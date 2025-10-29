@@ -18,12 +18,14 @@ import { TimeRangeToggle } from '../components/TimeRangeToggle';
 import { NowPlaying } from '../components/NowPlaying';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
+import { ConnectionStatus } from '../components/ConnectionStatus';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { calculateComfortLevel } from '../utils/comfort';
 import { formatTemperature, formatDecibels, formatLight, formatHumidity } from '../utils/format';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
+import locationService from '../services/location.service';
 import type { TimeRange, SensorData, HistoricalData } from '../types';
 
 export function Dashboard() {
@@ -34,17 +36,38 @@ export function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [soundAlerts, setSoundAlerts] = useState(true);
+  
+  // Multi-location support
+  const locations = user?.locations || locationService.getLocations();
+  const [currentLocationId, setCurrentLocationId] = useState<string>(
+    locationService.getCurrentLocationId() || locations[0]?.id || 'location-1'
+  );
+  
+  const currentLocation = locations.find(l => l.id === currentLocationId);
 
-  // Real-time data for live view
+  // Real-time data for live view (uses location ID as venue ID)
   const { 
     data: liveData, 
     loading: liveLoading, 
     error: liveError,
-    refetch 
+    refetch,
+    usingIoT
   } = useRealTimeData({
-    venueId: user?.venueId || 'demo',
+    venueId: currentLocationId,
     enabled: timeRange === 'live'
   });
+  
+  // Handle location change
+  const handleLocationChange = (locationId: string) => {
+    setCurrentLocationId(locationId);
+    locationService.setCurrentLocationId(locationId);
+    // Refetch data for new location
+    if (timeRange === 'live') {
+      refetch();
+    } else {
+      loadHistoricalData();
+    }
+  };
 
   // Load historical data when time range changes
   useEffect(() => {
@@ -54,13 +77,11 @@ export function Dashboard() {
   }, [timeRange]);
 
   const loadHistoricalData = async () => {
-    if (!user) return;
-    
     setLoading(true);
     setError(null);
     
     try {
-      const data = await apiService.getHistoricalData(user.venueId, timeRange);
+      const data = await apiService.getHistoricalData(currentLocationId, timeRange);
       setHistoricalData(data);
     } catch (err: any) {
       setError(err.message);
@@ -112,10 +133,13 @@ export function Dashboard() {
 
       {/* Top Bar */}
       <TopBar
-        venueName={user?.venueName || 'Demo Venue'}
+        venueName={user?.venueName || 'Pulse Dashboard'}
         onLogout={handleLogout}
         soundAlerts={soundAlerts}
         onToggleSoundAlerts={() => setSoundAlerts(!soundAlerts)}
+        locations={locations}
+        currentLocationId={currentLocationId}
+        onLocationChange={handleLocationChange}
       />
 
       <div className="flex flex-1 relative z-10">
@@ -133,9 +157,18 @@ export function Dashboard() {
                 animate={{ opacity: 1, y: 0 }}
               >
                 <div className="flex flex-wrap items-center justify-between gap-4 mb-2">
-                  <h2 className="text-2xl font-bold gradient-text">
-                    {timeRange === 'live' ? 'Live Monitoring' : 'Historical Data'}
-                  </h2>
+                  <div className="flex flex-col gap-2">
+                    <h2 className="text-2xl font-bold gradient-text">
+                      {timeRange === 'live' ? 'Live Monitoring' : 'Historical Data'}
+                    </h2>
+                    {currentLocation && (
+                      <ConnectionStatus 
+                        isConnected={!!liveData}
+                        usingIoT={usingIoT}
+                        locationName={currentLocation.name}
+                      />
+                    )}
+                  </div>
                   
                   <div className="flex gap-2">
                     <motion.button

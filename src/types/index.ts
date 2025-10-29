@@ -3,6 +3,15 @@ export interface User {
   email: string;
   venueId: string;
   venueName: string;
+  locations?: Location[];
+}
+
+export interface Location {
+  id: string;
+  name: string;
+  address?: string;
+  timezone?: string;
+  deviceId?: string;
 }
 
 export interface SensorData {
