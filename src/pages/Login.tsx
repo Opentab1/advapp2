@@ -177,7 +177,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
           </motion.button>
         </motion.div>
 
-        {/* Demo Info */}
+        {/* Production Info */}
         <motion.div
           className="mt-6 p-4 rounded-lg bg-cyan/5 border border-cyan/20"
           initial={{ opacity: 0 }}
@@ -185,7 +185,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
           transition={{ delay: 0.4 }}
         >
           <p className="text-xs text-center text-gray-400">
-            <span className="text-cyan font-semibold">Demo Mode:</span> Any credentials will work for testing
+            Secure authentication powered by <span className="text-cyan font-semibold">AWS Cognito</span>
           </p>
         </motion.div>
       </motion.div>

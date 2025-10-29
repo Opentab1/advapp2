@@ -7,6 +7,7 @@ import {
   SignInInput
 } from '@aws-amplify/auth';
 import type { User } from '../types';
+import locationService from './location.service';
 
 class AuthService {
   private tokenKey = 'pulse_auth_token';
@@ -67,13 +68,22 @@ class AuthService {
       // Extract user data from token or attributes
       const payload = session.tokens?.idToken?.payload;
       const venueId = (payload?.['custom:venueId'] as string) || 'demo-venue';
-      const venueName = (payload?.['custom:venueName'] as string) || 'Demo Venue';
+      const venueName = (payload?.['custom:venueName'] as string) || 'Pulse Dashboard';
+      
+      // Get user's locations
+      const locations = locationService.getLocations();
+      
+      // Set initial location if none selected
+      if (!locationService.getCurrentLocationId() && locations.length > 0) {
+        locationService.setCurrentLocationId(locations[0].id);
+      }
 
       const user: User = {
         id: currentUser.userId,
         email: payload?.email as string || '',
         venueId,
-        venueName
+        venueName,
+        locations
       };
 
       localStorage.setItem(this.userKey, JSON.stringify(user));
