@@ -1,0 +1,206 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Inter Font Import */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-navy text-white font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    letter-spacing: -0.01em;
+    overflow-x: hidden;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-navy-light;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-600 rounded-full;
+    transition: background-color 0.2s;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-cyan;
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+  }
+
+  /* Glassmorphism Card */
+  .glass-card {
+    @apply bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl;
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.15),
+                inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  }
+
+  .glass-card-hover {
+    @apply glass-card transition-all duration-300;
+  }
+
+  .glass-card-hover:hover {
+    @apply border-cyan/30 scale-105;
+    box-shadow: 0 0 30px rgba(0, 212, 255, 0.3),
+                inset 0 1px 1px rgba(255, 255, 255, 0.1);
+    transform: translateY(-4px) scale(1.02);
+  }
+
+  /* Cyan Glow Effect */
+  .cyan-glow {
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+  }
+
+  .cyan-glow-strong {
+    box-shadow: 0 0 40px rgba(0, 212, 255, 0.6),
+                0 0 60px rgba(0, 212, 255, 0.3);
+  }
+
+  /* Button Styles */
+  .btn-primary {
+    @apply px-6 py-3 bg-gradient-to-r from-cyan to-cyan-dark text-navy font-semibold rounded-xl;
+    @apply transition-all duration-300 hover:scale-105;
+    box-shadow: 0 4px 20px rgba(0, 212, 255, 0.4);
+  }
+
+  .btn-primary:hover {
+    box-shadow: 0 6px 30px rgba(0, 212, 255, 0.6);
+  }
+
+  .btn-secondary {
+    @apply px-6 py-3 glass-card font-semibold rounded-xl;
+    @apply transition-all duration-300 hover:border-cyan/50;
+  }
+
+  /* Animated Background Orbs */
+  .orb {
+    @apply absolute rounded-full blur-3xl opacity-20 pointer-events-none;
+  }
+
+  .orb-1 {
+    @apply w-96 h-96 bg-gradient-to-br from-cyan/30 to-blue-500/30;
+    @apply top-[-10%] left-[-5%] animate-float;
+  }
+
+  .orb-2 {
+    @apply w-80 h-80 bg-gradient-to-br from-purple-500/20 to-pink-500/20;
+    @apply bottom-[-10%] right-[-5%] animate-float-delayed;
+  }
+
+  .orb-3 {
+    @apply w-64 h-64 bg-gradient-to-br from-blue-400/20 to-cyan/20;
+    @apply top-[40%] right-[10%] animate-float;
+    animation-delay: 3s;
+  }
+
+  /* Ripple Effect */
+  .ripple {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .ripple::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(0, 212, 255, 0.4);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+  }
+
+  .ripple:active::after {
+    width: 300px;
+    height: 300px;
+  }
+
+  /* Pulse Heart Monitor Effect */
+  .pulse-line {
+    @apply relative;
+  }
+
+  .pulse-line::before {
+    content: '';
+    @apply absolute inset-0 bg-gradient-to-r from-transparent via-cyan to-transparent;
+    animation: pulse-scan 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-scan {
+    0%, 100% {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  /* Metric Value Styles */
+  .metric-value {
+    @apply text-4xl md:text-5xl font-bold bg-gradient-to-r from-white to-cyan bg-clip-text text-transparent;
+    text-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+  }
+
+  /* Loading Spinner */
+  .spinner {
+    @apply inline-block w-6 h-6 border-2 border-white/20 border-t-cyan rounded-full animate-spin;
+  }
+
+  /* Comfort Gauge */
+  .gauge-fill {
+    transition: all 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  /* Focus Visible for Accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-cyan ring-offset-2 ring-offset-navy;
+  }
+
+  /* Selection */
+  ::selection {
+    @apply bg-cyan/30 text-white;
+  }
+}
+
+/* Utility Classes */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Grid Auto Fit */
+  .grid-auto-fit {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+
+  /* Gradient Text */
+  .gradient-text {
+    @apply bg-gradient-to-r from-white via-cyan to-white bg-clip-text text-transparent;
+  }
+}
