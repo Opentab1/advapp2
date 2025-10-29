@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, Bell, BellOff, MapPin, ExternalLink, ChevronDown } from 'lucide-react';
+import { LogOut, Bell, BellOff, MapPin, ChevronDown } from 'lucide-react';
 import { Logo } from './Logo';
 import { format } from 'date-fns';
 import type { Location } from '../types';
@@ -122,20 +122,6 @@ export function TopBar({
               {format(currentTime, 'HH:mm:ss')}
             </span>
           </div>
-
-          {/* GoDaddy Domain Button */}
-          <motion.a
-            href="https://www.godaddy.com/domainsearch/find?domainToCheck=dashboard.advizia.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 text-white font-medium transition-all border border-green-400/30 shadow-lg shadow-green-500/20"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            title="Manage domain on GoDaddy"
-          >
-            <ExternalLink className="w-4 h-4" />
-            <span className="text-xs font-semibold">GoDaddy</span>
-          </motion.a>
 
           {/* Sound Alerts Toggle */}
           <motion.button
