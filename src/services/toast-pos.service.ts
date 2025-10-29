@@ -19,7 +19,7 @@ class ToastPOSService {
     };
   }
 
-  async getRecentOrders(limit: number = 50): Promise<ToastOrder[]> {
+  async getRecentOrders(_limit: number = 50): Promise<ToastOrder[]> {
     if (!this.apiKey || !this.restaurantGuid) {
       console.warn('Toast POS not configured');
       return this.getMockOrders();
@@ -42,7 +42,7 @@ class ToastPOSService {
     }
   }
 
-  async getMetrics(startDate: Date, endDate: Date): Promise<ToastMetrics> {
+  async getMetrics(_startDate: Date, _endDate: Date): Promise<ToastMetrics> {
     if (!this.apiKey || !this.restaurantGuid) {
       return this.getMockMetrics();
     }
