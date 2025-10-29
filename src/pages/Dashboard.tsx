@@ -6,26 +6,34 @@ import {
   Volume2, 
   Droplets, 
   Download,
-  RefreshCw
+  RefreshCw,
+  Cloud
 } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { Sidebar } from '../components/Sidebar';
 import { AnimatedBackground } from '../components/AnimatedBackground';
 import { MetricCard } from '../components/MetricCard';
 import { ComfortGauge } from '../components/ComfortGauge';
+import { ComfortBreakdownCard } from '../components/ComfortBreakdown';
+import { SportsWidget } from '../components/SportsWidget';
 import { DataChart } from '../components/DataChart';
 import { TimeRangeToggle } from '../components/TimeRangeToggle';
 import { NowPlaying } from '../components/NowPlaying';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { ConnectionStatus } from '../components/ConnectionStatus';
+import { Settings } from './Settings';
+import { SongLog } from './SongLog';
+import { Reports } from './Reports';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { calculateComfortLevel } from '../utils/comfort';
+import { calculateComfortLevel, calculateComfortBreakdown } from '../utils/comfort';
 import { formatTemperature, formatDecibels, formatLight, formatHumidity } from '../utils/format';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
+import songLogService from '../services/song-log.service';
+import { VENUE_CONFIG } from '../config/amplify';
 import type { TimeRange, SensorData, HistoricalData } from '../types';
 
 export function Dashboard() {
@@ -37,13 +45,13 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [soundAlerts, setSoundAlerts] = useState(true);
   
-  // Venue ID from Cognito for data isolation
-  const venueId = user?.venueId || 'demo-venue';
+  // Use Ferg's Sports Bar venue ID
+  const venueId = user?.venueId || VENUE_CONFIG.venueId;
   
   // Multi-location support (locations within the venue)
   const locations = user?.locations || locationService.getLocations();
   const [currentLocationId, setCurrentLocationId] = useState<string>(
-    locationService.getCurrentLocationId() || locations[0]?.id || 'location-1'
+    locationService.getCurrentLocationId() || VENUE_CONFIG.locationId
   );
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
@@ -59,6 +67,25 @@ export function Dashboard() {
     venueId: venueId,
     enabled: timeRange === 'live'
   });
+  
+  // Log songs when they change
+  useEffect(() => {
+    if (liveData?.currentSong) {
+      const lastSong = localStorage.getItem('lastSongLogged');
+      const currentSongKey = `${liveData.currentSong}-${liveData.timestamp}`;
+      
+      if (lastSong !== currentSongKey) {
+        songLogService.addSong({
+          timestamp: liveData.timestamp,
+          songName: liveData.currentSong,
+          artist: liveData.artist || 'Unknown Artist',
+          albumArt: liveData.albumArt,
+          source: 'spotify'
+        });
+        localStorage.setItem('lastSongLogged', currentSongKey);
+      }
+    }
+  }, [liveData?.currentSong, liveData?.timestamp]);
   
   // Handle location change
   const handleLocationChange = (locationId: string) => {
@@ -125,6 +152,7 @@ export function Dashboard() {
     : historicalData?.data || [];
 
   const comfortLevel = currentData ? calculateComfortLevel(currentData) : null;
+  const comfortBreakdown = currentData ? calculateComfortBreakdown(currentData) : null;
 
   // Show loading state
   if (timeRange === 'live' && liveLoading && !liveData) {
@@ -137,7 +165,7 @@ export function Dashboard() {
 
       {/* Top Bar */}
       <TopBar
-        venueName={user?.venueName || 'Pulse Dashboard'}
+        venueName={VENUE_CONFIG.venueName}
         onLogout={handleLogout}
         soundAlerts={soundAlerts}
         onToggleSoundAlerts={() => setSoundAlerts(!soundAlerts)}
@@ -169,7 +197,7 @@ export function Dashboard() {
                       <ConnectionStatus 
                         isConnected={!!liveData}
                         usingIoT={usingIoT}
-                        locationName={currentLocation.name}
+                        locationName={VENUE_CONFIG.locationName}
                       />
                     )}
                   </div>
@@ -218,7 +246,7 @@ export function Dashboard() {
               {!loading && currentData && (
                 <>
                   {/* Hero Metrics Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
                     <MetricCard
                       title="Sound Level"
                       value={formatDecibels(currentData.decibels).split(' ')[0]}
@@ -244,6 +272,15 @@ export function Dashboard() {
                       icon={Thermometer}
                       color="#ff6b6b"
                       delay={0.2}
+                    />
+                    
+                    <MetricCard
+                      title="Outdoor Temp"
+                      value={formatTemperature(currentData.outdoorTemp).split('°')[0]}
+                      unit="°F"
+                      icon={Cloud}
+                      color="#60a5fa"
+                      delay={0.25}
                     />
                     
                     <MetricCard
@@ -274,6 +311,14 @@ export function Dashboard() {
                     )}
                   </div>
 
+                  {/* Comfort Breakdown & Sports */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    {comfortBreakdown && (
+                      <ComfortBreakdownCard breakdown={comfortBreakdown} />
+                    )}
+                    <SportsWidget />
+                  </div>
+
                   {/* Charts */}
                   {chartData.length > 0 && (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -300,15 +345,21 @@ export function Dashboard() {
                       
                       <DataChart
                         data={chartData}
-                        metric="humidity"
-                        title="Humidity Level"
-                        color="#4ecdc4"
+                        metric="outdoorTemp"
+                        title="Outdoor Temperature"
+                        color="#60a5fa"
                       />
                     </div>
                   )}
                 </>
               )}
             </>
+          ) : activeTab === 'songs' ? (
+            <SongLog />
+          ) : activeTab === 'reports' ? (
+            <Reports />
+          ) : activeTab === 'settings' ? (
+            <Settings />
           ) : (
             // Placeholder for other tabs
             <motion.div

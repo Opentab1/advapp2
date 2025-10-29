@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { 
   Activity, 
   History, 
-  Cpu, 
+  Music, 
   FileText, 
   Settings, 
   LucideIcon 
@@ -22,7 +22,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: 'live', label: 'Live', icon: Activity },
   { id: 'history', label: 'History', icon: History },
-  { id: 'devices', label: 'Devices', icon: Cpu },
+  { id: 'songs', label: 'Songs', icon: Music },
   { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'settings', label: 'Settings', icon: Settings }
 ];

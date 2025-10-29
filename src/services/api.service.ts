@@ -137,34 +137,79 @@ class ApiService {
     return { data, venueId, range };
   }
 
-  exportToCSV(data: SensorData[]): void {
-    const headers = ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Song'];
-    const rows = data.map(d => [
-      d.timestamp,
-      d.decibels.toFixed(1),
-      d.light.toFixed(1),
-      d.indoorTemp.toFixed(1),
-      d.outdoorTemp.toFixed(1),
-      d.humidity.toFixed(1),
-      d.currentSong || ''
-    ]);
+  exportToCSV(data: SensorData[], includeComfort: boolean = true): void {
+    const headers = includeComfort 
+      ? ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Comfort Score', 'Comfort Status', 'Song', 'Artist']
+      : ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Song', 'Artist'];
+    
+    const rows = data.map(d => {
+      const comfort = includeComfort ? this.calculateComfort(d) : null;
+      const baseRow = [
+        d.timestamp,
+        d.decibels.toFixed(1),
+        d.light.toFixed(1),
+        d.indoorTemp.toFixed(1),
+        d.outdoorTemp.toFixed(1),
+        d.humidity.toFixed(1)
+      ];
+      
+      if (includeComfort && comfort) {
+        baseRow.push(comfort.score.toString(), comfort.status);
+      }
+      
+      baseRow.push(d.currentSong || '', d.artist || '');
+      return baseRow;
+    });
 
     const csvContent = [
       headers.join(','),
-      ...rows.map(row => row.join(','))
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    this.downloadFile(csvContent, `fergs-sports-bar-data-${new Date().toISOString()}.csv`, 'text/csv');
+  }
+
+  exportToJSON(data: SensorData[]): void {
+    const jsonContent = JSON.stringify(data, null, 2);
+    this.downloadFile(jsonContent, `fergs-sports-bar-data-${new Date().toISOString()}.json`, 'application/json');
+  }
+
+  private downloadFile(content: string, filename: string, mimeType: string): void {
+    const blob = new Blob([content], { type: `${mimeType};charset=utf-8;` });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     
     link.setAttribute('href', url);
-    link.setAttribute('download', `pulse-data-${new Date().toISOString()}.csv`);
+    link.setAttribute('download', filename);
     link.style.visibility = 'hidden';
     
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  private calculateComfort(data: SensorData): { score: number; status: string } {
+    // Quick comfort calculation for export
+    const tempScore = this.scoreInRange(data.indoorTemp, 68, 74);
+    const humidityScore = this.scoreInRange(data.humidity, 40, 60);
+    const soundScore = this.scoreInRange(data.decibels, 65, 80);
+    const lightScore = this.scoreInRange(data.light, 200, 500);
+    
+    const overall = (tempScore * 0.35 + humidityScore * 0.30 + soundScore * 0.20 + lightScore * 0.15);
+    
+    let status = 'poor';
+    if (overall >= 80) status = 'excellent';
+    else if (overall >= 65) status = 'good';
+    else if (overall >= 50) status = 'fair';
+    
+    return { score: Math.round(overall), status };
+  }
+
+  private scoreInRange(value: number, min: number, max: number): number {
+    if (value >= min && value <= max) return 100;
+    const distance = value < min ? min - value : value - max;
+    return Math.max(0, 100 - distance * 10);
   }
 }
 

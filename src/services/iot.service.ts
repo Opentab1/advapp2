@@ -1,8 +1,9 @@
 import { fetchAuthSession } from '@aws-amplify/auth';
 import type { SensorData } from '../types';
+import { VENUE_CONFIG } from '../config/amplify';
 
 // AWS IoT Core configuration
-const IOT_ENDPOINT = 'a2k8y8z8z8z8z8-ats.iot.us-east-2.amazonaws.com'; // Will be configured
+const IOT_ENDPOINT = VENUE_CONFIG.iotEndpoint;
 
 interface IoTMessage {
   deviceId: string;
