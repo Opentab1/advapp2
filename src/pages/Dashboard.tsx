@@ -7,7 +7,10 @@ import {
   Droplets, 
   Download,
   RefreshCw,
-  Cloud
+  Cloud,
+  UserPlus,
+  UserMinus,
+  Users
 } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { Sidebar } from '../components/Sidebar';
@@ -28,7 +31,7 @@ import { Reports } from './Reports';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { calculateComfortLevel, calculateComfortBreakdown } from '../utils/comfort';
-import { formatTemperature, formatDecibels, formatLight, formatHumidity } from '../utils/format';
+import { formatTemperature, formatDecibels, formatLight, formatHumidity, formatOccupancy } from '../utils/format';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
@@ -246,7 +249,7 @@ export function Dashboard() {
               {!loading && currentData && (
                 <>
                   {/* Hero Metrics Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                     <MetricCard
                       title="Sound Level"
                       value={formatDecibels(currentData.decibels).split(' ')[0]}
@@ -290,6 +293,33 @@ export function Dashboard() {
                       icon={Droplets}
                       color="#4ecdc4"
                       delay={0.3}
+                    />
+                    
+                    <MetricCard
+                      title="People In"
+                      value={formatOccupancy(currentData.peopleIn || 0)}
+                      unit=""
+                      icon={UserPlus}
+                      color="#22c55e"
+                      delay={0.35}
+                    />
+                    
+                    <MetricCard
+                      title="People Out"
+                      value={formatOccupancy(currentData.peopleOut || 0)}
+                      unit=""
+                      icon={UserMinus}
+                      color="#ef4444"
+                      delay={0.4}
+                    />
+                    
+                    <MetricCard
+                      title="Total Occupancy"
+                      value={formatOccupancy(currentData.totalOccupancy || 0)}
+                      unit=""
+                      icon={Users}
+                      color="#8b5cf6"
+                      delay={0.45}
                     />
                   </div>
 

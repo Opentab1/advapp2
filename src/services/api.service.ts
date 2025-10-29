@@ -66,6 +66,9 @@ class ApiService {
         indoorTemp: item.indoorTemp || item.indoor_temperature || 0,
         outdoorTemp: item.outdoorTemp || item.outdoor_temperature || 0,
         humidity: item.humidity || 0,
+        peopleIn: item.peopleIn || item.people_in,
+        peopleOut: item.peopleOut || item.people_out,
+        totalOccupancy: item.totalOccupancy || item.total_occupancy,
         currentSong: item.currentSong || item.current_song,
         albumArt: item.albumArt || item.album_art
       }));
@@ -106,6 +109,9 @@ class ApiService {
       indoorTemp: 72 + Math.random() * 4,
       outdoorTemp: 68 + Math.random() * 8,
       humidity: 40 + Math.random() * 20,
+      peopleIn: Math.floor(Math.random() * 15) + 5,
+      peopleOut: Math.floor(Math.random() * 12) + 3,
+      totalOccupancy: Math.floor(Math.random() * 80) + 40,
       currentSong: 'Neon Dreams - Synthwave',
       albumArt: 'https://picsum.photos/seed/album/200'
     };
@@ -129,6 +135,9 @@ class ApiService {
         indoorTemp: 70 + Math.random() * 8 + Math.sin(i / 15) * 3,
         outdoorTemp: 65 + Math.random() * 15 + Math.cos(i / 12) * 5,
         humidity: 35 + Math.random() * 30,
+        peopleIn: Math.floor(Math.random() * 15) + 5 + Math.floor(Math.sin(i / 5) * 5),
+        peopleOut: Math.floor(Math.random() * 12) + 3 + Math.floor(Math.cos(i / 5) * 4),
+        totalOccupancy: Math.floor(50 + Math.random() * 60 + Math.sin(i / 8) * 20),
         currentSong: i === 0 ? 'Neon Dreams - Synthwave' : undefined,
         albumArt: i === 0 ? 'https://picsum.photos/seed/album/200' : undefined
       });
@@ -139,8 +148,8 @@ class ApiService {
 
   exportToCSV(data: SensorData[], includeComfort: boolean = true): void {
     const headers = includeComfort 
-      ? ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Comfort Score', 'Comfort Status', 'Song', 'Artist']
-      : ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Song', 'Artist'];
+      ? ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'People In', 'People Out', 'Total Occupancy', 'Comfort Score', 'Comfort Status', 'Song', 'Artist']
+      : ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'People In', 'People Out', 'Total Occupancy', 'Song', 'Artist'];
     
     const rows = data.map(d => {
       const comfort = includeComfort ? this.calculateComfort(d) : null;
@@ -150,7 +159,10 @@ class ApiService {
         d.light.toFixed(1),
         d.indoorTemp.toFixed(1),
         d.outdoorTemp.toFixed(1),
-        d.humidity.toFixed(1)
+        d.humidity.toFixed(1),
+        (d.peopleIn || 0).toString(),
+        (d.peopleOut || 0).toString(),
+        (d.totalOccupancy || 0).toString()
       ];
       
       if (includeComfort && comfort) {

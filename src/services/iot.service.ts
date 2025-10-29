@@ -14,6 +14,9 @@ interface IoTMessage {
     indoor_temperature: number;
     outdoor_temperature: number;
     humidity: number;
+    people_in?: number;
+    people_out?: number;
+    total_occupancy?: number;
   };
   spotify?: {
     current_song: string;
@@ -134,6 +137,9 @@ class IoTService {
       indoorTemp: message.sensors.indoor_temperature || 0,
       outdoorTemp: message.sensors.outdoor_temperature || 0,
       humidity: message.sensors.humidity || 0,
+      peopleIn: message.sensors.people_in,
+      peopleOut: message.sensors.people_out,
+      totalOccupancy: message.sensors.total_occupancy,
       currentSong: message.spotify?.current_song,
       albumArt: message.spotify?.album_art
     };

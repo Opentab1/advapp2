@@ -21,6 +21,9 @@ export interface SensorData {
   indoorTemp: number;
   outdoorTemp: number;
   humidity: number;
+  peopleIn?: number;
+  peopleOut?: number;
+  totalOccupancy?: number;
   currentSong?: string;
   albumArt?: string;
   artist?: string;

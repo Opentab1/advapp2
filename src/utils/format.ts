@@ -29,3 +29,7 @@ export function formatLight(lux: number): string {
 export function formatHumidity(humidity: number): string {
   return `${humidity.toFixed(0)}%`;
 }
+
+export function formatOccupancy(count: number): string {
+  return `${Math.round(count)}`;
+}
