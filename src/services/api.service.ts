@@ -67,7 +67,11 @@ class ApiService {
         outdoorTemp: item.outdoorTemp || item.outdoor_temperature || 0,
         humidity: item.humidity || 0,
         currentSong: item.currentSong || item.current_song,
-        albumArt: item.albumArt || item.album_art
+        albumArt: item.albumArt || item.album_art,
+        // Occupancy mapping with safe fallbacks
+        peopleIn: item.peopleIn ?? item.people_in ?? 0,
+        peopleOut: item.peopleOut ?? item.people_out ?? 0,
+        occupancy: item.occupancy ?? item.total_occupancy ?? item.totalOccupancy ?? 0
       }));
     }
     
@@ -99,6 +103,9 @@ class ApiService {
   // Mock data for demo/development
   private getMockLiveData(): SensorData {
     const now = new Date();
+    const peopleIn = Math.floor(Math.random() * 6); // 0-5
+    const peopleOut = Math.floor(Math.random() * 6); // 0-5
+    const occupancy = 50 + Math.floor(Math.random() * 100); // 50-149
     return {
       timestamp: now.toISOString(),
       decibels: 65 + Math.random() * 20,
@@ -107,7 +114,10 @@ class ApiService {
       outdoorTemp: 68 + Math.random() * 8,
       humidity: 40 + Math.random() * 20,
       currentSong: 'Neon Dreams - Synthwave',
-      albumArt: 'https://picsum.photos/seed/album/200'
+      albumArt: 'https://picsum.photos/seed/album/200',
+      peopleIn,
+      peopleOut,
+      occupancy
     };
   }
 
@@ -130,7 +140,10 @@ class ApiService {
         outdoorTemp: 65 + Math.random() * 15 + Math.cos(i / 12) * 5,
         humidity: 35 + Math.random() * 30,
         currentSong: i === 0 ? 'Neon Dreams - Synthwave' : undefined,
-        albumArt: i === 0 ? 'https://picsum.photos/seed/album/200' : undefined
+        albumArt: i === 0 ? 'https://picsum.photos/seed/album/200' : undefined,
+        peopleIn: Math.floor(Math.random() * 6),
+        peopleOut: Math.floor(Math.random() * 6),
+        occupancy: 40 + Math.floor(Math.random() * 120)
       });
     }
     
@@ -139,8 +152,8 @@ class ApiService {
 
   exportToCSV(data: SensorData[], includeComfort: boolean = true): void {
     const headers = includeComfort 
-      ? ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Comfort Score', 'Comfort Status', 'Song', 'Artist']
-      : ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Song', 'Artist'];
+      ? ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'People In', 'People Out', 'Occupancy', 'Comfort Score', 'Comfort Status', 'Song', 'Artist']
+      : ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'People In', 'People Out', 'Occupancy', 'Song', 'Artist'];
     
     const rows = data.map(d => {
       const comfort = includeComfort ? this.calculateComfort(d) : null;
@@ -150,7 +163,10 @@ class ApiService {
         d.light.toFixed(1),
         d.indoorTemp.toFixed(1),
         d.outdoorTemp.toFixed(1),
-        d.humidity.toFixed(1)
+        d.humidity.toFixed(1),
+        String(d.peopleIn ?? 0),
+        String(d.peopleOut ?? 0),
+        String(d.occupancy ?? 0)
       ];
       
       if (includeComfort && comfort) {

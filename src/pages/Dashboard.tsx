@@ -7,7 +7,10 @@ import {
   Droplets, 
   Download,
   RefreshCw,
-  Cloud
+  Cloud,
+  UserPlus,
+  UserMinus,
+  Users
 } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { Sidebar } from '../components/Sidebar';
@@ -246,7 +249,7 @@ export function Dashboard() {
               {!loading && currentData && (
                 <>
                   {/* Hero Metrics Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-8 gap-4 mb-6">
                     <MetricCard
                       title="Sound Level"
                       value={formatDecibels(currentData.decibels).split(' ')[0]}
@@ -273,6 +276,33 @@ export function Dashboard() {
                       color="#ff6b6b"
                       delay={0.2}
                     />
+
+                    <MetricCard
+                      title="People In"
+                      value={String(currentData.peopleIn ?? 0)}
+                      unit="people"
+                      icon={UserPlus}
+                      color="#34d399"
+                      delay={0.22}
+                    />
+
+                    <MetricCard
+                      title="People Out"
+                      value={String(currentData.peopleOut ?? 0)}
+                      unit="people"
+                      icon={UserMinus}
+                      color="#f87171"
+                      delay={0.24}
+                    />
+
+                    <MetricCard
+                      title="Occupancy"
+                      value={String(currentData.occupancy ?? 0)}
+                      unit="people"
+                      icon={Users}
+                      color="#60a5fa"
+                      delay={0.26}
+                    />
                     
                     <MetricCard
                       title="Outdoor Temp"
@@ -280,7 +310,7 @@ export function Dashboard() {
                       unit="°F"
                       icon={Cloud}
                       color="#60a5fa"
-                      delay={0.25}
+                      delay={0.28}
                     />
                     
                     <MetricCard
@@ -289,7 +319,7 @@ export function Dashboard() {
                       unit="%"
                       icon={Droplets}
                       color="#4ecdc4"
-                      delay={0.3}
+                      delay={0.32}
                     />
                   </div>
 

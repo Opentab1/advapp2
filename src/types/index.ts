@@ -24,6 +24,10 @@ export interface SensorData {
   currentSong?: string;
   albumArt?: string;
   artist?: string;
+  // Occupancy metrics
+  peopleIn?: number;
+  peopleOut?: number;
+  occupancy?: number;
 }
 
 export interface HistoricalData {
