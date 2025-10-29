@@ -4,7 +4,9 @@ import {
   getCurrentUser,
   fetchAuthSession,
   signInWithRedirect,
-  SignInInput
+  confirmSignIn,
+  SignInInput,
+  SignInOutput
 } from '@aws-amplify/auth';
 import type { User } from '../types';
 import locationService from './location.service';
@@ -20,9 +22,14 @@ class AuthService {
         password
       };
       
-      const { isSignedIn } = await signIn(signInInput);
+      const signInOutput: SignInOutput = await signIn(signInInput);
       
-      if (isSignedIn) {
+      // Handle NEW_PASSWORD_REQUIRED challenge for temp passwords
+      if (signInOutput.nextStep?.signInStep === 'CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED') {
+        throw new Error('NEW_PASSWORD_REQUIRED');
+      }
+      
+      if (signInOutput.isSignedIn) {
         const user = await this.getCurrentAuthenticatedUser();
         return user;
       }
@@ -30,7 +37,26 @@ class AuthService {
       throw new Error('Sign in failed');
     } catch (error: any) {
       console.error('Login error:', error);
+      if (error.message === 'NEW_PASSWORD_REQUIRED') {
+        throw error;
+      }
       throw new Error(error.message || 'Failed to login');
+    }
+  }
+
+  async completeNewPassword(newPassword: string): Promise<User> {
+    try {
+      const { isSignedIn } = await confirmSignIn({ challengeResponse: newPassword });
+      
+      if (isSignedIn) {
+        const user = await this.getCurrentAuthenticatedUser();
+        return user;
+      }
+      
+      throw new Error('Password change failed');
+    } catch (error: any) {
+      console.error('Password change error:', error);
+      throw new Error(error.message || 'Failed to set new password');
     }
   }
 

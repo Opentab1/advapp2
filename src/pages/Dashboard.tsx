@@ -37,7 +37,10 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [soundAlerts, setSoundAlerts] = useState(true);
   
-  // Multi-location support
+  // Venue ID from Cognito for data isolation
+  const venueId = user?.venueId || 'demo-venue';
+  
+  // Multi-location support (locations within the venue)
   const locations = user?.locations || locationService.getLocations();
   const [currentLocationId, setCurrentLocationId] = useState<string>(
     locationService.getCurrentLocationId() || locations[0]?.id || 'location-1'
@@ -45,7 +48,7 @@ export function Dashboard() {
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
 
-  // Real-time data for live view (uses location ID as venue ID)
+  // Real-time data for live view (uses venue ID for data isolation)
   const { 
     data: liveData, 
     loading: liveLoading, 
@@ -53,7 +56,7 @@ export function Dashboard() {
     refetch,
     usingIoT
   } = useRealTimeData({
-    venueId: currentLocationId,
+    venueId: venueId,
     enabled: timeRange === 'live'
   });
   
@@ -81,7 +84,8 @@ export function Dashboard() {
     setError(null);
     
     try {
-      const data = await apiService.getHistoricalData(currentLocationId, timeRange);
+      // Use venueId for data isolation, not locationId
+      const data = await apiService.getHistoricalData(venueId, timeRange);
       setHistoricalData(data);
     } catch (err: any) {
       setError(err.message);

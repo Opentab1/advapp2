@@ -6,9 +6,11 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.advizia.a
 class ApiService {
   private getHeaders(): HeadersInit {
     const token = authService.getStoredToken();
+    const user = authService.getStoredUser();
     return {
       'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` })
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+      ...(user?.venueId && { 'X-Venue-ID': user.venueId })
     };
   }
 
