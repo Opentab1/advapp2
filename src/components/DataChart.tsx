@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   Chart as ChartJS,
@@ -113,14 +113,14 @@ export function DataChart({ data, metric, title, color = '#00d4ff' }: DataChartP
           pinch: {
             enabled: true
           },
-          mode: 'x'
+          mode: 'x' as const
         },
         pan: {
           enabled: true,
-          mode: 'x'
+          mode: 'x' as const
         },
         limits: {
-          x: { min: 'original', max: 'original' }
+          x: { min: 'original' as const, max: 'original' as const }
         }
       }
     },
