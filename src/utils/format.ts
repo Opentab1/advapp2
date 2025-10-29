@@ -1,4 +1,4 @@
-import { format, formatDistance, formatRelative } from 'date-fns';
+import { format, formatDistance } from 'date-fns';
 
 export function formatDate(date: Date | string, formatStr: string = 'MMM dd, yyyy HH:mm'): string {
   const d = typeof date === 'string' ? new Date(date) : date;
