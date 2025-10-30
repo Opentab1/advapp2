@@ -1,12 +1,13 @@
-import { fetchAuthSession } from '@aws-amplify/auth';
+import mqtt from 'mqtt';
 import type { SensorData } from '../types';
 import { VENUE_CONFIG } from '../config/amplify';
 
-// AWS IoT Core configuration
-const IOT_ENDPOINT = VENUE_CONFIG.iotEndpoint;
+// AWS IoT Core configuration - Direct MQTT connection
+const IOT_ENDPOINT = `wss://${VENUE_CONFIG.iotEndpoint}/mqtt`;
+const MQTT_TOPIC = `pulse/${VENUE_CONFIG.venueId}/${VENUE_CONFIG.locationId}`;
 
 interface IoTMessage {
-  deviceId: string;
+  deviceId?: string;
   timestamp: string;
   sensors: {
     sound_level: number;
@@ -17,53 +18,65 @@ interface IoTMessage {
   };
   spotify?: {
     current_song: string;
-    album_art: string;
+    album_art?: string;
+    artist?: string;
+  };
+  occupancy?: {
+    current: number;
+    entries: number;
+    exits: number;
+    capacity?: number;
   };
 }
 
 class IoTService {
-  private ws: WebSocket | null = null;
+  private client: mqtt.MqttClient | null = null;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectDelay = 3000;
+  private maxReconnectAttempts = 10;
   private messageHandlers: Set<(data: SensorData) => void> = new Set();
   private isConnecting = false;
 
-  async connect(venueId: string): Promise<void> {
-    if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) {
+  async connect(_venueId: string): Promise<void> {
+    if (this.client?.connected || this.isConnecting) {
+      console.log('Already connected or connecting to AWS IoT');
       return;
     }
 
     this.isConnecting = true;
 
     try {
-      // Get AWS credentials from Cognito
-      const session = await fetchAuthSession();
-      const credentials = session.credentials;
+      console.log('🔌 Connecting to AWS IoT Core via MQTT...');
+      console.log('📍 Endpoint:', IOT_ENDPOINT);
+      console.log('📡 Topic:', MQTT_TOPIC);
 
-      if (!credentials) {
-        console.warn('No AWS credentials available, using fallback');
-        this.isConnecting = false;
-        return;
-      }
+      // Connect to AWS IoT Core without authentication
+      // Note: The IoT endpoint must be configured to allow unauthenticated access
+      this.client = mqtt.connect(IOT_ENDPOINT, {
+        clientId: `pulse-dashboard-${Date.now()}`,
+        clean: true,
+        reconnectPeriod: 5000,
+        connectTimeout: 30000,
+        keepalive: 60,
+        protocol: 'wss',
+        protocolVersion: 5,
+        rejectUnauthorized: false
+      });
 
-      // Create WebSocket URL for AWS IoT Core
-      const wsUrl = await this.getSignedWebSocketUrl(venueId, credentials);
-      
-      this.ws = new WebSocket(wsUrl);
-
-      this.ws.onopen = () => {
+      this.client.on('connect', () => {
         console.log('✅ Connected to AWS IoT Core');
         this.reconnectAttempts = 0;
         this.isConnecting = false;
 
-        // Subscribe to venue-specific topic
-        this.subscribe(`pulse/venue/${venueId}/data`);
-      };
+        // Subscribe to the topic
+        this.subscribe(MQTT_TOPIC);
+      });
 
-      this.ws.onmessage = (event) => {
+      this.client.on('message', (topic: string, payload: Buffer) => {
         try {
-          const message: IoTMessage = JSON.parse(event.data);
+          console.log(`📨 Message received on topic: ${topic}`);
+          const message: IoTMessage = JSON.parse(payload.toString());
+          console.log('📊 Sensor data:', message);
+          
           const sensorData = this.transformIoTMessage(message);
           
           // Notify all handlers
@@ -71,59 +84,48 @@ class IoTService {
         } catch (error) {
           console.error('Error parsing IoT message:', error);
         }
-      };
+      });
 
-      this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+      this.client.on('error', (error) => {
+        console.error('❌ MQTT error:', error);
         this.isConnecting = false;
-      };
+      });
 
-      this.ws.onclose = () => {
-        console.log('WebSocket closed');
+      this.client.on('close', () => {
+        console.log('🔌 MQTT connection closed');
         this.isConnecting = false;
-        this.handleReconnect(venueId);
-      };
+      });
+
+      this.client.on('reconnect', () => {
+        this.reconnectAttempts++;
+        console.log(`🔄 Reconnecting... (attempt ${this.reconnectAttempts})`);
+        
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+          console.error('❌ Max reconnection attempts reached');
+          this.client?.end(true);
+        }
+      });
+
+      this.client.on('offline', () => {
+        console.warn('⚠️ MQTT client is offline');
+      });
+
     } catch (error) {
       console.error('Error connecting to IoT:', error);
       this.isConnecting = false;
     }
   }
 
-  private async getSignedWebSocketUrl(
-    _venueId: string, 
-    credentials: any
-  ): Promise<string> {
-    // For production: Generate pre-signed WebSocket URL using AWS SigV4
-    // This is a simplified version - in production, use AWS SDK to sign the request
-    const endpoint = `wss://${IOT_ENDPOINT}/mqtt`;
-    return `${endpoint}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=${credentials.accessKeyId}`;
-  }
-
   private subscribe(topic: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      const subscribeMessage = {
-        action: 'subscribe',
-        topics: [topic]
-      };
-      this.ws.send(JSON.stringify(subscribeMessage));
-      console.log(`📡 Subscribed to topic: ${topic}`);
+    if (this.client?.connected) {
+      this.client.subscribe(topic, { qos: 1 }, (err) => {
+        if (err) {
+          console.error('❌ Subscription error:', err);
+        } else {
+          console.log(`📡 Subscribed to topic: ${topic}`);
+        }
+      });
     }
-  }
-
-  private handleReconnect(venueId: string): void {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('Max reconnection attempts reached');
-      return;
-    }
-
-    this.reconnectAttempts++;
-    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
-    
-    console.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
-    
-    setTimeout(() => {
-      this.connect(venueId);
-    }, delay);
   }
 
   private transformIoTMessage(message: IoTMessage): SensorData {
@@ -135,7 +137,14 @@ class IoTService {
       outdoorTemp: message.sensors.outdoor_temperature || 0,
       humidity: message.sensors.humidity || 0,
       currentSong: message.spotify?.current_song,
-      albumArt: message.spotify?.album_art
+      albumArt: message.spotify?.album_art,
+      artist: message.spotify?.artist,
+      occupancy: message.occupancy ? {
+        current: message.occupancy.current || 0,
+        entries: message.occupancy.entries || 0,
+        exits: message.occupancy.exits || 0,
+        capacity: message.occupancy.capacity
+      } : undefined
     };
   }
 
@@ -149,16 +158,30 @@ class IoTService {
   }
 
   disconnect(): void {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+    if (this.client) {
+      console.log('🔌 Disconnecting from AWS IoT Core');
+      this.client.end(true);
+      this.client = null;
     }
     this.messageHandlers.clear();
     this.reconnectAttempts = 0;
   }
 
   isConnected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return this.client?.connected || false;
+  }
+
+  // Publish a message to IoT (for testing or commands)
+  publish(topic: string, message: any): void {
+    if (this.client?.connected) {
+      this.client.publish(topic, JSON.stringify(message), { qos: 1 }, (err) => {
+        if (err) {
+          console.error('❌ Publish error:', err);
+        } else {
+          console.log(`📤 Published to topic: ${topic}`);
+        }
+      });
+    }
   }
 }
 
