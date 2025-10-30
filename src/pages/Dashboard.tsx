@@ -22,6 +22,7 @@ import { NowPlaying } from '../components/NowPlaying';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { ConnectionStatus } from '../components/ConnectionStatus';
+import { OccupancyWidget } from '../components/OccupancyWidget';
 import { Settings } from './Settings';
 import { SongLog } from './SongLog';
 import { Reports } from './Reports';
@@ -291,6 +292,11 @@ export function Dashboard() {
                       color="#4ecdc4"
                       delay={0.3}
                     />
+                  </div>
+
+                  {/* Occupancy */}
+                  <div className="mb-6">
+                    <OccupancyWidget venueId={venueId} />
                   </div>
 
                   {/* Now Playing & Comfort Level */}

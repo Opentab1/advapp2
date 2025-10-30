@@ -177,3 +177,25 @@ export interface WeeklyMetrics {
   totalRevenue: number;
   topSongs: Array<{ song: string; plays: number }>;
 }
+
+// Occupancy
+export type OccupancyPeriod = '1d' | '7d' | '14d';
+
+export interface OccupancyLive {
+  timestamp: string;
+  current: number;
+  entriesToday: number;
+  exitsToday: number;
+}
+
+export interface OccupancyAggregate {
+  period: OccupancyPeriod;
+  entries: number;
+  exits: number;
+  totalOccupancy: number; // net entries - exits over the period
+}
+
+export interface OccupancyMetrics {
+  live: OccupancyLive;
+  aggregates: OccupancyAggregate[];
+}
