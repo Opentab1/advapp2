@@ -31,19 +31,18 @@ export function useRealTimeData({ venueId, interval = 15000, enabled = true }: U
     if (!enabled) return;
 
     // Try to connect to AWS IoT for real-time streaming
+    let unsubscribe: (() => void) | null = null;
     iotService.connect(venueId).then(() => {
       if (iotService.isConnected()) {
         console.log('✅ Using AWS IoT for real-time data');
         setUsingIoT(true);
         setLoading(false);
-        
+
         // Subscribe to IoT messages
-        const unsubscribe = iotService.onMessage((sensorData) => {
+        unsubscribe = iotService.onMessage((sensorData) => {
           setData(sensorData);
           setError(null);
         });
-        
-        return unsubscribe;
       }
     }).catch(() => {
       console.log('⚠️ AWS IoT unavailable, using polling fallback');
@@ -59,6 +58,7 @@ export function useRealTimeData({ venueId, interval = 15000, enabled = true }: U
 
     return () => {
       clearInterval(intervalId);
+      if (unsubscribe) unsubscribe();
       if (usingIoT) {
         iotService.disconnect();
       }

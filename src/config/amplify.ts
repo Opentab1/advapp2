@@ -6,9 +6,16 @@ export const VENUE_CONFIG = {
   locationId: 'main-floor',
   venueName: "Ferg's Sports Bar",
   locationName: 'Main Floor',
-  region: 'us-east-2',
-  iotEndpoint: 'a1h5tm3jvbz8cg-ats.iot.us-east-2.amazonaws.com'
+  region: (import.meta as any).env?.VITE_AWS_REGION || 'us-east-2',
+  iotEndpoint: (import.meta as any).env?.VITE_IOT_ENDPOINT || 'a1h5tm3jvbz8cg-ats.iot.us-east-2.amazonaws.com'
 };
+
+// AWS IoT Core Topic (No AppSync/DynamoDB)
+export const IOT_TOPIC = ((import.meta as any).env?.VITE_IOT_TOPIC as string) || 'pulse/fergs-stpete/main-floor';
+
+// Optional: Cognito Identity Pool for unauth guest credentials (no login)
+// This must allow unauthenticated identities with IoT connect/subscribe permissions
+export const IDENTITY_POOL_ID = (import.meta as any).env?.VITE_COGNITO_IDENTITY_POOL_ID || '';
 
 const amplifyConfig = {
   Auth: {
