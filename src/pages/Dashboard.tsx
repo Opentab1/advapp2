@@ -7,7 +7,11 @@ import {
   Droplets, 
   Download,
   RefreshCw,
-  Cloud
+  Cloud,
+  Users,
+  UserPlus,
+  UserMinus,
+  TrendingUp
 } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { Sidebar } from '../components/Sidebar';
@@ -34,7 +38,7 @@ import authService from '../services/auth.service';
 import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
 import { VENUE_CONFIG } from '../config/amplify';
-import type { TimeRange, SensorData, HistoricalData } from '../types';
+import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics } from '../types';
 
 export function Dashboard() {
   const user = authService.getStoredUser();
@@ -44,6 +48,7 @@ export function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [soundAlerts, setSoundAlerts] = useState(true);
+  const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   
   // Use Ferg's Sports Bar venue ID
   const venueId = user?.venueId || VENUE_CONFIG.venueId;
@@ -105,6 +110,23 @@ export function Dashboard() {
       loadHistoricalData();
     }
   }, [timeRange]);
+
+  // Load occupancy metrics
+  useEffect(() => {
+    loadOccupancyMetrics();
+    // Refresh occupancy metrics every 30 seconds
+    const interval = setInterval(loadOccupancyMetrics, 30000);
+    return () => clearInterval(interval);
+  }, [venueId]);
+
+  const loadOccupancyMetrics = async () => {
+    try {
+      const metrics = await apiService.getOccupancyMetrics(venueId);
+      setOccupancyMetrics(metrics);
+    } catch (err: any) {
+      console.error('Failed to load occupancy metrics:', err);
+    }
+  };
 
   const loadHistoricalData = async () => {
     setLoading(true);
@@ -245,6 +267,84 @@ export function Dashboard() {
               {/* Dashboard Content */}
               {!loading && currentData && (
                 <>
+                  {/* Occupancy Metrics Section */}
+                  {occupancyMetrics && (
+                    <motion.div
+                      className="mb-6"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.1 }}
+                    >
+                      <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                        <Users className="w-5 h-5 text-cyan-400" />
+                        Occupancy Tracking
+                      </h3>
+                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                        <MetricCard
+                          title="Current Occupancy"
+                          value={occupancyMetrics.current.toString()}
+                          unit="people"
+                          icon={Users}
+                          color="#00d4ff"
+                          delay={0}
+                        />
+                        
+                        <MetricCard
+                          title="Today's Entries"
+                          value={occupancyMetrics.todayEntries.toString()}
+                          unit="people"
+                          icon={UserPlus}
+                          color="#4ade80"
+                          delay={0.05}
+                        />
+                        
+                        <MetricCard
+                          title="Today's Exits"
+                          value={occupancyMetrics.todayExits.toString()}
+                          unit="people"
+                          icon={UserMinus}
+                          color="#f87171"
+                          delay={0.1}
+                        />
+                        
+                        <MetricCard
+                          title="Peak Today"
+                          value={occupancyMetrics.peakOccupancy.toString()}
+                          unit={occupancyMetrics.peakTime ? `@ ${occupancyMetrics.peakTime}` : 'people'}
+                          icon={TrendingUp}
+                          color="#fbbf24"
+                          delay={0.15}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div className="glass-card p-4">
+                          <div className="text-sm text-gray-400 mb-1">7-Day Average</div>
+                          <div className="text-2xl font-bold text-cyan-400">
+                            {occupancyMetrics.sevenDayAvg}
+                            <span className="text-sm text-gray-400 ml-2">people/day</span>
+                          </div>
+                        </div>
+                        
+                        <div className="glass-card p-4">
+                          <div className="text-sm text-gray-400 mb-1">14-Day Average</div>
+                          <div className="text-2xl font-bold text-cyan-400">
+                            {occupancyMetrics.fourteenDayAvg}
+                            <span className="text-sm text-gray-400 ml-2">people/day</span>
+                          </div>
+                        </div>
+                        
+                        <div className="glass-card p-4">
+                          <div className="text-sm text-gray-400 mb-1">30-Day Average</div>
+                          <div className="text-2xl font-bold text-cyan-400">
+                            {occupancyMetrics.thirtyDayAvg}
+                            <span className="text-sm text-gray-400 ml-2">people/day</span>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+
                   {/* Hero Metrics Grid */}
                   <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
                     <MetricCard
@@ -322,6 +422,13 @@ export function Dashboard() {
                   {/* Charts */}
                   {chartData.length > 0 && (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <DataChart
+                        data={chartData}
+                        metric="occupancy"
+                        title="Occupancy Over Time"
+                        color="#00d4ff"
+                      />
+                      
                       <DataChart
                         data={chartData}
                         metric="decibels"
