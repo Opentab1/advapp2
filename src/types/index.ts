@@ -24,6 +24,26 @@ export interface SensorData {
   currentSong?: string;
   albumArt?: string;
   artist?: string;
+  occupancy?: OccupancyData;
+}
+
+export interface OccupancyData {
+  current: number;
+  entries: number;
+  exits: number;
+  capacity?: number;
+}
+
+export interface OccupancyMetrics {
+  current: number;
+  todayEntries: number;
+  todayExits: number;
+  todayTotal: number;
+  sevenDayAvg: number;
+  fourteenDayAvg: number;
+  thirtyDayAvg: number;
+  peakOccupancy: number;
+  peakTime?: string;
 }
 
 export interface HistoricalData {

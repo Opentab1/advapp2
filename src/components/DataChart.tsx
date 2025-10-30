@@ -32,7 +32,7 @@ ChartJS.register(
 
 interface DataChartProps {
   data: SensorData[];
-  metric: 'decibels' | 'light' | 'indoorTemp' | 'outdoorTemp' | 'humidity';
+  metric: 'decibels' | 'light' | 'indoorTemp' | 'outdoorTemp' | 'humidity' | 'occupancy';
   title: string;
   color?: string;
 }
@@ -45,7 +45,7 @@ export function DataChart({ data, metric, title, color = '#00d4ff' }: DataChartP
     datasets: [
       {
         label: title,
-        data: data.map(d => d[metric]),
+        data: data.map(d => metric === 'occupancy' ? (d.occupancy?.current || 0) : d[metric]),
         borderColor: color,
         backgroundColor: `${color}20`,
         borderWidth: 2,
@@ -98,6 +98,8 @@ export function DataChart({ data, metric, title, color = '#00d4ff' }: DataChartP
               label += `${value.toFixed(1)}°F`;
             } else if (metric === 'humidity') {
               label += `${value.toFixed(0)}%`;
+            } else if (metric === 'occupancy') {
+              label += `${Math.round(value)} people`;
             } else {
               label += value.toFixed(1);
             }
@@ -163,6 +165,8 @@ export function DataChart({ data, metric, title, color = '#00d4ff' }: DataChartP
               return `${value}°F`;
             } else if (metric === 'humidity') {
               return `${value}%`;
+            } else if (metric === 'occupancy') {
+              return `${value}`;
             }
             return value;
           }

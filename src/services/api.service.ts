@@ -1,4 +1,4 @@
-import type { SensorData, TimeRange, HistoricalData } from '../types';
+import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '../types';
 import authService from './auth.service';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.advizia.ai';
@@ -99,6 +99,10 @@ class ApiService {
   // Mock data for demo/development
   private getMockLiveData(): SensorData {
     const now = new Date();
+    const hour = now.getHours();
+    // Simulate realistic occupancy based on time of day
+    const baseOccupancy = this.getBaseOccupancyForHour(hour);
+    
     return {
       timestamp: now.toISOString(),
       decibels: 65 + Math.random() * 20,
@@ -107,8 +111,24 @@ class ApiService {
       outdoorTemp: 68 + Math.random() * 8,
       humidity: 40 + Math.random() * 20,
       currentSong: 'Neon Dreams - Synthwave',
-      albumArt: 'https://picsum.photos/seed/album/200'
+      albumArt: 'https://picsum.photos/seed/album/200',
+      occupancy: {
+        current: Math.floor(baseOccupancy + (Math.random() - 0.5) * 10),
+        entries: Math.floor((Math.random() * 5) + 2),
+        exits: Math.floor((Math.random() * 5) + 1),
+        capacity: 150
+      }
     };
+  }
+
+  private getBaseOccupancyForHour(hour: number): number {
+    // Simulate sports bar occupancy patterns
+    if (hour >= 0 && hour < 6) return 5; // Late night/early morning
+    if (hour >= 6 && hour < 11) return 10; // Morning
+    if (hour >= 11 && hour < 14) return 45; // Lunch rush
+    if (hour >= 14 && hour < 17) return 30; // Afternoon
+    if (hour >= 17 && hour < 22) return 80; // Evening peak
+    return 25; // Late evening
   }
 
   private getMockData(venueId: string, range: TimeRange): HistoricalData {
@@ -121,6 +141,8 @@ class ApiService {
     
     for (let i = pointsCount; i >= 0; i--) {
       const timestamp = new Date(now.getTime() - i * (hours / pointsCount) * 60 * 60 * 1000);
+      const hour = timestamp.getHours();
+      const baseOccupancy = this.getBaseOccupancyForHour(hour);
       
       data.push({
         timestamp: timestamp.toISOString(),
@@ -130,7 +152,13 @@ class ApiService {
         outdoorTemp: 65 + Math.random() * 15 + Math.cos(i / 12) * 5,
         humidity: 35 + Math.random() * 30,
         currentSong: i === 0 ? 'Neon Dreams - Synthwave' : undefined,
-        albumArt: i === 0 ? 'https://picsum.photos/seed/album/200' : undefined
+        albumArt: i === 0 ? 'https://picsum.photos/seed/album/200' : undefined,
+        occupancy: {
+          current: Math.floor(baseOccupancy + (Math.random() - 0.5) * 15),
+          entries: Math.floor((Math.random() * 8) + 3),
+          exits: Math.floor((Math.random() * 8) + 2),
+          capacity: 150
+        }
       });
     }
     
@@ -210,6 +238,49 @@ class ApiService {
     if (value >= min && value <= max) return 100;
     const distance = value < min ? min - value : value - max;
     return Math.max(0, 100 - distance * 10);
+  }
+
+  async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
+    try {
+      const url = `${API_BASE_URL}/occupancy/${venueId}/metrics`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: this.getHeaders()
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Occupancy metrics fetch error:', error);
+      // Return mock occupancy metrics
+      return this.getMockOccupancyMetrics();
+    }
+  }
+
+  private getMockOccupancyMetrics(): OccupancyMetrics {
+    const now = new Date();
+    const hour = now.getHours();
+    const currentOccupancy = this.getBaseOccupancyForHour(hour);
+    
+    // Calculate today's totals (cumulative entries/exits throughout the day)
+    const todayEntries = Math.floor(350 + Math.random() * 100);
+    const todayExits = Math.floor(todayEntries - currentOccupancy + (Math.random() - 0.5) * 20);
+    
+    return {
+      current: Math.floor(currentOccupancy + (Math.random() - 0.5) * 10),
+      todayEntries,
+      todayExits,
+      todayTotal: todayEntries,
+      sevenDayAvg: Math.floor(420 + Math.random() * 80),
+      fourteenDayAvg: Math.floor(405 + Math.random() * 70),
+      thirtyDayAvg: Math.floor(390 + Math.random() * 60),
+      peakOccupancy: Math.floor(120 + Math.random() * 30),
+      peakTime: '19:30'
+    };
   }
 }
 
