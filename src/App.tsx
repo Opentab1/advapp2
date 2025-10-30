@@ -4,14 +4,14 @@ import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
-import authService from './services/auth.service';
 import { configureAmplify } from './config/amplify';
 
 // Configure AWS Amplify
 configureAmplify();
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(authService.isAuthenticated());
+  // MQTT-ONLY MODE: No authentication required for direct IoT access
+  const [isAuthenticated] = useState(true); // Always authenticated for direct IoT mode
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
@@ -42,20 +42,14 @@ function App() {
             isAuthenticated ? (
               <Navigate to="/" replace />
             ) : (
-              <Login onLoginSuccess={() => setIsAuthenticated(true)} />
+              <Login onLoginSuccess={() => {}} />
             )
           }
         />
         
         <Route
           path="/"
-          element={
-            isAuthenticated ? (
-              <Dashboard />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
+          element={<Dashboard />}
         />
         
         <Route path="*" element={<Error404 />} />

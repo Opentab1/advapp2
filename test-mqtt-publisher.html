@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MQTT Test Publisher</title>
+  <script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #fff;
+    }
+    .container {
+      background: #2a2a2a;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    h1 { color: #00d4ff; }
+    button {
+      background: #00d4ff;
+      color: #000;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+    button:hover { background: #00b8e6; }
+    button:disabled { background: #666; cursor: not-allowed; }
+    .status {
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+    .connected { background: #10b981; color: #fff; }
+    .disconnected { background: #ef4444; color: #fff; }
+    .connecting { background: #f59e0b; color: #fff; }
+    .log {
+      background: #000;
+      padding: 15px;
+      border-radius: 6px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      margin-top: 20px;
+    }
+    .log-entry {
+      margin-bottom: 8px;
+      padding: 4px;
+    }
+    .log-info { color: #00d4ff; }
+    .log-success { color: #10b981; }
+    .log-error { color: #ef4444; }
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      background: #1a1a1a;
+      border: 1px solid #444;
+      border-radius: 6px;
+      color: #fff;
+      font-family: inherit;
+    }
+    label {
+      display: block;
+      margin-top: 15px;
+      color: #aaa;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧪 MQTT Test Publisher for Pulse Dashboard</h1>
+    
+    <div id="status" class="status disconnected">
+      ❌ Disconnected
+    </div>
+
+    <div>
+      <button id="connectBtn" onclick="connect()">Connect to AWS IoT</button>
+      <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+    </div>
+
+    <div>
+      <h3>Quick Test Messages:</h3>
+      <button onclick="publishTestData()" disabled id="testBtn1">📊 Send Test Sensor Data</button>
+      <button onclick="publishWithMusic()" disabled id="testBtn2">🎵 Send with Spotify Data</button>
+      <button onclick="publishRealistic()" disabled id="testBtn3">🏢 Send Realistic Venue Data</button>
+    </div>
+
+    <label>Custom Message (JSON):</label>
+    <textarea id="customMessage" rows="10">{
+  "timestamp": "2025-10-30T12:00:00Z",
+  "sensors": {
+    "sound_level": 75,
+    "light_level": 350,
+    "indoor_temperature": 72,
+    "outdoor_temperature": 68,
+    "humidity": 45
+  }
+}</textarea>
+    <button onclick="publishCustom()" disabled id="customBtn">📤 Publish Custom Message</button>
+
+    <div class="log" id="log"></div>
+  </div>
+
+  <script>
+    const IOT_ENDPOINT = 'wss://a1h5tm3jvbz8cg-ats.iot.us-east-2.amazonaws.com/mqtt';
+    const MQTT_TOPIC = 'pulse/fergs-stpete/main-floor';
+    
+    let client = null;
+
+    function log(message, type = 'info') {
+      const logDiv = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = `log-entry log-${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logDiv.appendChild(entry);
+      logDiv.scrollTop = logDiv.scrollHeight;
+      console.log(message);
+    }
+
+    function updateStatus(status, message) {
+      const statusDiv = document.getElementById('status');
+      statusDiv.className = `status ${status}`;
+      statusDiv.textContent = message;
+    }
+
+    function enableButtons(enabled) {
+      document.getElementById('testBtn1').disabled = !enabled;
+      document.getElementById('testBtn2').disabled = !enabled;
+      document.getElementById('testBtn3').disabled = !enabled;
+      document.getElementById('customBtn').disabled = !enabled;
+      document.getElementById('connectBtn').disabled = enabled;
+      document.getElementById('disconnectBtn').disabled = !enabled;
+    }
+
+    function connect() {
+      updateStatus('connecting', '🔄 Connecting...');
+      log('Attempting to connect to AWS IoT Core...', 'info');
+      log(`Endpoint: ${IOT_ENDPOINT}`, 'info');
+      log(`Topic: ${MQTT_TOPIC}`, 'info');
+
+      try {
+        client = mqtt.connect(IOT_ENDPOINT, {
+          clientId: `mqtt-test-publisher-${Date.now()}`,
+          clean: true,
+          reconnectPeriod: 5000,
+          connectTimeout: 30000,
+          keepalive: 60,
+          protocol: 'wss',
+          protocolVersion: 5,
+          rejectUnauthorized: false
+        });
+
+        client.on('connect', () => {
+          updateStatus('connected', '✅ Connected to AWS IoT Core');
+          log('Successfully connected to AWS IoT Core!', 'success');
+          enableButtons(true);
+        });
+
+        client.on('error', (error) => {
+          updateStatus('disconnected', '❌ Connection Error');
+          log(`Error: ${error.message}`, 'error');
+          enableButtons(false);
+        });
+
+        client.on('close', () => {
+          updateStatus('disconnected', '❌ Disconnected');
+          log('Connection closed', 'info');
+          enableButtons(false);
+        });
+
+        client.on('offline', () => {
+          log('Client is offline', 'error');
+        });
+
+      } catch (error) {
+        updateStatus('disconnected', '❌ Connection Failed');
+        log(`Failed to connect: ${error.message}`, 'error');
+      }
+    }
+
+    function disconnect() {
+      if (client) {
+        client.end();
+        client = null;
+        updateStatus('disconnected', '❌ Disconnected');
+        log('Disconnected from AWS IoT Core', 'info');
+        enableButtons(false);
+      }
+    }
+
+    function publish(message) {
+      if (!client || !client.connected) {
+        log('Not connected! Please connect first.', 'error');
+        return;
+      }
+
+      const payload = JSON.stringify(message, null, 2);
+      log(`Publishing to ${MQTT_TOPIC}...`, 'info');
+      
+      client.publish(MQTT_TOPIC, payload, { qos: 1 }, (err) => {
+        if (err) {
+          log(`Publish error: ${err.message}`, 'error');
+        } else {
+          log('✅ Message published successfully!', 'success');
+          log(`Payload: ${payload}`, 'info');
+        }
+      });
+    }
+
+    function publishTestData() {
+      const message = {
+        timestamp: new Date().toISOString(),
+        deviceId: 'test-device-001',
+        sensors: {
+          sound_level: 75.5,
+          light_level: 350,
+          indoor_temperature: 72,
+          outdoor_temperature: 68,
+          humidity: 45
+        }
+      };
+      publish(message);
+    }
+
+    function publishWithMusic() {
+      const message = {
+        timestamp: new Date().toISOString(),
+        deviceId: 'test-device-001',
+        sensors: {
+          sound_level: 82.3,
+          light_level: 420,
+          indoor_temperature: 73,
+          outdoor_temperature: 70,
+          humidity: 48
+        },
+        spotify: {
+          current_song: 'Thunder Struck',
+          artist: 'AC/DC',
+          album_art: 'https://i.scdn.co/image/ab67616d0000b273d7a49fe5503cf1cfed96eaef'
+        }
+      };
+      publish(message);
+    }
+
+    function publishRealistic() {
+      const message = {
+        timestamp: new Date().toISOString(),
+        deviceId: 'fergs-main-floor-001',
+        sensors: {
+          sound_level: Math.random() * 20 + 70, // 70-90 dB
+          light_level: Math.random() * 200 + 300, // 300-500 lux
+          indoor_temperature: Math.random() * 5 + 70, // 70-75°F
+          outdoor_temperature: Math.random() * 10 + 60, // 60-70°F
+          humidity: Math.random() * 15 + 40 // 40-55%
+        },
+        spotify: {
+          current_song: 'Welcome to the Jungle',
+          artist: 'Guns N\' Roses',
+          album_art: 'https://i.scdn.co/image/ab67616d0000b273ae7f8a57d8cbc28e9b6cef99'
+        },
+        occupancy: {
+          current: Math.floor(Math.random() * 50 + 30), // 30-80 people
+          entries: Math.floor(Math.random() * 100 + 50),
+          exits: Math.floor(Math.random() * 80 + 20),
+          capacity: 150
+        }
+      };
+      publish(message);
+    }
+
+    function publishCustom() {
+      try {
+        const customText = document.getElementById('customMessage').value;
+        const message = JSON.parse(customText);
+        publish(message);
+      } catch (error) {
+        log(`Invalid JSON: ${error.message}`, 'error');
+      }
+    }
+
+    // Auto-publish for continuous testing (optional - uncomment to enable)
+    // setInterval(() => {
+    //   if (client && client.connected) {
+    //     publishRealistic();
+    //   }
+    // }, 5000); // Publish every 5 seconds
+
+    log('MQTT Test Publisher ready. Click "Connect to AWS IoT" to start.', 'info');
+  </script>
+</body>
+</html>

@@ -6,6 +6,26 @@ A next-generation, ultra-professional Progressive Web App for real-time IoT moni
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6?style=for-the-badge&logo=typescript)
 ![Vite](https://img.shields.io/badge/Vite-5.0-646CFF?style=for-the-badge&logo=vite)
 ![Tailwind](https://img.shields.io/badge/Tailwind-3.4-06B6D4?style=for-the-badge&logo=tailwindcss)
+![MQTT](https://img.shields.io/badge/MQTT-5.0-660066?style=for-the-badge&logo=mqtt)
+![AWS IoT](https://img.shields.io/badge/AWS_IoT-Real--Time-FF9900?style=for-the-badge&logo=amazonaws)
+
+---
+
+## 🚀 **NEW: Real-Time AWS IoT MQTT Integration**
+
+✅ **Direct MQTT over WebSocket** - No authentication, no AppSync, no DynamoDB  
+✅ **Live Sensor Data** - Instant updates as IoT devices publish  
+✅ **No Login Required** - Direct access to real-time dashboard  
+✅ **Auto-Reconnection** - Robust connection handling with 10 retry attempts  
+
+**IoT Endpoint**: `wss://a1h5tm3jvbz8cg-ats.iot.us-east-2.amazonaws.com/mqtt`  
+**Topic**: `pulse/fergs-stpete/main-floor`
+
+📖 **[Complete MQTT Integration Guide →](./MQTT_INTEGRATION_GUIDE.md)**  
+📖 **[Implementation Summary →](./MQTT_IMPLEMENTATION_SUMMARY.md)**  
+🧪 **[Web Test Publisher →](./test-mqtt-publisher.html)**
+
+---
 
 ## ✨ Features
 
