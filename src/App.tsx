@@ -4,11 +4,7 @@ import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
-import { configureAmplify } from './config/amplify';
 import authService from './services/auth.service';
-
-// Configure AWS Amplify
-configureAmplify();
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => authService.isAuthenticated());
