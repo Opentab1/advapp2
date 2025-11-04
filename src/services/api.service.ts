@@ -37,7 +37,10 @@ class ApiService {
       });
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Authentication failed. Please log in again.');
+        }
+        throw new Error(`Failed to fetch historical data: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
@@ -51,8 +54,17 @@ class ApiService {
     } catch (error: any) {
       console.error('API fetch error:', error);
       
-      // Return mock data for demo purposes
-      return this.getMockData(venueId, range);
+      // Only use mock data if user is NOT authenticated (demo mode)
+      if (!authService.isAuthenticated()) {
+        console.warn('⚠️ User not authenticated, using mock data for demo');
+        return this.getMockData(venueId, range);
+      }
+      
+      // When authenticated, throw the error instead of silently falling back
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('Failed to fetch historical data from API');
     }
   }
 
@@ -84,15 +96,28 @@ class ApiService {
       });
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Authentication failed. Please log in again.');
+        }
+        throw new Error(`Failed to fetch live data: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
       return this.transformApiData([data])[0];
-    } catch (error) {
+    } catch (error: any) {
       console.error('Live data fetch error:', error);
-      // Return mock live data
-      return this.getMockLiveData();
+      
+      // Only use mock data if user is NOT authenticated (demo mode)
+      if (!authService.isAuthenticated()) {
+        console.warn('⚠️ User not authenticated, using mock data for demo');
+        return this.getMockLiveData();
+      }
+      
+      // When authenticated, throw the error instead of silently falling back
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('Failed to fetch live data from API');
     }
   }
 
@@ -250,14 +275,27 @@ class ApiService {
       });
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Authentication failed. Please log in again.');
+        }
+        throw new Error(`Failed to fetch occupancy metrics: ${response.status} ${response.statusText}`);
       }
 
       return await response.json();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Occupancy metrics fetch error:', error);
-      // Return mock occupancy metrics
-      return this.getMockOccupancyMetrics();
+      
+      // Only use mock data if user is NOT authenticated (demo mode)
+      if (!authService.isAuthenticated()) {
+        console.warn('⚠️ User not authenticated, using mock data for demo');
+        return this.getMockOccupancyMetrics();
+      }
+      
+      // When authenticated, throw the error instead of silently falling back
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('Failed to fetch occupancy metrics from API');
     }
   }
 
