@@ -4,7 +4,7 @@ import { VENUE_CONFIG } from '../config/amplify';
 
 // AWS IoT Core configuration - Direct MQTT connection
 const IOT_ENDPOINT = `wss://${VENUE_CONFIG.iotEndpoint}/mqtt`;
-const MQTT_TOPIC = `pulse/${VENUE_CONFIG.venueId}/${VENUE_CONFIG.locationId}`;
+const MQTT_TOPIC = "pulse/sensors/data";
 
 interface IoTMessage {
   deviceId?: string;
