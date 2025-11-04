@@ -1,10 +1,21 @@
 import mqtt from 'mqtt';
 import type { SensorData } from '../types';
 import { VENUE_CONFIG } from '../config/amplify';
+import { API, graphqlOperation } from 'aws-amplify';
+import { Auth } from 'aws-amplify';
 
 // AWS IoT Core configuration - Direct MQTT connection
 const IOT_ENDPOINT = `wss://${VENUE_CONFIG.iotEndpoint}/mqtt`;
-const TOPIC = "pulse/sensors/data";
+
+const getVenueConfig = /* GraphQL */ `
+  query GetVenueConfig($venueId: ID!, $locationId: String!) {
+    getVenueConfig(venueId: $venueId, locationId: $locationId) {
+      mqttTopic
+      displayName
+      locationName
+    }
+  }
+`;
 
 interface IoTMessage {
   deviceId?: string;
@@ -35,6 +46,7 @@ class IoTService {
   private maxReconnectAttempts = 10;
   private messageHandlers: Set<(data: SensorData) => void> = new Set();
   private isConnecting = false;
+  private topic: string = "pulse/sensors/data"; // fallback topic
 
   async connect(_venueId: string): Promise<void> {
     if (this.client?.connected || this.isConnecting) {
@@ -45,9 +57,38 @@ class IoTService {
     this.isConnecting = true;
 
     try {
+      // Fetch venue-specific MQTT topic
+      let venueId = "fergs-stpete";
+      let locationId = "main-floor";
+      let TOPIC = "pulse/fergs-stpete/main-floor";
+
+      try {
+        const user = await Auth.currentAuthenticatedUser();
+        venueId = user.attributes?.['custom:venueId'] || venueId;
+        locationId = user.attributes?.['custom:locationId'] || locationId;
+      } catch (err) {
+        console.warn("Not logged in, using default venue");
+      }
+
+      try {
+        const response = await API.graphql(
+          graphqlOperation(getVenueConfig, { venueId, locationId })
+        ) as any;
+
+        const config = response?.data?.getVenueConfig;
+        if (config?.mqttTopic) {
+          TOPIC = config.mqttTopic;
+          console.log("Loaded config for", venueId, "→ topic:", TOPIC);
+        }
+      } catch (err) {
+        console.warn("Config not found, using fallback topic", err);
+      }
+
+      this.topic = TOPIC;
+
       console.log('🔌 Connecting to AWS IoT Core via MQTT...');
       console.log('📍 Endpoint:', IOT_ENDPOINT);
-      console.log('📡 Topic:', TOPIC);
+      console.log('📡 Topic:', this.topic);
 
       // Connect to AWS IoT Core without authentication
       // Note: The IoT endpoint must be configured to allow unauthenticated access
@@ -68,7 +109,7 @@ class IoTService {
         this.isConnecting = false;
 
         // Subscribe to the topic
-        this.subscribe(TOPIC);
+        this.subscribe(this.topic);
       });
 
       this.client.on('message', (topic: string, payload: Buffer) => {
