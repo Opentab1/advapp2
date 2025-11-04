@@ -40,7 +40,11 @@ import songLogService from '../services/song-log.service';
 import { VENUE_CONFIG } from '../config/amplify';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics } from '../types';
 
-export function Dashboard() {
+interface DashboardProps {
+  onLogout?: () => Promise<void> | void;
+}
+
+export function Dashboard({ onLogout }: DashboardProps) {
   const user = authService.getStoredUser();
   const [activeTab, setActiveTab] = useState('live');
   const [timeRange, setTimeRange] = useState<TimeRange>('live');
@@ -154,22 +158,26 @@ export function Dashboard() {
     }
   };
 
-  const handleExport = () => {
-    const dataToExport = timeRange === 'live' 
-      ? liveData ? [liveData] : []
-      : historicalData?.data || [];
-    
-    if (dataToExport.length > 0) {
-      apiService.exportToCSV(dataToExport);
-    }
-  };
+    const handleExport = () => {
+      const dataToExport = timeRange === 'live'
+        ? liveData ? [liveData] : []
+        : historicalData?.data || [];
 
-  const handleLogout = async () => {
-    await authService.logout();
-    window.location.reload();
-  };
+      if (dataToExport.length > 0) {
+        apiService.exportToCSV(dataToExport);
+      }
+    };
 
-  // Keyboard shortcuts
+    const handleLogout = async () => {
+      if (onLogout) {
+        await onLogout();
+      } else {
+        await authService.logout();
+        window.location.replace('/login');
+      }
+    };
+
+    // Keyboard shortcuts
   useKeyboardShortcuts({
     onRefresh: refetch,
     onExport: handleExport

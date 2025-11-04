@@ -6,7 +6,7 @@ import { AnimatedBackground } from '../components/AnimatedBackground';
 import authService from '../services/auth.service';
 
 interface LoginProps {
-  onLoginSuccess: () => void;
+  onLoginSuccess: () => void | Promise<void>;
 }
 
 export function Login({ onLoginSuccess }: LoginProps) {
@@ -25,7 +25,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
 
     try {
       await authService.login(email, password);
-      onLoginSuccess();
+      await onLoginSuccess();
     } catch (err: any) {
       if (err.message === 'NEW_PASSWORD_REQUIRED') {
         setNeedsPasswordChange(true);
@@ -57,7 +57,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
 
     try {
       await authService.completeNewPassword(newPassword);
-      onLoginSuccess();
+      await onLoginSuccess();
     } catch (err: any) {
       setError(err.message || 'Failed to set new password');
     } finally {

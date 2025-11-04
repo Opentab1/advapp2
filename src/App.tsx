@@ -4,15 +4,38 @@ import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
+import { LoadingSpinner } from './components/LoadingSpinner';
+import authService from './services/auth.service';
 import { configureAmplify } from './config/amplify';
 
 // Configure AWS Amplify
 configureAmplify();
 
 function App() {
-  // MQTT-ONLY MODE: No authentication required for direct IoT access
-  const [isAuthenticated] = useState(true); // Always authenticated for direct IoT mode
+  const [isAuthenticated, setIsAuthenticated] = useState(() => authService.isAuthenticated());
+  const [authChecking, setAuthChecking] = useState(true);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const verifyAuth = async () => {
+      if (!authService.isAuthenticated()) {
+        setIsAuthenticated(false);
+        setAuthChecking(false);
+        return;
+      }
+
+      try {
+        await authService.getCurrentAuthenticatedUser();
+        setIsAuthenticated(true);
+      } catch {
+        setIsAuthenticated(false);
+      } finally {
+        setAuthChecking(false);
+      }
+    };
+
+    verifyAuth();
+  }, []);
 
   useEffect(() => {
     // Handle online/offline status
@@ -28,9 +51,31 @@ function App() {
     };
   }, []);
 
+  const handleLoginSuccess = async () => {
+    try {
+      await authService.getCurrentAuthenticatedUser();
+    } catch (error) {
+      console.error('Failed to refresh authenticated user after login:', error);
+    }
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await authService.logout();
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+    setIsAuthenticated(false);
+  };
+
   // Show offline page if not connected
   if (!isOnline) {
     return <Offline />;
+  }
+
+  if (authChecking) {
+    return <LoadingSpinner fullScreen />;
   }
 
   return (
@@ -42,14 +87,20 @@ function App() {
             isAuthenticated ? (
               <Navigate to="/" replace />
             ) : (
-              <Login onLoginSuccess={() => {}} />
+              <Login onLoginSuccess={handleLoginSuccess} />
             )
           }
         />
         
         <Route
           path="/"
-          element={<Dashboard />}
+          element={
+            isAuthenticated ? (
+              <Dashboard onLogout={handleLogout} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
         />
         
         <Route path="*" element={<Error404 />} />
