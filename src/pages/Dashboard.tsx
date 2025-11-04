@@ -37,7 +37,7 @@ import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
-import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics } from '../types';
+import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location } from '../types';
 
 export function Dashboard() {
   const user = authService.getStoredUser();
@@ -69,12 +69,49 @@ export function Dashboard() {
   const venueName = user.venueName || 'Pulse Dashboard';
   
   // Multi-location support (locations within the venue)
-  const locations = user.locations || locationService.getLocations();
+  const [locations, setLocations] = useState<Location[]>(user.locations || locationService.getLocations());
+  const [locationsLoading, setLocationsLoading] = useState(false);
+  const [locationsError, setLocationsError] = useState<string | null>(null);
   const [currentLocationId, setCurrentLocationId] = useState<string>(
     locationService.getCurrentLocationId() || (locations.length > 0 ? locations[0].id : 'default')
   );
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
+
+  // Fetch locations from AWS on mount if not available
+  useEffect(() => {
+    const fetchLocations = async () => {
+      // Only fetch if we don't have locations
+      const currentLocations = user.locations || locationService.getLocations();
+      if (currentLocations.length === 0) {
+        setLocationsLoading(true);
+        setLocationsError(null);
+        try {
+          const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
+          setLocations(fetchedLocations);
+          
+          // Update user object with locations
+          const updatedUser = { ...user, locations: fetchedLocations };
+          localStorage.setItem('pulse_user', JSON.stringify(updatedUser));
+          
+          // Set initial location if none selected
+          const currentId = locationService.getCurrentLocationId();
+          if (!currentId && fetchedLocations.length > 0) {
+            const initialLocationId = fetchedLocations[0].id;
+            setCurrentLocationId(initialLocationId);
+            locationService.setCurrentLocationId(initialLocationId);
+          }
+        } catch (error: any) {
+          console.error('Failed to fetch locations:', error);
+          setLocationsError(error.message || 'Failed to load locations');
+        } finally {
+          setLocationsLoading(false);
+        }
+      }
+    };
+
+    fetchLocations();
+  }, []); // Only run on mount
 
   // Real-time data for live view (uses venue ID for data isolation)
   const { 
@@ -211,6 +248,8 @@ export function Dashboard() {
         locations={locations}
         currentLocationId={currentLocationId}
         onLocationChange={handleLocationChange}
+        locationsLoading={locationsLoading}
+        locationsError={locationsError}
       />
 
       <div className="flex flex-1 relative z-10">
