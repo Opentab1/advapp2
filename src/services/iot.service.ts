@@ -1,10 +1,21 @@
 import mqtt from 'mqtt';
 import type { SensorData } from '../types';
 import { VENUE_CONFIG } from '../config/amplify';
+import { API, graphqlOperation } from 'aws-amplify';
+import { Auth } from 'aws-amplify';
 
 // AWS IoT Core configuration - Direct MQTT connection
 const IOT_ENDPOINT = `wss://${VENUE_CONFIG.iotEndpoint}/mqtt`;
-const TOPIC = "pulse/sensors/data";
+
+const getVenueConfig = /* GraphQL */ `
+  query GetVenueConfig($venueId: ID!, $locationId: String!) {
+    getVenueConfig(venueId: $venueId, locationId: $locationId) {
+      mqttTopic
+      displayName
+      locationName
+    }
+  }
+`;
 
 interface IoTMessage {
   deviceId?: string;
@@ -45,6 +56,33 @@ class IoTService {
     this.isConnecting = true;
 
     try {
+      // Fetch venue configuration from Cognito and AppSync
+      let venueId = "fergs-stpete";
+      let locationId = "main-floor";
+      let TOPIC = "pulse/fergs-stpete/main-floor";
+
+      try {
+        const user = await Auth.currentAuthenticatedUser();
+        venueId = user.attributes?.['custom:venueId'] || venueId;
+        locationId = user.attributes?.['custom:locationId'] || locationId;
+      } catch (err) {
+        console.warn("Not logged in, using default venue");
+      }
+
+      try {
+        const response = await API.graphql(
+          graphqlOperation(getVenueConfig, { venueId, locationId })
+        ) as any;
+
+        const config = response?.data?.getVenueConfig;
+        if (config?.mqttTopic) {
+          TOPIC = config.mqttTopic;
+          console.log("Loaded config for", venueId, "→ topic:", TOPIC);
+        }
+      } catch (err) {
+        console.warn("Config not found, using fallback topic", err);
+      }
+
       console.log('🔌 Connecting to AWS IoT Core via MQTT...');
       console.log('📍 Endpoint:', IOT_ENDPOINT);
       console.log('📡 Topic:', TOPIC);
