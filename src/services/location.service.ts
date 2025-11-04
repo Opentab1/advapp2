@@ -89,9 +89,26 @@ class LocationService {
       const payload = session.tokens?.idToken?.payload;
       const venueId = payload?.['custom:venueId'] as string;
 
+      console.log('🔐 Auth session details:', {
+        hasTokens: !!session.tokens,
+        hasIdToken: !!session.tokens?.idToken,
+        hasAccessToken: !!session.tokens?.accessToken,
+        tokenType: session.tokens?.idToken?.payload ? 'JWT' : 'none',
+        venueId: venueId || 'NOT FOUND',
+        userAttributes: payload ? Object.keys(payload).filter(k => k.startsWith('custom:')) : []
+      });
+
       if (!venueId) {
         throw new Error('No venueId found in user attributes. Please ensure your Cognito user has custom:venueId attribute.');
       }
+
+      const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+      console.log('📡 GraphQL Request Details:', {
+        endpoint: endpoint ? endpoint.substring(0, 50) + '...' : 'NOT SET',
+        query: 'listVenueLocations',
+        venueId,
+        authMode: 'userPool'
+      });
 
       // Query DynamoDB for all locations for this venue
       const client = generateClient();
@@ -103,6 +120,10 @@ class LocationService {
 
       // Check for GraphQL errors in response
       if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL Response Errors:', {
+          errors: response.errors,
+          fullResponse: JSON.stringify(response, null, 2)
+        });
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
@@ -131,7 +152,29 @@ class LocationService {
       
       return locations;
     } catch (error: any) {
-      console.error('❌ Failed to fetch locations from DynamoDB:', error);
+      console.error('❌ Failed to fetch locations from DynamoDB');
+      console.error('🔍 Full Error Object:', {
+        name: error?.name,
+        message: error?.message,
+        code: error?.code,
+        statusCode: error?.statusCode,
+        errorType: error?.errorType,
+        errorInfo: error?.errorInfo,
+        underlyingError: error?.underlyingError,
+        errors: error?.errors,
+        data: error?.data,
+        stack: error?.stack,
+        fullError: JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+      });
+      
+      // Log network-level details if available
+      if (error?.name === 'NetworkError' || error?.code === 'NETWORK_ERROR') {
+        console.error('🌐 Network Error Details:', {
+          endpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT,
+          message: error.message
+        });
+      }
+      
       const errorMessage = this.extractErrorMessage(error);
       throw new Error(`Failed to load locations: ${errorMessage}`);
     }
