@@ -2,7 +2,7 @@ import mqtt from 'mqtt';
 import type { SensorData } from '../types';
 import { VENUE_CONFIG } from '../config/amplify';
 import { API, graphqlOperation } from 'aws-amplify';
-import { Auth } from 'aws-amplify';
+import { getCurrentUser, fetchAuthSession } from '@aws-amplify/auth';
 
 // AWS IoT Core configuration - Direct MQTT connection
 const IOT_ENDPOINT = `wss://${VENUE_CONFIG.iotEndpoint}/mqtt`;
@@ -62,9 +62,11 @@ class IoTService {
       let TOPIC = "pulse/fergs-stpete/main-floor";
 
       try {
-        const user = await Auth.currentAuthenticatedUser();
-        venueId = user.attributes?.['custom:venueId'] || venueId;
-        locationId = user.attributes?.['custom:locationId'] || locationId;
+        const currentUser = await getCurrentUser();
+        const session = await fetchAuthSession();
+        const payload = session.tokens?.idToken?.payload;
+        venueId = (payload?.['custom:venueId'] as string) || venueId;
+        locationId = (payload?.['custom:locationId'] as string) || locationId;
       } catch (err) {
         console.warn("Not logged in, using default venue");
       }
