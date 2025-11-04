@@ -433,19 +433,26 @@ export function Dashboard() {
                 >
                   <div className="flex items-start gap-4">
                     <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-red-400 mb-2">Unable to Load Data</h3>
+                      <h3 className="text-lg font-semibold text-red-400 mb-2">Unable to Load Data from DynamoDB</h3>
                       <p className="text-sm text-red-300 mb-3">{error || liveError}</p>
                       <div className="text-xs text-red-300/80 mb-4">
                         <p className="font-semibold mb-2">Possible causes:</p>
                         <ul className="list-disc ml-4 space-y-1">
-                          <li>API endpoint not responding (check <code className="px-1 py-0.5 bg-black/20 rounded">https://api.advizia.ai</code>)</li>
-                          <li>AWS IoT Core connection failed (check MQTT topic configuration)</li>
-                          <li>Missing VenueConfig in DynamoDB table</li>
-                          <li>Invalid venueId in Cognito user attributes (custom:venueId)</li>
-                          <li>Network connectivity issues</li>
+                          <li>GraphQL API endpoint not configured (check <code className="px-1 py-0.5 bg-black/20 rounded">VITE_GRAPHQL_ENDPOINT</code> in .env)</li>
+                          <li>AWS AppSync API not set up (see <code className="px-1 py-0.5 bg-black/20 rounded">DYNAMODB_SETUP.md</code>)</li>
+                          <li>DynamoDB tables missing or empty (SensorData, VenueConfig, OccupancyMetrics)</li>
+                          <li>Invalid venueId in Cognito user attributes (<code className="px-1 py-0.5 bg-black/20 rounded">custom:venueId</code>)</li>
+                          <li>AppSync resolvers not configured correctly</li>
+                          <li>No sensor data published to DynamoDB yet</li>
                         </ul>
                         <p className="mt-3">
                           <strong>Check browser console (F12)</strong> for detailed error logs.
+                        </p>
+                        <p className="mt-2">
+                          <strong>Your venueId:</strong> <code className="px-1 py-0.5 bg-black/20 rounded">{venueId}</code>
+                        </p>
+                        <p className="mt-2 text-yellow-300">
+                          📚 <strong>Setup Guide:</strong> See <code className="px-1 py-0.5 bg-black/20 rounded">DYNAMODB_SETUP.md</code> for complete instructions
                         </p>
                       </div>
                       <button

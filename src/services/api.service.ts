@@ -1,7 +1,6 @@
 import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '../types';
 import authService from './auth.service';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.advizia.ai';
+import dynamoDBService from './dynamodb.service';
 
 class ApiService {
   private getHeaders(): HeadersInit {
@@ -27,35 +26,16 @@ class ApiService {
   }
 
   async getHistoricalData(venueId: string, range: TimeRange): Promise<HistoricalData> {
-    const days = this.getRangeDays(range);
-    const url = `${API_BASE_URL}/history/${venueId}?days=${days}`;
-    
-    console.log('🔍 Fetching historical data from:', url);
+    console.log('🔍 Fetching historical data from DynamoDB for venue:', venueId, 'range:', range);
     
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
-
-      if (!response.ok) {
-        const errorMsg = `API returned ${response.status}: ${response.statusText}`;
-        console.error(`❌ ${errorMsg}`);
-        throw new Error(errorMsg);
-      }
-
-      const data = await response.json();
-      console.log('✅ Historical data received from API');
-      
-      // Transform API response to our data structure
-      return {
-        data: this.transformApiData(data),
-        venueId,
-        range
-      };
+      // Fetch directly from DynamoDB using the user's venueId
+      const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, range);
+      console.log('✅ Historical data received from DynamoDB');
+      return historicalData;
     } catch (error: any) {
-      console.error('❌ Historical data API fetch failed:', error);
-      throw new Error(`Failed to fetch historical data from ${API_BASE_URL}: ${error.message}`);
+      console.error('❌ Historical data DynamoDB fetch failed:', error);
+      throw new Error(`Failed to fetch historical data from DynamoDB: ${error.message}`);
     }
   }
 
@@ -78,28 +58,16 @@ class ApiService {
   }
 
   async getLiveData(venueId: string): Promise<SensorData> {
-    const url = `${API_BASE_URL}/live/${venueId}`;
-    
-    console.log('🔍 Fetching live data from:', url);
+    console.log('🔍 Fetching live data from DynamoDB for venue:', venueId);
     
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
-
-      if (!response.ok) {
-        const errorMsg = `API returned ${response.status}: ${response.statusText}`;
-        console.error(`❌ ${errorMsg}`);
-        throw new Error(errorMsg);
-      }
-
-      const data = await response.json();
-      console.log('✅ Live data received from API');
-      return this.transformApiData([data])[0];
+      // Fetch directly from DynamoDB using the user's venueId
+      const liveData = await dynamoDBService.getLiveSensorData(venueId);
+      console.log('✅ Live data received from DynamoDB');
+      return liveData;
     } catch (error: any) {
-      console.error('❌ Live data API fetch failed:', error);
-      throw new Error(`Failed to fetch live data from ${API_BASE_URL}: ${error.message}`);
+      console.error('❌ Live data DynamoDB fetch failed:', error);
+      throw new Error(`Failed to fetch live data from DynamoDB: ${error.message}`);
     }
   }
 
@@ -179,28 +147,16 @@ class ApiService {
   }
 
   async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
-    const url = `${API_BASE_URL}/occupancy/${venueId}/metrics`;
-    
-    console.log('🔍 Fetching occupancy metrics from:', url);
+    console.log('🔍 Fetching occupancy metrics from DynamoDB for venue:', venueId);
     
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
-
-      if (!response.ok) {
-        const errorMsg = `API returned ${response.status}: ${response.statusText}`;
-        console.error(`❌ ${errorMsg}`);
-        throw new Error(errorMsg);
-      }
-
-      const data = await response.json();
-      console.log('✅ Occupancy metrics received from API');
-      return data;
+      // Fetch directly from DynamoDB using the user's venueId
+      const metrics = await dynamoDBService.getOccupancyMetrics(venueId);
+      console.log('✅ Occupancy metrics received from DynamoDB');
+      return metrics;
     } catch (error: any) {
-      console.error('❌ Occupancy metrics API fetch failed:', error);
-      throw new Error(`Failed to fetch occupancy metrics from ${API_BASE_URL}: ${error.message}`);
+      console.error('❌ Occupancy metrics DynamoDB fetch failed:', error);
+      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${error.message}`);
     }
   }
 }
