@@ -21,6 +21,7 @@ export function useRealTimeData({ venueId, interval = 15000, enabled = true }: U
       setData(liveData);
       setError(null);
     } catch (err: any) {
+      setData(null);
       setError(err.message || 'Failed to fetch data');
     } finally {
       setLoading(false);

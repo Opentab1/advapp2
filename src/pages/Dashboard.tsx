@@ -155,22 +155,29 @@ export function Dashboard() {
   
   // Log songs when they change
   useEffect(() => {
-    if (liveData?.currentSong) {
-      const lastSong = localStorage.getItem('lastSongLogged');
-      const currentSongKey = `${liveData.currentSong}-${liveData.timestamp}`;
-      
-      if (lastSong !== currentSongKey) {
-        songLogService.addSong({
-          timestamp: liveData.timestamp,
-          songName: liveData.currentSong,
-          artist: liveData.artist || 'Unknown Artist',
-          albumArt: liveData.albumArt,
-          source: 'spotify'
-        });
-        localStorage.setItem('lastSongLogged', currentSongKey);
-      }
+    if (liveError) {
+      localStorage.removeItem('lastSongLogged');
+      return;
     }
-  }, [liveData?.currentSong, liveData?.timestamp]);
+
+    if (!liveData?.currentSong || !liveData?.timestamp) {
+      return;
+    }
+
+    const lastSong = localStorage.getItem('lastSongLogged');
+    const currentSongKey = `${liveData.currentSong}-${liveData.timestamp}`;
+
+    if (lastSong !== currentSongKey) {
+      songLogService.addSong({
+        timestamp: liveData.timestamp,
+        songName: liveData.currentSong,
+        artist: liveData.artist || 'Unknown Artist',
+        albumArt: liveData.albumArt,
+        source: 'spotify'
+      });
+      localStorage.setItem('lastSongLogged', currentSongKey);
+    }
+  }, [liveData?.currentSong, liveData?.timestamp, liveError]);
   
   // Handle location change
   const handleLocationChange = (locationId: string) => {
