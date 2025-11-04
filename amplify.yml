@@ -1,13 +1,17 @@
 version: 1
+backend:
+  phases:
+    build:
+      commands:
+        - amplifyPush --simple
 frontend:
   phases:
     preBuild:
       commands:
-        - node -v
-        - npm ci
+        - npm install  # Use install instead of ci to avoid lockfile hangs
     build:
       commands:
-        - npm run build
+        - npm run build  # Explicit Next.js build
   artifacts:
     baseDirectory: .next
     files:
@@ -16,3 +20,6 @@ frontend:
     paths:
       - node_modules/**/*
       - .next/cache/**/*
+  filesToUpload:
+    index.html:
+      - '**/*'
