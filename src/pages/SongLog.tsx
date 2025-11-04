@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Music, Download, Clock, TrendingUp } from 'lucide-react';
 import { format } from 'date-fns';
 import songLogService from '../services/song-log.service';
+import authService from '../services/auth.service';
 import type { SongLogEntry } from '../types';
 
 export function SongLog() {
@@ -19,7 +20,9 @@ export function SongLog() {
   };
 
   const handleExport = () => {
-    songLogService.exportToCSV();
+    const user = authService.getStoredUser();
+    const venueName = user?.venueName || user?.email?.split('@')[0] || undefined;
+    songLogService.exportToCSV(venueName);
   };
 
   return (

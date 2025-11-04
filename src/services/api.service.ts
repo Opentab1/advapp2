@@ -83,7 +83,7 @@ class ApiService {
     }
   }
 
-  exportToCSV(data: SensorData[], includeComfort: boolean = true): void {
+  exportToCSV(data: SensorData[], includeComfort: boolean = true, venueName?: string): void {
     const headers = includeComfort 
       ? ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Comfort Score', 'Comfort Status', 'Song', 'Artist']
       : ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Song', 'Artist'];
@@ -112,12 +112,14 @@ class ApiService {
       ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
     ].join('\n');
 
-    this.downloadFile(csvContent, `fergs-sports-bar-data-${new Date().toISOString()}.csv`, 'text/csv');
+    const venuePrefix = venueName ? venueName.toLowerCase().replace(/\s+/g, '-') : 'sensor';
+    this.downloadFile(csvContent, `${venuePrefix}-data-${new Date().toISOString()}.csv`, 'text/csv');
   }
 
-  exportToJSON(data: SensorData[]): void {
+  exportToJSON(data: SensorData[], venueName?: string): void {
     const jsonContent = JSON.stringify(data, null, 2);
-    this.downloadFile(jsonContent, `fergs-sports-bar-data-${new Date().toISOString()}.json`, 'application/json');
+    const venuePrefix = venueName ? venueName.toLowerCase().replace(/\s+/g, '-') : 'sensor';
+    this.downloadFile(jsonContent, `${venuePrefix}-data-${new Date().toISOString()}.json`, 'application/json');
   }
 
   private downloadFile(content: string, filename: string, mimeType: string): void {
