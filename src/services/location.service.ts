@@ -84,14 +84,40 @@ class LocationService {
       if (cachedTime && cached) {
         const age = Date.now() - parseInt(cachedTime);
         if (age < this.cacheExpiryMs) {
-          return JSON.parse(cached);
+          const locations = JSON.parse(cached);
+          // Check for fake data and clear cache if detected
+          const fakeLocationNames = ['Downtown Lounge', 'Uptown Bar', 'Waterfront Club'];
+          const hasFakeData = locations.some((loc: Location) => 
+            fakeLocationNames.some(fake => loc.name.includes(fake))
+          );
+          
+          if (hasFakeData) {
+            console.warn('⚠️ Detected fake cached location data, clearing cache...');
+            this.clearCache();
+            return [];
+          }
+          
+          return locations;
         }
       }
 
       // Try to get from regular storage
       const stored = localStorage.getItem(this.storageKey);
       if (stored) {
-        return JSON.parse(stored);
+        const locations = JSON.parse(stored);
+        // Check for fake data and clear cache if detected
+        const fakeLocationNames = ['Downtown Lounge', 'Uptown Bar', 'Waterfront Club'];
+        const hasFakeData = locations.some((loc: Location) => 
+          fakeLocationNames.some(fake => loc.name.includes(fake))
+        );
+        
+        if (hasFakeData) {
+          console.warn('⚠️ Detected fake cached location data in storage, clearing cache...');
+          this.clearCache();
+          return [];
+        }
+        
+        return locations;
       }
     } catch (error) {
       console.error('Error loading locations:', error);

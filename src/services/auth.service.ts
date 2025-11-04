@@ -132,11 +132,27 @@ class AuthService {
         locations = await locationService.fetchLocationsFromDynamoDB();
       } catch (error) {
         console.error('Failed to fetch locations:', error);
-        // Try to get from cache
-        locations = locationService.getLocations();
-        if (locations.length === 0) {
+        // Try to get from cache, but check for fake data first
+        const cachedLocations = locationService.getLocations();
+        
+        // Check if cached data looks like fake data (Downtown Lounge, Uptown Bar, Waterfront Club)
+        const fakeLocationNames = ['Downtown Lounge', 'Uptown Bar', 'Waterfront Club'];
+        const hasFakeData = cachedLocations.some(loc => 
+          fakeLocationNames.some(fake => loc.name.includes(fake))
+        );
+        
+        if (hasFakeData) {
+          // Clear fake cached data
+          console.warn('⚠️ Detected fake cached location data in auth service, clearing cache...');
+          locationService.clearCache();
           throw new Error('No locations configured for this venue. Please contact administrator.');
         }
+        
+        if (cachedLocations.length === 0) {
+          throw new Error('No locations configured for this venue. Please contact administrator.');
+        }
+        
+        locations = cachedLocations;
       }
       
       // Set initial location if none selected

@@ -69,30 +69,48 @@ export function Dashboard() {
   const venueName = user.venueName || user.email?.split('@')[0] || 'Your Venue';
   
   // Multi-location support (locations within the venue)
-  const initialLocations = user.locations || locationService.getLocations();
-  const [locations, setLocations] = useState<Location[]>(initialLocations);
+  // Start with empty array - always fetch fresh data from DynamoDB
+  const [locations, setLocations] = useState<Location[]>([]);
   const [locationsError, setLocationsError] = useState<string | null>(null);
-  const [locationsLoading, setLocationsLoading] = useState(false);
+  const [locationsLoading, setLocationsLoading] = useState(true);
   
-  // Fetch locations if not already loaded
+  // Always fetch fresh locations from DynamoDB on mount - don't use cached data
   useEffect(() => {
     const loadLocations = async () => {
-      if (locations.length === 0 && !locationsLoading) {
-        setLocationsLoading(true);
-        try {
-          const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
-          setLocations(fetchedLocations);
-          setLocationsError(null);
-          // Set initial location if none selected
-          if (!locationService.getCurrentLocationId() && fetchedLocations.length > 0) {
-            locationService.setCurrentLocationId(fetchedLocations[0].id);
-          }
-        } catch (error: any) {
-          console.error('Failed to load locations:', error);
-          setLocationsError(error.message || 'Failed to load locations');
-        } finally {
-          setLocationsLoading(false);
+      setLocationsLoading(true);
+      setLocationsError(null);
+      try {
+        // Always fetch fresh data from DynamoDB, ignoring any cached fake data
+        const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
+        setLocations(fetchedLocations);
+        // Set initial location if none selected
+        if (!locationService.getCurrentLocationId() && fetchedLocations.length > 0) {
+          locationService.setCurrentLocationId(fetchedLocations[0].id);
         }
+      } catch (error: any) {
+        console.error('Failed to load locations:', error);
+        setLocationsError(error.message || 'Failed to load locations');
+        // Only fall back to cached data if fetch fails - but clear cache first if it looks fake
+        const cachedLocations = locationService.getLocations();
+        // Check if cached data looks like fake data (Downtown Lounge, Uptown Bar, Waterfront Club)
+        const fakeLocationNames = ['Downtown Lounge', 'Uptown Bar', 'Waterfront Club'];
+        const hasFakeData = cachedLocations.some(loc => 
+          fakeLocationNames.some(fake => loc.name.includes(fake))
+        );
+        
+        if (hasFakeData) {
+          // Clear fake cached data
+          console.warn('⚠️ Detected fake cached location data, clearing cache...');
+          locationService.clearCache();
+          setLocations([]);
+        } else if (cachedLocations.length > 0) {
+          // Use cached data as fallback only if it doesn't look fake
+          setLocations(cachedLocations);
+        } else {
+          setLocations([]);
+        }
+      } finally {
+        setLocationsLoading(false);
       }
     };
     
