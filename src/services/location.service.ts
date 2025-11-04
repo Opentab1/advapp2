@@ -41,9 +41,47 @@ class LocationService {
     }
   }
 
+  /**
+   * Check if GraphQL endpoint is configured
+   */
+  private checkGraphQLEndpoint(): void {
+    const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+    if (!endpoint || endpoint.trim() === '' || endpoint.includes('your-appsync-api')) {
+      throw new Error(
+        'GraphQL endpoint not configured. Please set VITE_GRAPHQL_ENDPOINT in your .env file. ' +
+        'See DYNAMODB_SETUP.md for instructions on how to set up your AppSync API endpoint.'
+      );
+    }
+  }
+
+  /**
+   * Extract error message from various error types
+   */
+  private extractErrorMessage(error: any): string {
+    if (error?.message) {
+      return error.message;
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    if (error?.error?.message) {
+      return error.error.message;
+    }
+    if (error?.errors && Array.isArray(error.errors) && error.errors.length > 0) {
+      return error.errors.map((e: any) => e.message || e).join(', ');
+    }
+    if (error?.data?.errors) {
+      return error.data.errors.map((e: any) => e.message || e).join(', ');
+    }
+    return error?.toString() || 'Unknown error occurred';
+  }
+
   async fetchLocationsFromDynamoDB(): Promise<Location[]> {
     try {
       console.log('🔍 Fetching locations from DynamoDB VenueConfig...');
+      
+      // Check if GraphQL endpoint is configured
+      this.checkGraphQLEndpoint();
       
       // Get venueId from Cognito
       await getCurrentUser();
@@ -52,7 +90,7 @@ class LocationService {
       const venueId = payload?.['custom:venueId'] as string;
 
       if (!venueId) {
-        throw new Error('No venueId found in user attributes');
+        throw new Error('No venueId found in user attributes. Please ensure your Cognito user has custom:venueId attribute.');
       }
 
       // Query DynamoDB for all locations for this venue
@@ -62,11 +100,17 @@ class LocationService {
         variables: { venueId }
       }) as any;
 
+      // Check for GraphQL errors in response
+      if (response?.errors && response.errors.length > 0) {
+        const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
+        throw new Error(`GraphQL error: ${errorMessages}`);
+      }
+
       const items = response?.data?.listVenueLocations?.items || [];
       
       if (items.length === 0) {
         console.warn('⚠️ No locations found in VenueConfig for venueId:', venueId);
-        throw new Error(`No locations configured for venue: ${venueId}`);
+        throw new Error(`No locations configured for venue: ${venueId}. Please add locations to the VenueConfig table in DynamoDB.`);
       }
 
       const locations: Location[] = items.map((item: any) => ({
@@ -87,7 +131,8 @@ class LocationService {
       return locations;
     } catch (error: any) {
       console.error('❌ Failed to fetch locations from DynamoDB:', error);
-      throw new Error(`Failed to load locations: ${error.message}`);
+      const errorMessage = this.extractErrorMessage(error);
+      throw new Error(`Failed to load locations: ${errorMessage}`);
     }
   }
 
