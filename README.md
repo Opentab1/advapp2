@@ -27,6 +27,33 @@ A next-generation, ultra-professional Progressive Web App for real-time IoT moni
 
 ---
 
+## 🗄️ **NEW: Direct DynamoDB Integration**
+
+✅ **No More Fake API** - Removed `https://api.advizia.ai` endpoint  
+✅ **AWS AppSync GraphQL** - Query DynamoDB directly via GraphQL API  
+✅ **Multi-Tenant by Design** - Data isolated by user's `venueId` from Cognito  
+✅ **Live & Historical Data** - Fetch sensor data, occupancy metrics, venue config  
+✅ **Secure Authentication** - Cognito User Pool authentication for all queries  
+
+**What Changed:**
+- ❌ Removed: Fake API endpoint calls
+- ✅ Added: `dynamodb.service.ts` for direct DynamoDB queries
+- ✅ Updated: All data fetching now uses AppSync GraphQL API
+- ✅ Secure: Each user only sees their own venue's data
+
+📖 **[DynamoDB Setup Guide →](./DYNAMODB_SETUP.md)**  
+📖 **[Integration Summary →](./DYNAMODB_INTEGRATION_SUMMARY.md)**  
+
+**Quick Setup:**
+1. Create AWS AppSync GraphQL API
+2. Create DynamoDB tables (SensorData, VenueConfig, OccupancyMetrics)
+3. Configure resolvers in AppSync
+4. Update `.env` with `VITE_GRAPHQL_ENDPOINT`
+5. Ensure users have `custom:venueId` in Cognito
+6. Start publishing sensor data to DynamoDB
+
+---
+
 ## ✨ Features
 
 ### 🎨 Design System
