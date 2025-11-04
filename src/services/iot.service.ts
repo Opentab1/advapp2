@@ -56,35 +56,55 @@ class IoTService {
     this.isConnecting = true;
 
     try {
-      // Fetch venue configuration from Cognito and AppSync
-      let venueId = "fergs-stpete";
-      let locationId = "main-floor";
-      let TOPIC = "pulse/fergs-stpete/main-floor";
+      // Get venueId from Cognito user attributes - REQUIRED
+      let venueId: string | null = null;
+      let locationId: string | undefined = undefined;
 
       try {
         await getCurrentUser();
         const session = await fetchAuthSession();
         const payload = session.tokens?.idToken?.payload;
-        venueId = (payload?.['custom:venueId'] as string) || venueId;
-        locationId = (payload?.['custom:locationId'] as string) || locationId;
+        venueId = payload?.['custom:venueId'] as string | undefined || null;
+        locationId = payload?.['custom:locationId'] as string | undefined;
+        
+        if (!venueId) {
+          throw new Error('custom:venueId not found in user attributes');
+        }
       } catch (err) {
-        console.warn("Not logged in, using default venue");
+        console.error("Failed to get venueId from Cognito:", err);
+        this.isConnecting = false;
+        throw new Error('User must be logged in with custom:venueId attribute');
       }
+
+      // Query DynamoDB VenueConfig for the MQTT topic - REQUIRED
+      let TOPIC: string | null = null;
 
       try {
         const client = generateClient();
         const response = await client.graphql({
           query: getVenueConfig,
-          variables: { venueId, locationId }
+          variables: { 
+            venueId, 
+            locationId: locationId || 'default' // Use 'default' if locationId not provided
+          }
         }) as any;
 
         const config = response?.data?.getVenueConfig;
         if (config?.mqttTopic) {
           TOPIC = config.mqttTopic;
-          console.log("Loaded config for", venueId, "→ topic:", TOPIC);
+          console.log("✅ Loaded VenueConfig for", venueId, "→ topic:", TOPIC);
+        } else {
+          throw new Error(`No mqttTopic found in VenueConfig for venueId: ${venueId}`);
         }
       } catch (err) {
-        console.warn("Config not found, using fallback topic", err);
+        console.error("Failed to get VenueConfig from DynamoDB:", err);
+        this.isConnecting = false;
+        throw new Error(`Failed to load MQTT topic from VenueConfig for venueId: ${venueId}`);
+      }
+
+      if (!TOPIC) {
+        this.isConnecting = false;
+        throw new Error('MQTT topic not found');
       }
 
       console.log('🔌 Connecting to AWS IoT Core via MQTT...');

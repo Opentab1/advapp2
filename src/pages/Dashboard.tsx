@@ -50,8 +50,19 @@ export function Dashboard() {
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   
-  // Use Ferg's Sports Bar venue ID
-  const venueId = user?.venueId || VENUE_CONFIG.venueId;
+  // Get venueId from authenticated user - REQUIRED (no fallback)
+  const venueId = user?.venueId;
+  
+  if (!venueId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <ErrorMessage 
+          message="No venue ID found. Please ensure you are logged in with a valid custom:venueId attribute."
+          onRetry={() => window.location.reload()}
+        />
+      </div>
+    );
+  }
   
   // Multi-location support (locations within the venue)
   const locations = user?.locations || locationService.getLocations();

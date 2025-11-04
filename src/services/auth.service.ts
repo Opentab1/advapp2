@@ -72,10 +72,36 @@ class AuthService {
   async logout(): Promise<void> {
     try {
       await signOut();
-      localStorage.removeItem(this.tokenKey);
-      localStorage.removeItem(this.userKey);
+      
+      // Clear all Cognito-related tokens from localStorage
+      // AWS Amplify stores tokens with various keys
+      const keysToRemove: string[] = [
+        this.tokenKey,
+        this.userKey,
+        'CognitoIdentityServiceProvider',
+        'aws-amplify-cache',
+        'aws-amplify-federatedInfo',
+        'appSettings', // Also clear appSettings on logout
+        'lastSongLogged'
+      ];
+      
+      // Remove all localStorage items that start with Cognito-related prefixes
+      Object.keys(localStorage).forEach(key => {
+        if (
+          key.startsWith('CognitoIdentityServiceProvider') ||
+          key.startsWith('aws-amplify-') ||
+          key.startsWith('amplify-') ||
+          keysToRemove.includes(key)
+        ) {
+          localStorage.removeItem(key);
+        }
+      });
+      
+      console.log('✅ Logout complete - all tokens cleared');
     } catch (error) {
       console.error('Logout error:', error);
+      // Still clear localStorage even if signOut fails
+      localStorage.clear();
       throw new Error('Failed to logout');
     }
   }
