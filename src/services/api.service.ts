@@ -1,17 +1,89 @@
 import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '../types';
-import authService from './auth.service';
+import { generateClient } from '@aws-amplify/api';
+import { getCurrentUser, fetchAuthSession } from '@aws-amplify/auth';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.advizia.ai';
+// GraphQL queries for DynamoDB
+const getLatestSensorData = /* GraphQL */ `
+  query GetLatestSensorData($venueId: ID!) {
+    getLatestSensorData(venueId: $venueId) {
+      timestamp
+      venueId
+      sound_level
+      light_level
+      indoor_temperature
+      outdoor_temperature
+      humidity
+      current_song
+      album_art
+      artist
+      occupancy {
+        current
+        entries
+        exits
+        capacity
+      }
+    }
+  }
+`;
+
+const listSensorDataByVenue = /* GraphQL */ `
+  query ListSensorDataByVenue($venueId: ID!, $startTime: String!, $endTime: String!) {
+    listSensorDataByVenue(venueId: $venueId, startTime: $startTime, endTime: $endTime) {
+      items {
+        timestamp
+        venueId
+        sound_level
+        light_level
+        indoor_temperature
+        outdoor_temperature
+        humidity
+        current_song
+        album_art
+        artist
+        occupancy {
+          current
+          entries
+          exits
+          capacity
+        }
+      }
+    }
+  }
+`;
+
+const getOccupancyMetricsQuery = /* GraphQL */ `
+  query GetOccupancyMetrics($venueId: ID!) {
+    getOccupancyMetrics(venueId: $venueId) {
+      current
+      todayEntries
+      todayExits
+      todayTotal
+      sevenDayAvg
+      fourteenDayAvg
+      thirtyDayAvg
+      peakOccupancy
+      peakTime
+    }
+  }
+`;
 
 class ApiService {
-  private getHeaders(): HeadersInit {
-    const token = authService.getStoredToken();
-    const user = authService.getStoredUser();
-    return {
-      'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` }),
-      ...(user?.venueId && { 'X-Venue-ID': user.venueId })
-    };
+  private async getVenueId(): Promise<string> {
+    try {
+      await getCurrentUser();
+      const session = await fetchAuthSession();
+      const payload = session.tokens?.idToken?.payload;
+      const venueId = payload?.['custom:venueId'] as string;
+      
+      if (!venueId) {
+        throw new Error('User does not have custom:venueId attribute. Please contact administrator.');
+      }
+      
+      return venueId;
+    } catch (error: any) {
+      console.error('Failed to get venueId from Cognito:', error);
+      throw new Error('User must be logged in with custom:venueId attribute');
+    }
   }
 
   private getRangeDays(range: TimeRange): number {
@@ -26,80 +98,90 @@ class ApiService {
     return rangeMap[range];
   }
 
+  private transformDynamoDBData(item: any): SensorData {
+    return {
+      timestamp: item.timestamp || new Date().toISOString(),
+      decibels: item.sound_level || item.decibels || 0,
+      light: item.light_level || item.light || 0,
+      indoorTemp: item.indoor_temperature || item.indoorTemp || 0,
+      outdoorTemp: item.outdoor_temperature || item.outdoorTemp || 0,
+      humidity: item.humidity || 0,
+      currentSong: item.current_song || item.currentSong,
+      albumArt: item.album_art || item.albumArt,
+      artist: item.artist,
+      occupancy: item.occupancy ? {
+        current: item.occupancy.current || 0,
+        entries: item.occupancy.entries || 0,
+        exits: item.occupancy.exits || 0,
+        capacity: item.occupancy.capacity
+      } : undefined
+    };
+  }
+
   async getHistoricalData(venueId: string, range: TimeRange): Promise<HistoricalData> {
     const days = this.getRangeDays(range);
-    const url = `${API_BASE_URL}/history/${venueId}?days=${days}`;
     
-    console.log('🔍 Fetching historical data from:', url);
+    console.log(`🔍 Fetching historical data from DynamoDB for venueId: ${venueId}, range: ${range} (${days} days)`);
     
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
+      // Calculate time range
+      const endTime = new Date().toISOString();
+      const startTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-      if (!response.ok) {
-        const errorMsg = `API returned ${response.status}: ${response.statusText}`;
-        console.error(`❌ ${errorMsg}`);
-        throw new Error(errorMsg);
-      }
+      // Query DynamoDB via GraphQL
+      const client = generateClient();
+      const response = await client.graphql({
+        query: listSensorDataByVenue,
+        variables: {
+          venueId,
+          startTime,
+          endTime
+        }
+      }) as any;
 
-      const data = await response.json();
-      console.log('✅ Historical data received from API');
+      const items = response?.data?.listSensorDataByVenue?.items || [];
       
-      // Transform API response to our data structure
+      console.log(`✅ Retrieved ${items.length} historical records from DynamoDB`);
+      
+      // Transform DynamoDB data to SensorData format
+      const sensorData = items.map((item: any) => this.transformDynamoDBData(item));
+      
+      // Sort by timestamp (oldest first)
+      sensorData.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      
       return {
-        data: this.transformApiData(data),
+        data: sensorData,
         venueId,
         range
       };
     } catch (error: any) {
-      console.error('❌ Historical data API fetch failed:', error);
-      throw new Error(`Failed to fetch historical data from ${API_BASE_URL}: ${error.message}`);
+      console.error('❌ Historical data DynamoDB query failed:', error);
+      throw new Error(`Failed to fetch historical data from DynamoDB: ${error.message}`);
     }
-  }
-
-  private transformApiData(apiData: any): SensorData[] {
-    // Transform API response to SensorData array
-    if (Array.isArray(apiData)) {
-      return apiData.map((item: any) => ({
-        timestamp: item.timestamp || new Date().toISOString(),
-        decibels: item.decibels || item.sound_level || 0,
-        light: item.light || item.light_level || 0,
-        indoorTemp: item.indoorTemp || item.indoor_temperature || 0,
-        outdoorTemp: item.outdoorTemp || item.outdoor_temperature || 0,
-        humidity: item.humidity || 0,
-        currentSong: item.currentSong || item.current_song,
-        albumArt: item.albumArt || item.album_art
-      }));
-    }
-    
-    return [];
   }
 
   async getLiveData(venueId: string): Promise<SensorData> {
-    const url = `${API_BASE_URL}/live/${venueId}`;
-    
-    console.log('🔍 Fetching live data from:', url);
+    console.log(`🔍 Fetching live data from DynamoDB for venueId: ${venueId}`);
     
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
+      // Query DynamoDB for the latest sensor data
+      const client = generateClient();
+      const response = await client.graphql({
+        query: getLatestSensorData,
+        variables: { venueId }
+      }) as any;
 
-      if (!response.ok) {
-        const errorMsg = `API returned ${response.status}: ${response.statusText}`;
-        console.error(`❌ ${errorMsg}`);
-        throw new Error(errorMsg);
+      const item = response?.data?.getLatestSensorData;
+      
+      if (!item) {
+        throw new Error(`No sensor data found in DynamoDB for venueId: ${venueId}`);
       }
 
-      const data = await response.json();
-      console.log('✅ Live data received from API');
-      return this.transformApiData([data])[0];
+      console.log('✅ Live data received from DynamoDB');
+      return this.transformDynamoDBData(item);
     } catch (error: any) {
-      console.error('❌ Live data API fetch failed:', error);
-      throw new Error(`Failed to fetch live data from ${API_BASE_URL}: ${error.message}`);
+      console.error('❌ Live data DynamoDB query failed:', error);
+      throw new Error(`Failed to fetch live data from DynamoDB: ${error.message}`);
     }
   }
 
@@ -179,28 +261,27 @@ class ApiService {
   }
 
   async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
-    const url = `${API_BASE_URL}/occupancy/${venueId}/metrics`;
-    
-    console.log('🔍 Fetching occupancy metrics from:', url);
+    console.log(`🔍 Fetching occupancy metrics from DynamoDB for venueId: ${venueId}`);
     
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
+      // Query DynamoDB for occupancy metrics
+      const client = generateClient();
+      const response = await client.graphql({
+        query: getOccupancyMetricsQuery,
+        variables: { venueId }
+      }) as any;
 
-      if (!response.ok) {
-        const errorMsg = `API returned ${response.status}: ${response.statusText}`;
-        console.error(`❌ ${errorMsg}`);
-        throw new Error(errorMsg);
+      const metrics = response?.data?.getOccupancyMetrics;
+      
+      if (!metrics) {
+        throw new Error(`No occupancy metrics found in DynamoDB for venueId: ${venueId}`);
       }
 
-      const data = await response.json();
-      console.log('✅ Occupancy metrics received from API');
-      return data;
+      console.log('✅ Occupancy metrics received from DynamoDB');
+      return metrics;
     } catch (error: any) {
-      console.error('❌ Occupancy metrics API fetch failed:', error);
-      throw new Error(`Failed to fetch occupancy metrics from ${API_BASE_URL}: ${error.message}`);
+      console.error('❌ Occupancy metrics DynamoDB query failed:', error);
+      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${error.message}`);
     }
   }
 }
