@@ -5,13 +5,14 @@ import { Dashboard } from './pages/Dashboard';
 import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
 import { configureAmplify } from './config/amplify';
+import authService from './services/auth.service';
 
 // Configure AWS Amplify
 configureAmplify();
 
 function App() {
-  // MQTT-ONLY MODE: No authentication required for direct IoT access
-  const [isAuthenticated] = useState(true); // Always authenticated for direct IoT mode
+  // Check authentication state - allow access without login but support login if needed
+  const [isAuthenticated, setIsAuthenticated] = useState(authService.isAuthenticated());
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
@@ -28,6 +29,11 @@ function App() {
     };
   }, []);
 
+  // Handle login success
+  const handleLoginSuccess = () => {
+    setIsAuthenticated(true);
+  };
+
   // Show offline page if not connected
   if (!isOnline) {
     return <Offline />;
@@ -42,7 +48,7 @@ function App() {
             isAuthenticated ? (
               <Navigate to="/" replace />
             ) : (
-              <Login onLoginSuccess={() => {}} />
+              <Login onLoginSuccess={handleLoginSuccess} />
             )
           }
         />
