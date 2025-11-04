@@ -106,68 +106,12 @@ export function TopBar({
                       </motion.button>
                     ))
                   ) : (
-                    <>
-                      <motion.button
-                        onClick={() => {
-                          onLocationChange?.('main-floor');
-                          setShowLocationDropdown(false);
-                        }}
-                        className={`
-                          w-full text-left px-3 py-2 rounded-lg transition-colors
-                          ${
-                            currentLocationId === 'main-floor'
-                              ? 'bg-cyan-400/20 text-cyan-400'
-                              : 'hover:bg-white/5 text-gray-300'
-                          }
-                        `}
-                        whileHover={{ x: 4 }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <MapPin className="w-4 h-4" />
-                          <div className="text-sm font-medium">Main Floor</div>
-                        </div>
-                      </motion.button>
-                      <motion.button
-                        onClick={() => {
-                          onLocationChange?.('patio');
-                          setShowLocationDropdown(false);
-                        }}
-                        className={`
-                          w-full text-left px-3 py-2 rounded-lg transition-colors
-                          ${
-                            currentLocationId === 'patio'
-                              ? 'bg-cyan-400/20 text-cyan-400'
-                              : 'hover:bg-white/5 text-gray-300'
-                          }
-                        `}
-                        whileHover={{ x: 4 }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <MapPin className="w-4 h-4" />
-                          <div className="text-sm font-medium">Patio</div>
-                        </div>
-                      </motion.button>
-                      <motion.button
-                        onClick={() => {
-                          onLocationChange?.('bar-area');
-                          setShowLocationDropdown(false);
-                        }}
-                        className={`
-                          w-full text-left px-3 py-2 rounded-lg transition-colors
-                          ${
-                            currentLocationId === 'bar-area'
-                              ? 'bg-cyan-400/20 text-cyan-400'
-                              : 'hover:bg-white/5 text-gray-300'
-                          }
-                        `}
-                        whileHover={{ x: 4 }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <MapPin className="w-4 h-4" />
-                          <div className="text-sm font-medium">Bar Area</div>
-                        </div>
-                      </motion.button>
-                    </>
+                    <div className="px-3 py-4 text-center">
+                      <div className="text-sm text-yellow-400 mb-2">⚠️ No Locations Configured</div>
+                      <div className="text-xs text-gray-400">
+                        Contact your administrator to configure locations in AWS DynamoDB VenueConfig table.
+                      </div>
+                    </div>
                   )}
                 </motion.div>
               )}
