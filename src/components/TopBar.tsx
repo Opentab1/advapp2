@@ -15,7 +15,7 @@ interface TopBarProps {
 }
 
 export function TopBar({
-  venueName = 'Advizia',
+  venueName = 'Your Venue',
   onLogout, 
   soundAlerts, 
   onToggleSoundAlerts,
@@ -27,6 +27,7 @@ export function TopBar({
   const [showLocationDropdown, setShowLocationDropdown] = useState(false);
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
+  const hasLocations = locations.length > 0;
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -48,36 +49,38 @@ export function TopBar({
         <div className="flex items-center gap-6">
           <div>
             <h1 className="text-2xl font-bold text-cyan-400">{venueName}</h1>
-            <p className="text-sm text-gray-400">
-              Zone Selection: <span className="text-cyan-300">{currentLocation?.name || 'Main Floor'}</span>
-            </p>
+            {hasLocations && (
+              <p className="text-sm text-gray-400">
+                Zone Selection: <span className="text-cyan-300">{currentLocation?.name || 'Select Zone'}</span>
+              </p>
+            )}
           </div>
           
-          {/* Zone Dropdown - Always visible */}
-          <div className="relative">
-            <motion.button
-              onClick={() => setShowLocationDropdown(!showLocationDropdown)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 transition-colors"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              <MapPin className="w-4 h-4 text-cyan-400" />
-              <span className="text-sm text-white font-medium">
-                {currentLocation?.name || 'Main Floor'}
-              </span>
-              <ChevronDown className="w-3 h-3 text-gray-300" />
-            </motion.button>
+          {/* Zone Dropdown - Only show if locations exist */}
+          {hasLocations && (
+            <div className="relative">
+              <motion.button
+                onClick={() => setShowLocationDropdown(!showLocationDropdown)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 transition-colors"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <MapPin className="w-4 h-4 text-cyan-400" />
+                <span className="text-sm text-white font-medium">
+                  {currentLocation?.name || 'Select Zone'}
+                </span>
+                <ChevronDown className="w-3 h-3 text-gray-300" />
+              </motion.button>
             
-            <AnimatePresence>
-              {showLocationDropdown && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="absolute top-full mt-2 left-0 w-64 glass-card border border-white/20 rounded-lg p-2 shadow-xl"
-                >
-                  {locations.length > 0 ? (
-                    locations.map(location => (
+              <AnimatePresence>
+                {showLocationDropdown && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="absolute top-full mt-2 left-0 w-64 glass-card border border-white/20 rounded-lg p-2 shadow-xl"
+                  >
+                    {locations.map(location => (
                       <motion.button
                         key={location.id}
                         onClick={() => {
@@ -104,21 +107,12 @@ export function TopBar({
                           </div>
                         </div>
                       </motion.button>
-                    ))
-                  ) : (
-                    <div className="px-3 py-4 text-center">
-                      <p className="text-sm text-yellow-400 font-medium mb-1">
-                        No locations configured
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        Please contact your administrator to configure locations for this venue.
-                      </p>
-                    </div>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
         </div>
 
         {/* Right: Clock, Alerts, Logout */}
@@ -163,9 +157,11 @@ export function TopBar({
       <div className="md:hidden flex items-center justify-between mt-3 pt-3 border-t border-white/10">
         <div>
           <h2 className="text-lg font-bold text-cyan-400">{venueName}</h2>
-          <p className="text-xs text-gray-400">
-            Zone: <span className="text-cyan-300">{currentLocation?.name || 'Main Floor'}</span>
-          </p>
+          {hasLocations && (
+            <p className="text-xs text-gray-400">
+              Zone: <span className="text-cyan-300">{currentLocation?.name || 'Select Zone'}</span>
+            </p>
+          )}
         </div>
       </div>
     </motion.header>
