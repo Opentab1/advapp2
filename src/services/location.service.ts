@@ -53,6 +53,13 @@ class LocationService {
         throw new Error(`No locations configured for venue: ${venueId}`);
       }
 
+      console.log(`📋 Raw items from DynamoDB:`, items.map((item: any) => ({
+        locationId: item.locationId,
+        displayName: item.displayName,
+        locationName: item.locationName,
+        address: item.address
+      })));
+
       const locations: Location[] = items.map((item: any) => ({
         id: item.locationId,
         name: item.displayName || item.locationName,
@@ -61,7 +68,7 @@ class LocationService {
         deviceId: item.deviceId
       }));
 
-      console.log(`✅ Loaded ${locations.length} locations from DynamoDB`);
+      console.log(`✅ Loaded ${locations.length} locations from DynamoDB:`, locations.map(l => l.name));
       
       // Cache the locations
       this.setLocations(locations);
@@ -84,20 +91,27 @@ class LocationService {
       if (cachedTime && cached) {
         const age = Date.now() - parseInt(cachedTime);
         if (age < this.cacheExpiryMs) {
-          return JSON.parse(cached);
+          const cachedLocations = JSON.parse(cached);
+          console.log(`📦 Using cached locations (${cachedLocations.length} locations, cached ${Math.round(age / 1000)}s ago)`);
+          return cachedLocations;
+        } else {
+          console.log(`⏰ Cache expired (${Math.round(age / 1000)}s old), will fetch from DynamoDB`);
         }
       }
 
       // Try to get from regular storage
       const stored = localStorage.getItem(this.storageKey);
       if (stored) {
-        return JSON.parse(stored);
+        const storedLocations = JSON.parse(stored);
+        console.log(`📦 Using stored locations (${storedLocations.length} locations from localStorage)`);
+        return storedLocations;
       }
     } catch (error) {
       console.error('Error loading locations:', error);
     }
     
     // Return empty array - locations must be fetched from DynamoDB
+    console.log('⚠️ No locations in cache/storage, must fetch from DynamoDB');
     return [];
   }
 
@@ -129,7 +143,18 @@ class LocationService {
     localStorage.removeItem(this.locationsCacheKey);
     localStorage.removeItem(this.locationsCacheTimeKey);
     localStorage.removeItem(this.storageKey);
+    localStorage.removeItem(this.currentLocationKey);
     console.log('✅ Locations cache cleared');
+  }
+
+  // Debug method to log current locations state
+  debugLocations(): void {
+    console.log('=== Location Service Debug ===');
+    console.log('Cached locations:', localStorage.getItem(this.locationsCacheKey));
+    console.log('Cached time:', localStorage.getItem(this.locationsCacheTimeKey));
+    console.log('Stored locations:', localStorage.getItem(this.storageKey));
+    console.log('Current location ID:', localStorage.getItem(this.currentLocationKey));
+    console.log('getLocations() result:', this.getLocations());
   }
 }
 
