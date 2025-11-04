@@ -6,6 +6,8 @@ import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
 import { configureAmplify } from './config/amplify';
 
+const topic = "pulse/sensors/data";
+
 // Configure AWS Amplify
 configureAmplify();
 
