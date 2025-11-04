@@ -66,7 +66,7 @@ export function Dashboard() {
   }
 
   const venueId = user.venueId;
-  const venueName = user.venueName || 'Pulse Dashboard';
+  const venueName = user.venueName || user.email?.split('@')[0] || 'Your Venue';
   
   // Multi-location support (locations within the venue)
   const initialLocations = user.locations || locationService.getLocations();
@@ -260,15 +260,62 @@ export function Dashboard() {
         >
           <div className="flex items-start gap-3">
             <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm font-semibold text-yellow-400">⚠️ Location Configuration Error</span>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-sm font-semibold text-yellow-400">⚠️ Location Configuration Required</span>
               </div>
-              <p className="text-xs text-yellow-300/80 mb-2">
+              <p className="text-sm text-yellow-300/90 mb-3">
                 {locationsError}
               </p>
-              <p className="text-xs text-yellow-300/60">
-                Locations must be configured in DynamoDB VenueConfig table for venue: <code className="px-1 py-0.5 bg-black/20 rounded">{venueId}</code>
+              <div className="text-xs text-yellow-300/70 space-y-2 mb-3">
+                <p className="font-semibold text-yellow-300">To fix this:</p>
+                <ol className="list-decimal ml-4 space-y-1">
+                  <li>Open AWS Console → DynamoDB</li>
+                  <li>Find your <code className="px-1 py-0.5 bg-black/20 rounded">VenueConfig</code> table</li>
+                  <li>Add location entries for venue: <code className="px-1 py-0.5 bg-black/20 rounded">{venueId}</code></li>
+                  <li>Clear cache in Settings page and refresh</li>
+                </ol>
+              </div>
+              <div className="p-2 bg-black/20 rounded text-xs text-yellow-300/60 mb-3">
+                <p className="font-semibold mb-1">Required DynamoDB fields:</p>
+                <code>locationId, displayName, venueId, address (optional), timezone (optional), deviceId (optional)</code>
+              </div>
+              <button
+                onClick={() => {
+                  setActiveTab('settings');
+                }}
+                className="px-3 py-1.5 rounded bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 text-xs font-medium transition-colors"
+              >
+                Go to Settings → Clear Cache
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      )}
+      
+      {/* No Locations Warning (but no error) */}
+      {!locationsError && locations.length === 0 && !locationsLoading && (
+        <motion.div
+          className="mx-4 mt-4 p-4 rounded-lg bg-blue-500/10 border border-blue-500/30"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-semibold text-blue-400">ℹ️ No Locations Found</span>
+              </div>
+              <p className="text-xs text-blue-300/80 mb-2">
+                No locations are configured for your venue yet. You may be seeing cached data from a previous session.
               </p>
+              <button
+                onClick={() => {
+                  locationService.clearCache();
+                  window.location.reload();
+                }}
+                className="px-3 py-1.5 rounded bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs font-medium transition-colors"
+              >
+                Clear Cache & Refresh
+              </button>
             </div>
           </div>
         </motion.div>

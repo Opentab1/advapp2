@@ -120,7 +120,7 @@ class AuthService {
       // Extract user data from token or attributes
       const payload = session.tokens?.idToken?.payload;
       const venueId = (payload?.['custom:venueId'] as string);
-      const venueName = (payload?.['custom:venueName'] as string) || 'Pulse Dashboard';
+      const venueName = (payload?.['custom:venueName'] as string) || payload?.email?.split('@')[0] || 'Your Venue';
       
       if (!venueId) {
         throw new Error('User does not have custom:venueId attribute. Please contact administrator.');

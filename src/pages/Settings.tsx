@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Save, Key, MapPin, DollarSign, Check, Building2 } from 'lucide-react';
+import { Save, Key, MapPin, DollarSign, Check, Building2, Trash2, AlertTriangle } from 'lucide-react';
 import type { AppSettings } from '../types';
 import authService from '../services/auth.service';
 import toastPOSService from '../services/toast-pos.service';
+import locationService from '../services/location.service';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -19,6 +20,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 export function Settings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
+  const [cacheCleared, setCacheCleared] = useState(false);
   const [toastRestaurantGuid, setToastRestaurantGuid] = useState('');
   const user = authService.getStoredUser();
 
@@ -89,6 +91,20 @@ export function Settings() {
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
       console.error('Error saving settings:', error);
+    }
+  };
+
+  const clearLocationCache = () => {
+    try {
+      locationService.clearCache();
+      setCacheCleared(true);
+      setTimeout(() => {
+        setCacheCleared(false);
+        // Reload the page to fetch fresh locations
+        window.location.reload();
+      }, 2000);
+    } catch (error) {
+      console.error('Error clearing cache:', error);
     }
   };
 
@@ -224,12 +240,65 @@ export function Settings() {
             </div>
           </motion.div>
 
-          {/* Display Preferences */}
+          {/* Cache Management */}
           <motion.div
             className="glass-card p-6"
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.3 }}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <Trash2 className="w-5 h-5 text-yellow-500" />
+              <h3 className="text-xl font-semibold text-white">Cache Management</h3>
+            </div>
+
+            <div className="space-y-4">
+              <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-yellow-300 font-medium mb-1">
+                      Seeing old or fake location data?
+                    </p>
+                    <p className="text-xs text-yellow-300/80">
+                      Clear the location cache to remove old cached locations and fetch fresh data from your AWS DynamoDB VenueConfig table. The page will reload after clearing.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <motion.button
+                onClick={clearLocationCache}
+                disabled={cacheCleared}
+                className={`w-full px-4 py-3 rounded-lg border transition-all flex items-center justify-center gap-2 ${
+                  cacheCleared
+                    ? 'bg-green-500/20 border-green-500/50 text-green-400'
+                    : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20'
+                }`}
+                whileHover={cacheCleared ? {} : { scale: 1.02 }}
+                whileTap={cacheCleared ? {} : { scale: 0.98 }}
+              >
+                {cacheCleared ? (
+                  <>
+                    <Check className="w-5 h-5" />
+                    Cache Cleared! Reloading...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-5 h-5" />
+                    Clear Location Cache
+                  </>
+                )}
+              </motion.button>
+            </div>
+          </motion.div>
+
+          {/* Display Preferences */}
+          <motion.div
+            className="glass-card p-6"
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.4 }}
           >
             <h3 className="text-xl font-semibold text-white mb-4">Display Preferences</h3>
 
@@ -296,7 +365,7 @@ export function Settings() {
             whileTap={{ scale: 0.98 }}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
+            transition={{ delay: 0.5 }}
           >
             {saved ? (
               <>
