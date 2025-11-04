@@ -2,7 +2,6 @@ import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '..
 import authService from './auth.service';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.advizia.ai';
-const DISABLE_MOCK_FALLBACK = import.meta.env.VITE_DISABLE_MOCK_DATA === 'true';
 
 class ApiService {
   private getHeaders(): HeadersInit {
@@ -28,20 +27,21 @@ class ApiService {
   }
 
   async getHistoricalData(venueId: string, range: TimeRange): Promise<HistoricalData> {
+    const days = this.getRangeDays(range);
+    const url = `${API_BASE_URL}/history/${venueId}?days=${days}`;
+    
+    console.log('🔍 Fetching historical data from:', url);
+    
     try {
-      const days = this.getRangeDays(range);
-      const url = `${API_BASE_URL}/history/${venueId}?days=${days}`;
-      
-      console.log('🔍 Fetching historical data from:', url);
-      
       const response = await fetch(url, {
         method: 'GET',
         headers: this.getHeaders()
       });
 
       if (!response.ok) {
-        console.warn(`⚠️ API returned ${response.status}: ${response.statusText}`);
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
+        const errorMsg = `API returned ${response.status}: ${response.statusText}`;
+        console.error(`❌ ${errorMsg}`);
+        throw new Error(errorMsg);
       }
 
       const data = await response.json();
@@ -55,15 +55,7 @@ class ApiService {
       };
     } catch (error: any) {
       console.error('❌ Historical data API fetch failed:', error);
-      
-      if (DISABLE_MOCK_FALLBACK) {
-        console.error('🚫 Mock data disabled - throwing error');
-        throw new Error(`Failed to fetch historical data: ${error.message}`);
-      }
-      
-      console.warn('⚠️ Returning mock data as fallback');
-      // Return mock data for demo purposes
-      return this.getMockData(venueId, range);
+      throw new Error(`Failed to fetch historical data from ${API_BASE_URL}: ${error.message}`);
     }
   }
 
@@ -86,19 +78,20 @@ class ApiService {
   }
 
   async getLiveData(venueId: string): Promise<SensorData> {
+    const url = `${API_BASE_URL}/live/${venueId}`;
+    
+    console.log('🔍 Fetching live data from:', url);
+    
     try {
-      const url = `${API_BASE_URL}/live/${venueId}`;
-      
-      console.log('🔍 Fetching live data from:', url);
-      
       const response = await fetch(url, {
         method: 'GET',
         headers: this.getHeaders()
       });
 
       if (!response.ok) {
-        console.warn(`⚠️ API returned ${response.status}: ${response.statusText}`);
-        throw new Error(`API error: ${response.status}`);
+        const errorMsg = `API returned ${response.status}: ${response.statusText}`;
+        console.error(`❌ ${errorMsg}`);
+        throw new Error(errorMsg);
       }
 
       const data = await response.json();
@@ -106,85 +99,8 @@ class ApiService {
       return this.transformApiData([data])[0];
     } catch (error: any) {
       console.error('❌ Live data API fetch failed:', error);
-      
-      if (DISABLE_MOCK_FALLBACK) {
-        console.error('🚫 Mock data disabled - throwing error');
-        throw new Error(`Failed to fetch live data: ${error.message}`);
-      }
-      
-      console.warn('⚠️ Returning mock data as fallback');
-      // Return mock live data
-      return this.getMockLiveData();
+      throw new Error(`Failed to fetch live data from ${API_BASE_URL}: ${error.message}`);
     }
-  }
-
-  // Mock data for demo/development
-  private getMockLiveData(): SensorData {
-    const now = new Date();
-    const hour = now.getHours();
-    // Simulate realistic occupancy based on time of day
-    const baseOccupancy = this.getBaseOccupancyForHour(hour);
-    
-    return {
-      timestamp: now.toISOString(),
-      decibels: 65 + Math.random() * 20,
-      light: 300 + Math.random() * 200,
-      indoorTemp: 72 + Math.random() * 4,
-      outdoorTemp: 68 + Math.random() * 8,
-      humidity: 40 + Math.random() * 20,
-      currentSong: 'Neon Dreams - Synthwave',
-      albumArt: 'https://picsum.photos/seed/album/200',
-      occupancy: {
-        current: Math.floor(baseOccupancy + (Math.random() - 0.5) * 10),
-        entries: Math.floor((Math.random() * 5) + 2),
-        exits: Math.floor((Math.random() * 5) + 1),
-        capacity: 150
-      }
-    };
-  }
-
-  private getBaseOccupancyForHour(hour: number): number {
-    // Simulate sports bar occupancy patterns
-    if (hour >= 0 && hour < 6) return 5; // Late night/early morning
-    if (hour >= 6 && hour < 11) return 10; // Morning
-    if (hour >= 11 && hour < 14) return 45; // Lunch rush
-    if (hour >= 14 && hour < 17) return 30; // Afternoon
-    if (hour >= 17 && hour < 22) return 80; // Evening peak
-    return 25; // Late evening
-  }
-
-  private getMockData(venueId: string, range: TimeRange): HistoricalData {
-    const days = this.getRangeDays(range);
-    const hours = range === 'live' || range === '6h' ? 6 : days * 24;
-    const pointsCount = range === 'live' ? 20 : Math.min(hours, 200);
-    
-    const data: SensorData[] = [];
-    const now = new Date();
-    
-    for (let i = pointsCount; i >= 0; i--) {
-      const timestamp = new Date(now.getTime() - i * (hours / pointsCount) * 60 * 60 * 1000);
-      const hour = timestamp.getHours();
-      const baseOccupancy = this.getBaseOccupancyForHour(hour);
-      
-      data.push({
-        timestamp: timestamp.toISOString(),
-        decibels: 60 + Math.random() * 30 + Math.sin(i / 10) * 10,
-        light: 250 + Math.random() * 300 + Math.cos(i / 8) * 100,
-        indoorTemp: 70 + Math.random() * 8 + Math.sin(i / 15) * 3,
-        outdoorTemp: 65 + Math.random() * 15 + Math.cos(i / 12) * 5,
-        humidity: 35 + Math.random() * 30,
-        currentSong: i === 0 ? 'Neon Dreams - Synthwave' : undefined,
-        albumArt: i === 0 ? 'https://picsum.photos/seed/album/200' : undefined,
-        occupancy: {
-          current: Math.floor(baseOccupancy + (Math.random() - 0.5) * 15),
-          entries: Math.floor((Math.random() * 8) + 3),
-          exits: Math.floor((Math.random() * 8) + 2),
-          capacity: 150
-        }
-      });
-    }
-    
-    return { data, venueId, range };
   }
 
   exportToCSV(data: SensorData[], includeComfort: boolean = true): void {
@@ -263,19 +179,20 @@ class ApiService {
   }
 
   async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
+    const url = `${API_BASE_URL}/occupancy/${venueId}/metrics`;
+    
+    console.log('🔍 Fetching occupancy metrics from:', url);
+    
     try {
-      const url = `${API_BASE_URL}/occupancy/${venueId}/metrics`;
-      
-      console.log('🔍 Fetching occupancy metrics from:', url);
-      
       const response = await fetch(url, {
         method: 'GET',
         headers: this.getHeaders()
       });
 
       if (!response.ok) {
-        console.warn(`⚠️ API returned ${response.status}: ${response.statusText}`);
-        throw new Error(`API error: ${response.status}`);
+        const errorMsg = `API returned ${response.status}: ${response.statusText}`;
+        console.error(`❌ ${errorMsg}`);
+        throw new Error(errorMsg);
       }
 
       const data = await response.json();
@@ -283,38 +200,8 @@ class ApiService {
       return data;
     } catch (error: any) {
       console.error('❌ Occupancy metrics API fetch failed:', error);
-      
-      if (DISABLE_MOCK_FALLBACK) {
-        console.error('🚫 Mock data disabled - throwing error');
-        throw new Error(`Failed to fetch occupancy metrics: ${error.message}`);
-      }
-      
-      console.warn('⚠️ Returning mock metrics as fallback');
-      // Return mock occupancy metrics
-      return this.getMockOccupancyMetrics();
+      throw new Error(`Failed to fetch occupancy metrics from ${API_BASE_URL}: ${error.message}`);
     }
-  }
-
-  private getMockOccupancyMetrics(): OccupancyMetrics {
-    const now = new Date();
-    const hour = now.getHours();
-    const currentOccupancy = this.getBaseOccupancyForHour(hour);
-    
-    // Calculate today's totals (cumulative entries/exits throughout the day)
-    const todayEntries = Math.floor(350 + Math.random() * 100);
-    const todayExits = Math.floor(todayEntries - currentOccupancy + (Math.random() - 0.5) * 20);
-    
-    return {
-      current: Math.floor(currentOccupancy + (Math.random() - 0.5) * 10),
-      todayEntries,
-      todayExits,
-      todayTotal: todayEntries,
-      sevenDayAvg: Math.floor(420 + Math.random() * 80),
-      fourteenDayAvg: Math.floor(405 + Math.random() * 70),
-      thirtyDayAvg: Math.floor(390 + Math.random() * 60),
-      peakOccupancy: Math.floor(120 + Math.random() * 30),
-      peakTime: '19:30'
-    };
   }
 }
 
