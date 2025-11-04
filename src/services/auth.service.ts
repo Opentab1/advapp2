@@ -8,7 +8,7 @@ import {
   SignInInput,
   SignInOutput
 } from '@aws-amplify/auth';
-import type { User } from '../types';
+import type { User, Location } from '../types';
 import locationService from './location.service';
 
 class AuthService {
@@ -134,20 +134,18 @@ class AuthService {
       // Clear any cached location data first to ensure fresh data
       locationService.clearCache();
       
-      let locations;
+      let locations: Location[] = [];
       try {
         locations = await locationService.fetchLocationsFromDynamoDB();
-        if (locations.length === 0) {
-          throw new Error('No locations configured for this venue. Please contact administrator.');
+        // Set initial location if none selected and locations exist
+        if (!locationService.getCurrentLocationId() && locations.length > 0) {
+          locationService.setCurrentLocationId(locations[0].id);
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to fetch locations:', error);
-        throw new Error('Failed to load venue locations. Please check your configuration and try again.');
-      }
-      
-      // Set initial location if none selected
-      if (!locationService.getCurrentLocationId() && locations.length > 0) {
-        locationService.setCurrentLocationId(locations[0].id);
+        // Don't throw error - allow user to proceed without locations
+        // Locations can be loaded later in the Dashboard
+        console.warn('⚠️ Proceeding without locations. They will be loaded in Dashboard.');
       }
 
       const user: User = {
