@@ -97,6 +97,13 @@ export function Settings() {
   const clearLocationCache = () => {
     try {
       locationService.clearCache();
+      
+      // Also clear song-related cache to prevent fake/stale song data from reappearing
+      localStorage.removeItem('lastSongLogged');
+      localStorage.removeItem('songLog');
+      
+      console.log('✅ Cleared location and song cache');
+      
       setCacheCleared(true);
       setTimeout(() => {
         setCacheCleared(false);

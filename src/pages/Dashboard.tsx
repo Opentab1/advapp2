@@ -153,9 +153,13 @@ export function Dashboard() {
     enabled: timeRange === 'live'
   });
   
-  // Log songs when they change
+  // Log songs when they change - only if we have valid data (not in error state)
   useEffect(() => {
-    if (liveData?.currentSong) {
+    // Only log songs if:
+    // 1. We have liveData with a currentSong
+    // 2. We're NOT in an error state (liveError is null/undefined)
+    // 3. Data was successfully fetched (not stale/cached error data)
+    if (liveData?.currentSong && !liveError && !liveLoading) {
       const lastSong = localStorage.getItem('lastSongLogged');
       const currentSongKey = `${liveData.currentSong}-${liveData.timestamp}`;
       
@@ -170,7 +174,7 @@ export function Dashboard() {
         localStorage.setItem('lastSongLogged', currentSongKey);
       }
     }
-  }, [liveData?.currentSong, liveData?.timestamp]);
+  }, [liveData?.currentSong, liveData?.timestamp, liveError, liveLoading]);
   
   // Handle location change
   const handleLocationChange = (locationId: string) => {
@@ -337,6 +341,9 @@ export function Dashboard() {
               <button
                 onClick={() => {
                   locationService.clearCache();
+                  // Also clear song-related cache
+                  localStorage.removeItem('lastSongLogged');
+                  localStorage.removeItem('songLog');
                   window.location.reload();
                 }}
                 className="px-3 py-1.5 rounded bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs font-medium transition-colors"
