@@ -67,6 +67,7 @@ export function Dashboard() {
 
   const venueId = user.venueId;
   const venueName = user.venueName || 'Pulse Dashboard';
+  const companyName = user.companyName || venueName || 'Advizia';
   
   // Multi-location support (locations within the venue)
   const locations = user.locations || locationService.getLocations();
@@ -205,6 +206,7 @@ export function Dashboard() {
       {/* Top Bar */}
       <TopBar
         venueName={venueName}
+        companyName={companyName}
         onLogout={handleLogout}
         soundAlerts={soundAlerts}
         onToggleSoundAlerts={() => setSoundAlerts(!soundAlerts)}

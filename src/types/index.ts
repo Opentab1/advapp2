@@ -3,6 +3,7 @@ export interface User {
   email: string;
   venueId: string;
   venueName: string;
+  companyName?: string;
   locations?: Location[];
 }
 

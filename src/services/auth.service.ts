@@ -121,6 +121,7 @@ class AuthService {
       const payload = session.tokens?.idToken?.payload;
       const venueId = (payload?.['custom:venueId'] as string);
       const venueName = (payload?.['custom:venueName'] as string) || 'Pulse Dashboard';
+      const companyName = (payload?.['custom:companyName'] as string) || venueName || 'Advizia';
       
       if (!venueId) {
         throw new Error('User does not have custom:venueId attribute. Please contact administrator.');
@@ -149,6 +150,7 @@ class AuthService {
         email: payload?.email as string || '',
         venueId,
         venueName,
+        companyName,
         locations
       };
 
