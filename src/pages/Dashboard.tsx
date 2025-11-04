@@ -40,7 +40,8 @@ import songLogService from '../services/song-log.service';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location } from '../types';
 
 export function Dashboard() {
-  const user = authService.getStoredUser();
+  const [user, setUser] = useState(authService.getStoredUser());
+  const [userLoading, setUserLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('live');
   const [timeRange, setTimeRange] = useState<TimeRange>('live');
   const [historicalData, setHistoricalData] = useState<HistoricalData | null>(null);
@@ -49,17 +50,43 @@ export function Dashboard() {
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   
+  // Try to refresh user if authenticated but no stored user
+  useEffect(() => {
+    const refreshUser = async () => {
+      if (!user && authService.isAuthenticated() && !userLoading) {
+        setUserLoading(true);
+        try {
+          const refreshedUser = await authService.getCurrentAuthenticatedUser();
+          setUser(refreshedUser);
+        } catch (error: any) {
+          console.error('Failed to refresh user:', error);
+          // If refresh fails, logout and redirect to login
+          await authService.logout();
+          window.location.href = '/login';
+        } finally {
+          setUserLoading(false);
+        }
+      }
+    };
+    
+    refreshUser();
+  }, [user, userLoading]);
+  
   // User must be authenticated with venueId - no fallbacks
   if (!user || !user.venueId) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900">
         <div className="max-w-md">
-          <ErrorMessage 
-            message="Authentication required. Please log in with a valid account that has a custom:venueId attribute configured."
-            onRetry={() => {
-              authService.logout().then(() => window.location.href = '/login');
-            }}
-          />
+          {userLoading ? (
+            <LoadingSpinner fullScreen />
+          ) : (
+            <ErrorMessage 
+              message="Authentication required. Please log in with a valid account that has a custom:venueId attribute configured."
+              onRetry={() => {
+                authService.logout().then(() => window.location.href = '/login');
+              }}
+            />
+          )}
         </div>
       </div>
     );
