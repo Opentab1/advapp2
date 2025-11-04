@@ -83,6 +83,7 @@ class AuthService {
         'aws-amplify-federatedInfo',
         'appSettings', // Also clear appSettings on logout
         'lastSongLogged',
+        'songLog', // Clear song history
         'pulse_locations', // Clear location caches
         'pulse_current_location',
         'pulse_locations_cache',

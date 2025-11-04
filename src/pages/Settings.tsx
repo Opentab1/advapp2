@@ -96,7 +96,15 @@ export function Settings() {
 
   const clearLocationCache = () => {
     try {
+      // Clear location cache
       locationService.clearCache();
+      
+      // Clear song-related cache (fake/old song data)
+      localStorage.removeItem('songLog');
+      localStorage.removeItem('lastSongLogged');
+      
+      console.log('✅ Cleared all cached data (locations and song log)');
+      
       setCacheCleared(true);
       setTimeout(() => {
         setCacheCleared(false);
@@ -258,10 +266,11 @@ export function Settings() {
                   <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="text-sm text-yellow-300 font-medium mb-1">
-                      Seeing old or fake location data?
+                      Seeing old or fake data?
                     </p>
                     <p className="text-xs text-yellow-300/80">
-                      Clear the location cache to remove old cached locations and fetch fresh data from your AWS DynamoDB VenueConfig table. The page will reload after clearing.
+                      Clear all cached data to remove old locations, fake song history, and other stale data. 
+                      This will fetch fresh data from your AWS DynamoDB tables. The page will reload after clearing.
                     </p>
                   </div>
                 </div>
@@ -286,7 +295,7 @@ export function Settings() {
                 ) : (
                   <>
                     <Trash2 className="w-5 h-5" />
-                    Clear Location Cache
+                    Clear All Cached Data
                   </>
                 )}
               </motion.button>
