@@ -131,6 +131,22 @@ class LocationService {
     localStorage.removeItem(this.storageKey);
     console.log('✅ Locations cache cleared');
   }
+
+  // Check if locations contain fake/placeholder data
+  private isFakeLocationData(locations: Location[]): boolean {
+    const fakeIds = ['main-floor', 'patio', 'bar-area'];
+    return locations.some(loc => fakeIds.includes(loc.id));
+  }
+
+  // Clear cache if it contains fake data
+  clearFakeData(): void {
+    const cached = this.getLocations();
+    if (cached.length > 0 && this.isFakeLocationData(cached)) {
+      console.warn('⚠️ Detected fake location data in cache, clearing...');
+      this.clearCache();
+      localStorage.removeItem(this.currentLocationKey);
+    }
+  }
 }
 
 export default new LocationService();

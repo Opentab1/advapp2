@@ -78,35 +78,55 @@ export function Dashboard() {
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
 
-  // Fetch locations from AWS on mount if not available
+  // Fetch locations from AWS on mount - always try to get fresh data
   useEffect(() => {
     const fetchLocations = async () => {
-      // Only fetch if we don't have locations
-      const currentLocations = user.locations || locationService.getLocations();
-      if (currentLocations.length === 0) {
-        setLocationsLoading(true);
-        setLocationsError(null);
-        try {
-          const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
-          setLocations(fetchedLocations);
-          
-          // Update user object with locations
-          const updatedUser = { ...user, locations: fetchedLocations };
-          localStorage.setItem('pulse_user', JSON.stringify(updatedUser));
-          
-          // Set initial location if none selected
-          const currentId = locationService.getCurrentLocationId();
-          if (!currentId && fetchedLocations.length > 0) {
-            const initialLocationId = fetchedLocations[0].id;
-            setCurrentLocationId(initialLocationId);
-            locationService.setCurrentLocationId(initialLocationId);
-          }
-        } catch (error: any) {
-          console.error('Failed to fetch locations:', error);
-          setLocationsError(error.message || 'Failed to load locations');
-        } finally {
-          setLocationsLoading(false);
+      // Clear any fake location data from cache first
+      locationService.clearFakeData();
+      
+      setLocationsLoading(true);
+      setLocationsError(null);
+      
+      try {
+        // Always attempt to fetch fresh locations from DynamoDB
+        const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
+        setLocations(fetchedLocations);
+        
+        // Update user object with locations
+        const updatedUser = { ...user, locations: fetchedLocations };
+        localStorage.setItem('pulse_user', JSON.stringify(updatedUser));
+        
+        // Check if current location ID is valid (not a fake one)
+        const currentId = locationService.getCurrentLocationId();
+        const validLocationIds = fetchedLocations.map(l => l.id);
+        
+        // If current location is not in the fetched list, reset it
+        if (currentId && !validLocationIds.includes(currentId)) {
+          console.warn('⚠️ Current location ID not found in fetched locations, resetting...');
+          locationService.setCurrentLocationId('');
         }
+        
+        // Set initial location if none selected or if current one is invalid
+        const finalLocationId = locationService.getCurrentLocationId();
+        if ((!finalLocationId || !validLocationIds.includes(finalLocationId)) && fetchedLocations.length > 0) {
+          const initialLocationId = fetchedLocations[0].id;
+          setCurrentLocationId(initialLocationId);
+          locationService.setCurrentLocationId(initialLocationId);
+        }
+      } catch (error: any) {
+        console.error('❌ Failed to fetch locations from DynamoDB:', error);
+        
+        // Fall back to cached locations if fetch fails
+        const cachedLocations = locationService.getLocations();
+        if (cachedLocations.length > 0) {
+          console.log('⚠️ Using cached locations as fallback');
+          setLocations(cachedLocations);
+          setLocationsError(null);
+        } else {
+          setLocationsError(error.message || 'Failed to load locations. Please check your AWS configuration.');
+        }
+      } finally {
+        setLocationsLoading(false);
       }
     };
 
