@@ -111,6 +111,13 @@ class DynamoDBService {
   }
 
   /**
+   * Check if error is already wrapped to avoid double-wrapping
+   */
+  private isAlreadyWrapped(errorMessage: string, prefix: string): boolean {
+    return errorMessage.startsWith(prefix) || errorMessage.includes('Failed to fetch');
+  }
+
+  /**
    * Get the most recent sensor data for a venue
    */
   async getLiveSensorData(venueId: string): Promise<SensorData> {
@@ -160,6 +167,10 @@ class DynamoDBService {
     } catch (error: any) {
       console.error('❌ Failed to fetch live sensor data from DynamoDB:', error);
       const errorMessage = this.extractErrorMessage(error);
+      // Avoid double-wrapping error messages
+      if (this.isAlreadyWrapped(errorMessage, 'Failed to fetch live data')) {
+        throw error; // Re-throw original error if already wrapped
+      }
       throw new Error(`Failed to fetch live data from DynamoDB: ${errorMessage}`);
     }
   }
@@ -216,6 +227,10 @@ class DynamoDBService {
     } catch (error: any) {
       console.error('❌ Failed to fetch historical sensor data from DynamoDB:', error);
       const errorMessage = this.extractErrorMessage(error);
+      // Avoid double-wrapping error messages
+      if (this.isAlreadyWrapped(errorMessage, 'Failed to fetch historical data')) {
+        throw error; // Re-throw original error if already wrapped
+      }
       throw new Error(`Failed to fetch historical data from DynamoDB: ${errorMessage}`);
     }
   }
@@ -259,6 +274,10 @@ class DynamoDBService {
     } catch (error: any) {
       console.error('❌ Failed to fetch occupancy metrics from DynamoDB:', error);
       const errorMessage = this.extractErrorMessage(error);
+      // Avoid double-wrapping error messages
+      if (this.isAlreadyWrapped(errorMessage, 'Failed to fetch occupancy metrics')) {
+        throw error; // Re-throw original error if already wrapped
+      }
       throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
     }
   }

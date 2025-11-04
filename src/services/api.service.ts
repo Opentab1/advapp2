@@ -35,7 +35,13 @@ class ApiService {
       return historicalData;
     } catch (error: any) {
       console.error('❌ Historical data DynamoDB fetch failed:', error);
-      throw new Error(`Failed to fetch historical data from DynamoDB: ${error.message}`);
+      // Avoid double-wrapping error messages
+      const errorMessage = error?.message || error?.toString() || 'Unknown error';
+      if (errorMessage.startsWith('Failed to fetch historical data from DynamoDB') || 
+          errorMessage.startsWith('Failed to fetch')) {
+        throw error; // Re-throw original error if already wrapped
+      }
+      throw new Error(`Failed to fetch historical data from DynamoDB: ${errorMessage}`);
     }
   }
 
@@ -67,7 +73,13 @@ class ApiService {
       return liveData;
     } catch (error: any) {
       console.error('❌ Live data DynamoDB fetch failed:', error);
-      throw new Error(`Failed to fetch live data from DynamoDB: ${error.message}`);
+      // Avoid double-wrapping error messages
+      const errorMessage = error?.message || error?.toString() || 'Unknown error';
+      if (errorMessage.startsWith('Failed to fetch live data from DynamoDB') || 
+          errorMessage.startsWith('Failed to fetch')) {
+        throw error; // Re-throw original error if already wrapped
+      }
+      throw new Error(`Failed to fetch live data from DynamoDB: ${errorMessage}`);
     }
   }
 
@@ -156,7 +168,13 @@ class ApiService {
       return metrics;
     } catch (error: any) {
       console.error('❌ Occupancy metrics DynamoDB fetch failed:', error);
-      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${error.message}`);
+      // Avoid double-wrapping error messages
+      const errorMessage = error?.message || error?.toString() || 'Unknown error';
+      if (errorMessage.startsWith('Failed to fetch occupancy metrics from DynamoDB') || 
+          errorMessage.startsWith('Failed to fetch')) {
+        throw error; // Re-throw original error if already wrapped
+      }
+      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
     }
   }
 }
