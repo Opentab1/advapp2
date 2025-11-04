@@ -46,10 +46,34 @@ class LocationService {
    */
   private checkGraphQLEndpoint(): void {
     const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
-    if (!endpoint || endpoint.trim() === '' || endpoint.includes('your-appsync-api')) {
+    const endpointValue = endpoint?.trim() || '';
+    
+    // Check if endpoint is missing, empty, or contains placeholder
+    if (!endpointValue || endpointValue === '' || endpointValue.includes('your-appsync-api')) {
+      const envValue = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+      const diagnosticInfo = envValue === undefined 
+        ? 'Environment variable is undefined. Make sure .env file exists in the project root.'
+        : envValue === ''
+        ? 'Environment variable is set but empty. Please add your AppSync endpoint URL.'
+        : 'Environment variable contains placeholder value. Please replace with your actual AppSync endpoint URL.';
+      
       throw new Error(
-        'GraphQL endpoint not configured. Please set VITE_GRAPHQL_ENDPOINT in your .env file. ' +
-        'See DYNAMODB_SETUP.md for instructions on how to set up your AppSync API endpoint.'
+        `GraphQL endpoint not configured. ${diagnosticInfo}\n\n` +
+        'To fix this:\n' +
+        '1. Create or update your .env file in the project root\n' +
+        '2. Add: VITE_GRAPHQL_ENDPOINT=https://your-api-id.appsync-api.us-east-2.amazonaws.com/graphql\n' +
+        '3. Get your AppSync API endpoint from AWS Console > AppSync > Settings > API URL\n' +
+        '4. Restart your dev server (npm run dev)\n\n' +
+        'See DYNAMODB_SETUP.md for detailed setup instructions.'
+      );
+    }
+    
+    // Validate endpoint format
+    if (!endpointValue.startsWith('https://') || !endpointValue.includes('.appsync-api.')) {
+      throw new Error(
+        `Invalid GraphQL endpoint format: "${endpointValue}"\n\n` +
+        'The endpoint should look like: https://xxxxx.appsync-api.us-east-2.amazonaws.com/graphql\n' +
+        'Please check your VITE_GRAPHQL_ENDPOINT value in .env file.'
       );
     }
   }
