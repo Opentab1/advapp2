@@ -231,7 +231,7 @@ export function Dashboard() {
       : historicalData?.data || [];
     
     if (dataToExport.length > 0) {
-      apiService.exportToCSV(dataToExport);
+      apiService.exportToCSV(dataToExport, true, venueName);
     }
   };
 

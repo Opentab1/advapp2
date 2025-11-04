@@ -83,7 +83,7 @@ class SongLogService {
     }
   }
 
-  exportToCSV(): void {
+  exportToCSV(venueName?: string): void {
     this.loadSongs();
     const headers = ['Timestamp', 'Song', 'Artist', 'Source', 'Duration'];
     const rows = this.songs.map(song => [
@@ -99,12 +99,13 @@ class SongLogService {
       ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
     ].join('\n');
 
+    const venuePrefix = venueName ? venueName.toLowerCase().replace(/\s+/g, '-') : 'song';
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     
     link.setAttribute('href', url);
-    link.setAttribute('download', `fergs-song-log-${new Date().toISOString()}.csv`);
+    link.setAttribute('download', `${venuePrefix}-song-log-${new Date().toISOString()}.csv`);
     link.style.visibility = 'hidden';
     
     document.body.appendChild(link);

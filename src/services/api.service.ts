@@ -35,7 +35,13 @@ class ApiService {
       return historicalData;
     } catch (error: any) {
       console.error('❌ Historical data DynamoDB fetch failed:', error);
-      throw new Error(`Failed to fetch historical data from DynamoDB: ${error.message}`);
+      // Avoid double-wrapping error messages
+      const errorMessage = error?.message || error?.toString() || 'Unknown error';
+      if (errorMessage.startsWith('Failed to fetch historical data from DynamoDB') || 
+          errorMessage.startsWith('Failed to fetch')) {
+        throw error; // Re-throw original error if already wrapped
+      }
+      throw new Error(`Failed to fetch historical data from DynamoDB: ${errorMessage}`);
     }
   }
 
@@ -67,11 +73,17 @@ class ApiService {
       return liveData;
     } catch (error: any) {
       console.error('❌ Live data DynamoDB fetch failed:', error);
-      throw new Error(`Failed to fetch live data from DynamoDB: ${error.message}`);
+      // Avoid double-wrapping error messages
+      const errorMessage = error?.message || error?.toString() || 'Unknown error';
+      if (errorMessage.startsWith('Failed to fetch live data from DynamoDB') || 
+          errorMessage.startsWith('Failed to fetch')) {
+        throw error; // Re-throw original error if already wrapped
+      }
+      throw new Error(`Failed to fetch live data from DynamoDB: ${errorMessage}`);
     }
   }
 
-  exportToCSV(data: SensorData[], includeComfort: boolean = true): void {
+  exportToCSV(data: SensorData[], includeComfort: boolean = true, venueName?: string): void {
     const headers = includeComfort 
       ? ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Comfort Score', 'Comfort Status', 'Song', 'Artist']
       : ['Timestamp', 'Decibels', 'Light', 'Indoor Temp', 'Outdoor Temp', 'Humidity', 'Song', 'Artist'];
@@ -100,12 +112,14 @@ class ApiService {
       ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
     ].join('\n');
 
-    this.downloadFile(csvContent, `fergs-sports-bar-data-${new Date().toISOString()}.csv`, 'text/csv');
+    const venuePrefix = venueName ? venueName.toLowerCase().replace(/\s+/g, '-') : 'sensor';
+    this.downloadFile(csvContent, `${venuePrefix}-data-${new Date().toISOString()}.csv`, 'text/csv');
   }
 
-  exportToJSON(data: SensorData[]): void {
+  exportToJSON(data: SensorData[], venueName?: string): void {
     const jsonContent = JSON.stringify(data, null, 2);
-    this.downloadFile(jsonContent, `fergs-sports-bar-data-${new Date().toISOString()}.json`, 'application/json');
+    const venuePrefix = venueName ? venueName.toLowerCase().replace(/\s+/g, '-') : 'sensor';
+    this.downloadFile(jsonContent, `${venuePrefix}-data-${new Date().toISOString()}.json`, 'application/json');
   }
 
   private downloadFile(content: string, filename: string, mimeType: string): void {
@@ -156,7 +170,13 @@ class ApiService {
       return metrics;
     } catch (error: any) {
       console.error('❌ Occupancy metrics DynamoDB fetch failed:', error);
-      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${error.message}`);
+      // Avoid double-wrapping error messages
+      const errorMessage = error?.message || error?.toString() || 'Unknown error';
+      if (errorMessage.startsWith('Failed to fetch occupancy metrics from DynamoDB') || 
+          errorMessage.startsWith('Failed to fetch')) {
+        throw error; // Re-throw original error if already wrapped
+      }
+      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
     }
   }
 }
