@@ -97,7 +97,8 @@ class LocationService {
       const client = generateClient();
       const response = await client.graphql({
         query: listVenueLocations,
-        variables: { venueId }
+        variables: { venueId },
+        authMode: 'userPool'
       }) as any;
 
       // Check for GraphQL errors in response
