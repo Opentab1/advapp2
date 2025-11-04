@@ -2,8 +2,28 @@ import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '..
 import authService from './auth.service';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.advizia.ai';
+const USE_MOCK_DATA_FORCE = import.meta.env.VITE_USE_MOCK_DATA === 'true';
+const IS_DEVELOPMENT = import.meta.env.MODE === 'development';
 
 class ApiService {
+  private shouldUseMockData(): boolean {
+    // Use mock data if:
+    // 1. Explicitly forced via VITE_USE_MOCK_DATA='true' (for testing), OR
+    // 2. In development mode AND user is not authenticated (demo mode)
+    const isAuthenticated = authService.isAuthenticated();
+    
+    if (USE_MOCK_DATA_FORCE) {
+      return true; // Force mock data for testing
+    }
+    
+    if (IS_DEVELOPMENT && !isAuthenticated) {
+      return true; // Development demo mode
+    }
+    
+    // Production mode or authenticated user: never use mock data
+    return false;
+  }
+
   private getHeaders(): HeadersInit {
     const token = authService.getStoredToken();
     const user = authService.getStoredUser();
@@ -51,8 +71,14 @@ class ApiService {
     } catch (error: any) {
       console.error('API fetch error:', error);
       
-      // Return mock data for demo purposes
-      return this.getMockData(venueId, range);
+      // Only return mock data if explicitly allowed (development mode without auth)
+      if (this.shouldUseMockData()) {
+        console.warn('⚠️ Using mock data (development mode, not authenticated)');
+        return this.getMockData(venueId, range);
+      }
+      
+      // In production with authenticated user, throw the error
+      throw error;
     }
   }
 
@@ -91,8 +117,15 @@ class ApiService {
       return this.transformApiData([data])[0];
     } catch (error) {
       console.error('Live data fetch error:', error);
-      // Return mock live data
-      return this.getMockLiveData();
+      
+      // Only return mock data if explicitly allowed (development mode without auth)
+      if (this.shouldUseMockData()) {
+        console.warn('⚠️ Using mock data (development mode, not authenticated)');
+        return this.getMockLiveData();
+      }
+      
+      // In production with authenticated user, throw the error
+      throw error;
     }
   }
 
@@ -256,8 +289,15 @@ class ApiService {
       return await response.json();
     } catch (error) {
       console.error('Occupancy metrics fetch error:', error);
-      // Return mock occupancy metrics
-      return this.getMockOccupancyMetrics();
+      
+      // Only return mock data if explicitly allowed (development mode without auth)
+      if (this.shouldUseMockData()) {
+        console.warn('⚠️ Using mock data (development mode, not authenticated)');
+        return this.getMockOccupancyMetrics();
+      }
+      
+      // In production with authenticated user, throw the error
+      throw error;
     }
   }
 
