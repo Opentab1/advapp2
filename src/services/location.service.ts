@@ -25,6 +25,22 @@ class LocationService {
   private locationsCacheTimeKey = 'pulse_locations_cache_time';
   private cacheExpiryMs = 5 * 60 * 1000; // 5 minutes
 
+  constructor() {
+    // Clear expired cache on initialization
+    this.cleanupExpiredCache();
+  }
+
+  private cleanupExpiredCache(): void {
+    const cachedTime = localStorage.getItem(this.locationsCacheTimeKey);
+    if (cachedTime) {
+      const age = Date.now() - parseInt(cachedTime);
+      if (age >= this.cacheExpiryMs) {
+        console.log('🧹 Clearing expired location cache...');
+        this.clearCache();
+      }
+    }
+  }
+
   async fetchLocationsFromDynamoDB(): Promise<Location[]> {
     try {
       console.log('🔍 Fetching locations from DynamoDB VenueConfig...');
