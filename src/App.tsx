@@ -11,6 +11,7 @@ configureAmplify();
 
 function App() {
   // MQTT-ONLY MODE: No authentication required for direct IoT access
+  const topic = "pulse/sensors/data";
   const [isAuthenticated] = useState(true); // Always authenticated for direct IoT mode
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
