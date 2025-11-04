@@ -27,33 +27,26 @@ class ApiService {
   }
 
   async getHistoricalData(venueId: string, range: TimeRange): Promise<HistoricalData> {
-    try {
-      const days = this.getRangeDays(range);
-      const url = `${API_BASE_URL}/history/${venueId}?days=${days}`;
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
+    const days = this.getRangeDays(range);
+    const url = `${API_BASE_URL}/history/${venueId}?days=${days}`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: this.getHeaders()
+    });
 
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      
-      // Transform API response to our data structure
-      return {
-        data: this.transformApiData(data),
-        venueId,
-        range
-      };
-    } catch (error: any) {
-      console.error('API fetch error:', error);
-      
-      // Return mock data for demo purposes
-      return this.getMockData(venueId, range);
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status} ${response.statusText}`);
     }
+
+    const data = await response.json();
+    
+    // Transform API response to our data structure
+    return {
+      data: this.transformApiData(data),
+      venueId,
+      range
+    };
   }
 
   private transformApiData(apiData: any): SensorData[] {
@@ -75,25 +68,19 @@ class ApiService {
   }
 
   async getLiveData(venueId: string): Promise<SensorData> {
-    try {
-      const url = `${API_BASE_URL}/live/${venueId}`;
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
+    const url = `${API_BASE_URL}/live/${venueId}`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: this.getHeaders()
+    });
 
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return this.transformApiData([data])[0];
-    } catch (error) {
-      console.error('Live data fetch error:', error);
-      // Return mock live data
-      return this.getMockLiveData();
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
     }
+
+    const data = await response.json();
+    return this.transformApiData([data])[0];
   }
 
   // Mock data for demo/development
@@ -241,24 +228,18 @@ class ApiService {
   }
 
   async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
-    try {
-      const url = `${API_BASE_URL}/occupancy/${venueId}/metrics`;
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
+    const url = `${API_BASE_URL}/occupancy/${venueId}/metrics`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: this.getHeaders()
+    });
 
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Occupancy metrics fetch error:', error);
-      // Return mock occupancy metrics
-      return this.getMockOccupancyMetrics();
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
     }
+
+    return await response.json();
   }
 
   private getMockOccupancyMetrics(): OccupancyMetrics {

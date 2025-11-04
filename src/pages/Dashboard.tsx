@@ -50,13 +50,13 @@ export function Dashboard() {
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   
-  // Use Ferg's Sports Bar venue ID
-  const venueId = user?.venueId || VENUE_CONFIG.venueId;
+  // Get venueId from logged-in user - no fallback
+  const venueId = user?.venueId || '';
   
   // Multi-location support (locations within the venue)
   const locations = user?.locations || locationService.getLocations();
   const [currentLocationId, setCurrentLocationId] = useState<string>(
-    locationService.getCurrentLocationId() || VENUE_CONFIG.locationId
+    locationService.getCurrentLocationId() || 'main-floor'
   );
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
@@ -187,7 +187,7 @@ export function Dashboard() {
 
       {/* Top Bar */}
       <TopBar
-        venueName={VENUE_CONFIG.venueName}
+        venueName={user?.venueName || 'Pulse Dashboard'}
         onLogout={handleLogout}
         soundAlerts={soundAlerts}
         onToggleSoundAlerts={() => setSoundAlerts(!soundAlerts)}
@@ -219,7 +219,7 @@ export function Dashboard() {
                       <ConnectionStatus 
                         isConnected={!!liveData}
                         usingIoT={usingIoT}
-                        locationName={VENUE_CONFIG.locationName}
+                        locationName={currentLocation.name || 'Main Floor'}
                       />
                     )}
                   </div>

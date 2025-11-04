@@ -2,21 +2,25 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Save, Key, MapPin, DollarSign, Check } from 'lucide-react';
 import type { AppSettings } from '../types';
-import { VENUE_CONFIG } from '../config/amplify';
+import authService from '../services/auth.service';
 
-const DEFAULT_SETTINGS: AppSettings = {
-  theme: 'dark',
-  soundAlerts: true,
-  refreshInterval: 5,
-  notifications: true,
-  venueId: VENUE_CONFIG.venueId,
-  locationId: VENUE_CONFIG.locationId,
-  toastPOSEnabled: false,
-  toastAPIKey: ''
+const getDefaultSettings = (): AppSettings => {
+  const user = authService.getStoredUser();
+  return {
+    theme: 'dark',
+    soundAlerts: true,
+    refreshInterval: 5,
+    notifications: true,
+    venueId: user?.venueId || '',
+    locationId: 'main-floor',
+    toastPOSEnabled: false,
+    toastAPIKey: ''
+  };
 };
 
 export function Settings() {
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const user = authService.getStoredUser();
+  const [settings, setSettings] = useState<AppSettings>(getDefaultSettings());
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -25,9 +29,12 @@ export function Settings() {
 
   const loadSettings = () => {
     try {
+      const defaultSettings = getDefaultSettings();
       const stored = localStorage.getItem('appSettings');
       if (stored) {
-        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) });
+        setSettings({ ...defaultSettings, ...JSON.parse(stored) });
+      } else {
+        setSettings(defaultSettings);
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -77,7 +84,7 @@ export function Settings() {
                   className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  Configured: {VENUE_CONFIG.venueName}
+                  Configured: {user?.venueName || 'Not logged in'}
                 </p>
               </div>
 
@@ -92,7 +99,7 @@ export function Settings() {
                   className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  Configured: {VENUE_CONFIG.locationName}
+                  Location ID from settings
                 </p>
               </div>
             </div>

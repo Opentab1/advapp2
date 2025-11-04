@@ -72,8 +72,17 @@ class AuthService {
   async logout(): Promise<void> {
     try {
       await signOut();
+      // Clear all localStorage items to ensure clean logout
       localStorage.removeItem(this.tokenKey);
       localStorage.removeItem(this.userKey);
+      localStorage.removeItem('appSettings');
+      localStorage.removeItem('lastSongLogged');
+      localStorage.removeItem('pulse_location_current');
+      localStorage.removeItem('pulse_locations');
+      localStorage.removeItem('songLog');
+      localStorage.removeItem('weeklyReports');
+      // Clear any other Amplify/Cognito tokens that might be stored
+      localStorage.clear();
     } catch (error) {
       console.error('Logout error:', error);
       throw new Error('Failed to logout');

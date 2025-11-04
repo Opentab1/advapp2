@@ -57,18 +57,26 @@ class IoTService {
 
     try {
       // Fetch venue configuration from Cognito and AppSync
-      let venueId = "fergs-stpete";
-      let locationId = "main-floor";
-      let TOPIC = "pulse/fergs-stpete/main-floor";
+      let venueId: string;
+      let locationId: string = "main-floor";
+      let TOPIC: string;
 
       try {
         await getCurrentUser();
         const session = await fetchAuthSession();
         const payload = session.tokens?.idToken?.payload;
-        venueId = (payload?.['custom:venueId'] as string) || venueId;
+        venueId = payload?.['custom:venueId'] as string;
         locationId = (payload?.['custom:locationId'] as string) || locationId;
+        
+        if (!venueId) {
+          throw new Error('No custom:venueId found in user token. User must be logged in with a valid venueId.');
+        }
+        
+        console.log('User venueId:', venueId, 'locationId:', locationId);
       } catch (err) {
-        console.warn("Not logged in, using default venue");
+        console.error("Authentication error:", err);
+        this.isConnecting = false;
+        throw new Error('Must be logged in with a valid venueId to connect to MQTT');
       }
 
       try {
@@ -81,10 +89,14 @@ class IoTService {
         const config = response?.data?.getVenueConfig;
         if (config?.mqttTopic) {
           TOPIC = config.mqttTopic;
-          console.log("Loaded config for", venueId, "→ topic:", TOPIC);
+          console.log("✅ Loaded config for", venueId, "→ topic:", TOPIC);
+        } else {
+          throw new Error(`No MQTT topic found in VenueConfig for venueId: ${venueId}`);
         }
       } catch (err) {
-        console.warn("Config not found, using fallback topic", err);
+        console.error("Failed to load venue config from DynamoDB:", err);
+        this.isConnecting = false;
+        throw new Error(`Failed to load venue configuration for ${venueId}. Ensure VenueConfig exists in DynamoDB.`);
       }
 
       console.log('🔌 Connecting to AWS IoT Core via MQTT...');
