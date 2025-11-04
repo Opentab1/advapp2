@@ -37,7 +37,7 @@ import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
-import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics } from '../types';
+import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location } from '../types';
 
 export function Dashboard() {
   const user = authService.getStoredUser();
@@ -69,10 +69,48 @@ export function Dashboard() {
   const venueName = user.venueName || 'Pulse Dashboard';
   
   // Multi-location support (locations within the venue)
-  const locations = user.locations || locationService.getLocations();
+  const initialLocations = user.locations || locationService.getLocations();
+  const [locations, setLocations] = useState<Location[]>(initialLocations);
+  const [locationsError, setLocationsError] = useState<string | null>(null);
+  const [locationsLoading, setLocationsLoading] = useState(false);
+  
+  // Fetch locations if not already loaded
+  useEffect(() => {
+    const loadLocations = async () => {
+      if (locations.length === 0 && !locationsLoading) {
+        setLocationsLoading(true);
+        try {
+          const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
+          setLocations(fetchedLocations);
+          setLocationsError(null);
+          // Set initial location if none selected
+          if (!locationService.getCurrentLocationId() && fetchedLocations.length > 0) {
+            locationService.setCurrentLocationId(fetchedLocations[0].id);
+          }
+        } catch (error: any) {
+          console.error('Failed to load locations:', error);
+          setLocationsError(error.message || 'Failed to load locations');
+        } finally {
+          setLocationsLoading(false);
+        }
+      }
+    };
+    
+    loadLocations();
+  }, [venueId]);
+  
   const [currentLocationId, setCurrentLocationId] = useState<string>(
-    locationService.getCurrentLocationId() || (locations.length > 0 ? locations[0].id : 'default')
+    locationService.getCurrentLocationId() || (locations.length > 0 ? locations[0].id : '')
   );
+  
+  // Update currentLocationId when locations are loaded
+  useEffect(() => {
+    if (locations.length > 0 && !currentLocationId) {
+      const newLocationId = locations[0].id;
+      setCurrentLocationId(newLocationId);
+      locationService.setCurrentLocationId(newLocationId);
+    }
+  }, [locations]);
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
 
@@ -212,6 +250,29 @@ export function Dashboard() {
         currentLocationId={currentLocationId}
         onLocationChange={handleLocationChange}
       />
+
+      {/* Locations Error Banner */}
+      {locationsError && locations.length === 0 && (
+        <motion.div
+          className="mx-4 mt-4 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-sm font-semibold text-yellow-400">⚠️ Location Configuration Error</span>
+              </div>
+              <p className="text-xs text-yellow-300/80 mb-2">
+                {locationsError}
+              </p>
+              <p className="text-xs text-yellow-300/60">
+                Locations must be configured in DynamoDB VenueConfig table for venue: <code className="px-1 py-0.5 bg-black/20 rounded">{venueId}</code>
+              </p>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       <div className="flex flex-1 relative z-10">
         {/* Sidebar */}
