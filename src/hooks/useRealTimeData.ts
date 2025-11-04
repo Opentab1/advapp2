@@ -34,33 +34,38 @@ export function useRealTimeData({ venueId, interval = 15000, enabled = true }: U
     let intervalId: NodeJS.Timeout | undefined;
 
     // Try to connect to AWS IoT for real-time streaming
-    iotService.connect(venueId).then(() => {
-      if (iotService.isConnected()) {
-        console.log('✅ Using AWS IoT for real-time data');
-        setUsingIoT(true);
-        setLoading(false);
-        
-        // Subscribe to IoT messages - this replaces polling
-        unsubscribe = iotService.onMessage((sensorData) => {
-          setData(sensorData);
-          setError(null);
-        });
-      } else {
+    iotService
+      .connect(venueId)
+      .then(() => {
+        if (iotService.isConnected()) {
+          console.log('✅ Using AWS IoT for real-time data');
+          setUsingIoT(true);
+          setLoading(false);
+
+          // Subscribe to IoT messages - this replaces polling
+          unsubscribe = iotService.onMessage((sensorData) => {
+            setData(sensorData);
+            setError(null);
+          });
+        } else {
+          // IoT connection failed, fall back to polling
+          console.log('⚠️ AWS IoT unavailable, using DynamoDB polling fallback');
+          setUsingIoT(false);
+          fetchData();
+          intervalId = setInterval(() => {
+            fetchData();
+          }, interval);
+        }
+      })
+      .catch((err) => {
+        console.log('⚠️ AWS IoT unavailable, using DynamoDB polling fallback:', err);
+        setUsingIoT(false);
         // IoT connection failed, fall back to polling
-        console.log('⚠️ AWS IoT unavailable, using polling fallback');
         fetchData();
         intervalId = setInterval(() => {
           fetchData();
         }, interval);
-      }
-    }).catch((err) => {
-      console.log('⚠️ AWS IoT unavailable, using polling fallback:', err);
-      // IoT connection failed, fall back to polling
-      fetchData();
-      intervalId = setInterval(() => {
-        fetchData();
-      }, interval);
-    });
+      });
 
     return () => {
       if (intervalId) {

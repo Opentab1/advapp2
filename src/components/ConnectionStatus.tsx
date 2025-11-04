@@ -27,7 +27,7 @@ export function ConnectionStatus({ isConnected, usingIoT, locationName }: Connec
         <>
           <Wifi className="w-4 h-4 text-yellow-400" />
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-yellow-400">Polling Mode</span>
+            <span className="text-sm font-medium text-yellow-400">DynamoDB Polling</span>
             <span className="text-xs text-gray-400">•</span>
             <span className="text-xs text-gray-400">{locationName}</span>
           </div>
