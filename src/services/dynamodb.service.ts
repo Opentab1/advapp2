@@ -71,16 +71,59 @@ class DynamoDBService {
   private client = generateClient();
 
   /**
+   * Check if GraphQL endpoint is configured
+   */
+  private checkGraphQLEndpoint(): void {
+    const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+    if (!endpoint || endpoint.trim() === '' || endpoint.includes('your-appsync-api')) {
+      throw new Error(
+        'GraphQL endpoint not configured. Please set VITE_GRAPHQL_ENDPOINT in your .env file. ' +
+        'See DYNAMODB_SETUP.md for instructions on how to set up your AppSync API endpoint.'
+      );
+    }
+  }
+
+  /**
+   * Extract error message from various error types
+   */
+  private extractErrorMessage(error: any): string {
+    if (error?.message) {
+      return error.message;
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    if (error?.error?.message) {
+      return error.error.message;
+    }
+    if (error?.errors && Array.isArray(error.errors) && error.errors.length > 0) {
+      return error.errors.map((e: any) => e.message || e).join(', ');
+    }
+    // Check for GraphQL errors
+    if (error?.data?.errors) {
+      return error.data.errors.map((e: any) => e.message || e).join(', ');
+    }
+    // Check for network errors
+    if (error?.name === 'NetworkError' || error?.code === 'NETWORK_ERROR') {
+      return 'Network error: Unable to connect to GraphQL endpoint. Check your VITE_GRAPHQL_ENDPOINT configuration.';
+    }
+    return error?.toString() || 'Unknown error occurred';
+  }
+
+  /**
    * Get the most recent sensor data for a venue
    */
   async getLiveSensorData(venueId: string): Promise<SensorData> {
     console.log('🔍 Fetching live sensor data from DynamoDB for venue:', venueId);
     
     try {
+      // Check if GraphQL endpoint is configured
+      this.checkGraphQLEndpoint();
+
       // Verify authentication
       const session = await fetchAuthSession();
       if (!session.tokens) {
-        throw new Error('Not authenticated');
+        throw new Error('Not authenticated. Please log in again.');
       }
 
       // Query DynamoDB for the most recent data
@@ -98,6 +141,12 @@ class DynamoDBService {
         }
       }) as any;
 
+      // Check for GraphQL errors in response
+      if (response?.errors && response.errors.length > 0) {
+        const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
+        throw new Error(`GraphQL error: ${errorMessages}`);
+      }
+
       const items = response?.data?.listSensorData?.items || [];
       
       if (items.length === 0) {
@@ -110,7 +159,8 @@ class DynamoDBService {
       return this.transformDynamoDBData(latestData);
     } catch (error: any) {
       console.error('❌ Failed to fetch live sensor data from DynamoDB:', error);
-      throw new Error(`Failed to fetch live data from DynamoDB: ${error.message}`);
+      const errorMessage = this.extractErrorMessage(error);
+      throw new Error(`Failed to fetch live data from DynamoDB: ${errorMessage}`);
     }
   }
 
@@ -121,10 +171,13 @@ class DynamoDBService {
     console.log('🔍 Fetching historical sensor data from DynamoDB for venue:', venueId, 'range:', range);
     
     try {
+      // Check if GraphQL endpoint is configured
+      this.checkGraphQLEndpoint();
+
       // Verify authentication
       const session = await fetchAuthSession();
       if (!session.tokens) {
-        throw new Error('Not authenticated');
+        throw new Error('Not authenticated. Please log in again.');
       }
 
       const { startTime, endTime } = this.getTimeRangeValues(range);
@@ -138,6 +191,12 @@ class DynamoDBService {
           limit: 1000 // Adjust based on your needs
         }
       }) as any;
+
+      // Check for GraphQL errors in response
+      if (response?.errors && response.errors.length > 0) {
+        const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
+        throw new Error(`GraphQL error: ${errorMessages}`);
+      }
 
       const items = response?.data?.listSensorData?.items || [];
       
@@ -156,7 +215,8 @@ class DynamoDBService {
       };
     } catch (error: any) {
       console.error('❌ Failed to fetch historical sensor data from DynamoDB:', error);
-      throw new Error(`Failed to fetch historical data from DynamoDB: ${error.message}`);
+      const errorMessage = this.extractErrorMessage(error);
+      throw new Error(`Failed to fetch historical data from DynamoDB: ${errorMessage}`);
     }
   }
 
@@ -167,16 +227,25 @@ class DynamoDBService {
     console.log('🔍 Fetching occupancy metrics from DynamoDB for venue:', venueId);
     
     try {
+      // Check if GraphQL endpoint is configured
+      this.checkGraphQLEndpoint();
+
       // Verify authentication
       const session = await fetchAuthSession();
       if (!session.tokens) {
-        throw new Error('Not authenticated');
+        throw new Error('Not authenticated. Please log in again.');
       }
 
       const response = await this.client.graphql({
         query: getOccupancyMetricsQuery,
         variables: { venueId }
       }) as any;
+
+      // Check for GraphQL errors in response
+      if (response?.errors && response.errors.length > 0) {
+        const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
+        throw new Error(`GraphQL error: ${errorMessages}`);
+      }
 
       const metrics = response?.data?.getOccupancyMetrics;
       
@@ -189,7 +258,8 @@ class DynamoDBService {
       return metrics;
     } catch (error: any) {
       console.error('❌ Failed to fetch occupancy metrics from DynamoDB:', error);
-      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${error.message}`);
+      const errorMessage = this.extractErrorMessage(error);
+      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
     }
   }
 
