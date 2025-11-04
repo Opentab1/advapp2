@@ -69,17 +69,18 @@ export function Dashboard() {
   const venueName = user.venueName || user.email?.split('@')[0] || 'Your Venue';
   
   // Multi-location support (locations within the venue)
-  const initialLocations = user.locations || locationService.getLocations();
-  const [locations, setLocations] = useState<Location[]>(initialLocations);
+  // Start with empty array - always fetch fresh from DynamoDB to avoid showing fake cached data
+  const [locations, setLocations] = useState<Location[]>([]);
   const [locationsError, setLocationsError] = useState<string | null>(null);
   const [locationsLoading, setLocationsLoading] = useState(false);
   
-  // Fetch locations if not already loaded
+  // Always fetch fresh locations from DynamoDB on mount - don't use cached data initially
   useEffect(() => {
     const loadLocations = async () => {
-      if (locations.length === 0 && !locationsLoading) {
+      if (!locationsLoading) {
         setLocationsLoading(true);
         try {
+          // Always fetch fresh from DynamoDB - ignore cache
           const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
           setLocations(fetchedLocations);
           setLocationsError(null);
@@ -90,6 +91,24 @@ export function Dashboard() {
         } catch (error: any) {
           console.error('Failed to load locations:', error);
           setLocationsError(error.message || 'Failed to load locations');
+          
+          // Only use cached locations as last resort if fetch fails
+          const cachedLocations = locationService.getLocations();
+          // Check if cached locations look like fake data
+          const fakeLocationNames = ['Downtown Lounge', 'Uptown Bar', 'Waterfront Club'];
+          const hasFakeData = cachedLocations.some(loc => 
+            fakeLocationNames.includes(loc.name)
+          );
+          
+          if (hasFakeData) {
+            console.warn('⚠️ Detected fake location data in cache, clearing...');
+            locationService.clearCache();
+            setLocations([]);
+          } else if (cachedLocations.length > 0) {
+            // Use cached locations only if they don't appear to be fake
+            console.log('Using cached locations as fallback');
+            setLocations(cachedLocations);
+          }
         } finally {
           setLocationsLoading(false);
         }

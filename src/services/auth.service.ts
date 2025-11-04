@@ -126,17 +126,31 @@ class AuthService {
         throw new Error('User does not have custom:venueId attribute. Please contact administrator.');
       }
       
-      // Fetch user's locations from DynamoDB
+      // Fetch user's locations from DynamoDB - always fetch fresh
       let locations;
       try {
         locations = await locationService.fetchLocationsFromDynamoDB();
       } catch (error) {
         console.error('Failed to fetch locations:', error);
-        // Try to get from cache
-        locations = locationService.getLocations();
-        if (locations.length === 0) {
+        // Try to get from cache as last resort, but check for fake data
+        const cachedLocations = locationService.getLocations();
+        // Check if cached locations look like fake data
+        const fakeLocationNames = ['Downtown Lounge', 'Uptown Bar', 'Waterfront Club'];
+        const hasFakeData = cachedLocations.some(loc => 
+          fakeLocationNames.includes(loc.name)
+        );
+        
+        if (hasFakeData) {
+          console.warn('⚠️ Detected fake location data, clearing cache...');
+          locationService.clearCache();
           throw new Error('No locations configured for this venue. Please contact administrator.');
         }
+        
+        if (cachedLocations.length === 0) {
+          throw new Error('No locations configured for this venue. Please contact administrator.');
+        }
+        
+        locations = cachedLocations;
       }
       
       // Set initial location if none selected
