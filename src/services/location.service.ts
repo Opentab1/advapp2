@@ -82,27 +82,72 @@ class LocationService {
       
       // Check if GraphQL endpoint is configured
       this.checkGraphQLEndpoint();
+      const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+      console.log('📡 GraphQL Endpoint:', endpoint ? endpoint.substring(0, 50) + '...' : 'NOT SET');
       
       // Get venueId from Cognito
       await getCurrentUser();
       const session = await fetchAuthSession();
+      
+      // Enhanced diagnostic logging
+      console.log('🔐 Authentication Session:', {
+        hasTokens: !!session.tokens,
+        hasIdToken: !!session.tokens?.idToken,
+        hasAccessToken: !!session.tokens?.accessToken,
+        tokenExpiry: session.tokens?.idToken?.payload?.exp ? new Date(session.tokens.idToken.payload.exp * 1000).toISOString() : 'N/A',
+        tokenIssuedAt: session.tokens?.idToken?.payload?.iat ? new Date(session.tokens.idToken.payload.iat * 1000).toISOString() : 'N/A',
+        tokenIssuer: session.tokens?.idToken?.payload?.iss || 'N/A',
+        userId: session.tokens?.idToken?.payload?.sub || 'N/A'
+      });
+      
       const payload = session.tokens?.idToken?.payload;
       const venueId = payload?.['custom:venueId'] as string;
 
       if (!venueId) {
+        console.error('❌ Missing venueId in token payload. Available attributes:', Object.keys(payload || {}));
         throw new Error('No venueId found in user attributes. Please ensure your Cognito user has custom:venueId attribute.');
       }
 
+      console.log('🏢 Using venueId:', venueId);
+
       // Query DynamoDB for all locations for this venue
       const client = generateClient();
+      
+      console.log('📤 Sending GraphQL request:', {
+        query: 'listVenueLocations',
+        variables: { venueId },
+        authMode: 'userPool'
+      });
+      
       const response = await client.graphql({
         query: listVenueLocations,
         variables: { venueId },
         authMode: 'userPool'
       }) as any;
 
+      // Enhanced error logging
+      console.log('📥 GraphQL Response:', {
+        hasData: !!response?.data,
+        hasErrors: !!response?.errors,
+        errorsCount: response?.errors?.length || 0,
+        dataKeys: response?.data ? Object.keys(response.data) : [],
+        responseKeys: Object.keys(response || {})
+      });
+
       // Check for GraphQL errors in response
       if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL Errors:', response.errors);
+        response.errors.forEach((err: any, idx: number) => {
+          console.error(`  Error ${idx + 1}:`, {
+            message: err.message,
+            errorType: err.errorType,
+            errorInfo: err.errorInfo,
+            path: err.path,
+            locations: err.locations,
+            extensions: err.extensions,
+            fullError: JSON.stringify(err, null, 2)
+          });
+        });
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
@@ -111,6 +156,7 @@ class LocationService {
       
       if (items.length === 0) {
         console.warn('⚠️ No locations found in VenueConfig for venueId:', venueId);
+        console.warn('   Response data structure:', response?.data);
         throw new Error(`No locations configured for venue: ${venueId}. Please add locations to the VenueConfig table in DynamoDB.`);
       }
 
@@ -132,6 +178,31 @@ class LocationService {
       return locations;
     } catch (error: any) {
       console.error('❌ Failed to fetch locations from DynamoDB:', error);
+      console.error('   Error type:', error?.constructor?.name);
+      console.error('   Error name:', error?.name);
+      console.error('   Error code:', error?.code);
+      console.error('   Error message:', error?.message);
+      console.error('   Error stack:', error?.stack);
+      console.error('   Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+      
+      // Check for network errors
+      if (error?.name === 'NetworkError' || error?.code === 'NETWORK_ERROR' || error?.message?.includes('fetch')) {
+        console.error('🌐 Network Error Detected - Check:');
+        console.error('   1. VITE_GRAPHQL_ENDPOINT is correct');
+        console.error('   2. CORS is configured on AppSync API');
+        console.error('   3. Network connectivity');
+        console.error('   4. AppSync API is accessible');
+      }
+      
+      // Check for authentication errors
+      if (error?.message?.includes('Unauthorized') || error?.message?.includes('401') || error?.message?.includes('403')) {
+        console.error('🔒 Authentication Error Detected - Check:');
+        console.error('   1. JWT token is valid and not expired');
+        console.error('   2. AppSync API uses Cognito User Pool authentication');
+        console.error('   3. User has custom:venueId attribute in Cognito');
+        console.error('   4. AppSync resolver authorization is configured correctly');
+      }
+      
       const errorMessage = this.extractErrorMessage(error);
       throw new Error(`Failed to load locations: ${errorMessage}`);
     }

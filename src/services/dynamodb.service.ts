@@ -129,9 +129,23 @@ class DynamoDBService {
     try {
       // Check if GraphQL endpoint is configured
       this.checkGraphQLEndpoint();
+      const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+      console.log('📡 GraphQL Endpoint:', endpoint ? endpoint.substring(0, 50) + '...' : 'NOT SET');
 
       // Verify authentication
       const session = await fetchAuthSession();
+      
+      // Enhanced diagnostic logging
+      console.log('🔐 Authentication Session:', {
+        hasTokens: !!session.tokens,
+        hasIdToken: !!session.tokens?.idToken,
+        hasAccessToken: !!session.tokens?.accessToken,
+        tokenExpiry: session.tokens?.idToken?.payload?.exp ? new Date(session.tokens.idToken.payload.exp * 1000).toISOString() : 'N/A',
+        tokenIssuedAt: session.tokens?.idToken?.payload?.iat ? new Date(session.tokens.idToken.payload.iat * 1000).toISOString() : 'N/A',
+        tokenIssuer: session.tokens?.idToken?.payload?.iss || 'N/A',
+        userId: session.tokens?.idToken?.payload?.sub || 'N/A'
+      });
+      
       if (!session.tokens) {
         throw new Error('Not authenticated. Please log in again.');
       }
@@ -142,6 +156,12 @@ class DynamoDBService {
       // Since we don't have the exact timestamp, we'll query for recent data
       const endTime = new Date().toISOString();
       const startTime = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // Last 5 minutes
+      
+      console.log('📤 Sending GraphQL request:', {
+        query: 'listSensorData',
+        variables: { venueId, startTime, endTime, limit: 1 },
+        authMode: 'userPool'
+      });
       
       const response = await client.graphql({
         query: listSensorData,
@@ -154,8 +174,29 @@ class DynamoDBService {
         authMode: 'userPool'
       }) as any;
 
+      // Enhanced error logging
+      console.log('📥 GraphQL Response:', {
+        hasData: !!response?.data,
+        hasErrors: !!response?.errors,
+        errorsCount: response?.errors?.length || 0,
+        dataKeys: response?.data ? Object.keys(response.data) : [],
+        responseKeys: Object.keys(response || {})
+      });
+
       // Check for GraphQL errors in response
       if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL Errors:', response.errors);
+        response.errors.forEach((err: any, idx: number) => {
+          console.error(`  Error ${idx + 1}:`, {
+            message: err.message,
+            errorType: err.errorType,
+            errorInfo: err.errorInfo,
+            path: err.path,
+            locations: err.locations,
+            extensions: err.extensions,
+            fullError: JSON.stringify(err, null, 2)
+          });
+        });
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
@@ -163,6 +204,8 @@ class DynamoDBService {
       const items = response?.data?.listSensorData?.items || [];
       
       if (items.length === 0) {
+        console.warn('⚠️ No sensor data found for venue:', venueId);
+        console.warn('   Response data structure:', response?.data);
         throw new Error(`No sensor data found for venue: ${venueId}. Please ensure your IoT devices are publishing data to DynamoDB.`);
       }
 
@@ -172,6 +215,31 @@ class DynamoDBService {
       return this.transformDynamoDBData(latestData);
     } catch (error: any) {
       console.error('❌ Failed to fetch live sensor data from DynamoDB:', error);
+      console.error('   Error type:', error?.constructor?.name);
+      console.error('   Error name:', error?.name);
+      console.error('   Error code:', error?.code);
+      console.error('   Error message:', error?.message);
+      console.error('   Error stack:', error?.stack);
+      console.error('   Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+      
+      // Check for network errors
+      if (error?.name === 'NetworkError' || error?.code === 'NETWORK_ERROR' || error?.message?.includes('fetch')) {
+        console.error('🌐 Network Error Detected - Check:');
+        console.error('   1. VITE_GRAPHQL_ENDPOINT is correct');
+        console.error('   2. CORS is configured on AppSync API');
+        console.error('   3. Network connectivity');
+        console.error('   4. AppSync API is accessible');
+      }
+      
+      // Check for authentication errors
+      if (error?.message?.includes('Unauthorized') || error?.message?.includes('401') || error?.message?.includes('403')) {
+        console.error('🔒 Authentication Error Detected - Check:');
+        console.error('   1. JWT token is valid and not expired');
+        console.error('   2. AppSync API uses Cognito User Pool authentication');
+        console.error('   3. User has custom:venueId attribute in Cognito');
+        console.error('   4. AppSync resolver authorization is configured correctly');
+      }
+      
       const errorMessage = this.extractErrorMessage(error);
       // Avoid double-wrapping error messages
       if (this.isAlreadyWrapped(errorMessage, 'Failed to fetch live data')) {
@@ -190,15 +258,35 @@ class DynamoDBService {
     try {
       // Check if GraphQL endpoint is configured
       this.checkGraphQLEndpoint();
+      const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+      console.log('📡 GraphQL Endpoint:', endpoint ? endpoint.substring(0, 50) + '...' : 'NOT SET');
 
       // Verify authentication
       const session = await fetchAuthSession();
+      
+      // Enhanced diagnostic logging
+      console.log('🔐 Authentication Session:', {
+        hasTokens: !!session.tokens,
+        hasIdToken: !!session.tokens?.idToken,
+        hasAccessToken: !!session.tokens?.accessToken,
+        tokenExpiry: session.tokens?.idToken?.payload?.exp ? new Date(session.tokens.idToken.payload.exp * 1000).toISOString() : 'N/A',
+        tokenIssuedAt: session.tokens?.idToken?.payload?.iat ? new Date(session.tokens.idToken.payload.iat * 1000).toISOString() : 'N/A',
+        tokenIssuer: session.tokens?.idToken?.payload?.iss || 'N/A',
+        userId: session.tokens?.idToken?.payload?.sub || 'N/A'
+      });
+      
       if (!session.tokens) {
         throw new Error('Not authenticated. Please log in again.');
       }
 
       const { startTime, endTime } = this.getTimeRangeValues(range);
       const client = this.getClient();
+
+      console.log('📤 Sending GraphQL request:', {
+        query: 'listSensorData',
+        variables: { venueId, startTime, endTime, limit: 1000 },
+        authMode: 'userPool'
+      });
 
       const response = await client.graphql({
         query: listSensorData,
@@ -211,8 +299,29 @@ class DynamoDBService {
         authMode: 'userPool'
       }) as any;
 
+      // Enhanced error logging
+      console.log('📥 GraphQL Response:', {
+        hasData: !!response?.data,
+        hasErrors: !!response?.errors,
+        errorsCount: response?.errors?.length || 0,
+        dataKeys: response?.data ? Object.keys(response.data) : [],
+        responseKeys: Object.keys(response || {})
+      });
+
       // Check for GraphQL errors in response
       if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL Errors:', response.errors);
+        response.errors.forEach((err: any, idx: number) => {
+          console.error(`  Error ${idx + 1}:`, {
+            message: err.message,
+            errorType: err.errorType,
+            errorInfo: err.errorInfo,
+            path: err.path,
+            locations: err.locations,
+            extensions: err.extensions,
+            fullError: JSON.stringify(err, null, 2)
+          });
+        });
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
@@ -220,6 +329,8 @@ class DynamoDBService {
       const items = response?.data?.listSensorData?.items || [];
       
       if (items.length === 0) {
+        console.warn('⚠️ No historical data found for venue:', venueId);
+        console.warn('   Response data structure:', response?.data);
         throw new Error(`No historical data found for venue: ${venueId} in the specified time range.`);
       }
 
@@ -234,6 +345,31 @@ class DynamoDBService {
       };
     } catch (error: any) {
       console.error('❌ Failed to fetch historical sensor data from DynamoDB:', error);
+      console.error('   Error type:', error?.constructor?.name);
+      console.error('   Error name:', error?.name);
+      console.error('   Error code:', error?.code);
+      console.error('   Error message:', error?.message);
+      console.error('   Error stack:', error?.stack);
+      console.error('   Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+      
+      // Check for network errors
+      if (error?.name === 'NetworkError' || error?.code === 'NETWORK_ERROR' || error?.message?.includes('fetch')) {
+        console.error('🌐 Network Error Detected - Check:');
+        console.error('   1. VITE_GRAPHQL_ENDPOINT is correct');
+        console.error('   2. CORS is configured on AppSync API');
+        console.error('   3. Network connectivity');
+        console.error('   4. AppSync API is accessible');
+      }
+      
+      // Check for authentication errors
+      if (error?.message?.includes('Unauthorized') || error?.message?.includes('401') || error?.message?.includes('403')) {
+        console.error('🔒 Authentication Error Detected - Check:');
+        console.error('   1. JWT token is valid and not expired');
+        console.error('   2. AppSync API uses Cognito User Pool authentication');
+        console.error('   3. User has custom:venueId attribute in Cognito');
+        console.error('   4. AppSync resolver authorization is configured correctly');
+      }
+      
       const errorMessage = this.extractErrorMessage(error);
       // Avoid double-wrapping error messages
       if (this.isAlreadyWrapped(errorMessage, 'Failed to fetch historical data')) {
@@ -252,14 +388,34 @@ class DynamoDBService {
     try {
       // Check if GraphQL endpoint is configured
       this.checkGraphQLEndpoint();
+      const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+      console.log('📡 GraphQL Endpoint:', endpoint ? endpoint.substring(0, 50) + '...' : 'NOT SET');
 
       // Verify authentication
       const session = await fetchAuthSession();
+      
+      // Enhanced diagnostic logging
+      console.log('🔐 Authentication Session:', {
+        hasTokens: !!session.tokens,
+        hasIdToken: !!session.tokens?.idToken,
+        hasAccessToken: !!session.tokens?.accessToken,
+        tokenExpiry: session.tokens?.idToken?.payload?.exp ? new Date(session.tokens.idToken.payload.exp * 1000).toISOString() : 'N/A',
+        tokenIssuedAt: session.tokens?.idToken?.payload?.iat ? new Date(session.tokens.idToken.payload.iat * 1000).toISOString() : 'N/A',
+        tokenIssuer: session.tokens?.idToken?.payload?.iss || 'N/A',
+        userId: session.tokens?.idToken?.payload?.sub || 'N/A'
+      });
+      
       if (!session.tokens) {
         throw new Error('Not authenticated. Please log in again.');
       }
 
       const client = this.getClient();
+
+      console.log('📤 Sending GraphQL request:', {
+        query: 'getOccupancyMetrics',
+        variables: { venueId },
+        authMode: 'userPool'
+      });
 
       const response = await client.graphql({
         query: getOccupancyMetricsQuery,
@@ -267,8 +423,29 @@ class DynamoDBService {
         authMode: 'userPool'
       }) as any;
 
+      // Enhanced error logging
+      console.log('📥 GraphQL Response:', {
+        hasData: !!response?.data,
+        hasErrors: !!response?.errors,
+        errorsCount: response?.errors?.length || 0,
+        dataKeys: response?.data ? Object.keys(response.data) : [],
+        responseKeys: Object.keys(response || {})
+      });
+
       // Check for GraphQL errors in response
       if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL Errors:', response.errors);
+        response.errors.forEach((err: any, idx: number) => {
+          console.error(`  Error ${idx + 1}:`, {
+            message: err.message,
+            errorType: err.errorType,
+            errorInfo: err.errorInfo,
+            path: err.path,
+            locations: err.locations,
+            extensions: err.extensions,
+            fullError: JSON.stringify(err, null, 2)
+          });
+        });
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
@@ -276,6 +453,8 @@ class DynamoDBService {
       const metrics = response?.data?.getOccupancyMetrics;
       
       if (!metrics) {
+        console.warn('⚠️ No occupancy metrics found for venue:', venueId);
+        console.warn('   Response data structure:', response?.data);
         throw new Error(`No occupancy metrics found for venue: ${venueId}`);
       }
 
@@ -284,6 +463,31 @@ class DynamoDBService {
       return metrics;
     } catch (error: any) {
       console.error('❌ Failed to fetch occupancy metrics from DynamoDB:', error);
+      console.error('   Error type:', error?.constructor?.name);
+      console.error('   Error name:', error?.name);
+      console.error('   Error code:', error?.code);
+      console.error('   Error message:', error?.message);
+      console.error('   Error stack:', error?.stack);
+      console.error('   Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+      
+      // Check for network errors
+      if (error?.name === 'NetworkError' || error?.code === 'NETWORK_ERROR' || error?.message?.includes('fetch')) {
+        console.error('🌐 Network Error Detected - Check:');
+        console.error('   1. VITE_GRAPHQL_ENDPOINT is correct');
+        console.error('   2. CORS is configured on AppSync API');
+        console.error('   3. Network connectivity');
+        console.error('   4. AppSync API is accessible');
+      }
+      
+      // Check for authentication errors
+      if (error?.message?.includes('Unauthorized') || error?.message?.includes('401') || error?.message?.includes('403')) {
+        console.error('🔒 Authentication Error Detected - Check:');
+        console.error('   1. JWT token is valid and not expired');
+        console.error('   2. AppSync API uses Cognito User Pool authentication');
+        console.error('   3. User has custom:venueId attribute in Cognito');
+        console.error('   4. AppSync resolver authorization is configured correctly');
+      }
+      
       const errorMessage = this.extractErrorMessage(error);
       // Avoid double-wrapping error messages
       if (this.isAlreadyWrapped(errorMessage, 'Failed to fetch occupancy metrics')) {
