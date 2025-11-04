@@ -2,15 +2,15 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Save, Key, MapPin, DollarSign, Check } from 'lucide-react';
 import type { AppSettings } from '../types';
-import { VENUE_CONFIG } from '../config/amplify';
+import authService from '../services/auth.service';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   soundAlerts: true,
   refreshInterval: 5,
   notifications: true,
-  venueId: VENUE_CONFIG.venueId,
-  locationId: VENUE_CONFIG.locationId,
+  venueId: '', // Will be populated from Cognito user
+  locationId: '', // Will be populated from Cognito user
   toastPOSEnabled: false,
   toastAPIKey: ''
 };
@@ -25,9 +25,30 @@ export function Settings() {
 
   const loadSettings = () => {
     try {
+      // Get venueId from authenticated user (from Cognito)
+      const user = authService.getStoredUser();
+      const baseSettings: AppSettings = {
+        ...DEFAULT_SETTINGS,
+        venueId: user?.venueId || '',
+        locationId: user?.locations?.[0]?.id || ''
+      };
+
+      // Load any additional stored settings (excluding venueId/locationId which come from Cognito)
       const stored = localStorage.getItem('appSettings');
       if (stored) {
-        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) });
+        const storedSettings = JSON.parse(stored);
+        // Don't override venueId/locationId from stored settings - they come from Cognito
+        setSettings({
+          ...baseSettings,
+          theme: storedSettings.theme || baseSettings.theme,
+          soundAlerts: storedSettings.soundAlerts !== undefined ? storedSettings.soundAlerts : baseSettings.soundAlerts,
+          refreshInterval: storedSettings.refreshInterval || baseSettings.refreshInterval,
+          notifications: storedSettings.notifications !== undefined ? storedSettings.notifications : baseSettings.notifications,
+          toastPOSEnabled: storedSettings.toastPOSEnabled !== undefined ? storedSettings.toastPOSEnabled : baseSettings.toastPOSEnabled,
+          toastAPIKey: storedSettings.toastAPIKey || baseSettings.toastAPIKey
+        });
+      } else {
+        setSettings(baseSettings);
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -36,7 +57,16 @@ export function Settings() {
 
   const saveSettings = () => {
     try {
-      localStorage.setItem('appSettings', JSON.stringify(settings));
+      // Only save non-venue settings (venueId/locationId come from Cognito, not localStorage)
+      const settingsToSave = {
+        theme: settings.theme,
+        soundAlerts: settings.soundAlerts,
+        refreshInterval: settings.refreshInterval,
+        notifications: settings.notifications,
+        toastPOSEnabled: settings.toastPOSEnabled,
+        toastAPIKey: settings.toastAPIKey
+      };
+      localStorage.setItem('appSettings', JSON.stringify(settingsToSave));
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
@@ -72,12 +102,12 @@ export function Settings() {
                 </label>
                 <input
                   type="text"
-                  value={settings.venueId}
+                  value={settings.venueId || 'Not set'}
                   disabled
                   className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  Configured: {VENUE_CONFIG.venueName}
+                  Set via Cognito custom:venueId attribute
                 </p>
               </div>
 
@@ -87,12 +117,12 @@ export function Settings() {
                 </label>
                 <input
                   type="text"
-                  value={settings.locationId}
+                  value={settings.locationId || 'Not set'}
                   disabled
                   className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  Configured: {VENUE_CONFIG.locationName}
+                  Set via Cognito custom:locationId attribute
                 </p>
               </div>
             </div>

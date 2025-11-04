@@ -30,7 +30,7 @@ export function useRealTimeData({ venueId, interval = 15000, enabled = true }: U
   useEffect(() => {
     if (!enabled) return;
 
-    // Try to connect to AWS IoT for real-time streaming
+    // Connect to AWS IoT for real-time streaming
     iotService.connect(venueId).then(() => {
       if (iotService.isConnected()) {
         console.log('✅ Using AWS IoT for real-time data');
@@ -44,21 +44,18 @@ export function useRealTimeData({ venueId, interval = 15000, enabled = true }: U
         });
         
         return unsubscribe;
+      } else {
+        setError('Failed to connect to AWS IoT. Please check your configuration.');
+        setLoading(false);
       }
-    }).catch(() => {
-      console.log('⚠️ AWS IoT unavailable, using polling fallback');
+    }).catch((err) => {
+      console.error('❌ AWS IoT connection failed:', err);
+      setError(err.message || 'Failed to connect to AWS IoT');
+      setLoading(false);
+      // Do not fall back to polling/mock data - require real MQTT connection
     });
 
-    // Fallback to polling if IoT not available
-    fetchData();
-    const intervalId = setInterval(() => {
-      if (!iotService.isConnected()) {
-        fetchData();
-      }
-    }, interval);
-
     return () => {
-      clearInterval(intervalId);
       if (usingIoT) {
         iotService.disconnect();
       }

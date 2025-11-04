@@ -37,7 +37,6 @@ import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
-import { VENUE_CONFIG } from '../config/amplify';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics } from '../types';
 
 export function Dashboard() {
@@ -50,13 +49,25 @@ export function Dashboard() {
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   
-  // Use Ferg's Sports Bar venue ID
-  const venueId = user?.venueId || VENUE_CONFIG.venueId;
+  // Get venueId from authenticated user (from Cognito custom:venueId)
+  // Require user to be logged in - no fallback to hardcoded values
+  const venueId = user?.venueId;
+  
+  if (!venueId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-red-400 mb-2">Authentication Required</h2>
+          <p className="text-gray-400">Please log in to access the dashboard.</p>
+        </div>
+      </div>
+    );
+  }
   
   // Multi-location support (locations within the venue)
   const locations = user?.locations || locationService.getLocations();
   const [currentLocationId, setCurrentLocationId] = useState<string>(
-    locationService.getCurrentLocationId() || VENUE_CONFIG.locationId
+    locationService.getCurrentLocationId() || locations[0]?.id || ''
   );
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
@@ -187,7 +198,7 @@ export function Dashboard() {
 
       {/* Top Bar */}
       <TopBar
-        venueName={VENUE_CONFIG.venueName}
+        venueName={user?.venueName}
         onLogout={handleLogout}
         soundAlerts={soundAlerts}
         onToggleSoundAlerts={() => setSoundAlerts(!soundAlerts)}
@@ -219,7 +230,7 @@ export function Dashboard() {
                       <ConnectionStatus 
                         isConnected={!!liveData}
                         usingIoT={usingIoT}
-                        locationName={VENUE_CONFIG.locationName}
+                        locationName={currentLocation.name}
                       />
                     )}
                   </div>
