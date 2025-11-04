@@ -3,14 +3,15 @@ import { motion } from 'framer-motion';
 import { Save, Key, MapPin, DollarSign, Check } from 'lucide-react';
 import type { AppSettings } from '../types';
 import { VENUE_CONFIG } from '../config/amplify';
+import authService from '../services/auth.service';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   soundAlerts: true,
   refreshInterval: 5,
   notifications: true,
-  venueId: VENUE_CONFIG.venueId,
-  locationId: VENUE_CONFIG.locationId,
+  venueId: '', // Will be populated from user's Cognito attributes, not stored here
+  locationId: '', // Will be populated from user's Cognito attributes, not stored here
   toastPOSEnabled: false,
   toastAPIKey: ''
 };
@@ -25,10 +26,32 @@ export function Settings() {
 
   const loadSettings = () => {
     try {
+      // Get venueId and locationId from authenticated user, not localStorage
+      const user = authService.getStoredUser();
+      
+      // Load other settings from localStorage (excluding venueId/locationId)
       const stored = localStorage.getItem('appSettings');
+      let parsedSettings: Partial<AppSettings> = {};
       if (stored) {
-        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) });
+        const parsed = JSON.parse(stored);
+        // Explicitly exclude venueId and locationId from stored settings
+        parsedSettings = {
+          theme: parsed.theme,
+          soundAlerts: parsed.soundAlerts,
+          refreshInterval: parsed.refreshInterval,
+          notifications: parsed.notifications,
+          toastPOSEnabled: parsed.toastPOSEnabled,
+          toastAPIKey: parsed.toastAPIKey
+        };
       }
+      
+      // Set venueId and locationId from user, not from stored settings
+      setSettings({
+        ...DEFAULT_SETTINGS,
+        ...parsedSettings,
+        venueId: user?.venueId || '',
+        locationId: user?.locations?.[0]?.id || ''
+      });
     } catch (error) {
       console.error('Error loading settings:', error);
     }
@@ -36,7 +59,17 @@ export function Settings() {
 
   const saveSettings = () => {
     try {
-      localStorage.setItem('appSettings', JSON.stringify(settings));
+      // Save settings but exclude venueId and locationId (they come from user attributes)
+      const settingsToSave = {
+        theme: settings.theme,
+        soundAlerts: settings.soundAlerts,
+        refreshInterval: settings.refreshInterval,
+        notifications: settings.notifications,
+        toastPOSEnabled: settings.toastPOSEnabled,
+        toastAPIKey: settings.toastAPIKey
+      };
+      
+      localStorage.setItem('appSettings', JSON.stringify(settingsToSave));
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
