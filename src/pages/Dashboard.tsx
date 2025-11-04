@@ -37,7 +37,6 @@ import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
-import { VENUE_CONFIG } from '../config/amplify';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics } from '../types';
 
 export function Dashboard() {
@@ -50,24 +49,29 @@ export function Dashboard() {
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   
-  // Get venueId from authenticated user, fallback to config for MQTT-only mode
-  const venueId = user?.venueId || VENUE_CONFIG.venueId;
-  
-  if (!venueId) {
+  // User must be authenticated with venueId - no fallbacks
+  if (!user || !user.venueId) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <ErrorMessage 
-          message="No venue ID found. Please ensure you are logged in with a valid custom:venueId attribute."
-          onRetry={() => window.location.reload()}
-        />
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900">
+        <div className="max-w-md">
+          <ErrorMessage 
+            message="Authentication required. Please log in with a valid account that has a custom:venueId attribute configured."
+            onRetry={() => {
+              authService.logout().then(() => window.location.href = '/login');
+            }}
+          />
+        </div>
       </div>
     );
   }
+
+  const venueId = user.venueId;
+  const venueName = user.venueName || 'Pulse Dashboard';
   
   // Multi-location support (locations within the venue)
-  const locations = user?.locations || locationService.getLocations();
+  const locations = user.locations || locationService.getLocations();
   const [currentLocationId, setCurrentLocationId] = useState<string>(
-    locationService.getCurrentLocationId() || VENUE_CONFIG.locationId
+    locationService.getCurrentLocationId() || (locations.length > 0 ? locations[0].id : 'default')
   );
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
@@ -200,7 +204,7 @@ export function Dashboard() {
 
       {/* Top Bar */}
       <TopBar
-        venueName={VENUE_CONFIG.venueName}
+        venueName={venueName}
         onLogout={handleLogout}
         soundAlerts={soundAlerts}
         onToggleSoundAlerts={() => setSoundAlerts(!soundAlerts)}
@@ -251,7 +255,7 @@ export function Dashboard() {
                       <ConnectionStatus 
                         isConnected={!!liveData}
                         usingIoT={usingIoT}
-                        locationName={VENUE_CONFIG.locationName}
+                        locationName={currentLocation.name}
                       />
                     )}
                   </div>

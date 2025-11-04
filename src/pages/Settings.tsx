@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Save, Key, MapPin, DollarSign, Check, Building2 } from 'lucide-react';
 import type { AppSettings } from '../types';
-import { VENUE_CONFIG } from '../config/amplify';
 import authService from '../services/auth.service';
 import toastPOSService from '../services/toast-pos.service';
 
@@ -21,6 +20,7 @@ export function Settings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
   const [toastRestaurantGuid, setToastRestaurantGuid] = useState('');
+  const user = authService.getStoredUser();
 
   useEffect(() => {
     loadSettings();
@@ -125,7 +125,7 @@ export function Settings() {
                   className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  Configured: {VENUE_CONFIG.venueName}
+                  Venue: {user?.venueName || 'Not configured'}
                 </p>
               </div>
 
@@ -140,7 +140,7 @@ export function Settings() {
                   className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  Configured: {VENUE_CONFIG.locationName}
+                  Location: {user?.locations?.[0]?.name || 'Not configured'}
                 </p>
               </div>
             </div>

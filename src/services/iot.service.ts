@@ -1,11 +1,8 @@
 import mqtt from 'mqtt';
 import type { SensorData } from '../types';
-import { VENUE_CONFIG } from '../config/amplify';
+import { AWS_CONFIG } from '../config/amplify';
 import { generateClient } from '@aws-amplify/api';
 import { getCurrentUser, fetchAuthSession } from '@aws-amplify/auth';
-
-// AWS IoT Core configuration - Direct MQTT connection
-const IOT_ENDPOINT = `wss://${VENUE_CONFIG.iotEndpoint}/mqtt`;
 
 const getVenueConfig = /* GraphQL */ `
   query GetVenueConfig($venueId: ID!, $locationId: String!) {
@@ -13,6 +10,7 @@ const getVenueConfig = /* GraphQL */ `
       mqttTopic
       displayName
       locationName
+      iotEndpoint
     }
   }
 `;
@@ -76,8 +74,9 @@ class IoTService {
         throw new Error('User must be logged in with custom:venueId attribute');
       }
 
-      // Query DynamoDB VenueConfig for the MQTT topic - REQUIRED
+      // Query DynamoDB VenueConfig for the MQTT topic and IoT endpoint - REQUIRED
       let TOPIC: string | null = null;
+      let IOT_ENDPOINT: string | null = null;
 
       try {
         const client = generateClient();
@@ -92,19 +91,24 @@ class IoTService {
         const config = response?.data?.getVenueConfig;
         if (config?.mqttTopic) {
           TOPIC = config.mqttTopic;
-          console.log("✅ Loaded VenueConfig for", venueId, "→ topic:", TOPIC);
+          // Use venue-specific IoT endpoint if provided, otherwise fall back to default
+          const endpoint = config.iotEndpoint || AWS_CONFIG.defaultIotEndpoint;
+          IOT_ENDPOINT = `wss://${endpoint}/mqtt`;
+          console.log("✅ Loaded VenueConfig for", venueId);
+          console.log("   → MQTT topic:", TOPIC);
+          console.log("   → IoT endpoint:", endpoint);
         } else {
           throw new Error(`No mqttTopic found in VenueConfig for venueId: ${venueId}`);
         }
       } catch (err) {
         console.error("Failed to get VenueConfig from DynamoDB:", err);
         this.isConnecting = false;
-        throw new Error(`Failed to load MQTT topic from VenueConfig for venueId: ${venueId}`);
+        throw new Error(`Failed to load MQTT configuration from VenueConfig for venueId: ${venueId}`);
       }
 
-      if (!TOPIC) {
+      if (!TOPIC || !IOT_ENDPOINT) {
         this.isConnecting = false;
-        throw new Error('MQTT topic not found');
+        throw new Error('MQTT topic or IoT endpoint not found');
       }
 
       console.log('🔌 Connecting to AWS IoT Core via MQTT...');
