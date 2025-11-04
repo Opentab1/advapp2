@@ -50,8 +50,8 @@ export function Dashboard() {
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   
-  // Get venueId from authenticated user - REQUIRED (no fallback)
-  const venueId = user?.venueId;
+  // Get venueId from authenticated user, fallback to config for MQTT-only mode
+  const venueId = user?.venueId || VENUE_CONFIG.venueId;
   
   if (!venueId) {
     return (
