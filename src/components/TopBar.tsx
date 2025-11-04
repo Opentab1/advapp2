@@ -43,10 +43,10 @@ export function TopBar({
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
     >
       <div className="flex items-center justify-between">
-        {/* Left: Advizia Branding + Zone Selection */}
+        {/* Left: Company Name + Zone Selection */}
         <div className="flex items-center gap-6">
           <div>
-            <h1 className="text-2xl font-bold text-cyan-400">Advizia</h1>
+            <h1 className="text-2xl font-bold text-cyan-400">{venueName || 'Advizia'}</h1>
             <p className="text-sm text-gray-400">
               Zone Selection: <span className="text-cyan-300">{currentLocation?.name || 'Main Floor'}</span>
             </p>
@@ -212,10 +212,10 @@ export function TopBar({
         </div>
       </div>
 
-      {/* Mobile Advizia branding */}
+      {/* Mobile Company Name */}
       <div className="md:hidden flex items-center justify-between mt-3 pt-3 border-t border-white/10">
         <div>
-          <h2 className="text-lg font-bold text-cyan-400">Advizia</h2>
+          <h2 className="text-lg font-bold text-cyan-400">{venueName || 'Advizia'}</h2>
           <p className="text-xs text-gray-400">Zone: <span className="text-cyan-300">{currentLocation?.name || 'Main Floor'}</span></p>
         </div>
       </div>
