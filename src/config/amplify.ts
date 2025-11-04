@@ -25,13 +25,24 @@ const amplifyConfig = {
     GraphQL: {
       endpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT || '',
       region: 'us-east-2',
-      defaultAuthMode: 'userPool'
+      defaultAuthMode: 'userPool' as const
     }
   }
 };
 
 export function configureAmplify() {
+  // Validate GraphQL endpoint configuration before initializing
+  const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+  if (!endpoint || endpoint.trim() === '' || endpoint.includes('your-appsync-api')) {
+    console.error('❌ CONFIGURATION ERROR: VITE_GRAPHQL_ENDPOINT is not configured properly in .env file');
+    console.error('   Please create a .env file based on .env.example and set your AppSync GraphQL endpoint');
+    console.error('   Example: VITE_GRAPHQL_ENDPOINT=https://xxxxx.appsync-api.us-east-2.amazonaws.com/graphql');
+  }
+  
   Amplify.configure(amplifyConfig);
+  
+  console.log('✅ Amplify configured successfully');
+  console.log('   GraphQL Endpoint:', endpoint ? endpoint.substring(0, 40) + '...' : 'NOT SET');
 }
 
 export default amplifyConfig;
