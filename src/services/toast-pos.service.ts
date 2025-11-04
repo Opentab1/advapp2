@@ -1,14 +1,68 @@
 import type { ToastOrder, ToastMetrics } from '../types';
 
 const TOAST_API_BASE = 'https://ws-api.toasttab.com';
+const TOAST_CREDENTIALS_KEY = 'pulse_toast_credentials';
+
+interface ToastCredentials {
+  apiKey: string;
+  restaurantGuid: string;
+}
 
 class ToastPOSService {
   private apiKey: string | null = null;
   private restaurantGuid: string | null = null;
 
+  constructor() {
+    // Load saved credentials from localStorage
+    this.loadCredentials();
+  }
+
+  private loadCredentials() {
+    try {
+      const saved = localStorage.getItem(TOAST_CREDENTIALS_KEY);
+      if (saved) {
+        const credentials: ToastCredentials = JSON.parse(saved);
+        this.apiKey = credentials.apiKey;
+        this.restaurantGuid = credentials.restaurantGuid;
+        console.log('✅ Toast POS credentials loaded');
+      }
+    } catch (error) {
+      console.error('Failed to load Toast credentials:', error);
+    }
+  }
+
   setCredentials(apiKey: string, restaurantGuid: string) {
     this.apiKey = apiKey;
     this.restaurantGuid = restaurantGuid;
+    
+    // Save to localStorage
+    try {
+      localStorage.setItem(TOAST_CREDENTIALS_KEY, JSON.stringify({ apiKey, restaurantGuid }));
+      console.log('✅ Toast POS credentials saved');
+    } catch (error) {
+      console.error('Failed to save Toast credentials:', error);
+    }
+  }
+
+  getCredentials(): ToastCredentials | null {
+    if (this.apiKey && this.restaurantGuid) {
+      return {
+        apiKey: this.apiKey,
+        restaurantGuid: this.restaurantGuid
+      };
+    }
+    return null;
+  }
+
+  clearCredentials() {
+    this.apiKey = null;
+    this.restaurantGuid = null;
+    localStorage.removeItem(TOAST_CREDENTIALS_KEY);
+    console.log('✅ Toast POS credentials cleared');
+  }
+
+  isConfigured(): boolean {
+    return !!(this.apiKey && this.restaurantGuid);
   }
 
   private getHeaders(): HeadersInit {
@@ -20,10 +74,11 @@ class ToastPOSService {
   }
 
   async getRecentOrders(_limit: number = 50): Promise<ToastOrder[]> {
-    if (!this.apiKey || !this.restaurantGuid) {
-      console.warn('Toast POS not configured');
-      return this.getMockOrders();
+    if (!this.isConfigured()) {
+      throw new Error('Toast POS credentials not configured. Please add your API key and Restaurant GUID in Settings.');
     }
+
+    console.log('🔍 Fetching Toast POS orders...');
 
     try {
       const response = await fetch(`${TOAST_API_BASE}/orders/v2/orders`, {
@@ -31,28 +86,31 @@ class ToastPOSService {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch orders');
+        const errorMsg = `Toast API returned ${response.status}: ${response.statusText}`;
+        console.error(`❌ ${errorMsg}`);
+        throw new Error(errorMsg);
       }
 
       const data = await response.json();
+      console.log('✅ Toast POS orders received');
       return this.transformToastOrders(data);
-    } catch (error) {
-      console.error('Toast POS error:', error);
-      return this.getMockOrders();
+    } catch (error: any) {
+      console.error('❌ Toast POS error:', error);
+      throw new Error(`Failed to fetch Toast POS orders: ${error.message}`);
     }
   }
 
   async getMetrics(_startDate: Date, _endDate: Date): Promise<ToastMetrics> {
-    if (!this.apiKey || !this.restaurantGuid) {
-      return this.getMockMetrics();
+    if (!this.isConfigured()) {
+      throw new Error('Toast POS credentials not configured. Please add your API key and Restaurant GUID in Settings.');
     }
 
     try {
       const orders = await this.getRecentOrders(1000);
       return this.calculateMetrics(orders);
-    } catch (error) {
-      console.error('Error calculating metrics:', error);
-      return this.getMockMetrics();
+    } catch (error: any) {
+      console.error('❌ Error calculating Toast metrics:', error);
+      throw new Error(`Failed to calculate Toast metrics: ${error.message}`);
     }
   }
 
@@ -110,51 +168,6 @@ class ToastPOSService {
       averageOrderValue,
       topItems,
       revenueByHour
-    };
-  }
-
-  private getMockOrders(): ToastOrder[] {
-    const now = new Date();
-    const orders: ToastOrder[] = [];
-
-    for (let i = 0; i < 20; i++) {
-      const timestamp = new Date(now.getTime() - i * 15 * 60 * 1000); // Every 15 minutes
-      orders.push({
-        orderId: `ORDER-${1000 + i}`,
-        timestamp: timestamp.toISOString(),
-        total: 25 + Math.random() * 75,
-        items: [
-          {
-            name: ['Craft Beer', 'Wings', 'Burger', 'Nachos', 'Pizza'][Math.floor(Math.random() * 5)],
-            quantity: 1 + Math.floor(Math.random() * 3),
-            price: 8 + Math.random() * 15,
-            category: 'Food & Beverage'
-          }
-        ],
-        tableNumber: `${Math.floor(Math.random() * 20) + 1}`,
-        guestCount: 1 + Math.floor(Math.random() * 6)
-      });
-    }
-
-    return orders;
-  }
-
-  private getMockMetrics(): ToastMetrics {
-    return {
-      totalOrders: 145,
-      totalRevenue: 6750.50,
-      averageOrderValue: 46.55,
-      topItems: [
-        { name: 'Craft Beer Flight', count: 67, revenue: 871.00 },
-        { name: 'Classic Wings', count: 45, revenue: 697.50 },
-        { name: 'Ferg Burger', count: 38, revenue: 608.00 },
-        { name: 'Loaded Nachos', count: 32, revenue: 416.00 },
-        { name: 'Margherita Pizza', count: 28, revenue: 448.00 }
-      ],
-      revenueByHour: Array.from({ length: 24 }, (_, hour) => ({
-        hour,
-        revenue: hour >= 11 && hour <= 23 ? 200 + Math.random() * 400 : 0
-      }))
     };
   }
 }

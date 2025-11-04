@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Save, Key, MapPin, DollarSign, Check } from 'lucide-react';
+import { Save, Key, MapPin, DollarSign, Check, Building2 } from 'lucide-react';
 import type { AppSettings } from '../types';
 import { VENUE_CONFIG } from '../config/amplify';
 import authService from '../services/auth.service';
+import toastPOSService from '../services/toast-pos.service';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -19,6 +20,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 export function Settings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
+  const [toastRestaurantGuid, setToastRestaurantGuid] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -28,6 +30,12 @@ export function Settings() {
     try {
       // Get venueId and locationId from authenticated user, not localStorage
       const user = authService.getStoredUser();
+      
+      // Load Toast POS credentials
+      const toastCreds = toastPOSService.getCredentials();
+      if (toastCreds) {
+        setToastRestaurantGuid(toastCreds.restaurantGuid);
+      }
       
       // Load other settings from localStorage (excluding venueId/locationId)
       const stored = localStorage.getItem('appSettings');
@@ -40,8 +48,8 @@ export function Settings() {
           soundAlerts: parsed.soundAlerts,
           refreshInterval: parsed.refreshInterval,
           notifications: parsed.notifications,
-          toastPOSEnabled: parsed.toastPOSEnabled,
-          toastAPIKey: parsed.toastAPIKey
+          toastPOSEnabled: toastCreds?.apiKey ? true : parsed.toastPOSEnabled || false,
+          toastAPIKey: toastCreds?.apiKey || parsed.toastAPIKey || ''
         };
       }
       
@@ -59,6 +67,13 @@ export function Settings() {
 
   const saveSettings = () => {
     try {
+      // Save Toast POS credentials to the service
+      if (settings.toastPOSEnabled && settings.toastAPIKey && toastRestaurantGuid) {
+        toastPOSService.setCredentials(settings.toastAPIKey, toastRestaurantGuid);
+      } else if (!settings.toastPOSEnabled) {
+        toastPOSService.clearCredentials();
+      }
+      
       // Save settings but exclude venueId and locationId (they come from user attributes)
       const settingsToSave = {
         theme: settings.theme,
@@ -66,7 +81,7 @@ export function Settings() {
         refreshInterval: settings.refreshInterval,
         notifications: settings.notifications,
         toastPOSEnabled: settings.toastPOSEnabled,
-        toastAPIKey: settings.toastAPIKey
+        toastAPIKey: '' // Don't store API key in settings, it's in Toast service
       };
       
       localStorage.setItem('appSettings', JSON.stringify(settingsToSave));
@@ -164,22 +179,47 @@ export function Settings() {
               </div>
 
               {settings.toastPOSEnabled && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    <Key className="w-4 h-4 inline mr-2" />
-                    Toast API Key
-                  </label>
-                  <input
-                    type="password"
-                    value={settings.toastAPIKey || ''}
-                    onChange={(e) => setSettings({ ...settings, toastAPIKey: e.target.value })}
-                    placeholder="Enter your Toast API key"
-                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 transition-all text-white"
-                  />
-                  <p className="text-xs text-gray-400 mt-1">
-                    Get your API key from Toast Dashboard → Integrations
-                  </p>
-                </div>
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      <Key className="w-4 h-4 inline mr-2" />
+                      Toast API Key
+                    </label>
+                    <input
+                      type="password"
+                      value={settings.toastAPIKey || ''}
+                      onChange={(e) => setSettings({ ...settings, toastAPIKey: e.target.value })}
+                      placeholder="Enter your Toast API key"
+                      className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 transition-all text-white"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      Get your API key from Toast Dashboard → Integrations → API Access
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      <Building2 className="w-4 h-4 inline mr-2" />
+                      Restaurant GUID
+                    </label>
+                    <input
+                      type="text"
+                      value={toastRestaurantGuid}
+                      onChange={(e) => setToastRestaurantGuid(e.target.value)}
+                      placeholder="Enter your Restaurant GUID"
+                      className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 transition-all text-white"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      Find your Restaurant GUID in Toast Dashboard → Locations
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-cyan/5 border border-cyan/20 rounded-lg">
+                    <p className="text-xs text-cyan-300">
+                      <strong>Note:</strong> Toast POS credentials are stored securely in your browser's local storage and are only used to fetch your restaurant data.
+                    </p>
+                  </div>
+                </>
               )}
             </div>
           </motion.div>

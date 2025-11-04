@@ -1,36 +1,94 @@
 import type { Location } from '../types';
+import { generateClient } from '@aws-amplify/api';
+import { getCurrentUser, fetchAuthSession } from '@aws-amplify/auth';
+
+const listVenueLocations = /* GraphQL */ `
+  query ListVenueLocations($venueId: ID!) {
+    listVenueLocations(venueId: $venueId) {
+      items {
+        locationId
+        displayName
+        locationName
+        address
+        timezone
+        deviceId
+        mqttTopic
+      }
+    }
+  }
+`;
 
 class LocationService {
   private storageKey = 'pulse_locations';
   private currentLocationKey = 'pulse_current_location';
+  private locationsCacheKey = 'pulse_locations_cache';
+  private locationsCacheTimeKey = 'pulse_locations_cache_time';
+  private cacheExpiryMs = 5 * 60 * 1000; // 5 minutes
 
-  // Mock locations for demo - in production, fetch from API
-  private defaultLocations: Location[] = [
-    {
-      id: 'location-1',
-      name: 'Downtown Lounge',
-      address: '123 Main St, City Center',
-      timezone: 'America/New_York',
-      deviceId: 'rpi5-downtown-001'
-    },
-    {
-      id: 'location-2',
-      name: 'Uptown Bar',
-      address: '456 Park Ave, Uptown',
-      timezone: 'America/New_York',
-      deviceId: 'rpi5-uptown-002'
-    },
-    {
-      id: 'location-3',
-      name: 'Waterfront Club',
-      address: '789 Harbor Blvd, Waterfront',
-      timezone: 'America/New_York',
-      deviceId: 'rpi5-waterfront-003'
+  async fetchLocationsFromDynamoDB(): Promise<Location[]> {
+    try {
+      console.log('🔍 Fetching locations from DynamoDB VenueConfig...');
+      
+      // Get venueId from Cognito
+      await getCurrentUser();
+      const session = await fetchAuthSession();
+      const payload = session.tokens?.idToken?.payload;
+      const venueId = payload?.['custom:venueId'] as string;
+
+      if (!venueId) {
+        throw new Error('No venueId found in user attributes');
+      }
+
+      // Query DynamoDB for all locations for this venue
+      const client = generateClient();
+      const response = await client.graphql({
+        query: listVenueLocations,
+        variables: { venueId }
+      }) as any;
+
+      const items = response?.data?.listVenueLocations?.items || [];
+      
+      if (items.length === 0) {
+        console.warn('⚠️ No locations found in VenueConfig for venueId:', venueId);
+        throw new Error(`No locations configured for venue: ${venueId}`);
+      }
+
+      const locations: Location[] = items.map((item: any) => ({
+        id: item.locationId,
+        name: item.displayName || item.locationName,
+        address: item.address || 'No address provided',
+        timezone: item.timezone || 'America/New_York',
+        deviceId: item.deviceId
+      }));
+
+      console.log(`✅ Loaded ${locations.length} locations from DynamoDB`);
+      
+      // Cache the locations
+      this.setLocations(locations);
+      localStorage.setItem(this.locationsCacheKey, JSON.stringify(locations));
+      localStorage.setItem(this.locationsCacheTimeKey, Date.now().toString());
+      
+      return locations;
+    } catch (error: any) {
+      console.error('❌ Failed to fetch locations from DynamoDB:', error);
+      throw new Error(`Failed to load locations: ${error.message}`);
     }
-  ];
+  }
 
   getLocations(): Location[] {
     try {
+      // Check if we have cached locations and they're not expired
+      const cachedTime = localStorage.getItem(this.locationsCacheTimeKey);
+      const cached = localStorage.getItem(this.locationsCacheKey);
+      
+      if (cachedTime && cached) {
+        const age = Date.now() - parseInt(cachedTime);
+        if (age < this.cacheExpiryMs) {
+          return JSON.parse(cached);
+        }
+      }
+
+      // Try to get from regular storage
       const stored = localStorage.getItem(this.storageKey);
       if (stored) {
         return JSON.parse(stored);
@@ -39,12 +97,11 @@ class LocationService {
       console.error('Error loading locations:', error);
     }
     
-    // Return default locations if none stored
-    this.setLocations(this.defaultLocations);
-    return this.defaultLocations;
+    // Return empty array - locations must be fetched from DynamoDB
+    return [];
   }
 
-  setLocations(locations: Location[]): void {
+  private setLocations(locations: Location[]): void {
     try {
       localStorage.setItem(this.storageKey, JSON.stringify(locations));
     } catch (error) {
@@ -68,31 +125,11 @@ class LocationService {
     return locations.find(l => l.id === locationId) || null;
   }
 
-  addLocation(location: Location): void {
-    const locations = this.getLocations();
-    locations.push(location);
-    this.setLocations(locations);
-  }
-
-  updateLocation(locationId: string, updates: Partial<Location>): void {
-    const locations = this.getLocations();
-    const index = locations.findIndex(l => l.id === locationId);
-    
-    if (index !== -1) {
-      locations[index] = { ...locations[index], ...updates };
-      this.setLocations(locations);
-    }
-  }
-
-  deleteLocation(locationId: string): void {
-    const locations = this.getLocations();
-    const filtered = locations.filter(l => l.id !== locationId);
-    this.setLocations(filtered);
-    
-    // If deleted current location, clear it
-    if (this.getCurrentLocationId() === locationId) {
-      localStorage.removeItem(this.currentLocationKey);
-    }
+  clearCache(): void {
+    localStorage.removeItem(this.locationsCacheKey);
+    localStorage.removeItem(this.locationsCacheTimeKey);
+    localStorage.removeItem(this.storageKey);
+    console.log('✅ Locations cache cleared');
   }
 }
 

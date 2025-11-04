@@ -119,11 +119,25 @@ class AuthService {
 
       // Extract user data from token or attributes
       const payload = session.tokens?.idToken?.payload;
-      const venueId = (payload?.['custom:venueId'] as string) || 'demo-venue';
+      const venueId = (payload?.['custom:venueId'] as string);
       const venueName = (payload?.['custom:venueName'] as string) || 'Pulse Dashboard';
       
-      // Get user's locations
-      const locations = locationService.getLocations();
+      if (!venueId) {
+        throw new Error('User does not have custom:venueId attribute. Please contact administrator.');
+      }
+      
+      // Fetch user's locations from DynamoDB
+      let locations;
+      try {
+        locations = await locationService.fetchLocationsFromDynamoDB();
+      } catch (error) {
+        console.error('Failed to fetch locations:', error);
+        // Try to get from cache
+        locations = locationService.getLocations();
+        if (locations.length === 0) {
+          throw new Error('No locations configured for this venue. Please contact administrator.');
+        }
+      }
       
       // Set initial location if none selected
       if (!locationService.getCurrentLocationId() && locations.length > 0) {
@@ -140,9 +154,9 @@ class AuthService {
 
       localStorage.setItem(this.userKey, JSON.stringify(user));
       return user;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Get current user error:', error);
-      throw new Error('Not authenticated');
+      throw new Error(error.message || 'Not authenticated');
     }
   }
 

@@ -26,7 +26,7 @@ The application uses a two-tier data strategy:
 
 ### 1. DynamoDB VenueConfig Table
 
-The IoT service queries DynamoDB to get the MQTT topic for each venue.
+The application queries DynamoDB to get MQTT topics and location configurations for each venue.
 
 **Create the table:**
 ```bash
@@ -42,7 +42,66 @@ aws dynamodb create-table \
   --region us-east-2
 ```
 
-**Add venue configuration:**
+**Schema:**
+- `venueId` (String, Partition Key) - Unique venue identifier (e.g., "fergs-stpete")
+- `locationId` (String, Sort Key) - Location identifier (e.g., "main-floor", "patio", "default")
+- `mqttTopic` (String, Required) - MQTT topic for IoT Core (e.g., "venue/fergs-stpete/main-floor")
+- `displayName` (String, Required) - Human-readable venue name (e.g., "Ferg's Sports Bar")
+- `locationName` (String, Required) - Human-readable location name (e.g., "Main Floor")
+- `address` (String, Optional) - Physical address
+- `timezone` (String, Optional) - Timezone (defaults to "America/New_York")
+- `deviceId` (String, Optional) - Associated IoT device ID
+
+**Add venue locations (example for Ferg's with multiple locations):**
+
+```bash
+# Main Floor
+aws dynamodb put-item \
+  --table-name VenueConfig \
+  --item '{
+    "venueId": {"S": "fergs-stpete"},
+    "locationId": {"S": "main-floor"},
+    "mqttTopic": {"S": "venue/fergs-stpete/main-floor"},
+    "displayName": {"S": "Fergs Sports Bar"},
+    "locationName": {"S": "Main Floor"},
+    "address": {"S": "1320 Central Ave, St. Petersburg, FL 33705"},
+    "timezone": {"S": "America/New_York"},
+    "deviceId": {"S": "rpi5-main-001"}
+  }' \
+  --region us-east-2
+
+# Upstairs Bar
+aws dynamodb put-item \
+  --table-name VenueConfig \
+  --item '{
+    "venueId": {"S": "fergs-stpete"},
+    "locationId": {"S": "upstairs"},
+    "mqttTopic": {"S": "venue/fergs-stpete/upstairs"},
+    "displayName": {"S": "Fergs Sports Bar"},
+    "locationName": {"S": "Upstairs Bar"},
+    "address": {"S": "1320 Central Ave, St. Petersburg, FL 33705"},
+    "timezone": {"S": "America/New_York"},
+    "deviceId": {"S": "rpi5-upstairs-002"}
+  }' \
+  --region us-east-2
+
+# Patio
+aws dynamodb put-item \
+  --table-name VenueConfig \
+  --item '{
+    "venueId": {"S": "fergs-stpete"},
+    "locationId": {"S": "patio"},
+    "mqttTopic": {"S": "venue/fergs-stpete/patio"},
+    "displayName": {"S": "Fergs Sports Bar"},
+    "locationName": {"S": "Patio"},
+    "address": {"S": "1320 Central Ave, St. Petersburg, FL 33705"},
+    "timezone": {"S": "America/New_York"},
+    "deviceId": {"S": "rpi5-patio-003"}
+  }' \
+  --region us-east-2
+```
+
+**For single-location venues, use "default":**
 ```bash
 aws dynamodb put-item \
   --table-name VenueConfig \
@@ -51,16 +110,26 @@ aws dynamodb put-item \
     "locationId": {"S": "default"},
     "mqttTopic": {"S": "venue/fergs-stpete/main-floor"},
     "displayName": {"S": "Fergs Sports Bar"},
-    "locationName": {"S": "Main Floor"}
+    "locationName": {"S": "Main Floor"},
+    "address": {"S": "1320 Central Ave, St. Petersburg, FL 33705"},
+    "timezone": {"S": "America/New_York"}
   }' \
   --region us-east-2
 ```
 
-**Verify:**
+**Verify locations:**
 ```bash
+# Get all locations for a venue
+aws dynamodb query \
+  --table-name VenueConfig \
+  --key-condition-expression "venueId = :vid" \
+  --expression-attribute-values '{":vid":{"S":"fergs-stpete"}}' \
+  --region us-east-2
+
+# Get specific location
 aws dynamodb get-item \
   --table-name VenueConfig \
-  --key '{"venueId":{"S":"fergs-stpete"},"locationId":{"S":"default"}}' \
+  --key '{"venueId":{"S":"fergs-stpete"},"locationId":{"S":"main-floor"}}' \
   --region us-east-2
 ```
 
