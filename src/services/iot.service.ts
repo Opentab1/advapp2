@@ -4,7 +4,7 @@ import { VENUE_CONFIG } from '../config/amplify';
 
 // AWS IoT Core configuration - Direct MQTT connection
 const IOT_ENDPOINT = `wss://${VENUE_CONFIG.iotEndpoint}/mqtt`;
-const MQTT_TOPIC = "pulse/sensors/data";
+const TOPIC = "pulse/sensors/data";
 
 interface IoTMessage {
   deviceId?: string;
@@ -47,7 +47,7 @@ class IoTService {
     try {
       console.log('🔌 Connecting to AWS IoT Core via MQTT...');
       console.log('📍 Endpoint:', IOT_ENDPOINT);
-      console.log('📡 Topic:', MQTT_TOPIC);
+      console.log('📡 Topic:', TOPIC);
 
       // Connect to AWS IoT Core without authentication
       // Note: The IoT endpoint must be configured to allow unauthenticated access
@@ -68,7 +68,7 @@ class IoTService {
         this.isConnecting = false;
 
         // Subscribe to the topic
-        this.subscribe(MQTT_TOPIC);
+        this.subscribe(TOPIC);
       });
 
       this.client.on('message', (topic: string, payload: Buffer) => {
