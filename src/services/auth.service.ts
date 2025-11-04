@@ -82,7 +82,11 @@ class AuthService {
         'aws-amplify-cache',
         'aws-amplify-federatedInfo',
         'appSettings', // Also clear appSettings on logout
-        'lastSongLogged'
+        'lastSongLogged',
+        'pulse_locations', // Clear location caches
+        'pulse_current_location',
+        'pulse_locations_cache',
+        'pulse_locations_cache_time'
       ];
       
       // Remove all localStorage items that start with Cognito-related prefixes
@@ -127,16 +131,18 @@ class AuthService {
       }
       
       // Fetch user's locations from DynamoDB
+      // Clear any cached location data first to ensure fresh data
+      locationService.clearCache();
+      
       let locations;
       try {
         locations = await locationService.fetchLocationsFromDynamoDB();
-      } catch (error) {
-        console.error('Failed to fetch locations:', error);
-        // Try to get from cache
-        locations = locationService.getLocations();
         if (locations.length === 0) {
           throw new Error('No locations configured for this venue. Please contact administrator.');
         }
+      } catch (error) {
+        console.error('Failed to fetch locations:', error);
+        throw new Error('Failed to load venue locations. Please check your configuration and try again.');
       }
       
       // Set initial location if none selected

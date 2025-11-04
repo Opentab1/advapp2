@@ -69,8 +69,8 @@ export function Dashboard() {
   const venueName = user.venueName || user.email?.split('@')[0] || 'Your Venue';
   
   // Multi-location support (locations within the venue)
-  const initialLocations = user.locations || locationService.getLocations();
-  const [locations, setLocations] = useState<Location[]>(initialLocations);
+  // Always start with empty array to force fresh fetch from DynamoDB
+  const [locations, setLocations] = useState<Location[]>([]);
   const [locationsError, setLocationsError] = useState<string | null>(null);
   const [locationsLoading, setLocationsLoading] = useState(false);
   
