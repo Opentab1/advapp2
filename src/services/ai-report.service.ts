@@ -4,14 +4,15 @@ class AIReportService {
   async generateWeeklyReport(
     weekStart: Date,
     weekEnd: Date,
-    metrics: WeeklyMetrics
+    metrics: WeeklyMetrics,
+    venueName?: string
   ): Promise<WeeklyReport> {
     // In production, call OpenAI/Claude API with metrics data
     // For now, generate a template-based report
     
     const insights = this.generateInsights(metrics);
     const recommendations = this.generateRecommendations(metrics);
-    const summary = this.generateSummary(metrics);
+    const summary = this.generateSummary(metrics, venueName);
 
     return {
       id: `report-${Date.now()}`,
@@ -52,11 +53,12 @@ class AIReportService {
     }
   }
 
-  private generateSummary(metrics: WeeklyMetrics): string {
+  private generateSummary(metrics: WeeklyMetrics, venueName?: string): string {
     const comfortStatus = metrics.avgComfort >= 80 ? 'excellent' : 
                          metrics.avgComfort >= 65 ? 'good' : 'needs improvement';
+    const venue = venueName || 'your venue';
     
-    return `This week at Ferg's Sports Bar showed ${comfortStatus} environmental conditions with an average comfort score of ${metrics.avgComfort.toFixed(1)}. Total revenue reached $${metrics.totalRevenue.toLocaleString()} across ${metrics.totalCustomers.toLocaleString()} customers, with peak activity during ${metrics.peakHours.join(', ')}.`;
+    return `This week at ${venue} showed ${comfortStatus} environmental conditions with an average comfort score of ${metrics.avgComfort.toFixed(1)}. Total revenue reached $${metrics.totalRevenue.toLocaleString()} across ${metrics.totalCustomers.toLocaleString()} customers, with peak activity during ${metrics.peakHours.join(', ')}.`;
   }
 
   private generateInsights(metrics: WeeklyMetrics): ReportInsight[] {

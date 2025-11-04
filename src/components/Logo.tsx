@@ -55,7 +55,7 @@ export function Logo({ className = '' }: { className?: string }) {
       </motion.svg>
       
       <div className="flex flex-col">
-        <span className="text-xl font-bold tracking-tight gradient-text">Ferg's Sports Bar</span>
+        <span className="text-xl font-bold tracking-tight gradient-text">Advizia</span>
         <span className="text-[10px] text-cyan/60 font-medium tracking-wider uppercase">Live Pulse</span>
       </div>
     </div>

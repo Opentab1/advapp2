@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { FileText, Download, Sparkles, TrendingUp, Calendar } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 import aiReportService from '../services/ai-report.service';
+import authService from '../services/auth.service';
 import type { WeeklyReport } from '../types';
 
 export function Reports() {
@@ -28,6 +29,10 @@ export function Reports() {
       const weekEnd = new Date();
       const weekStart = subDays(weekEnd, 7);
 
+      // Get user's venue name for personalized reports
+      const user = authService.getStoredUser();
+      const venueName = user?.venueName;
+
       // Mock metrics - in production, fetch from API
       const metrics = {
         avgComfort: 78.5,
@@ -44,7 +49,7 @@ export function Reports() {
         ]
       };
 
-      const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
+      const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics, venueName);
       await aiReportService.saveReport(report);
       await loadReports();
       setSelectedReport(report);
