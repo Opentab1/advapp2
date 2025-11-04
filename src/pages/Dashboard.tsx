@@ -153,9 +153,35 @@ export function Dashboard() {
     enabled: timeRange === 'live'
   });
   
-  // Log songs when they change
+  // Log songs when they change (only if we have valid data and no errors)
   useEffect(() => {
-    if (liveData?.currentSong) {
+    // Don't log songs if there's an error fetching data or if we're still loading
+    if (liveError || liveLoading || !liveData) {
+      return;
+    }
+    
+    // Only log if we have a valid song name
+    if (liveData?.currentSong && liveData.currentSong.trim() !== '') {
+      // Don't log known fake/test songs
+      const fakeSongPatterns = [
+        /neon dreams/i,
+        /synthwave/i,
+        /test/i,
+        /fake/i,
+        /demo/i,
+        /example/i,
+        /placeholder/i
+      ];
+      
+      const isFakeSong = fakeSongPatterns.some(pattern => 
+        pattern.test(liveData.currentSong) || (liveData.artist && pattern.test(liveData.artist))
+      );
+      
+      if (isFakeSong) {
+        console.warn('⚠️ Skipping fake/test song:', liveData.currentSong);
+        return;
+      }
+      
       const lastSong = localStorage.getItem('lastSongLogged');
       const currentSongKey = `${liveData.currentSong}-${liveData.timestamp}`;
       
@@ -170,7 +196,7 @@ export function Dashboard() {
         localStorage.setItem('lastSongLogged', currentSongKey);
       }
     }
-  }, [liveData?.currentSong, liveData?.timestamp]);
+  }, [liveData?.currentSong, liveData?.timestamp, liveError, liveLoading]);
   
   // Handle location change
   const handleLocationChange = (locationId: string) => {
@@ -337,6 +363,9 @@ export function Dashboard() {
               <button
                 onClick={() => {
                   locationService.clearCache();
+                  // Also clear song-related cache
+                  localStorage.removeItem('lastSongLogged');
+                  localStorage.removeItem('songLog');
                   window.location.reload();
                 }}
                 className="px-3 py-1.5 rounded bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs font-medium transition-colors"

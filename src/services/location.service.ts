@@ -190,6 +190,8 @@ class LocationService {
     localStorage.removeItem(this.locationsCacheKey);
     localStorage.removeItem(this.locationsCacheTimeKey);
     localStorage.removeItem(this.storageKey);
+    // Also clear current location to force fresh selection
+    localStorage.removeItem(this.currentLocationKey);
     console.log('✅ Locations cache cleared');
   }
 }
