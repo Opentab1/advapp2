@@ -68,7 +68,10 @@ const getOccupancyMetricsQuery = /* GraphQL */ `
 `;
 
 class DynamoDBService {
-  private client = generateClient();
+
+  private getClient() {
+    return generateClient();
+  }
 
   /**
    * Check if GraphQL endpoint is configured
@@ -133,19 +136,22 @@ class DynamoDBService {
         throw new Error('Not authenticated. Please log in again.');
       }
 
+      const client = this.getClient();
+
       // Query DynamoDB for the most recent data
       // Since we don't have the exact timestamp, we'll query for recent data
       const endTime = new Date().toISOString();
       const startTime = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // Last 5 minutes
       
-      const response = await this.client.graphql({
+      const response = await client.graphql({
         query: listSensorData,
         variables: { 
           venueId, 
           startTime,
           endTime,
           limit: 1 // Get only the most recent
-        }
+        },
+        authMode: 'userPool'
       }) as any;
 
       // Check for GraphQL errors in response
@@ -192,15 +198,17 @@ class DynamoDBService {
       }
 
       const { startTime, endTime } = this.getTimeRangeValues(range);
-      
-      const response = await this.client.graphql({
+      const client = this.getClient();
+
+      const response = await client.graphql({
         query: listSensorData,
         variables: { 
           venueId, 
           startTime,
           endTime,
           limit: 1000 // Adjust based on your needs
-        }
+        },
+        authMode: 'userPool'
       }) as any;
 
       // Check for GraphQL errors in response
@@ -251,9 +259,12 @@ class DynamoDBService {
         throw new Error('Not authenticated. Please log in again.');
       }
 
-      const response = await this.client.graphql({
+      const client = this.getClient();
+
+      const response = await client.graphql({
         query: getOccupancyMetricsQuery,
-        variables: { venueId }
+        variables: { venueId },
+        authMode: 'userPool'
       }) as any;
 
       // Check for GraphQL errors in response
