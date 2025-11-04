@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Save, Key, MapPin, DollarSign, Check, Building2 } from 'lucide-react';
+import { Save, Key, MapPin, DollarSign, Check, Building2, RefreshCw } from 'lucide-react';
 import type { AppSettings } from '../types';
 import authService from '../services/auth.service';
 import toastPOSService from '../services/toast-pos.service';
+import locationService from '../services/location.service';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -20,6 +21,7 @@ export function Settings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
   const [toastRestaurantGuid, setToastRestaurantGuid] = useState('');
+  const [cacheCleared, setCacheCleared] = useState(false);
   const user = authService.getStoredUser();
 
   useEffect(() => {
@@ -141,6 +143,30 @@ export function Settings() {
                 />
                 <p className="text-xs text-gray-400 mt-1">
                   Location: {user?.locations?.[0]?.name || 'Not configured'}
+                </p>
+              </div>
+
+              <div className="pt-4 border-t border-white/10">
+                <p className="text-sm font-medium text-white mb-2">Location Cache</p>
+                <p className="text-xs text-gray-400 mb-3">
+                  Locations are cached for 5 minutes. Clear cache to force refresh from DynamoDB.
+                </p>
+                <button
+                  onClick={() => {
+                    locationService.clearCache();
+                    setCacheCleared(true);
+                    setTimeout(() => {
+                      setCacheCleared(false);
+                      window.location.reload();
+                    }, 1500);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-cyan/10 hover:bg-cyan/20 border border-cyan/30 rounded-lg text-sm text-cyan-300 transition-colors"
+                >
+                  <RefreshCw className={`w-4 h-4 ${cacheCleared ? 'animate-spin' : ''}`} />
+                  {cacheCleared ? 'Cache Cleared! Reloading...' : 'Clear Location Cache'}
+                </button>
+                <p className="text-xs text-yellow-400/80 mt-2">
+                  ⚠️ Note: Fake locations must be removed from DynamoDB VenueConfig table. This only clears the cache.
                 </p>
               </div>
             </div>
