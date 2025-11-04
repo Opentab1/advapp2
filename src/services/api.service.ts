@@ -74,52 +74,26 @@ class ApiService {
     return [];
   }
 
-  async getLiveData(venueId: string): Promise<SensorData> {
-    try {
-      const url = `${API_BASE_URL}/live/${venueId}`;
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: this.getHeaders()
-      });
+    async getLiveData(venueId: string): Promise<SensorData> {
+      try {
+        const url = `${API_BASE_URL}/live/${venueId}`;
+        
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: this.getHeaders()
+        });
 
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        return this.transformApiData([data])[0];
+      } catch (error: any) {
+        console.error('Live data fetch error:', error);
+        throw new Error(error?.message || 'Failed to fetch live data');
       }
-
-      const data = await response.json();
-      return this.transformApiData([data])[0];
-    } catch (error) {
-      console.error('Live data fetch error:', error);
-      // Return mock live data
-      return this.getMockLiveData();
     }
-  }
-
-  // Mock data for demo/development
-  private getMockLiveData(): SensorData {
-    const now = new Date();
-    const hour = now.getHours();
-    // Simulate realistic occupancy based on time of day
-    const baseOccupancy = this.getBaseOccupancyForHour(hour);
-    
-    return {
-      timestamp: now.toISOString(),
-      decibels: 65 + Math.random() * 20,
-      light: 300 + Math.random() * 200,
-      indoorTemp: 72 + Math.random() * 4,
-      outdoorTemp: 68 + Math.random() * 8,
-      humidity: 40 + Math.random() * 20,
-      currentSong: 'Neon Dreams - Synthwave',
-      albumArt: 'https://picsum.photos/seed/album/200',
-      occupancy: {
-        current: Math.floor(baseOccupancy + (Math.random() - 0.5) * 10),
-        entries: Math.floor((Math.random() * 5) + 2),
-        exits: Math.floor((Math.random() * 5) + 1),
-        capacity: 150
-      }
-    };
-  }
 
   private getBaseOccupancyForHour(hour: number): number {
     // Simulate sports bar occupancy patterns

@@ -1,11 +1,12 @@
 import mqtt from 'mqtt';
 import type { SensorData } from '../types';
-import { VENUE_CONFIG } from '../config/amplify';
+import { AWS_IOT_CONFIG } from '../config/amplify';
 import { generateClient } from '@aws-amplify/api';
 import { getCurrentUser, fetchAuthSession } from '@aws-amplify/auth';
 
 // AWS IoT Core configuration - Direct MQTT connection
-const IOT_ENDPOINT = `wss://${VENUE_CONFIG.iotEndpoint}/mqtt`;
+const IOT_ENDPOINT = `wss://${AWS_IOT_CONFIG.endpoint}/mqtt`;
+const FALLBACK_MQTT_TOPIC = 'pulse/sensors/data';
 
 const getVenueConfig = /* GraphQL */ `
   query GetVenueConfig($venueId: ID!, $locationId: String!) {
@@ -40,59 +41,58 @@ interface IoTMessage {
   };
 }
 
+type VenueConnectionOptions = {
+  venueId?: string;
+  locationId?: string;
+};
+
+interface VenueConnectionInfo {
+  venueId: string;
+  locationId?: string;
+  topic: string;
+  displayName?: string;
+  locationName?: string;
+}
+
 class IoTService {
   private client: mqtt.MqttClient | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private messageHandlers: Set<(data: SensorData) => void> = new Set();
   private isConnecting = false;
+  private currentTopic: string | null = null;
+  private connectionInfo: VenueConnectionInfo | null = null;
 
-  async connect(_venueId: string): Promise<void> {
-    if (this.client?.connected || this.isConnecting) {
-      console.log('Already connected or connecting to AWS IoT');
-      return;
+  async connect(options: VenueConnectionOptions = {}): Promise<VenueConnectionInfo> {
+    const info = await this.resolveVenueConnection(options);
+
+    if (this.client?.connected && this.currentTopic === info.topic) {
+      console.log('Already connected to AWS IoT topic:', info.topic);
+      this.connectionInfo = info;
+      return info;
+    }
+
+    if (this.client?.connected && this.currentTopic && this.currentTopic !== info.topic) {
+      console.log(`Switching MQTT subscription from ${this.currentTopic} to ${info.topic}`);
+      this.client.unsubscribe(this.currentTopic, (err) => {
+        if (err) {
+          console.warn('Error unsubscribing from previous topic', err);
+        }
+      });
+      this.subscribe(info.topic);
+      this.currentTopic = info.topic;
+      this.connectionInfo = info;
+      return info;
+    }
+
+    if (this.isConnecting) {
+      return this.connectionInfo ?? info;
     }
 
     this.isConnecting = true;
+    this.connectionInfo = info;
 
     try {
-      // Fetch venue configuration from Cognito and AppSync
-      let venueId = "fergs-stpete";
-      let locationId = "main-floor";
-      let TOPIC = "pulse/fergs-stpete/main-floor";
-
-      try {
-        await getCurrentUser();
-        const session = await fetchAuthSession();
-        const payload = session.tokens?.idToken?.payload;
-        venueId = (payload?.['custom:venueId'] as string) || venueId;
-        locationId = (payload?.['custom:locationId'] as string) || locationId;
-      } catch (err) {
-        console.warn("Not logged in, using default venue");
-      }
-
-      try {
-        const client = generateClient();
-        const response = await client.graphql({
-          query: getVenueConfig,
-          variables: { venueId, locationId }
-        }) as any;
-
-        const config = response?.data?.getVenueConfig;
-        if (config?.mqttTopic) {
-          TOPIC = config.mqttTopic;
-          console.log("Loaded config for", venueId, "→ topic:", TOPIC);
-        }
-      } catch (err) {
-        console.warn("Config not found, using fallback topic", err);
-      }
-
-      console.log('🔌 Connecting to AWS IoT Core via MQTT...');
-      console.log('📍 Endpoint:', IOT_ENDPOINT);
-      console.log('📡 Topic:', TOPIC);
-
-      // Connect to AWS IoT Core without authentication
-      // Note: The IoT endpoint must be configured to allow unauthenticated access
       this.client = mqtt.connect(IOT_ENDPOINT, {
         clientId: `pulse-dashboard-${Date.now()}`,
         clean: true,
@@ -104,57 +104,148 @@ class IoTService {
         rejectUnauthorized: false
       });
 
-      this.client.on('connect', () => {
-        console.log('✅ Connected to AWS IoT Core');
-        this.reconnectAttempts = 0;
-        this.isConnecting = false;
-
-        // Subscribe to the topic
-        this.subscribe(TOPIC);
-      });
-
-      this.client.on('message', (topic: string, payload: Buffer) => {
-        try {
-          console.log(`📨 Message received on topic: ${topic}`);
-          const message: IoTMessage = JSON.parse(payload.toString());
-          console.log('📊 Sensor data:', message);
-          
-          const sensorData = this.transformIoTMessage(message);
-          
-          // Notify all handlers
-          this.messageHandlers.forEach(handler => handler(sensorData));
-        } catch (error) {
-          console.error('Error parsing IoT message:', error);
-        }
-      });
-
-      this.client.on('error', (error) => {
-        console.error('❌ MQTT error:', error);
-        this.isConnecting = false;
-      });
-
-      this.client.on('close', () => {
-        console.log('🔌 MQTT connection closed');
-        this.isConnecting = false;
-      });
-
-      this.client.on('reconnect', () => {
-        this.reconnectAttempts++;
-        console.log(`🔄 Reconnecting... (attempt ${this.reconnectAttempts})`);
-        
-        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-          console.error('❌ Max reconnection attempts reached');
-          this.client?.end(true);
-        }
-      });
-
-      this.client.on('offline', () => {
-        console.warn('⚠️ MQTT client is offline');
-      });
-
+      this.registerClientEventHandlers(info.topic);
     } catch (error) {
-      console.error('Error connecting to IoT:', error);
       this.isConnecting = false;
+      console.error('Error establishing MQTT connection', error);
+      throw error;
+    }
+
+    return info;
+  }
+
+  private registerClientEventHandlers(topic: string): void {
+    if (!this.client) {
+      return;
+    }
+
+    this.client.removeAllListeners();
+
+    this.client.on('connect', () => {
+      console.log('✅ Connected to AWS IoT Core');
+      this.reconnectAttempts = 0;
+      this.isConnecting = false;
+      this.subscribe(topic);
+    });
+
+    this.client.on('message', (messageTopic: string, payload: Buffer) => {
+      this.handleIncomingMessage(messageTopic, payload);
+    });
+
+    this.client.on('error', (error) => {
+      console.error('❌ MQTT error:', error);
+      this.isConnecting = false;
+    });
+
+    this.client.on('close', () => {
+      console.log('🔌 MQTT connection closed');
+      this.isConnecting = false;
+    });
+
+    this.client.on('reconnect', () => {
+      this.reconnectAttempts++;
+      console.log(`🔄 Reconnecting... (attempt ${this.reconnectAttempts})`);
+
+      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.error('❌ Max reconnection attempts reached');
+        this.client?.end(true);
+      }
+    });
+
+    this.client.on('offline', () => {
+      console.warn('⚠️ MQTT client is offline');
+    });
+  }
+
+  private async resolveVenueConnection(options: VenueConnectionOptions): Promise<VenueConnectionInfo> {
+    let venueId = options.venueId?.trim();
+    let locationId = options.locationId?.trim();
+    let venueDisplayName: string | undefined;
+    let locationDisplayName: string | undefined;
+
+    try {
+      await getCurrentUser();
+      const session = await fetchAuthSession();
+      const payload = session.tokens?.idToken?.payload;
+      if (!venueId) {
+        venueId = (payload?.['custom:venueId'] as string)?.trim() || venueId;
+      }
+      if (!locationId) {
+        locationId = (payload?.['custom:locationId'] as string)?.trim() || locationId;
+      }
+    } catch (err) {
+      console.warn('Unable to load Cognito user attributes for IoT connection', err);
+    }
+
+    if (!venueId) {
+      throw new Error('Unable to determine venue ID for IoT subscription');
+    }
+
+    const locationCandidates = Array.from(
+      new Set(
+        [
+          locationId,
+          options.locationId,
+          'main-floor',
+          'default'
+        ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      )
+    );
+
+    let topic = FALLBACK_MQTT_TOPIC;
+    let resolvedLocationId = locationId;
+
+    let gqlClient: ReturnType<typeof generateClient> | null = null;
+    try {
+      gqlClient = generateClient();
+    } catch (err) {
+      console.warn('Unable to initialise AppSync client for venue config lookup', err);
+    }
+
+    if (gqlClient) {
+      for (const candidate of locationCandidates) {
+        try {
+          const response = await gqlClient.graphql({
+            query: getVenueConfig,
+            variables: { venueId, locationId: candidate }
+          }) as any;
+
+          const config = response?.data?.getVenueConfig;
+          if (config?.mqttTopic) {
+            topic = config.mqttTopic;
+            venueDisplayName = config.displayName ?? venueDisplayName;
+            locationDisplayName = config.locationName ?? locationDisplayName;
+            resolvedLocationId = candidate;
+            console.log(`Loaded venue config for ${venueId} → topic: ${topic}`);
+            break;
+          }
+        } catch (err) {
+          console.warn(`Config lookup failed for ${venueId}/${candidate}`, err);
+        }
+      }
+    }
+
+    if (topic === FALLBACK_MQTT_TOPIC) {
+      console.warn(`Using fallback MQTT topic ${FALLBACK_MQTT_TOPIC} for venue ${venueId}`);
+    }
+
+    return {
+      venueId,
+      locationId: resolvedLocationId,
+      topic,
+      displayName: venueDisplayName,
+      locationName: locationDisplayName
+    };
+  }
+
+  private handleIncomingMessage(topic: string, payload: Buffer): void {
+    try {
+      console.log(`📨 Message received on topic: ${topic}`);
+      const message: IoTMessage = JSON.parse(payload.toString());
+      const sensorData = this.transformIoTMessage(message);
+      this.messageHandlers.forEach(handler => handler(sensorData));
+    } catch (error) {
+      console.error('Error parsing IoT message:', error);
     }
   }
 
@@ -164,6 +255,7 @@ class IoTService {
         if (err) {
           console.error('❌ Subscription error:', err);
         } else {
+          this.currentTopic = topic;
           console.log(`📡 Subscribed to topic: ${topic}`);
         }
       });
@@ -202,15 +294,23 @@ class IoTService {
   disconnect(): void {
     if (this.client) {
       console.log('🔌 Disconnecting from AWS IoT Core');
+      this.client.removeAllListeners();
       this.client.end(true);
       this.client = null;
     }
     this.messageHandlers.clear();
     this.reconnectAttempts = 0;
+    this.currentTopic = null;
+    this.isConnecting = false;
+    this.connectionInfo = null;
   }
 
   isConnected(): boolean {
     return this.client?.connected || false;
+  }
+
+  getActiveConnection(): VenueConnectionInfo | null {
+    return this.connectionInfo;
   }
 
   // Publish a message to IoT (for testing or commands)

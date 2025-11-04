@@ -1,33 +1,50 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Save, Key, MapPin, DollarSign, Check } from 'lucide-react';
 import type { AppSettings } from '../types';
-import { VENUE_CONFIG } from '../config/amplify';
+import authService from '../services/auth.service';
+import locationService from '../services/location.service';
 
-const DEFAULT_SETTINGS: AppSettings = {
+const buildDefaultSettings = (venueId: string, locationId: string): AppSettings => ({
   theme: 'dark',
   soundAlerts: true,
   refreshInterval: 5,
   notifications: true,
-  venueId: VENUE_CONFIG.venueId,
-  locationId: VENUE_CONFIG.locationId,
+  venueId,
+  locationId,
   toastPOSEnabled: false,
   toastAPIKey: ''
-};
+});
 
 export function Settings() {
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const storedUser = authService.getStoredUser();
+  const defaultVenueId = storedUser?.venueId || '';
+  const defaultLocationId = locationService.getCurrentLocationId() || storedUser?.locations?.[0]?.id || '';
+
+  const defaultSettings = useMemo(
+    () => buildDefaultSettings(defaultVenueId, defaultLocationId),
+    [defaultVenueId, defaultLocationId]
+  );
+
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     loadSettings();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultVenueId, defaultLocationId]);
 
   const loadSettings = () => {
     try {
       const stored = localStorage.getItem('appSettings');
       if (stored) {
-        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) });
+        const parsed = JSON.parse(stored);
+        setSettings({
+          ...defaultSettings,
+          ...parsed,
+          venueId: defaultVenueId,
+          locationId: parsed?.locationId || defaultLocationId
+        });
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -36,7 +53,13 @@ export function Settings() {
 
   const saveSettings = () => {
     try {
-      localStorage.setItem('appSettings', JSON.stringify(settings));
+      const nextSettings = {
+        ...settings,
+        venueId: defaultVenueId,
+        locationId: settings.locationId || defaultLocationId
+      };
+      setSettings(nextSettings);
+      localStorage.setItem('appSettings', JSON.stringify(nextSettings));
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
@@ -65,37 +88,40 @@ export function Settings() {
               <h3 className="text-xl font-semibold text-white">Venue Configuration</h3>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Venue ID
-                </label>
-                <input
-                  type="text"
-                  value={settings.venueId}
-                  disabled
-                  className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
-                />
-                <p className="text-xs text-gray-400 mt-1">
-                  Configured: {VENUE_CONFIG.venueName}
-                </p>
-              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Venue ID
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.venueId}
+                    disabled
+                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Configured: {storedUser?.venueName || 'Your venue'}
+                  </p>
+                </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Location ID
-                </label>
-                <input
-                  type="text"
-                  value={settings.locationId}
-                  disabled
-                  className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
-                />
-                <p className="text-xs text-gray-400 mt-1">
-                  Configured: {VENUE_CONFIG.locationName}
-                </p>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Location ID
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.locationId}
+                    disabled
+                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Configured: {
+                      storedUser?.locations?.find(l => l.id === settings.locationId)?.name ||
+                      'Current location'
+                    }
+                  </p>
+                </div>
               </div>
-            </div>
           </motion.div>
 
           {/* Toast POS Integration */}

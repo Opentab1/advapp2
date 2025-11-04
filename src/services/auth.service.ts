@@ -70,13 +70,19 @@ class AuthService {
   }
 
   async logout(): Promise<void> {
+    let logoutError: Error | null = null;
+
     try {
       await signOut();
-      localStorage.removeItem(this.tokenKey);
-      localStorage.removeItem(this.userKey);
     } catch (error) {
       console.error('Logout error:', error);
-      throw new Error('Failed to logout');
+      logoutError = new Error('Failed to logout');
+    } finally {
+      this.clearStoredSession();
+    }
+
+    if (logoutError) {
+      throw logoutError;
     }
   }
 
@@ -85,16 +91,19 @@ class AuthService {
       const currentUser = await getCurrentUser();
       const session = await fetchAuthSession();
       
-      // Get JWT token
-      const token = session.tokens?.idToken?.toString();
-      if (token) {
-        localStorage.setItem(this.tokenKey, token);
-      }
+        // Get JWT token
+        const token = session.tokens?.idToken?.toString();
+        if (token) {
+          localStorage.setItem(this.tokenKey, token);
+        }
 
-      // Extract user data from token or attributes
-      const payload = session.tokens?.idToken?.payload;
-      const venueId = (payload?.['custom:venueId'] as string) || 'demo-venue';
-      const venueName = (payload?.['custom:venueName'] as string) || 'Pulse Dashboard';
+        // Extract user data from token or attributes
+        const payload = session.tokens?.idToken?.payload;
+        const venueId = ((payload?.['custom:venueId'] as string) || '').trim();
+        if (!venueId) {
+          console.warn('Authenticated user is missing custom:venueId attribute');
+        }
+        const venueName = (payload?.['custom:venueName'] as string) || 'Pulse Dashboard';
       
       // Get user's locations
       const locations = locationService.getLocations();
@@ -138,6 +147,34 @@ class AuthService {
 
   isAuthenticated(): boolean {
     return !!this.getStoredToken();
+  }
+
+  private clearStoredSession(): void {
+    const keysToRemove = [
+      this.tokenKey,
+      this.userKey,
+      'appSettings',
+      'pulse_locations',
+      'pulse_current_location',
+      'songLog',
+      'lastSongLogged'
+    ];
+
+    keysToRemove.forEach(key => {
+      try {
+        localStorage.removeItem(key);
+      } catch (err) {
+        console.warn(`Failed to remove localStorage key ${key}`, err);
+      }
+    });
+
+    try {
+      Object.keys(localStorage)
+        .filter(key => key.startsWith('CognitoIdentityServiceProvider'))
+        .forEach(key => localStorage.removeItem(key));
+    } catch (err) {
+      console.warn('Failed to clear Cognito tokens from localStorage', err);
+    }
   }
 }
 
