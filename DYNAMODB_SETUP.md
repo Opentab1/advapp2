@@ -174,11 +174,17 @@ type VenueConfig {
   timezone: String
 }
 
+type VenueConfigConnection {
+  items: [VenueConfig]
+  nextToken: String
+}
+
 type Query {
   getSensorData(venueId: ID!, timestamp: String!): SensorData
   listSensorData(venueId: ID!, startTime: String!, endTime: String!, limit: Int): SensorDataConnection
   getOccupancyMetrics(venueId: ID!): OccupancyMetrics
   getVenueConfig(venueId: ID!, locationId: String!): VenueConfig
+  listVenueLocations(venueId: ID!): VenueConfigConnection
 }
 
 schema {
@@ -212,11 +218,23 @@ For each DynamoDB table, create a data source in AppSync:
 
 **Request Mapping Template (VTL):**
 ```vtl
+## SECURITY: Extract venueId from authenticated user's JWT token
+## This ensures users can only query their own venue's data
+#set($userVenueId = $ctx.identity.claims.get("custom:venueId"))
+
+#if(!$userVenueId)
+  $util.error("User does not have custom:venueId attribute. Please contact administrator.")
+#end
+
+## Use venueId from JWT token (not from query argument) for security
+## This prevents users from querying other venues' data
+#set($venueId = $userVenueId)
+
 {
   "version": "2017-02-28",
   "operation": "GetItem",
   "key": {
-    "venueId": $util.dynamodb.toDynamoDBJson($ctx.args.venueId),
+    "venueId": $util.dynamodb.toDynamoDBJson($venueId),
     "timestamp": $util.dynamodb.toDynamoDBJson($ctx.args.timestamp)
   }
 }
@@ -236,6 +254,18 @@ $util.toJson($ctx.result)
 
 **Request Mapping Template (VTL):**
 ```vtl
+## SECURITY: Extract venueId from authenticated user's JWT token
+## This ensures users can only query their own venue's data
+#set($userVenueId = $ctx.identity.claims.get("custom:venueId"))
+
+#if(!$userVenueId)
+  $util.error("User does not have custom:venueId attribute. Please contact administrator.")
+#end
+
+## Use venueId from JWT token (not from query argument) for security
+## This prevents users from querying other venues' data
+#set($venueId = $userVenueId)
+
 {
   "version": "2017-02-28",
   "operation": "Query",
@@ -245,7 +275,7 @@ $util.toJson($ctx.result)
       "#timestamp": "timestamp"
     },
     "expressionValues": {
-      ":venueId": $util.dynamodb.toDynamoDBJson($ctx.args.venueId),
+      ":venueId": $util.dynamodb.toDynamoDBJson($venueId),
       ":startTime": $util.dynamodb.toDynamoDBJson($ctx.args.startTime),
       ":endTime": $util.dynamodb.toDynamoDBJson($ctx.args.endTime)
     }
@@ -272,11 +302,23 @@ $util.toJson($ctx.result)
 
 **Request Mapping Template (VTL):**
 ```vtl
+## SECURITY: Extract venueId from authenticated user's JWT token
+## This ensures users can only query their own venue's data
+#set($userVenueId = $ctx.identity.claims.get("custom:venueId"))
+
+#if(!$userVenueId)
+  $util.error("User does not have custom:venueId attribute. Please contact administrator.")
+#end
+
+## Use venueId from JWT token (not from query argument) for security
+## This prevents users from querying other venues' data
+#set($venueId = $userVenueId)
+
 {
   "version": "2017-02-28",
   "operation": "GetItem",
   "key": {
-    "venueId": $util.dynamodb.toDynamoDBJson($ctx.args.venueId)
+    "venueId": $util.dynamodb.toDynamoDBJson($venueId)
   }
 }
 ```
@@ -295,11 +337,23 @@ $util.toJson($ctx.result)
 
 **Request Mapping Template (VTL):**
 ```vtl
+## SECURITY: Extract venueId from authenticated user's JWT token
+## This ensures users can only query their own venue's data
+#set($userVenueId = $ctx.identity.claims.get("custom:venueId"))
+
+#if(!$userVenueId)
+  $util.error("User does not have custom:venueId attribute. Please contact administrator.")
+#end
+
+## Use venueId from JWT token (not from query argument) for security
+## This prevents users from querying other venues' data
+#set($venueId = $userVenueId)
+
 {
   "version": "2017-02-28",
   "operation": "GetItem",
   "key": {
-    "venueId": $util.dynamodb.toDynamoDBJson($ctx.args.venueId),
+    "venueId": $util.dynamodb.toDynamoDBJson($venueId),
     "locationId": $util.dynamodb.toDynamoDBJson($ctx.args.locationId)
   }
 }
@@ -308,6 +362,49 @@ $util.toJson($ctx.result)
 **Response Mapping Template:**
 ```vtl
 $util.toJson($ctx.result)
+```
+
+---
+
+### Resolver 5: listVenueLocations
+
+**Query:** `Query.listVenueLocations`
+**Data source:** `VenueConfigTable`
+
+**Request Mapping Template (VTL):**
+```vtl
+## SECURITY: Extract venueId from authenticated user's JWT token
+## This ensures users can only query their own venue's data
+#set($userVenueId = $ctx.identity.claims.get("custom:venueId"))
+
+#if(!$userVenueId)
+  $util.error("User does not have custom:venueId attribute. Please contact administrator.")
+#end
+
+## Use venueId from JWT token (not from query argument) for security
+## This prevents users from querying other venues' data
+#set($venueId = $userVenueId)
+
+## Query VenueConfig table for all locations with this venueId
+## Note: venueId is the partition key, so we query by venueId only
+{
+  "version": "2017-02-28",
+  "operation": "Query",
+  "query": {
+    "expression": "venueId = :venueId",
+    "expressionValues": {
+      ":venueId": $util.dynamodb.toDynamoDBJson($venueId)
+    }
+  }
+}
+```
+
+**Response Mapping Template:**
+```vtl
+{
+  "items": $util.toJson($ctx.result.items),
+  "nextToken": $util.toJson($ctx.result.nextToken)
+}
 ```
 
 ---
@@ -322,7 +419,76 @@ $util.toJson($ctx.result)
 
 ---
 
-## Step 7: Get Your GraphQL Endpoint
+## Step 7: Understanding Multi-Tenant Security
+
+### How Data Isolation Works
+
+**YES, the solution works with multiple venues and multiple logins!** Here's how:
+
+1. **User Authentication**: Each user logs in via Cognito and receives a JWT token containing their `custom:venueId`
+
+2. **Server-Side Enforcement**: All AppSync resolvers automatically extract `venueId` from the JWT token and use it for queries, **ignoring any venueId passed as a query argument**
+
+3. **Automatic Isolation**: Even if User A tries to query data for User B's venueId, the resolver will:
+   - Extract User A's venueId from their JWT token
+   - Query only User A's data
+   - Return empty results if User A tries to access User B's venueId
+
+### Example Multi-Tenant Scenario:
+
+```
+User 1 (venueId: "venue-123") logs in
+  → JWT token: { custom:venueId: "venue-123" }
+  → Can ONLY access data where venueId = "venue-123"
+  
+User 2 (venueId: "venue-456") logs in  
+  → JWT token: { custom:venueId: "venue-456" }
+  → Can ONLY access data where venueId = "venue-456"
+  
+User 1 tries to query: listSensorData(venueId: "venue-456")
+  → Resolver ignores argument, uses JWT token venueId: "venue-123"
+  → Returns only venue-123 data (or empty if no data exists)
+  → User 1 CANNOT access venue-456 data
+```
+
+### Setting Up Multiple Venues:
+
+1. **Create DynamoDB Data** with different venueIds:
+   ```json
+   // Venue 1 data
+   { "venueId": "venue-123", "timestamp": "...", ... }
+   
+   // Venue 2 data  
+   { "venueId": "venue-456", "timestamp": "...", ... }
+   ```
+
+2. **Create Cognito Users** with different `custom:venueId`:
+   ```bash
+   # User for Venue 1
+   aws cognito-idp admin-create-user \
+     --user-pool-id us-east-2_I6EBJm3te \
+     --username user1@venue1.com \
+     --user-attributes Name=custom:venueId,Value=venue-123
+   
+   # User for Venue 2
+   aws cognito-idp admin-create-user \
+     --user-pool-id us-east-2_I6EBJm3te \
+     --username user2@venue2.com \
+     --user-attributes Name=custom:venueId,Value=venue-456
+   ```
+
+3. **Each User Sees Only Their Data**: The resolver automatically filters by the venueId from their JWT token
+
+### Important Notes:
+
+- ✅ **Client-side venueId is still passed** for code readability and logging, but **server-side ignores it**
+- ✅ **Security is enforced at the resolver level** - cannot be bypassed by client manipulation
+- ✅ **No additional configuration needed** - works automatically once resolvers are set up correctly
+- ✅ **Scalable** - supports unlimited venues with automatic isolation
+
+---
+
+## Step 8: Get Your GraphQL Endpoint
 
 1. In AppSync console, go to **Settings**
 2. Copy the **API URL** (looks like: `https://xxxxx.appsync-api.us-east-2.amazonaws.com/graphql`)
@@ -334,7 +500,7 @@ VITE_GRAPHQL_ENDPOINT=https://xxxxx.appsync-api.us-east-2.amazonaws.com/graphql
 
 ---
 
-## Step 8: Configure Cognito User Attributes
+## Step 9: Configure Cognito User Attributes
 
 Each user MUST have the following custom attributes:
 
@@ -347,7 +513,7 @@ Each user MUST have the following custom attributes:
 
 ---
 
-## Step 9: Test the Setup
+## Step 10: Test the Setup
 
 1. Build and run the app:
 ```bash
@@ -415,10 +581,41 @@ Displayed on dashboard
 
 ## Security Notes
 
-- Each user can ONLY see data for their own `venueId`
-- AppSync uses Cognito authentication for all queries
-- Consider adding resolver-level authorization to verify user's venueId matches query venueId
-- Use IAM roles with least-privilege permissions
+### Multi-Tenant Data Isolation (CRITICAL)
+
+✅ **IMPLEMENTED:** Server-side enforcement ensures complete data isolation between venues:
+
+1. **JWT Token Validation**: All resolvers extract `venueId` from the authenticated user's JWT token (`$ctx.identity.claims['custom:venueId']`)
+
+2. **Automatic Override**: The resolver templates use the `venueId` from the JWT token, **ignoring any venueId passed as a query argument**. This means:
+   - Even if a malicious user modifies client code to query a different venueId, the resolver will use their authenticated venueId
+   - Users can **ONLY** access data for their own venue
+
+3. **Error Handling**: If a user doesn't have `custom:venueId` in their JWT token, the resolver returns an error
+
+4. **No Client-Side Reliance**: Security is enforced at the AppSync resolver level, not just in the client code
+
+### Example Security Flow:
+
+```
+User A (venueId: "venue-123") logs in
+  ↓
+JWT token contains: custom:venueId = "venue-123"
+  ↓
+User queries: listSensorData(venueId: "venue-456")  ← Malicious attempt
+  ↓
+AppSync Resolver extracts venueId from JWT: "venue-123"
+  ↓
+Resolver queries DynamoDB with venueId: "venue-123"  ← Security enforced!
+  ↓
+Returns only data for venue-123 (not venue-456)
+```
+
+### Additional Security Measures:
+
+- AppSync uses Cognito User Pool authentication for all queries
+- IAM roles with least-privilege permissions for AppSync → DynamoDB access
+- DynamoDB tables use `venueId` as partition key for efficient querying and isolation
 
 ---
 
