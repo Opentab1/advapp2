@@ -79,13 +79,20 @@ class IoTService {
       let IOT_ENDPOINT: string | null = null;
 
       try {
+        // Verify authentication session has tokens
+        const session = await fetchAuthSession();
+        if (!session.tokens) {
+          throw new Error('Not authenticated. Please log in again.');
+        }
+        
         const client = generateClient();
         const response = await client.graphql({
           query: getVenueConfig,
           variables: { 
             venueId, 
             locationId: locationId || 'default' // Use 'default' if locationId not provided
-          }
+          },
+          authMode: 'userPool'
         }) as any;
 
         const config = response?.data?.getVenueConfig;

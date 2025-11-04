@@ -86,6 +86,12 @@ class LocationService {
       // Get venueId from Cognito
       await getCurrentUser();
       const session = await fetchAuthSession();
+      
+      // Verify authentication
+      if (!session.tokens) {
+        throw new Error('Not authenticated. Please log in again.');
+      }
+      
       const payload = session.tokens?.idToken?.payload;
       const venueId = payload?.['custom:venueId'] as string;
 
@@ -97,7 +103,8 @@ class LocationService {
       const client = generateClient();
       const response = await client.graphql({
         query: listVenueLocations,
-        variables: { venueId }
+        variables: { venueId },
+        authMode: 'userPool'
       }) as any;
 
       // Check for GraphQL errors in response
