@@ -1,7 +1,7 @@
 import mqtt from 'mqtt';
 import type { SensorData } from '../types';
 import { VENUE_CONFIG } from '../config/amplify';
-import { API, graphqlOperation } from 'aws-amplify';
+import { generateClient } from '@aws-amplify/api';
 import { getCurrentUser, fetchAuthSession } from '@aws-amplify/auth';
 
 // AWS IoT Core configuration - Direct MQTT connection
@@ -72,9 +72,11 @@ class IoTService {
       }
 
       try {
-        const response = await API.graphql(
-          graphqlOperation(getVenueConfig, { venueId, locationId })
-        ) as any;
+        const client = generateClient();
+        const response = await client.graphql({
+          query: getVenueConfig,
+          variables: { venueId, locationId }
+        }) as any;
 
         const config = response?.data?.getVenueConfig;
         if (config?.mqttTopic) {
