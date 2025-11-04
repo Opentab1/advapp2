@@ -3,7 +3,7 @@ frontend:
   phases:
     preBuild:
       commands:
-        - echo "Node: $(node -v)"
+        - echo "Node $(node -v)"
         - npm install
     build:
       commands:
