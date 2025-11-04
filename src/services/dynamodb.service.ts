@@ -328,6 +328,19 @@ class DynamoDBService {
           errors: response.errors,
           fullResponse: JSON.stringify(response, null, 2)
         });
+        // Log detailed error information
+        response.errors.forEach((error: any, index: number) => {
+          console.error(`Error ${index + 1}:`, {
+            message: error.message,
+            errorType: error.errorType,
+            errorInfo: error.errorInfo,
+            data: error.data,
+            path: error.path,
+            locations: error.locations,
+            extensions: error.extensions,
+            fullError: JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+          });
+        });
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
