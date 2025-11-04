@@ -2,6 +2,7 @@ import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '..
 import authService from './auth.service';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.advizia.ai';
+const DISABLE_MOCK_FALLBACK = import.meta.env.VITE_DISABLE_MOCK_DATA === 'true';
 
 class ApiService {
   private getHeaders(): HeadersInit {
@@ -31,16 +32,20 @@ class ApiService {
       const days = this.getRangeDays(range);
       const url = `${API_BASE_URL}/history/${venueId}?days=${days}`;
       
+      console.log('🔍 Fetching historical data from:', url);
+      
       const response = await fetch(url, {
         method: 'GET',
         headers: this.getHeaders()
       });
 
       if (!response.ok) {
+        console.warn(`⚠️ API returned ${response.status}: ${response.statusText}`);
         throw new Error(`API error: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
+      console.log('✅ Historical data received from API');
       
       // Transform API response to our data structure
       return {
@@ -49,8 +54,14 @@ class ApiService {
         range
       };
     } catch (error: any) {
-      console.error('API fetch error:', error);
+      console.error('❌ Historical data API fetch failed:', error);
       
+      if (DISABLE_MOCK_FALLBACK) {
+        console.error('🚫 Mock data disabled - throwing error');
+        throw new Error(`Failed to fetch historical data: ${error.message}`);
+      }
+      
+      console.warn('⚠️ Returning mock data as fallback');
       // Return mock data for demo purposes
       return this.getMockData(venueId, range);
     }
@@ -78,19 +89,30 @@ class ApiService {
     try {
       const url = `${API_BASE_URL}/live/${venueId}`;
       
+      console.log('🔍 Fetching live data from:', url);
+      
       const response = await fetch(url, {
         method: 'GET',
         headers: this.getHeaders()
       });
 
       if (!response.ok) {
+        console.warn(`⚠️ API returned ${response.status}: ${response.statusText}`);
         throw new Error(`API error: ${response.status}`);
       }
 
       const data = await response.json();
+      console.log('✅ Live data received from API');
       return this.transformApiData([data])[0];
-    } catch (error) {
-      console.error('Live data fetch error:', error);
+    } catch (error: any) {
+      console.error('❌ Live data API fetch failed:', error);
+      
+      if (DISABLE_MOCK_FALLBACK) {
+        console.error('🚫 Mock data disabled - throwing error');
+        throw new Error(`Failed to fetch live data: ${error.message}`);
+      }
+      
+      console.warn('⚠️ Returning mock data as fallback');
       // Return mock live data
       return this.getMockLiveData();
     }
@@ -244,18 +266,30 @@ class ApiService {
     try {
       const url = `${API_BASE_URL}/occupancy/${venueId}/metrics`;
       
+      console.log('🔍 Fetching occupancy metrics from:', url);
+      
       const response = await fetch(url, {
         method: 'GET',
         headers: this.getHeaders()
       });
 
       if (!response.ok) {
+        console.warn(`⚠️ API returned ${response.status}: ${response.statusText}`);
         throw new Error(`API error: ${response.status}`);
       }
 
-      return await response.json();
-    } catch (error) {
-      console.error('Occupancy metrics fetch error:', error);
+      const data = await response.json();
+      console.log('✅ Occupancy metrics received from API');
+      return data;
+    } catch (error: any) {
+      console.error('❌ Occupancy metrics API fetch failed:', error);
+      
+      if (DISABLE_MOCK_FALLBACK) {
+        console.error('🚫 Mock data disabled - throwing error');
+        throw new Error(`Failed to fetch occupancy metrics: ${error.message}`);
+      }
+      
+      console.warn('⚠️ Returning mock metrics as fallback');
       // Return mock occupancy metrics
       return this.getMockOccupancyMetrics();
     }

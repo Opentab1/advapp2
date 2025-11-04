@@ -215,6 +215,30 @@ export function Dashboard() {
         <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto pb-24 lg:pb-8">
           {activeTab === 'live' || activeTab === 'history' ? (
             <>
+              {/* Mock Data Warning Banner */}
+              {liveData && !usingIoT && (
+                <motion.div
+                  className="mb-4 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-start gap-3"
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-semibold text-yellow-400">⚠️ Using Simulated Data</span>
+                    </div>
+                    <p className="text-xs text-yellow-300/80">
+                      The API or IoT connection is not available. Check the browser console for details. 
+                      Real-time data from AWS IoT Core is not flowing. This may indicate:
+                    </p>
+                    <ul className="text-xs text-yellow-300/80 mt-2 ml-4 list-disc">
+                      <li>API endpoint not responding (check <code className="px-1 py-0.5 bg-black/20 rounded">https://api.advizia.ai</code>)</li>
+                      <li>IoT Core connection failed (check MQTT topic in DynamoDB)</li>
+                      <li>Missing or invalid venueId in Cognito user attributes</li>
+                    </ul>
+                  </div>
+                </motion.div>
+              )}
+
               {/* Time Range Selector */}
               <motion.div
                 className="mb-6"
