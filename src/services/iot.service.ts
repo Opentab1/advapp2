@@ -1,10 +1,18 @@
 import mqtt from 'mqtt';
 import type { SensorData } from '../types';
 import { VENUE_CONFIG } from '../config/amplify';
+import { API, graphqlOperation } from 'aws-amplify';
+
+const getVenueConfig = /* GraphQL */ `
+  query GetVenueConfig($venueId: ID!, $locationId: String!) {
+    getVenueConfig(venueId: $venueId, locationId: $locationId) {
+      mqttTopic
+    }
+  }
+`;
 
 // AWS IoT Core configuration - Direct MQTT connection
 const IOT_ENDPOINT = `wss://${VENUE_CONFIG.iotEndpoint}/mqtt`;
-const TOPIC = "pulse/sensors/data";
 
 interface IoTMessage {
   deviceId?: string;
@@ -43,6 +51,25 @@ class IoTService {
     }
 
     this.isConnecting = true;
+
+    let TOPIC = "pulse/fergs-stpete/main-floor"; // default fallback
+
+    try {
+      const response = await API.graphql(
+        graphqlOperation(getVenueConfig, {
+          venueId: "fergs-stpete",
+          locationId: "main-floor"
+        })
+      ) as any;
+
+      const config = response?.data?.getVenueConfig;
+      if (config?.mqttTopic) {
+        TOPIC = config.mqttTopic;
+        console.log("Using config topic:", TOPIC);
+      }
+    } catch (err) {
+      console.warn("Config not found, using default topic", err);
+    }
 
     try {
       console.log('🔌 Connecting to AWS IoT Core via MQTT...');
