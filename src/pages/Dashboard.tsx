@@ -438,10 +438,11 @@ export function Dashboard() {
                       <div className="text-xs text-red-300/80 mb-4">
                         <p className="font-semibold mb-2">Possible causes:</p>
                         <ul className="list-disc ml-4 space-y-1">
-                          <li>API endpoint not responding (check <code className="px-1 py-0.5 bg-black/20 rounded">https://api.advizia.ai</code>)</li>
+                          <li>No sensor data found in DynamoDB table <code className="px-1 py-0.5 bg-black/20 rounded">RPiSensorData</code> for your venue</li>
+                          <li>Invalid or missing venueId in Cognito user attributes (custom:venueId)</li>
                           <li>AWS IoT Core connection failed (check MQTT topic configuration)</li>
                           <li>Missing VenueConfig in DynamoDB table</li>
-                          <li>Invalid venueId in Cognito user attributes (custom:venueId)</li>
+                          <li>Insufficient IAM permissions to read from DynamoDB</li>
                           <li>Network connectivity issues</li>
                         </ul>
                         <p className="mt-3">
