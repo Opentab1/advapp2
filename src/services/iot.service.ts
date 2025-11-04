@@ -57,6 +57,7 @@ class IoTService {
 
     try {
       // Fetch venue configuration from Cognito and AppSync
+      // Resolve MQTT topic for the current user/venue (fallback defaults if unauthenticated)
       let venueId = "fergs-stpete";
       let locationId = "main-floor";
       let TOPIC = "pulse/fergs-stpete/main-floor";
