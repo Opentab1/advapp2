@@ -132,11 +132,26 @@ class DynamoDBService {
 
       // Verify authentication
       const session = await fetchAuthSession();
+      console.log('🔐 Auth session details:', {
+        hasTokens: !!session.tokens,
+        hasIdToken: !!session.tokens?.idToken,
+        hasAccessToken: !!session.tokens?.accessToken,
+        tokenType: session.tokens?.idToken?.payload ? 'JWT' : 'none',
+        venueId: session.tokens?.idToken?.payload?.['custom:venueId']
+      });
+      
       if (!session.tokens) {
         throw new Error('Not authenticated. Please log in again.');
       }
 
       const client = this.getClient();
+      const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
+      console.log('📡 GraphQL Request Details:', {
+        endpoint: endpoint ? endpoint.substring(0, 50) + '...' : 'NOT SET',
+        query: 'listSensorData',
+        venueId,
+        authMode: 'userPool'
+      });
 
       // Query DynamoDB for the most recent data
       // Since we don't have the exact timestamp, we'll query for recent data
@@ -156,6 +171,10 @@ class DynamoDBService {
 
       // Check for GraphQL errors in response
       if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL Response Errors:', {
+          errors: response.errors,
+          fullResponse: JSON.stringify(response, null, 2)
+        });
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
@@ -171,7 +190,29 @@ class DynamoDBService {
       
       return this.transformDynamoDBData(latestData);
     } catch (error: any) {
-      console.error('❌ Failed to fetch live sensor data from DynamoDB:', error);
+      console.error('❌ Failed to fetch live sensor data from DynamoDB');
+      console.error('🔍 Full Error Object:', {
+        name: error?.name,
+        message: error?.message,
+        code: error?.code,
+        statusCode: error?.statusCode,
+        errorType: error?.errorType,
+        errorInfo: error?.errorInfo,
+        underlyingError: error?.underlyingError,
+        errors: error?.errors,
+        data: error?.data,
+        stack: error?.stack,
+        fullError: JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+      });
+      
+      // Log network-level details if available
+      if (error?.name === 'NetworkError' || error?.code === 'NETWORK_ERROR') {
+        console.error('🌐 Network Error Details:', {
+          endpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT,
+          message: error.message
+        });
+      }
+      
       const errorMessage = this.extractErrorMessage(error);
       // Avoid double-wrapping error messages
       if (this.isAlreadyWrapped(errorMessage, 'Failed to fetch live data')) {
@@ -213,6 +254,10 @@ class DynamoDBService {
 
       // Check for GraphQL errors in response
       if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL Response Errors:', {
+          errors: response.errors,
+          fullResponse: JSON.stringify(response, null, 2)
+        });
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
@@ -233,7 +278,17 @@ class DynamoDBService {
         range
       };
     } catch (error: any) {
-      console.error('❌ Failed to fetch historical sensor data from DynamoDB:', error);
+      console.error('❌ Failed to fetch historical sensor data from DynamoDB');
+      console.error('🔍 Full Error Object:', {
+        name: error?.name,
+        message: error?.message,
+        code: error?.code,
+        statusCode: error?.statusCode,
+        errorType: error?.errorType,
+        errors: error?.errors,
+        data: error?.data,
+        fullError: JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+      });
       const errorMessage = this.extractErrorMessage(error);
       // Avoid double-wrapping error messages
       if (this.isAlreadyWrapped(errorMessage, 'Failed to fetch historical data')) {
@@ -269,6 +324,23 @@ class DynamoDBService {
 
       // Check for GraphQL errors in response
       if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL Response Errors:', {
+          errors: response.errors,
+          fullResponse: JSON.stringify(response, null, 2)
+        });
+        // Log detailed error information
+        response.errors.forEach((error: any, index: number) => {
+          console.error(`Error ${index + 1}:`, {
+            message: error.message,
+            errorType: error.errorType,
+            errorInfo: error.errorInfo,
+            data: error.data,
+            path: error.path,
+            locations: error.locations,
+            extensions: error.extensions,
+            fullError: JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+          });
+        });
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
@@ -283,7 +355,17 @@ class DynamoDBService {
       
       return metrics;
     } catch (error: any) {
-      console.error('❌ Failed to fetch occupancy metrics from DynamoDB:', error);
+      console.error('❌ Failed to fetch occupancy metrics from DynamoDB');
+      console.error('🔍 Full Error Object:', {
+        name: error?.name,
+        message: error?.message,
+        code: error?.code,
+        statusCode: error?.statusCode,
+        errorType: error?.errorType,
+        errors: error?.errors,
+        data: error?.data,
+        fullError: JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+      });
       const errorMessage = this.extractErrorMessage(error);
       // Avoid double-wrapping error messages
       if (this.isAlreadyWrapped(errorMessage, 'Failed to fetch occupancy metrics')) {

@@ -1,0 +1,93 @@
+type SensorData {
+  venueId: ID!
+  timestamp: String!
+  decibels: Float
+  light: Float
+  indoorTemp: Float
+  outdoorTemp: Float
+  humidity: Float
+  currentSong: String
+  albumArt: String
+  artist: String
+  occupancy: OccupancyData
+}
+
+type OccupancyData {
+  current: Int
+  entries: Int
+  exits: Int
+  capacity: Int
+}
+
+type SensorDataConnection {
+  items: [SensorData]
+  nextToken: String
+}
+
+type Location {
+  locationId: ID!
+  venueId: ID!
+  displayName: String
+  locationName: String
+  address: String
+  timezone: String
+  deviceId: String
+  mqttTopic: String
+}
+
+type LocationConnection {
+  items: [Location]
+  nextToken: String
+}
+
+type OccupancyMetrics {
+  venueId: ID!
+  current: Int
+  todayEntries: Int
+  todayExits: Int
+  peakOccupancy: Int
+  peakTime: String
+  sevenDayAvg: Float
+  fourteenDayAvg: Float
+  thirtyDayAvg: Float
+}
+
+type VenueConfig {
+  venueId: ID!
+  locationId: ID!
+  displayName: String
+  locationName: String
+  mqttTopic: String
+  iotEndpoint: String
+}
+
+type Query {
+  getSensorData(venueId: ID!, timestamp: String!): SensorData
+    @aws_cognito_user_pools
+
+  listSensorData(
+    venueId: ID!
+    startTime: String!
+    endTime: String!
+    limit: Int
+    nextToken: String
+  ): SensorDataConnection
+    @aws_cognito_user_pools
+
+  listVenueLocations(
+    venueId: ID!
+    limit: Int
+    nextToken: String
+  ): LocationConnection
+    @aws_cognito_user_pools
+
+  getOccupancyMetrics(venueId: ID!): OccupancyMetrics
+    @aws_cognito_user_pools
+
+  getVenueConfig(venueId: ID!, locationId: String!): VenueConfig
+    @aws_cognito_user_pools
+}
+
+type Schema {
+  query: Query
+}
