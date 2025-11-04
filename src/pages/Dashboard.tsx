@@ -69,34 +69,45 @@ export function Dashboard() {
   const venueName = user.venueName || user.email?.split('@')[0] || 'Your Venue';
   
   // Multi-location support (locations within the venue)
-  const initialLocations = user.locations || locationService.getLocations();
-  const [locations, setLocations] = useState<Location[]>(initialLocations);
+  const getInitialLocations = () => {
+    const cachedLocations = locationService.getLocations();
+    if (cachedLocations.length > 0) {
+      return cachedLocations;
+    }
+    return user.locations || [];
+  };
+  const [locations, setLocations] = useState<Location[]>(getInitialLocations);
   const [locationsError, setLocationsError] = useState<string | null>(null);
   const [locationsLoading, setLocationsLoading] = useState(false);
   
   // Fetch locations if not already loaded
   useEffect(() => {
+    let isMounted = true;
+
     const loadLocations = async () => {
-      if (locations.length === 0 && !locationsLoading) {
-        setLocationsLoading(true);
-        try {
-          const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
-          setLocations(fetchedLocations);
-          setLocationsError(null);
-          // Set initial location if none selected
-          if (!locationService.getCurrentLocationId() && fetchedLocations.length > 0) {
-            locationService.setCurrentLocationId(fetchedLocations[0].id);
-          }
-        } catch (error: any) {
-          console.error('Failed to load locations:', error);
-          setLocationsError(error.message || 'Failed to load locations');
-        } finally {
+      setLocationsLoading(true);
+      try {
+        const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
+        if (!isMounted) return;
+        setLocations(fetchedLocations);
+        setLocationsError(null);
+        authService.updateStoredUser({ locations: fetchedLocations });
+      } catch (error: any) {
+        if (!isMounted) return;
+        console.error('Failed to load locations:', error);
+        setLocationsError(error.message || 'Failed to load locations');
+      } finally {
+        if (isMounted) {
           setLocationsLoading(false);
         }
       }
     };
-    
+
     loadLocations();
+
+    return () => {
+      isMounted = false;
+    };
   }, [venueId]);
   
   const [currentLocationId, setCurrentLocationId] = useState<string>(
@@ -105,12 +116,16 @@ export function Dashboard() {
   
   // Update currentLocationId when locations are loaded
   useEffect(() => {
-    if (locations.length > 0 && !currentLocationId) {
+    if (locations.length === 0) {
+      return;
+    }
+
+    if (!currentLocationId || !locations.some(location => location.id === currentLocationId)) {
       const newLocationId = locations[0].id;
       setCurrentLocationId(newLocationId);
       locationService.setCurrentLocationId(newLocationId);
     }
-  }, [locations]);
+  }, [locations, currentLocationId]);
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
 

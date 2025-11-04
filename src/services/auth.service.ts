@@ -176,6 +176,24 @@ class AuthService {
     return null;
   }
 
+  updateStoredUser(partial: Partial<User>): void {
+    const stored = this.getStoredUser();
+    if (!stored) {
+      return;
+    }
+
+    const updatedUser: User = {
+      ...stored,
+      ...partial
+    };
+
+    try {
+      localStorage.setItem(this.userKey, JSON.stringify(updatedUser));
+    } catch (error) {
+      console.error('Error updating stored user:', error);
+    }
+  }
+
   isAuthenticated(): boolean {
     return !!this.getStoredToken();
   }
