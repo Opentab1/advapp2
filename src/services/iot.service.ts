@@ -85,7 +85,8 @@ class IoTService {
           variables: { 
             venueId, 
             locationId: locationId || 'default' // Use 'default' if locationId not provided
-          }
+          },
+          authMode: 'userPool'
         }) as any;
 
         const config = response?.data?.getVenueConfig;
