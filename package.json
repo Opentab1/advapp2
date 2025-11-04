@@ -5,7 +5,7 @@
   "description": "Futuristic IoT Pulse Dashboard PWA",
   "scripts": {
     "dev": "vite",
-    "build": "vite build --mode production --emptyOutDir",
+    "build": "vite build --force --mode production --emptyOutDir --minify terser --sourcemap false --logLevel error",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "type-check": "tsc --noEmit"
