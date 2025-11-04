@@ -68,14 +68,21 @@ const getOccupancyMetricsQuery = /* GraphQL */ `
 `;
 
 class DynamoDBService {
-  private client = generateClient();
+  private client: ReturnType<typeof generateClient> | null = null;
+
+  private getClient() {
+    if (!this.client) {
+      this.client = generateClient();
+    }
+    return this.client;
+  }
 
   /**
    * Get the most recent sensor data for a venue
    */
   async getLiveSensorData(venueId: string): Promise<SensorData> {
     console.log('🔍 Fetching live sensor data from DynamoDB for venue:', venueId);
-    
+
     try {
       // Verify authentication
       const session = await fetchAuthSession();
@@ -87,11 +94,11 @@ class DynamoDBService {
       // Since we don't have the exact timestamp, we'll query for recent data
       const endTime = new Date().toISOString();
       const startTime = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // Last 5 minutes
-      
-      const response = await this.client.graphql({
+
+      const response = await this.getClient().graphql({
         query: listSensorData,
-        variables: { 
-          venueId, 
+        variables: {
+          venueId,
           startTime,
           endTime,
           limit: 1 // Get only the most recent
@@ -99,18 +106,19 @@ class DynamoDBService {
       }) as any;
 
       const items = response?.data?.listSensorData?.items || [];
-      
+
       if (items.length === 0) {
         throw new Error(`No sensor data found for venue: ${venueId}. Please ensure your IoT devices are publishing data to DynamoDB.`);
       }
 
       const latestData = items[0];
       console.log('✅ Live sensor data retrieved from DynamoDB');
-      
+
       return this.transformDynamoDBData(latestData);
     } catch (error: any) {
       console.error('❌ Failed to fetch live sensor data from DynamoDB:', error);
-      throw new Error(`Failed to fetch live data from DynamoDB: ${error.message}`);
+      const errorMessage = this.extractErrorMessage(error);
+      throw new Error(`Failed to fetch live data from DynamoDB: ${errorMessage}`);
     }
   }
 
@@ -119,7 +127,7 @@ class DynamoDBService {
    */
   async getHistoricalSensorData(venueId: string, range: TimeRange): Promise<HistoricalData> {
     console.log('🔍 Fetching historical sensor data from DynamoDB for venue:', venueId, 'range:', range);
-    
+
     try {
       // Verify authentication
       const session = await fetchAuthSession();
@@ -128,11 +136,11 @@ class DynamoDBService {
       }
 
       const { startTime, endTime } = this.getTimeRangeValues(range);
-      
-      const response = await this.client.graphql({
+
+      const response = await this.getClient().graphql({
         query: listSensorData,
-        variables: { 
-          venueId, 
+        variables: {
+          venueId,
           startTime,
           endTime,
           limit: 1000 // Adjust based on your needs
@@ -140,15 +148,15 @@ class DynamoDBService {
       }) as any;
 
       const items = response?.data?.listSensorData?.items || [];
-      
+
       if (items.length === 0) {
         throw new Error(`No historical data found for venue: ${venueId} in the specified time range.`);
       }
 
       console.log(`✅ Retrieved ${items.length} historical data points from DynamoDB`);
-      
+
       const transformedData = items.map((item: any) => this.transformDynamoDBData(item));
-      
+
       return {
         data: transformedData,
         venueId,
@@ -156,7 +164,8 @@ class DynamoDBService {
       };
     } catch (error: any) {
       console.error('❌ Failed to fetch historical sensor data from DynamoDB:', error);
-      throw new Error(`Failed to fetch historical data from DynamoDB: ${error.message}`);
+      const errorMessage = this.extractErrorMessage(error);
+      throw new Error(`Failed to fetch historical data from DynamoDB: ${errorMessage}`);
     }
   }
 
@@ -165,7 +174,7 @@ class DynamoDBService {
    */
   async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
     console.log('🔍 Fetching occupancy metrics from DynamoDB for venue:', venueId);
-    
+
     try {
       // Verify authentication
       const session = await fetchAuthSession();
@@ -173,24 +182,55 @@ class DynamoDBService {
         throw new Error('Not authenticated');
       }
 
-      const response = await this.client.graphql({
+      const response = await this.getClient().graphql({
         query: getOccupancyMetricsQuery,
         variables: { venueId }
       }) as any;
 
       const metrics = response?.data?.getOccupancyMetrics;
-      
+
       if (!metrics) {
         throw new Error(`No occupancy metrics found for venue: ${venueId}`);
       }
 
       console.log('✅ Occupancy metrics retrieved from DynamoDB');
-      
+
       return metrics;
     } catch (error: any) {
       console.error('❌ Failed to fetch occupancy metrics from DynamoDB:', error);
-      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${error.message}`);
+      const errorMessage = this.extractErrorMessage(error);
+      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
     }
+  }
+
+  private extractErrorMessage(error: any): string {
+    if (!error) {
+      return 'Unknown error';
+    }
+
+    const graphQLErrors = error.errors || error?.data?.errors || error?.originalError?.errors;
+    if (Array.isArray(graphQLErrors) && graphQLErrors.length > 0) {
+      return graphQLErrors.map((e: any) => e.message || JSON.stringify(e)).join('; ');
+    }
+
+    if (error.cause?.message) {
+      return error.cause.message;
+    }
+
+    if (error.message) {
+      return error.message;
+    }
+
+    if (typeof error === 'string') {
+      return error;
+    }
+
+    const asString = error.toString?.();
+    if (asString && asString !== '[object Object]') {
+      return asString;
+    }
+
+    return JSON.stringify(error);
   }
 
   /**
