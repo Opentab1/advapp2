@@ -58,20 +58,51 @@ class LocationService {
    * Extract error message from various error types
    */
   private extractErrorMessage(error: any): string {
+    // Check for authentication/authorization errors specifically
     if (error?.message) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes('unauthorized') || msg.includes('401') || msg.includes('403')) {
+        return `Unauthorized: ${error.message}. Check that:\n` +
+               `1. VITE_GRAPHQL_ENDPOINT is set correctly in .env\n` +
+               `2. Your AppSync API is configured with Cognito User Pool authentication\n` +
+               `3. Your Cognito user has proper permissions\n` +
+               `4. You are logged in with a valid session`;
+      }
       return error.message;
     }
     if (typeof error === 'string') {
+      const msg = error.toLowerCase();
+      if (msg.includes('unauthorized') || msg.includes('401') || msg.includes('403')) {
+        return `Unauthorized: ${error}. Check VITE_GRAPHQL_ENDPOINT configuration and AppSync authentication settings.`;
+      }
       return error;
     }
     if (error?.error?.message) {
       return error.error.message;
     }
     if (error?.errors && Array.isArray(error.errors) && error.errors.length > 0) {
-      return error.errors.map((e: any) => e.message || e).join(', ');
+      const errorMessages = error.errors.map((e: any) => {
+        const msg = (e.message || e).toString().toLowerCase();
+        if (msg.includes('unauthorized') || msg.includes('401') || msg.includes('403')) {
+          return `Unauthorized: ${e.message || e}. Verify AppSync API authentication configuration.`;
+        }
+        return e.message || e;
+      });
+      return errorMessages.join(', ');
     }
     if (error?.data?.errors) {
-      return error.data.errors.map((e: any) => e.message || e).join(', ');
+      const errorMessages = error.data.errors.map((e: any) => {
+        const msg = (e.message || e).toString().toLowerCase();
+        if (msg.includes('unauthorized') || msg.includes('401') || msg.includes('403')) {
+          return `Unauthorized: ${e.message || e}. Check AppSync API auth settings.`;
+        }
+        return e.message || e;
+      });
+      return errorMessages.join(', ');
+    }
+    // Check for HTTP status codes
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return `Unauthorized (${error.statusCode}): Check that VITE_GRAPHQL_ENDPOINT is correct and AppSync API uses Cognito User Pool authentication.`;
     }
     return error?.toString() || 'Unknown error occurred';
   }
@@ -86,6 +117,18 @@ class LocationService {
       // Get venueId from Cognito
       await getCurrentUser();
       const session = await fetchAuthSession();
+      
+      if (!session.tokens) {
+        throw new Error('Not authenticated. Please log in again.');
+      }
+      
+      // Log auth info for debugging
+      console.log('🔐 Auth session valid:', {
+        hasIdToken: !!session.tokens?.idToken,
+        hasAccessToken: !!session.tokens?.accessToken,
+        endpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT?.substring(0, 50) + '...'
+      });
+      
       const payload = session.tokens?.idToken?.payload;
       const venueId = payload?.['custom:venueId'] as string;
 
@@ -102,6 +145,7 @@ class LocationService {
 
       // Check for GraphQL errors in response
       if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL errors:', response.errors);
         const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
         throw new Error(`GraphQL error: ${errorMessages}`);
       }
@@ -131,6 +175,12 @@ class LocationService {
       return locations;
     } catch (error: any) {
       console.error('❌ Failed to fetch locations from DynamoDB:', error);
+      console.error('❌ Error details:', {
+        message: error?.message,
+        statusCode: error?.statusCode,
+        errors: error?.errors,
+        data: error?.data
+      });
       const errorMessage = this.extractErrorMessage(error);
       throw new Error(`Failed to load locations: ${errorMessage}`);
     }

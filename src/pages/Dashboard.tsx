@@ -467,17 +467,24 @@ export function Dashboard() {
                       <div className="text-xs text-red-300/80 mb-4">
                         <p className="font-semibold mb-2">Possible causes:</p>
                         <ul className="list-disc ml-4 space-y-1">
-                          <li>GraphQL API endpoint not configured (check <code className="px-1 py-0.5 bg-black/20 rounded">VITE_GRAPHQL_ENDPOINT</code> in .env)</li>
-                          <li>AWS AppSync API not set up (see <code className="px-1 py-0.5 bg-black/20 rounded">DYNAMODB_SETUP.md</code>)</li>
-                          <li>DynamoDB tables missing or empty (SensorData, VenueConfig, OccupancyMetrics)</li>
-                          <li>Invalid venueId in Cognito user attributes (<code className="px-1 py-0.5 bg-black/20 rounded">custom:venueId</code>)</li>
-                          <li>AppSync resolvers not configured correctly</li>
-                          <li>No sensor data published to DynamoDB yet</li>
+                          <li><strong>GraphQL endpoint not configured:</strong> Check <code className="px-1 py-0.5 bg-black/20 rounded">VITE_GRAPHQL_ENDPOINT</code> in .env file</li>
+                          <li><strong>Unauthorized error:</strong> AppSync API must use <code className="px-1 py-0.5 bg-black/20 rounded">Amazon Cognito User Pool</code> authentication</li>
+                          <li><strong>AppSync resolvers:</strong> Check IAM permissions allow Cognito users to query DynamoDB</li>
+                          <li><strong>DynamoDB tables:</strong> Verify tables exist (SensorData, VenueConfig, OccupancyMetrics)</li>
+                          <li><strong>Invalid venueId:</strong> Check Cognito user has <code className="px-1 py-0.5 bg-black/20 rounded">custom:venueId</code> attribute</li>
+                          <li><strong>No data:</strong> Ensure IoT devices are publishing sensor data to DynamoDB</li>
                         </ul>
+                        <div className="mt-3 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded">
+                          <p className="font-semibold text-yellow-300 mb-2">🔍 Debugging Steps:</p>
+                          <ol className="list-decimal ml-4 space-y-1">
+                            <li>Open browser console (F12) and check for detailed error logs</li>
+                            <li>Verify <code className="px-1 py-0.5 bg-black/20 rounded">VITE_GRAPHQL_ENDPOINT</code> is set correctly</li>
+                            <li>Check AppSync API → Settings → Authorization to confirm it uses Cognito User Pool</li>
+                            <li>Verify your Cognito User Pool ID matches: <code className="px-1 py-0.5 bg-black/20 rounded">us-east-2_I6EBJm3te</code></li>
+                            <li>Check AppSync resolvers have DynamoDB data source permissions</li>
+                          </ol>
+                        </div>
                         <p className="mt-3">
-                          <strong>Check browser console (F12)</strong> for detailed error logs.
-                        </p>
-                        <p className="mt-2">
                           <strong>Your venueId:</strong> <code className="px-1 py-0.5 bg-black/20 rounded">{venueId}</code>
                         </p>
                         <p className="mt-2 text-yellow-300">
