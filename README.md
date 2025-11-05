@@ -315,6 +315,179 @@ Response: Latest sensor reading
 }
 ```
 
+## 👥 Adding a New Venue User
+
+This app supports multiple venues with complete data isolation. Each venue user can only see their own venue's data. Follow these steps to add a new venue:
+
+### Step 1: Create Cognito User with Venue ID
+
+**Choose a unique venue ID** (e.g., `fergs-stpete`, `venue-001`, `coffee-shop-downtown`)
+
+**Via AWS Console:**
+1. Go to **AWS Cognito Console** → User Pools → `us-east-2_I6EBJm3te`
+2. Click **Users** → **Create user**
+3. Fill in:
+   - Username/Email: `newuser@venue.com`
+   - Temporary password: Generate secure password
+   - ✅ Check "Send email invitation"
+4. After creation, click on the user → **Attributes** → **Edit**
+5. Set `custom:venueId` = `YOUR_VENUE_ID` (e.g., `fergs-stpete`)
+6. Optional: Set `custom:venueName` = `"Venue Display Name"`
+7. Click **Save changes**
+8. Set permanent password: **Actions** → **Set password**
+
+**Via AWS CLI:**
+```bash
+# Set variables
+USER_POOL_ID="us-east-2_I6EBJm3te"
+EMAIL="newuser@venue.com"
+VENUE_ID="YOUR_VENUE_ID"  # e.g., "fergs-stpete"
+TEMP_PASSWORD="TempPass123!"
+
+# Create user
+aws cognito-idp admin-create-user \
+  --user-pool-id $USER_POOL_ID \
+  --username $EMAIL \
+  --user-attributes \
+    Name=email,Value=$EMAIL \
+    Name=custom:venueId,Value=$VENUE_ID \
+  --temporary-password $TEMP_PASSWORD \
+  --message-action SUPPRESS \
+  --region us-east-2
+
+# Set permanent password
+aws cognito-idp admin-set-user-password \
+  --user-pool-id $USER_POOL_ID \
+  --username $EMAIL \
+  --password $TEMP_PASSWORD \
+  --permanent \
+  --region us-east-2
+```
+
+### Step 2: Create VenueConfig Entry in DynamoDB
+
+**Via AWS Console:**
+1. Go to **DynamoDB** → Tables → `VenueConfig`
+2. Click **Explore table items** → **Create item**
+3. Add:
+   - `venueId` (String): `YOUR_VENUE_ID`
+   - `locationId` (String): `main-floor` (or your location name)
+   - `displayName` (String): `Main Floor`
+   - `locationName` (String): `Main Floor`
+   - `mqttTopic` (String): `venue/YOUR_VENUE_ID/sensors`
+   - `deviceId` (String): `rpi-001` (your RPI identifier)
+   - `address` (String): Optional address
+   - `timezone` (String): `America/New_York` (optional)
+
+**Via AWS CLI:**
+```bash
+aws dynamodb put-item \
+  --table-name VenueConfig \
+  --item '{
+    "venueId": {"S": "YOUR_VENUE_ID"},
+    "locationId": {"S": "main-floor"},
+    "displayName": {"S": "Main Floor"},
+    "locationName": {"S": "Main Floor"},
+    "mqttTopic": {"S": "venue/YOUR_VENUE_ID/sensors"},
+    "deviceId": {"S": "rpi-001"}
+  }' \
+  --region us-east-2
+```
+
+### Step 3: Configure AWS IoT Core for RPI
+
+1. **Create IoT Thing:**
+   - AWS Console → **IoT Core** → **Manage** → **Things** → **Create thing**
+   - Thing name: `rpi-YOUR_VENUE_ID-001`
+   - Create certificate (one-click) → **Download all 3 files** (cert, key, root CA)
+   - Attach policy allowing Connect, Publish, Subscribe to `venue/*` topics
+
+2. **Create IoT Rule:**
+   - AWS Console → **IoT Core** → **Message routing** → **Rules** → **Create rule**
+   - Rule name: `StoreSensorData-YOUR_VENUE_ID`
+   - SQL: `SELECT * FROM 'venue/YOUR_VENUE_ID/sensors'`
+   - Action: **Insert into DynamoDB table** → `SensorData`
+   - Partition key: `venueId` = `YOUR_VENUE_ID`
+   - Sort key: `timestamp` = `${timestamp()}`
+
+### Step 4: Configure RPI to Publish Data
+
+Your RPI needs to publish sensor data to AWS IoT Core MQTT topic: `venue/YOUR_VENUE_ID/sensors`
+
+**Example Python code:**
+```python
+import json
+import time
+from awscrt import io, mqtt
+from awsiot import mqtt_connection_builder
+
+VENUE_ID = "YOUR_VENUE_ID"
+ENDPOINT = "a1h5tm3jvbz8cg-ats.iot.us-east-2.amazonaws.com"
+TOPIC = f"venue/{VENUE_ID}/sensors"
+
+# Connect using certificates downloaded in Step 3
+mqtt_connection = mqtt_connection_builder.mtls_from_path(
+    endpoint=ENDPOINT,
+    cert_filepath="/path/to/certificate.pem.crt",
+    pri_key_filepath="/path/to/private.pem.key",
+    ca_filepath="/path/to/root-CA.crt",
+    client_id=f"rpi-{VENUE_ID}",
+    clean_session=False
+)
+
+mqtt_connection.connect().result()
+
+# Publish sensor data every 15 seconds
+while True:
+    sensor_data = {
+        "deviceId": "rpi-001",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "sensors": {
+            "sound_level": 75.5,
+            "light_level": 350.2,
+            "indoor_temperature": 72.0,
+            "outdoor_temperature": 68.5,
+            "humidity": 55.0
+        },
+        "spotify": {
+            "current_song": "Song Title",
+            "artist": "Artist Name"
+        },
+        "occupancy": {
+            "current": 45,
+            "entries": 120,
+            "exits": 75,
+            "capacity": 200
+        }
+    }
+    
+    mqtt_connection.publish(
+        topic=TOPIC,
+        payload=json.dumps(sensor_data),
+        qos=mqtt.QoS.AT_LEAST_ONCE
+    )
+    time.sleep(15)
+```
+
+### Step 5: Test Login
+
+1. Login to the app with: `newuser@venue.com` / password
+2. Check browser console (F12) - should see:
+   - ✅ `"Fetching live sensor data from DynamoDB for venue: YOUR_VENUE_ID"`
+   - ✅ `"Live sensor data retrieved from DynamoDB"`
+3. Dashboard should show live sensor data from your RPI
+
+### Important Notes
+
+- **All components must use the same `venueId`**: Cognito attribute, DynamoDB entries, IoT topic
+- **Data isolation is automatic**: Each venue can only see their own data (enforced server-side)
+- **Multiple locations**: Create separate VenueConfig entries with different `locationId` but same `venueId`
+
+📖 **For detailed troubleshooting, see:** [`DIAGNOSTIC_CHECKLIST.md`](./DIAGNOSTIC_CHECKLIST.md)  
+📖 **For complete step-by-step guide, see:** [`ADD_NEW_USER_GUIDE.md`](./ADD_NEW_USER_GUIDE.md)
+
+---
+
 ## 🎯 Usage
 
 ### Keyboard Shortcuts
