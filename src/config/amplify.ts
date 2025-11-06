@@ -14,8 +14,8 @@ export const AWS_CONFIG = {
 const amplifyConfig = {
   Auth: {
     Cognito: {
-      userPoolId: 'us-east-2_I6EBJm3te',
-      userPoolClientId: '4v7vp7trh72q1priqno9k5prsq',
+      userPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID || 'us-east-2_sMY1wYEF9',
+      userPoolClientId: import.meta.env.VITE_COGNITO_CLIENT_ID || '4v7vp7trh72q1priqno9k5prsq',
       loginWith: {
         email: true
       }
