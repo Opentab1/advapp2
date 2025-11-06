@@ -3,6 +3,11 @@ frontend:
   phases:
     preBuild:
       commands:
+        - echo "=== Environment Variables Check ==="
+        - echo "VITE_COGNITO_USER_POOL_ID = $VITE_COGNITO_USER_POOL_ID"
+        - echo "VITE_COGNITO_CLIENT_ID = $VITE_COGNITO_CLIENT_ID"
+        - echo "VITE_GRAPHQL_ENDPOINT = $VITE_GRAPHQL_ENDPOINT"
+        - echo "==================================="
         - npm install
     build:
       commands:
