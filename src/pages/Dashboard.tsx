@@ -26,6 +26,7 @@ import { NowPlaying } from '../components/NowPlaying';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { ConnectionStatus } from '../components/ConnectionStatus';
+import { TermsModal } from '../components/TermsModal';
 import { Settings } from './Settings';
 import { SongLog } from './SongLog';
 import { Reports } from './Reports';
@@ -49,6 +50,29 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
+  
+  // Terms of Service modal state
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  
+  // Check if user has accepted terms on mount
+  useEffect(() => {
+    if (user?.email) {
+      const termsKey = `pulse_terms_accepted_${user.email}`;
+      const hasAccepted = localStorage.getItem(termsKey);
+      if (!hasAccepted) {
+        setShowTermsModal(true);
+      }
+    }
+  }, [user?.email]);
+  
+  const handleAcceptTerms = () => {
+    if (user?.email) {
+      const termsKey = `pulse_terms_accepted_${user.email}`;
+      localStorage.setItem(termsKey, 'true');
+      localStorage.setItem(`pulse_terms_accepted_date_${user.email}`, new Date().toISOString());
+      setShowTermsModal(false);
+    }
+  };
   
   // Try to refresh user if authenticated but no stored user
   useEffect(() => {
@@ -266,6 +290,14 @@ export function Dashboard() {
   return (
     <div className="min-h-screen flex flex-col relative overflow-hidden">
       <AnimatedBackground />
+      
+      {/* Terms of Service Modal */}
+      {showTermsModal && (
+        <TermsModal 
+          onAccept={handleAcceptTerms}
+          userEmail={user?.email || 'User'}
+        />
+      )}
 
       {/* Top Bar */}
       <TopBar
