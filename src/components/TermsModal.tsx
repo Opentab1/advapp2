@@ -3,10 +3,11 @@ import { X, Shield, FileText } from 'lucide-react';
 
 interface TermsModalProps {
   onAccept: () => void;
+  onSkip?: () => void;
   userEmail: string;
 }
 
-export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, userEmail }) => {
+export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, onSkip, userEmail }) => {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
@@ -137,6 +138,17 @@ export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, userEmail }) =
           >
             {canProceed ? 'Accept and Continue to Dashboard' : 'Please accept both policies to continue'}
           </button>
+          
+          {onSkip && (
+            <div className="mt-4 text-center">
+              <button
+                onClick={onSkip}
+                className="text-xs text-gray-500 hover:text-gray-400 underline transition-colors"
+              >
+                Skip for now (will show again next time)
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -74,6 +74,11 @@ export function Dashboard() {
     }
   };
   
+  const handleSkipTerms = () => {
+    // Just close modal - will show again on next login
+    setShowTermsModal(false);
+  };
+  
   // Try to refresh user if authenticated but no stored user
   useEffect(() => {
     const refreshUser = async () => {
@@ -295,6 +300,7 @@ export function Dashboard() {
       {showTermsModal && (
         <TermsModal 
           onAccept={handleAcceptTerms}
+          onSkip={handleSkipTerms}
           userEmail={user?.email || 'User'}
         />
       )}
