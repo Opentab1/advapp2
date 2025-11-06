@@ -28,28 +28,20 @@ export function Reports() {
       const weekEnd = new Date();
       const weekStart = subDays(weekEnd, 7);
 
-      // Mock metrics - in production, fetch from API
-      const metrics = {
-        avgComfort: 78.5,
-        avgTemperature: 71.2,
-        avgDecibels: 74.8,
-        avgHumidity: 48.3,
-        peakHours: ['7-8pm', '8-9pm', '9-10pm'],
-        totalCustomers: 1247,
-        totalRevenue: 48650.75,
-        topSongs: [
-          { song: 'Sweet Caroline', plays: 23 },
-          { song: 'Don\'t Stop Believin\'', plays: 19 },
-          { song: 'Born to Run', plays: 17 }
-        ]
-      };
-
-      const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
-      await aiReportService.saveReport(report);
-      await loadReports();
-      setSelectedReport(report);
+      // TODO: Fetch real metrics from API when historical data is available
+      // For now, this feature requires at least 7 days of sensor data
+      console.warn('⚠️ Report generation requires 7 days of historical data');
+      alert('Report generation requires at least 7 days of sensor data. This feature will be available once you have sufficient historical data.');
+      
+      // Placeholder - will be implemented when real data is available
+      // const metrics = await apiService.getWeeklyMetrics(weekStart, weekEnd);
+      // const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
+      // await aiReportService.saveReport(report);
+      // await loadReports();
+      // setSelectedReport(report);
     } catch (error) {
       console.error('Error generating report:', error);
+      alert('Failed to generate report. Please ensure you have sufficient historical data.');
     } finally {
       setGenerating(false);
     }
@@ -89,15 +81,22 @@ export function Reports() {
             </h3>
 
             <div className="space-y-2 max-h-[600px] overflow-y-auto custom-scrollbar">
-              {reports.map((report, index) => (
-                <motion.button
-                  key={report.id}
-                  onClick={() => setSelectedReport(report)}
-                  className={`w-full text-left p-3 rounded-lg transition-colors ${
-                    selectedReport?.id === report.id
-                      ? 'bg-cyan/20 border border-cyan/50'
-                      : 'bg-white/5 hover:bg-white/10'
-                  }`}
+              {reports.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p className="text-sm">No reports generated yet</p>
+                  <p className="text-xs mt-2">Requires 7+ days of data</p>
+                </div>
+              ) : (
+                reports.map((report, index) => (
+                  <motion.button
+                    key={report.id}
+                    onClick={() => setSelectedReport(report)}
+                    className={`w-full text-left p-3 rounded-lg transition-colors ${
+                      selectedReport?.id === report.id
+                        ? 'bg-cyan/20 border border-cyan/50'
+                        : 'bg-white/5 hover:bg-white/10'
+                    }`}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 + index * 0.05 }}
@@ -109,13 +108,7 @@ export function Reports() {
                     Generated {format(new Date(report.generatedAt), 'MMM d')}
                   </div>
                 </motion.button>
-              ))}
-
-              {reports.length === 0 && (
-                <div className="text-center py-8">
-                  <FileText className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                  <p className="text-sm text-gray-400">No reports yet</p>
-                </div>
+              ))
               )}
             </div>
           </motion.div>
