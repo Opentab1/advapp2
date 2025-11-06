@@ -1,9 +1,23 @@
 export interface User {
   id: string;
   email: string;
-  venueId: string;
-  venueName: string;
+  venueId?: string; // Optional - only for client users
+  venueName?: string; // Optional - only for client users
+  role: 'owner' | 'manager' | 'staff' | 'admin' | 'sales' | 'support' | 'installer' | 'custom';
   locations?: Location[];
+  permissions?: string[]; // For custom roles
+}
+
+export interface AdminUser extends User {
+  role: 'admin' | 'sales' | 'support' | 'installer';
+  venueId: undefined; // Admins don't have venues
+  assignedVenues?: string[]; // For sales/support - venues they manage
+}
+
+export interface ClientUser extends User {
+  role: 'owner' | 'manager' | 'staff' | 'custom';
+  venueId: string; // Required for clients
+  venueName: string; // Required for clients
 }
 
 export interface Location {

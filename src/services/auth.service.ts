@@ -123,34 +123,34 @@ class AuthService {
 
       // Extract user data from token or attributes
       const payload = session.tokens?.idToken?.payload;
-      const venueId = (payload?.['custom:venueId'] as string);
-      const venueName = (payload?.['custom:venueName'] as string) || payload?.email?.split('@')[0] || 'Your Venue';
+      const venueId = (payload?.['custom:venueId'] as string) || undefined;
+      const venueName = (payload?.['custom:venueName'] as string) || undefined;
+      const role = (payload?.['custom:role'] as string) || 'owner'; // Default to owner for backward compatibility
       
-      if (!venueId) {
-        throw new Error('User does not have custom:venueId attribute. Please contact administrator.');
-      }
-      
-      // Fetch user's locations from DynamoDB
-      // Clear any cached location data first to ensure fresh data
-      locationService.clearCache();
-      
+      // Fetch user's locations from DynamoDB (only for client users with venueId)
       let locations: Location[] = [];
-      try {
-        locations = await locationService.fetchLocationsFromDynamoDB();
-        // Set initial location if none selected and locations exist
-        if (!locationService.getCurrentLocationId() && locations.length > 0) {
-          locationService.setCurrentLocationId(locations[0].id);
+      if (venueId) {
+        // Clear any cached location data first to ensure fresh data
+        locationService.clearCache();
+        
+        try {
+          locations = await locationService.fetchLocationsFromDynamoDB();
+          // Set initial location if none selected and locations exist
+          if (!locationService.getCurrentLocationId() && locations.length > 0) {
+            locationService.setCurrentLocationId(locations[0].id);
+          }
+        } catch (error: any) {
+          console.error('Failed to fetch locations:', error);
+          // Don't throw error - allow user to proceed without locations
+          // Locations can be loaded later in the Dashboard
+          console.warn('⚠️ Proceeding without locations. They will be loaded in Dashboard.');
         }
-      } catch (error: any) {
-        console.error('Failed to fetch locations:', error);
-        // Don't throw error - allow user to proceed without locations
-        // Locations can be loaded later in the Dashboard
-        console.warn('⚠️ Proceeding without locations. They will be loaded in Dashboard.');
       }
 
       const user: User = {
         id: currentUser.userId,
         email: payload?.email as string || '',
+        role: role as User['role'],
         venueId,
         venueName,
         locations

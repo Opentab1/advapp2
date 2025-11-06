@@ -75,8 +75,10 @@ export function Dashboard() {
   };
   
   const handleSkipTerms = () => {
-    // Just close modal - will show again on next login
-    setShowTermsModal(false);
+    // Only admins can skip - check permission
+    if (canSkipTerms(user)) {
+      setShowTermsModal(false);
+    }
   };
   
   // Try to refresh user if authenticated but no stored user
@@ -101,8 +103,8 @@ export function Dashboard() {
     refreshUser();
   }, [user, userLoading]);
   
-  // User must be authenticated with venueId - no fallbacks
-  if (!user || !user.venueId) {
+  // User must be authenticated
+  if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900">
         <div className="max-w-md">
@@ -110,12 +112,32 @@ export function Dashboard() {
             <LoadingSpinner fullScreen />
           ) : (
             <ErrorMessage 
-              message="Authentication required. Please log in with a valid account that has a custom:venueId attribute configured."
+              message="Authentication required. Please log in."
               onRetry={() => {
                 authService.logout().then(() => window.location.href = '/login');
               }}
             />
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // Check if user is admin or client
+  const isAdmin = isAdminUser(user);
+  const isClient = isClientUser(user);
+
+  // If neither admin nor client (shouldn't happen), show error
+  if (!isAdmin && !isClient) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900">
+        <div className="max-w-md">
+          <ErrorMessage 
+            message="Invalid user configuration. Please contact support."
+            onRetry={() => {
+              authService.logout().then(() => window.location.href = '/login');
+            }}
+          />
         </div>
       </div>
     );
@@ -296,11 +318,11 @@ export function Dashboard() {
     <div className="min-h-screen flex flex-col relative overflow-hidden">
       <AnimatedBackground />
       
-      {/* Terms of Service Modal */}
+      {/* Terms of Service Modal - only for clients or if admin hasn't accepted yet */}
       {showTermsModal && (
         <TermsModal 
           onAccept={handleAcceptTerms}
-          onSkip={handleSkipTerms}
+          onSkip={canSkipTerms(user) ? handleSkipTerms : undefined}
           userEmail={user?.email || 'User'}
         />
       )}
@@ -387,11 +409,16 @@ export function Dashboard() {
       )}
 
       <div className="flex flex-1 relative z-10">
-        {/* Sidebar */}
-        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+        {/* Sidebar - only show for clients */}
+        {isClient && <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />}
 
         {/* Main Content */}
         <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto pb-24 lg:pb-8">
+          {/* Admin Dashboard - show for admin users */}
+          {isAdmin ? (
+            <AdminDashboard />
+          ) : (
+          /* Client Dashboard Content */
           {activeTab === 'live' || activeTab === 'history' ? (
             <>
               {/* Connection Warning Banner */}
@@ -741,6 +768,8 @@ export function Dashboard() {
               </div>
             </motion.div>
           )}
+          )}
+          {/* End Client Dashboard Content */}
         </main>
       </div>
     </div>
