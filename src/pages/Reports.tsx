@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Download, Sparkles, TrendingUp, Calendar } from 'lucide-react';
+import { FileText, Download, Sparkles, TrendingUp, Calendar, Music, ThermometerSun, Users, Mail } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 import aiReportService from '../services/ai-report.service';
 import type { WeeklyReport } from '../types';
+
+type ReportType = 'weekly' | 'monthly' | 'music' | 'atmosphere' | 'occupancy' | 'custom';
 
 export function Reports() {
   const [reports, setReports] = useState<WeeklyReport[]>([]);
   const [selectedReport, setSelectedReport] = useState<WeeklyReport | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [selectedReportType, setSelectedReportType] = useState<ReportType>('weekly');
+  const [showScheduler, setShowScheduler] = useState(false);
 
   useEffect(() => {
     loadReports();
@@ -47,6 +51,15 @@ export function Reports() {
     }
   };
 
+  const reportTypes = [
+    { id: 'weekly' as ReportType, label: 'Weekly Summary', icon: Calendar },
+    { id: 'monthly' as ReportType, label: 'Monthly Performance', icon: TrendingUp },
+    { id: 'music' as ReportType, label: 'Music Analytics', icon: Music },
+    { id: 'atmosphere' as ReportType, label: 'Atmosphere Optimization', icon: ThermometerSun },
+    { id: 'occupancy' as ReportType, label: 'Occupancy Trends', icon: Users },
+    { id: 'custom' as ReportType, label: 'Custom Report', icon: FileText },
+  ];
+
   return (
     <div className="max-w-7xl mx-auto">
       <motion.div
@@ -54,18 +67,86 @@ export function Reports() {
         animate={{ opacity: 1, y: 0 }}
       >
         <div className="flex items-center justify-between mb-8">
-          <h2 className="text-3xl font-bold gradient-text">AI Weekly Reports</h2>
-          <motion.button
-            onClick={generateReport}
-            disabled={generating}
-            className="btn-primary flex items-center gap-2 disabled:opacity-50"
-            whileHover={{ scale: generating ? 1 : 1.05 }}
-            whileTap={{ scale: generating ? 1 : 0.95 }}
-          >
-            <Sparkles className="w-4 h-4" />
-            {generating ? 'Generating...' : 'Generate New Report'}
-          </motion.button>
+          <div>
+            <h2 className="text-3xl font-bold gradient-text mb-2">📋 AI-Generated Reports</h2>
+            <p className="text-gray-400">Intelligent insights and recommendations</p>
+          </div>
+          <div className="flex gap-2">
+            <motion.button
+              onClick={() => setShowScheduler(!showScheduler)}
+              className="btn-secondary flex items-center gap-2"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <Calendar className="w-4 h-4" />
+              Schedule Reports
+            </motion.button>
+            <motion.button
+              onClick={generateReport}
+              disabled={generating}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+              whileHover={{ scale: generating ? 1 : 1.05 }}
+              whileTap={{ scale: generating ? 1 : 0.95 }}
+            >
+              <Sparkles className="w-4 h-4" />
+              {generating ? 'Generating...' : 'Generate New Report'}
+            </motion.button>
+          </div>
         </div>
+
+        {/* Report Type Selector */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+          {reportTypes.map((type) => (
+            <motion.button
+              key={type.id}
+              onClick={() => setSelectedReportType(type.id)}
+              className={`glass-card p-4 text-center transition-all ${
+                selectedReportType === type.id
+                  ? 'border-purple-500/50 bg-purple-500/10'
+                  : 'border-white/10 hover:border-purple-500/30'
+              }`}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <type.icon className={`w-6 h-6 mx-auto mb-2 ${
+                selectedReportType === type.id ? 'text-purple-400' : 'text-gray-400'
+              }`} />
+              <div className={`text-xs font-medium ${
+                selectedReportType === type.id ? 'text-white' : 'text-gray-400'
+              }`}>
+                {type.label}
+              </div>
+            </motion.button>
+          ))}
+        </div>
+
+        {/* Scheduled Reports Banner */}
+        {showScheduler && (
+          <motion.div
+            className="glass-card p-6 mb-6"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+          >
+            <h3 className="text-lg font-semibold text-white mb-4">📅 Scheduled Reports</h3>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-white/5 rounded">
+                <div>
+                  <div className="text-white font-medium">Weekly Summary</div>
+                  <div className="text-sm text-gray-400">Every Monday at 9:00 AM</div>
+                </div>
+                <button className="btn-secondary text-xs">Edit</button>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-white/5 rounded">
+                <div>
+                  <div className="text-white font-medium">Monthly Report</div>
+                  <div className="text-sm text-gray-400">First day of month at 8:00 AM</div>
+                </div>
+                <button className="btn-secondary text-xs">Edit</button>
+              </div>
+              <button className="btn-primary w-full text-sm">+ Add New Schedule</button>
+            </div>
+          </motion.div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Report List */}

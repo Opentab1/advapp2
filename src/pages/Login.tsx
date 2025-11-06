@@ -75,9 +75,18 @@ export function Login({ onLoginSuccess }: LoginProps) {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        {/* Logo */}
-        <div className="flex justify-center mb-8">
-          <Logo className="scale-125" />
+        {/* Logo & Branding */}
+        <div className="text-center mb-8">
+          <Logo className="scale-125 mx-auto mb-4" />
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+          >
+            <h1 className="text-3xl font-bold gradient-text mb-2">Pulse</h1>
+            <p className="text-gray-400 text-sm">by Advizia</p>
+            <p className="text-gray-500 text-xs mt-2">Real-time venue intelligence</p>
+          </motion.div>
         </div>
 
         {/* Login Card */}
@@ -231,15 +240,18 @@ export function Login({ onLoginSuccess }: LoginProps) {
 
         </motion.div>
 
-        {/* Production Info */}
+        {/* Footer Info */}
         <motion.div
-          className="mt-6 p-4 rounded-lg bg-cyan/5 border border-cyan/20"
+          className="mt-8 text-center"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.4 }}
         >
-          <p className="text-xs text-center text-gray-400">
-            Secure authentication powered by <span className="text-cyan font-semibold">AWS Cognito</span>
+          <p className="text-xs text-gray-500 mb-4">
+            Powered by Advizia © 2025
+          </p>
+          <p className="text-xs text-gray-600">
+            Secure authentication powered by <span className="text-cyan/70">AWS Cognito</span>
           </p>
         </motion.div>
       </motion.div>

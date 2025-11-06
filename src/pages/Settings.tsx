@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Save, Key, MapPin, DollarSign, Check, Building2, Trash2, AlertTriangle } from 'lucide-react';
+import { 
+  Save, Key, MapPin, DollarSign, Check, Building2, Trash2, AlertTriangle,
+  User, Bell, Settings as SettingsIcon, Info, Mail, Phone, Palette, Globe
+} from 'lucide-react';
 import type { AppSettings } from '../types';
 import authService from '../services/auth.service';
 import toastPOSService from '../services/toast-pos.service';
 import locationService from '../services/location.service';
+import { getUserRoleDisplay } from '../utils/userRoles';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -22,6 +26,7 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
   const [cacheCleared, setCacheCleared] = useState(false);
   const [toastRestaurantGuid, setToastRestaurantGuid] = useState('');
+  const [activeTab, setActiveTab] = useState<'account' | 'notifications' | 'preferences' | 'integrations' | 'about'>('account');
   const user = authService.getStoredUser();
 
   useEffect(() => {
@@ -114,9 +119,153 @@ export function Settings() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <h2 className="text-3xl font-bold gradient-text mb-8">Settings</h2>
+        <h2 className="text-3xl font-bold gradient-text mb-2">⚙️ Settings</h2>
+        <p className="text-gray-400 mb-8">Manage your account and preferences</p>
+
+        {/* Tab Navigation */}
+        <div className="flex gap-2 mb-6 overflow-x-auto">
+          {[
+            { id: 'account' as const, label: 'Account', icon: User },
+            { id: 'notifications' as const, label: 'Notifications', icon: Bell },
+            { id: 'preferences' as const, label: 'Preferences', icon: SettingsIcon },
+            { id: 'integrations' as const, label: 'Integrations', icon: DollarSign },
+            { id: 'about' as const, label: 'About', icon: Info },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap ${
+                activeTab === tab.id
+                  ? 'bg-purple-500/20 border border-purple-500/50 text-white'
+                  : 'bg-white/5 border border-white/10 text-gray-400 hover:text-white'
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
         <div className="space-y-6">
+          {/* Account Tab */}
+          {activeTab === 'account' && (
+            <motion.div
+              className="glass-card p-6"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <h3 className="text-xl font-semibold text-white mb-6">Account Information</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Email</label>
+                  <input
+                    type="text"
+                    value={user?.email || ''}
+                    disabled
+                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Venue</label>
+                  <input
+                    type="text"
+                    value={user?.venueName || 'Not configured'}
+                    disabled
+                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Role</label>
+                  <input
+                    type="text"
+                    value={user?.role ? getUserRoleDisplay(user.role) : 'Not configured'}
+                    disabled
+                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Account Status</label>
+                  <div className="flex items-center gap-2 px-4 py-2 bg-green-500/10 border border-green-500/30 rounded-lg">
+                    <Check className="w-4 h-4 text-green-400" />
+                    <span className="text-green-400 font-medium">Active</span>
+                  </div>
+                </div>
+                <button className="btn-secondary w-full">Change Password</button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Notifications Tab */}
+          {activeTab === 'notifications' && (
+            <motion.div
+              className="glass-card p-6"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <h3 className="text-xl font-semibold text-white mb-6">Notification Preferences</h3>
+              <div className="space-y-6">
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-300 mb-4 flex items-center gap-2">
+                    <Mail className="w-4 h-4" />
+                    Email Notifications
+                  </h4>
+                  <div className="space-y-3">
+                    {[
+                      { label: 'Daily summary reports', sublabel: '9:00 AM', checked: true },
+                      { label: 'High occupancy alerts', sublabel: 'Above 80% capacity', checked: true },
+                      { label: 'Temperature alerts', sublabel: 'Outside 68-74°F', checked: true },
+                      { label: 'Weekly performance reports', sublabel: 'Monday 9:00 AM', checked: false },
+                      { label: 'Monthly insights', sublabel: '1st of month', checked: false },
+                      { label: 'Sensor offline alerts', sublabel: 'Immediate', checked: true },
+                    ].map((item, i) => (
+                      <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded">
+                        <div>
+                          <div className="text-white text-sm">{item.label}</div>
+                          <div className="text-xs text-gray-400">{item.sublabel}</div>
+                        </div>
+                        <input type="checkbox" defaultChecked={item.checked} className="w-5 h-5" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-300 mb-4 flex items-center gap-2">
+                    <Phone className="w-4 h-4" />
+                    SMS Notifications
+                    <span className="text-xs px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">Optional</span>
+                  </h4>
+                  <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg mb-4">
+                    <p className="text-sm text-blue-300">
+                      SMS notifications require phone verification and may incur additional costs.
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-white text-sm">Enable SMS alerts</span>
+                      <input type="checkbox" className="w-5 h-5" />
+                    </div>
+                    <input
+                      type="tel"
+                      placeholder="+1 (555) 000-0000"
+                      className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                      disabled
+                    />
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Preferences Tab */}
+          {activeTab === 'preferences' && (
+            <motion.div
+              className="glass-card p-6"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <h3 className="text-xl font-semibold text-white mb-6">Display Preferences</h3>
+              <div className="space-y-6">
           {/* Venue Configuration */}
           <motion.div
             className="glass-card p-6"
