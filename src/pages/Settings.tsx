@@ -338,7 +338,7 @@ export function Settings() {
           {/* Integrations Tab */}
           {activeTab === 'integrations' && (
             <>
-          {/* Toast POS Integration */}
+          {/* Venue Configuration */}
           <motion.div
             className="glass-card p-6"
             initial={{ opacity: 0, x: -20 }}
@@ -554,11 +554,14 @@ export function Settings() {
             </motion.div>
           )}
 
-          {/* Save Button for Integrations/Preferences */}
-          {(activeTab === 'integrations' || activeTab === 'preferences') && (
+            </>
+          )}
+
+          {/* Save Button for Integrations */}
+          {activeTab === 'integrations' && (
           <motion.button
             onClick={saveSettings}
-            className="w-full btn-primary flex items-center justify-center gap-2"
+            className="w-full btn-primary flex items-center justify-center gap-2 mt-6"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             initial={{ opacity: 0, y: 20 }}
@@ -578,8 +581,6 @@ export function Settings() {
             )}
           </motion.button>
           )}
-
-          {/* End of settings sections */}
         </div>
       </motion.div>
     </div>
