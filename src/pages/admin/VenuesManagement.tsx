@@ -14,6 +14,7 @@ import {
   Eye
 } from 'lucide-react';
 import { CreateVenueModal, VenueFormData } from '../../components/admin/CreateVenueModal';
+import { RPiConfigGenerator } from '../../components/admin/RPiConfigGenerator';
 
 interface Venue {
   id: string;
@@ -31,12 +32,17 @@ interface Venue {
 export function VenuesManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showConfigGenerator, setShowConfigGenerator] = useState<Venue | null>(null);
 
   const handleCreateVenue = (venueData: VenueFormData) => {
     // TODO: Call API to create venue
     console.log('Creating venue:', venueData);
     alert('Venue creation will be wired to AWS backend. For now, this shows the UI works!');
     // In production: call Lambda/AppSync mutation to create venue
+  };
+
+  const handleGenerateConfig = (venue: Venue) => {
+    setShowConfigGenerator(venue);
   };
 
   // TODO: Replace with real data from API
@@ -211,7 +217,10 @@ export function VenuesManagement() {
                     <Edit className="w-4 h-4 inline mr-2" />
                     Edit
                   </button>
-                  <button className="btn-primary text-sm flex-1">
+                  <button 
+                    onClick={() => handleGenerateConfig(venue)}
+                    className="btn-primary text-sm flex-1"
+                  >
                     <FileDown className="w-4 h-4 inline mr-2" />
                     RPi Config
                   </button>
@@ -227,6 +236,19 @@ export function VenuesManagement() {
         <CreateVenueModal
           onClose={() => setShowCreateModal(false)}
           onCreate={handleCreateVenue}
+        />
+      )}
+
+      {/* RPi Config Generator */}
+      {showConfigGenerator && (
+        <RPiConfigGenerator
+          onClose={() => setShowConfigGenerator(null)}
+          venueId={showConfigGenerator.venueId}
+          venueName={showConfigGenerator.name}
+          locationId="mainfloor"
+          locationName="Main Floor"
+          deviceId={`rpi-${showConfigGenerator.venueId}-001`}
+          mqttTopic={`pulse/sensors/${showConfigGenerator.venueId}`}
         />
       )}
     </div>

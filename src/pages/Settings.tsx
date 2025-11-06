@@ -265,8 +265,80 @@ export function Settings() {
               animate={{ opacity: 1, x: 0 }}
             >
               <h3 className="text-xl font-semibold text-white mb-6">Display Preferences</h3>
-              <div className="space-y-6">
-          {/* Venue Configuration */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-white">Sound Alerts</p>
+                    <p className="text-xs text-gray-400">Play sounds for notifications</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings({ ...settings, soundAlerts: !settings.soundAlerts })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      settings.soundAlerts ? 'bg-cyan' : 'bg-gray-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        settings.soundAlerts ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Temperature Unit
+                  </label>
+                  <select className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white">
+                    <option>Fahrenheit (°F)</option>
+                    <option>Celsius (°C)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Time Zone
+                  </label>
+                  <select className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white">
+                    <option>America/New_York (Eastern)</option>
+                    <option>America/Chicago (Central)</option>
+                    <option>America/Denver (Mountain)</option>
+                    <option>America/Los_Angeles (Pacific)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Theme
+                  </label>
+                  <select className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white">
+                    <option>Dark</option>
+                    <option>Light</option>
+                    <option>Auto</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Refresh Interval (seconds)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="60"
+                    value={settings.refreshInterval}
+                    onChange={(e) => setSettings({ ...settings, refreshInterval: parseInt(e.target.value) || 5 })}
+                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 transition-all text-white"
+                  />
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Integrations Tab */}
+          {activeTab === 'integrations' && (
+            <>
+          {/* Toast POS Integration */}
           <motion.div
             className="glass-card p-6"
             initial={{ opacity: 0, x: -20 }}
@@ -442,71 +514,48 @@ export function Settings() {
             </div>
           </motion.div>
 
-          {/* Display Preferences */}
-          <motion.div
-            className="glass-card p-6"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.4 }}
-          >
-            <h3 className="text-xl font-semibold text-white mb-4">Display Preferences</h3>
-
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-white">Sound Alerts</p>
-                  <p className="text-xs text-gray-400">Play sounds for notifications</p>
+          {/* About Tab */}
+          {activeTab === 'about' && (
+            <motion.div
+              className="glass-card p-6"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <h3 className="text-xl font-semibold text-white mb-6">About Pulse</h3>
+              <div className="space-y-6">
+                <div className="text-center py-6">
+                  <div className="text-4xl font-bold gradient-text mb-2">Pulse</div>
+                  <div className="text-gray-400 mb-1">by Advizia</div>
+                  <div className="text-sm text-gray-500">Version 2.0.0</div>
+                  <div className="text-xs text-gray-600 mt-2">Last Updated: Nov 6, 2025</div>
                 </div>
-                <button
-                  onClick={() => setSettings({ ...settings, soundAlerts: !settings.soundAlerts })}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    settings.soundAlerts ? 'bg-cyan' : 'bg-gray-600'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      settings.soundAlerts ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
 
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-white">Notifications</p>
-                  <p className="text-xs text-gray-400">Show browser notifications</p>
+                <div className="space-y-3">
+                  <div className="p-4 bg-white/5 rounded-lg">
+                    <div className="text-sm text-gray-400 mb-1">Support</div>
+                    <a href="mailto:support@advizia.com" className="text-cyan-400 hover:text-cyan-300">
+                      support@advizia.com
+                    </a>
+                  </div>
+
+                  <div className="p-4 bg-white/5 rounded-lg">
+                    <div className="text-sm text-gray-400 mb-1">Documentation</div>
+                    <a href="#" className="text-cyan-400 hover:text-cyan-300">
+                      docs.advizia.com
+                    </a>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setSettings({ ...settings, notifications: !settings.notifications })}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    settings.notifications ? 'bg-cyan' : 'bg-gray-600'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      settings.notifications ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Refresh Interval (seconds)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="60"
-                  value={settings.refreshInterval}
-                  onChange={(e) => setSettings({ ...settings, refreshInterval: parseInt(e.target.value) || 5 })}
-                  className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 transition-all text-white"
-                />
+                <div className="flex gap-3">
+                  <button className="btn-secondary flex-1">Terms of Service</button>
+                  <button className="btn-secondary flex-1">Privacy Policy</button>
+                </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
+          )}
 
-          {/* Save Button */}
+          {/* Save Button for Integrations/Preferences */}
+          {(activeTab === 'integrations' || activeTab === 'preferences') && (
           <motion.button
             onClick={saveSettings}
             className="w-full btn-primary flex items-center justify-center gap-2"
@@ -528,6 +577,9 @@ export function Settings() {
               </>
             )}
           </motion.button>
+          )}
+
+          {/* End of settings sections */}
         </div>
       </motion.div>
     </div>
