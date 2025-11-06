@@ -13,6 +13,7 @@ import {
   FileDown,
   Eye
 } from 'lucide-react';
+import { CreateVenueModal, VenueFormData } from '../../components/admin/CreateVenueModal';
 
 interface Venue {
   id: string;
@@ -30,6 +31,13 @@ interface Venue {
 export function VenuesManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+
+  const handleCreateVenue = (venueData: VenueFormData) => {
+    // TODO: Call API to create venue
+    console.log('Creating venue:', venueData);
+    alert('Venue creation will be wired to AWS backend. For now, this shows the UI works!');
+    // In production: call Lambda/AppSync mutation to create venue
+  };
 
   // TODO: Replace with real data from API
   const venues: Venue[] = [
@@ -213,6 +221,14 @@ export function VenuesManagement() {
           )}
         </div>
       </motion.div>
+
+      {/* Create Venue Modal */}
+      {showCreateModal && (
+        <CreateVenueModal
+          onClose={() => setShowCreateModal(false)}
+          onCreate={handleCreateVenue}
+        />
+      )}
     </div>
   );
 }

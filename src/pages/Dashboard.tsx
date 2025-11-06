@@ -314,15 +314,32 @@ export function Dashboard() {
     return <LoadingSpinner fullScreen />;
   }
 
+  // If admin user, show admin portal instead
+  if (isAdmin) {
+    return (
+      <>
+        {/* Terms of Service Modal - admins can skip */}
+        {showTermsModal && (
+          <TermsModal 
+            onAccept={handleAcceptTerms}
+            onSkip={handleSkipTerms}
+            userEmail={user?.email || 'User'}
+          />
+        )}
+        <AdminPortal />
+      </>
+    );
+  }
+
+  // Client user dashboard
   return (
     <div className="min-h-screen flex flex-col relative overflow-hidden">
       <AnimatedBackground />
       
-      {/* Terms of Service Modal - only for clients or if admin hasn't accepted yet */}
+      {/* Terms of Service Modal - clients must accept */}
       {showTermsModal && (
         <TermsModal 
           onAccept={handleAcceptTerms}
-          onSkip={canSkipTerms(user) ? handleSkipTerms : undefined}
           userEmail={user?.email || 'User'}
         />
       )}
@@ -409,16 +426,11 @@ export function Dashboard() {
       )}
 
       <div className="flex flex-1 relative z-10">
-        {/* Sidebar - only show for clients */}
-        {isClient && <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />}
+        {/* Sidebar */}
+        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
         {/* Main Content */}
         <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto pb-24 lg:pb-8">
-          {/* Admin Dashboard - show for admin users */}
-          {isAdmin ? (
-            <AdminDashboard />
-          ) : (
-          /* Client Dashboard Content */
           {activeTab === 'live' || activeTab === 'history' ? (
             <>
               {/* Connection Warning Banner */}
@@ -768,8 +780,6 @@ export function Dashboard() {
               </div>
             </motion.div>
           )}
-          )}
-          {/* End Client Dashboard Content */}
         </main>
       </div>
     </div>
