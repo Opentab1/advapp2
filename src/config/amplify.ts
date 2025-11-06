@@ -42,6 +42,7 @@ export function configureAmplify() {
   Amplify.configure(amplifyConfig);
   
   console.log('✅ Amplify configured successfully');
+  console.log('   User Pool ID:', import.meta.env.VITE_COGNITO_USER_POOL_ID || 'NOT SET');
   console.log('   GraphQL Endpoint:', endpoint ? endpoint.substring(0, 40) + '...' : 'NOT SET');
 }
 
