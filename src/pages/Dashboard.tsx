@@ -510,6 +510,18 @@ export function Dashboard() {
               {/* Dashboard Content */}
               {!loading && currentData && (
                 <>
+                  {/* Pulse Score */}
+                  <PulseScore
+                    score={comfortLevel}
+                    breakdown={comfortBreakdown ? {
+                      sound: comfortBreakdown.sound.percentage,
+                      light: comfortBreakdown.light.percentage,
+                      temperature: comfortBreakdown.temperature.percentage,
+                      humidity: comfortBreakdown.humidity.percentage,
+                    } : undefined}
+                    trend="stable"
+                  />
+
                   {/* Occupancy Metrics Section */}
                   {occupancyMetrics && (
                     <motion.div
@@ -708,6 +720,10 @@ export function Dashboard() {
             <SongLog />
           ) : activeTab === 'reports' ? (
             <Reports />
+          ) : activeTab === 'ai' ? (
+            <AIInsights />
+          ) : activeTab === 'support' ? (
+            <Support />
           ) : activeTab === 'settings' ? (
             <Settings />
           ) : (
