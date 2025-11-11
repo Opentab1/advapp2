@@ -1,0 +1,240 @@
+# Sensor Data Types
+type SensorData {
+  venueId: ID!
+  timestamp: String!
+  decibels: Float
+  light: Float
+  indoorTemp: Float
+  outdoorTemp: Float
+  humidity: Float
+  currentSong: String
+  albumArt: String
+  artist: String
+  occupancy: OccupancyData
+}
+
+type OccupancyData {
+  current: Int
+  entries: Int
+  exits: Int
+  capacity: Int
+}
+
+type SensorDataConnection {
+  items: [SensorData]
+  nextToken: String
+}
+
+# Location Types
+type Location {
+  locationId: ID!
+  venueId: ID!
+  displayName: String
+  locationName: String
+  address: String
+  timezone: String
+  deviceId: String
+  mqttTopic: String
+}
+
+type LocationConnection {
+  items: [Location]
+  nextToken: String
+}
+
+# Occupancy Types
+type OccupancyMetrics {
+  venueId: ID!
+  current: Int
+  todayEntries: Int
+  todayExits: Int
+  peakOccupancy: Int
+  peakTime: String
+  sevenDayAvg: Float
+  fourteenDayAvg: Float
+  thirtyDayAvg: Float
+}
+
+# Venue Types
+type VenueConfig {
+  venueId: ID!
+  locationId: ID!
+  displayName: String
+  locationName: String
+  mqttTopic: String
+  iotEndpoint: String
+  devices: [Device]
+}
+
+# NEW: Device Types
+type Device {
+  deviceId: ID!
+  locationId: String!
+  thingArn: String
+  certificateArn: String
+  status: String
+  createdAt: String
+  archivedAt: String
+  thingDetails: ThingDetails
+}
+
+type ThingDetails {
+  version: Int
+  defaultClientId: String
+  attributes: AWSJSON
+}
+
+type DeviceList {
+  success: Boolean!
+  venueId: ID!
+  deviceCount: Int!
+  devices: [Device]
+}
+
+# Response Types
+type CreateVenueResponse {
+  success: Boolean!
+  message: String
+  venueId: ID
+  ownerEmail: String
+}
+
+type CreateUserResponse {
+  success: Boolean!
+  message: String
+  username: String
+}
+
+type UpdateUserPermissionsResponse {
+  success: Boolean!
+  message: String
+  username: String
+}
+
+type ResetPasswordResponse {
+  success: Boolean!
+  message: String
+  username: String
+}
+
+type GenerateRPiConfigResponse {
+  success: Boolean!
+  config: AWSJSON
+  certificates: AWSJSON
+  files: AWSJSON
+  instructions: String
+}
+
+type ProvisionDeviceResponse {
+  success: Boolean!
+  message: String
+  device: AWSJSON
+}
+
+type ArchiveDeviceResponse {
+  success: Boolean!
+  message: String
+  device: AWSJSON
+}
+
+# Queries
+type Query {
+  # Sensor Data Queries
+  getSensorData(venueId: ID!, timestamp: String!): SensorData
+    @aws_cognito_user_pools
+
+  listSensorData(
+    venueId: ID!
+    startTime: String!
+    endTime: String!
+    limit: Int
+    nextToken: String
+  ): SensorDataConnection
+    @aws_cognito_user_pools
+
+  # Location Queries
+  listVenueLocations(
+    venueId: ID!
+    limit: Int
+    nextToken: String
+  ): LocationConnection
+    @aws_cognito_user_pools
+
+  # Occupancy Queries
+  getOccupancyMetrics(venueId: ID!): OccupancyMetrics
+    @aws_cognito_user_pools
+
+  # Venue Config Queries
+  getVenueConfig(venueId: ID!, locationId: String!): VenueConfig
+    @aws_cognito_user_pools
+
+  # NEW: Device Queries
+  listVenueDevices(venueId: ID!): DeviceList
+    @aws_cognito_user_pools
+}
+
+# Mutations
+type Mutation {
+  # Venue Management
+  createVenue(
+    venueName: String!
+    venueId: String!
+    locationName: String!
+    locationId: String!
+    ownerEmail: String!
+    ownerName: String!
+    tempPassword: String!
+  ): CreateVenueResponse
+    @aws_cognito_user_pools
+
+  # User Management
+  createUser(
+    venueId: String!
+    venueName: String!
+    email: String!
+    name: String!
+    role: String!
+    tempPassword: String!
+  ): CreateUserResponse
+    @aws_cognito_user_pools
+
+  updateUserPermissions(
+    email: String!
+    role: String!
+  ): UpdateUserPermissionsResponse
+    @aws_cognito_user_pools
+
+  resetUserPassword(
+    email: String!
+    newPassword: String!
+  ): ResetPasswordResponse
+    @aws_cognito_user_pools
+
+  # RPi Configuration
+  generateRPiConfig(
+    venueId: String!
+    venueName: String
+    locationId: String!
+    locationName: String
+    deviceId: String
+  ): GenerateRPiConfigResponse
+    @aws_cognito_user_pools
+
+  # NEW: Device Management
+  provisionDevice(
+    venueId: String!
+    locationId: String!
+  ): ProvisionDeviceResponse
+    @aws_cognito_user_pools
+
+  archiveDevice(
+    venueId: String!
+    deviceId: String!
+  ): ArchiveDeviceResponse
+    @aws_cognito_user_pools
+}
+
+type Schema {
+  query: Query
+  mutation: Mutation
+}
