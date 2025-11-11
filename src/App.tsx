@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
+import { AdminPortal } from './pages/admin/AdminPortal';
 import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
 import authService from './services/auth.service';
@@ -9,6 +10,15 @@ import authService from './services/auth.service';
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => authService.isAuthenticated());
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [userRole, setUserRole] = useState<string | null>(null);
+
+  // Check if user is admin (has role but no venueId)
+  const isAdmin = () => {
+    const user = authService.getCurrentUser();
+    const role = user?.attributes?.['custom:role'];
+    const venueId = user?.attributes?.['custom:venueId'];
+    return role && !venueId;
+  };
 
   useEffect(() => {
     // Handle online/offline status
@@ -23,6 +33,16 @@ function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  useEffect(() => {
+    // Update user role when authentication changes
+    if (isAuthenticated) {
+      const user = authService.getCurrentUser();
+      setUserRole(user?.attributes?.['custom:role'] || null);
+    } else {
+      setUserRole(null);
+    }
+  }, [isAuthenticated]);
 
   // Check authentication status on mount and when storage changes
   useEffect(() => {
@@ -71,7 +91,26 @@ function App() {
           path="/"
           element={
             isAuthenticated ? (
-              <Dashboard />
+              isAdmin() ? (
+                <Navigate to="/admin" replace />
+              ) : (
+                <Dashboard />
+              )
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+
+        <Route
+          path="/admin/*"
+          element={
+            isAuthenticated ? (
+              isAdmin() ? (
+                <AdminPortal />
+              ) : (
+                <Navigate to="/" replace />
+              )
             ) : (
               <Navigate to="/login" replace />
             )
