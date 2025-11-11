@@ -27,6 +27,10 @@ const amplifyConfig = {
       region: 'us-east-2',
       defaultAuthMode: 'userPool' as const
     }
+  },
+  PubSub: {
+    region: 'us-east-2',
+    endpoint: `wss://${AWS_CONFIG.defaultIotEndpoint}/mqtt`
   }
 };
 
@@ -44,6 +48,7 @@ export function configureAmplify() {
   console.log('✅ Amplify configured successfully');
   console.log('   User Pool ID:', import.meta.env.VITE_COGNITO_USER_POOL_ID || 'NOT SET');
   console.log('   GraphQL Endpoint:', endpoint ? endpoint.substring(0, 40) + '...' : 'NOT SET');
+  console.log('   IoT MQTT Endpoint:', AWS_CONFIG.defaultIotEndpoint);
 }
 
 export default amplifyConfig;
