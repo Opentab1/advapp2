@@ -14,9 +14,9 @@ function App() {
 
   // Check if user is admin (has role but no venueId)
   const isAdmin = () => {
-    const user = authService.getCurrentUser();
-    const role = user?.attributes?.['custom:role'];
-    const venueId = user?.attributes?.['custom:venueId'];
+    const user = authService.getStoredUser();
+    const role = user?.role;
+    const venueId = user?.venueId;
     return role && !venueId;
   };
 
@@ -37,8 +37,8 @@ function App() {
   useEffect(() => {
     // Update user role when authentication changes
     if (isAuthenticated) {
-      const user = authService.getCurrentUser();
-      setUserRole(user?.attributes?.['custom:role'] || null);
+      const user = authService.getStoredUser();
+      setUserRole(user?.role || null);
     } else {
       setUserRole(null);
     }
