@@ -76,27 +76,34 @@ class LocationService {
     return error?.toString() || 'Unknown error occurred';
   }
 
-  async fetchLocationsFromDynamoDB(): Promise<Location[]> {
+  async fetchLocationsFromDynamoDB(providedVenueId?: string): Promise<Location[]> {
     try {
       console.log('🔍 Fetching locations from DynamoDB VenueConfig...');
       
       // Check if GraphQL endpoint is configured
       this.checkGraphQLEndpoint();
       
-      // Get venueId from Cognito
-      await getCurrentUser();
-      const session = await fetchAuthSession();
-      const payload = session.tokens?.idToken?.payload;
-      const venueId = payload?.['custom:venueId'] as string;
+      // Get venueId from parameter or from Cognito session
+      let venueId = providedVenueId;
+      
+      if (!venueId) {
+        console.log('📡 No venueId provided, fetching from Cognito session...');
+        await getCurrentUser();
+        const session = await fetchAuthSession();
+        const payload = session.tokens?.idToken?.payload;
+        venueId = payload?.['custom:venueId'] as string;
 
-      console.log('🔐 Auth session details:', {
-        hasTokens: !!session.tokens,
-        hasIdToken: !!session.tokens?.idToken,
-        hasAccessToken: !!session.tokens?.accessToken,
-        tokenType: session.tokens?.idToken?.payload ? 'JWT' : 'none',
-        venueId: venueId || 'NOT FOUND',
-        userAttributes: payload ? Object.keys(payload).filter(k => k.startsWith('custom:')) : []
-      });
+        console.log('🔐 Auth session details:', {
+          hasTokens: !!session.tokens,
+          hasIdToken: !!session.tokens?.idToken,
+          hasAccessToken: !!session.tokens?.accessToken,
+          tokenType: session.tokens?.idToken?.payload ? 'JWT' : 'none',
+          venueId: venueId || 'NOT FOUND',
+          userAttributes: payload ? Object.keys(payload).filter(k => k.startsWith('custom:')) : []
+        });
+      } else {
+        console.log('✅ Using provided venueId:', venueId);
+      }
 
       if (!venueId) {
         throw new Error('No venueId found in user attributes. Please ensure your Cognito user has custom:venueId attribute.');

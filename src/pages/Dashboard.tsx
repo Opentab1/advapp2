@@ -144,8 +144,27 @@ export function Dashboard() {
     );
   }
 
-  const venueId = user.venueId;
-  const venueName = user.venueName || user.email?.split('@')[0] || 'Your Venue';
+  const venueId = user?.venueId;
+  const venueName = user?.venueName || user?.email?.split('@')[0] || 'Your Venue';
+  
+  // Safety check: If no venueId, show error state
+  if (!venueId) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-blue-900/20">
+        <div className="glass-card p-8 max-w-md text-center">
+          <h2 className="text-2xl font-bold text-red-400 mb-4">⚠️ Configuration Error</h2>
+          <p className="text-gray-300 mb-4">Your user account is missing the venue ID attribute.</p>
+          <p className="text-sm text-gray-400">Please contact your administrator to configure your account properly.</p>
+          <button
+            onClick={() => authService.logout().then(() => window.location.href = '/login')}
+            className="btn-secondary mt-6"
+          >
+            Logout
+          </button>
+        </div>
+      </div>
+    );
+  }
   
   // Multi-location support (locations within the venue)
   // Always start with empty array to force fresh fetch from DynamoDB
@@ -156,10 +175,11 @@ export function Dashboard() {
   // Fetch locations if not already loaded
   useEffect(() => {
     const loadLocations = async () => {
-      if (locations.length === 0 && !locationsLoading) {
+      if (locations.length === 0 && !locationsLoading && venueId) {
         setLocationsLoading(true);
         try {
-          const fetchedLocations = await locationService.fetchLocationsFromDynamoDB();
+          // Pass venueId directly instead of fetching from session again
+          const fetchedLocations = await locationService.fetchLocationsFromDynamoDB(venueId);
           setLocations(fetchedLocations);
           setLocationsError(null);
           // Set initial location if none selected

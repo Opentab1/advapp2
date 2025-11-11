@@ -134,7 +134,8 @@ class AuthService {
         locationService.clearCache();
         
         try {
-          locations = await locationService.fetchLocationsFromDynamoDB();
+          // Pass venueId directly to avoid double session fetch
+          locations = await locationService.fetchLocationsFromDynamoDB(venueId);
           // Set initial location if none selected and locations exist
           if (!locationService.getCurrentLocationId() && locations.length > 0) {
             locationService.setCurrentLocationId(locations[0].id);
