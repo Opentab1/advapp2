@@ -191,9 +191,12 @@ class ApiService {
     tempPassword: string;
   }): Promise<any> {
     console.log('🔍 Creating venue via AppSync:', venueData.venueName);
+    console.log('📦 Venue data:', JSON.stringify(venueData, null, 2));
     
     try {
+      console.log('🔧 Generating GraphQL client...');
       const client = generateClient();
+      console.log('✅ Client generated');
       
       const mutation = `
         mutation CreateVenue(
@@ -222,6 +225,7 @@ class ApiService {
         }
       `;
 
+      console.log('📡 Sending GraphQL mutation...');
       const result = await client.graphql({
         query: mutation,
         variables: venueData
@@ -231,7 +235,21 @@ class ApiService {
       return result.data.createVenue;
     } catch (error: any) {
       console.error('❌ Create venue failed:', error);
-      throw new Error(`Failed to create venue: ${error.message || error.toString()}`);
+      console.error('❌ Error type:', typeof error);
+      console.error('❌ Error keys:', Object.keys(error));
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Error errors:', error.errors);
+      console.error('❌ Full error JSON:', JSON.stringify(error, null, 2));
+      
+      // Extract meaningful error message
+      let errorMessage = 'Unknown error';
+      if (error.errors && error.errors.length > 0) {
+        errorMessage = error.errors[0].message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      throw new Error(`Failed to create venue: ${errorMessage}`);
     }
   }
 }
