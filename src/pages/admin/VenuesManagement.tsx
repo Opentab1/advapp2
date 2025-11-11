@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { CreateVenueModal, VenueFormData } from '../../components/admin/CreateVenueModal';
 import { RPiConfigGenerator } from '../../components/admin/RPiConfigGenerator';
+import apiService from '../../services/api.service';
 
 interface Venue {
   id: string;
@@ -33,12 +34,36 @@ export function VenuesManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showConfigGenerator, setShowConfigGenerator] = useState<Venue | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
-  const handleCreateVenue = (venueData: VenueFormData) => {
-    // TODO: Call API to create venue
-    console.log('Creating venue:', venueData);
-    alert('Venue creation will be wired to AWS backend. For now, this shows the UI works!');
-    // In production: call Lambda/AppSync mutation to create venue
+  const handleCreateVenue = async (venueData: VenueFormData) => {
+    setIsCreating(true);
+    try {
+      // Call API to create venue with auto password generation
+      const tempPassword = `Temp${Math.random().toString(36).slice(2, 10)}!`;
+      
+      const result = await apiService.createVenue({
+        venueName: venueData.venueName,
+        venueId: venueData.venueId,
+        locationName: venueData.locationName,
+        locationId: venueData.locationId,
+        ownerEmail: venueData.ownerEmail,
+        ownerName: venueData.ownerName,
+        tempPassword: tempPassword
+      });
+
+      if (result.success) {
+        alert(`✅ Venue "${venueData.venueName}" created successfully!\n\nOwner: ${venueData.ownerEmail}\nTemporary Password: ${tempPassword}\n\n⚠️ Save this password! The owner will need it to login.`);
+        // TODO: Refresh venues list from API
+      } else {
+        alert(`❌ Error: ${result.message || 'Failed to create venue'}`);
+      }
+    } catch (error: any) {
+      console.error('Failed to create venue:', error);
+      alert(`❌ Failed to create venue: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleGenerateConfig = (venue: Venue) => {

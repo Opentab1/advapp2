@@ -1,6 +1,7 @@
 import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '../types';
 import authService from './auth.service';
 import dynamoDBService from './dynamodb.service';
+import { generateClient } from 'aws-amplify/api';
 
 class ApiService {
   private getHeaders(): HeadersInit {
@@ -177,6 +178,60 @@ class ApiService {
         throw error; // Re-throw original error if already wrapped
       }
       throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
+    }
+  }
+
+  async createVenue(venueData: {
+    venueName: string;
+    venueId: string;
+    locationName: string;
+    locationId: string;
+    ownerEmail: string;
+    ownerName: string;
+    tempPassword: string;
+  }): Promise<any> {
+    console.log('🔍 Creating venue via AppSync:', venueData.venueName);
+    
+    try {
+      const client = generateClient();
+      
+      const mutation = `
+        mutation CreateVenue(
+          $venueName: String!
+          $venueId: String!
+          $locationName: String!
+          $locationId: String!
+          $ownerEmail: String!
+          $ownerName: String!
+          $tempPassword: String!
+        ) {
+          createVenue(
+            venueName: $venueName
+            venueId: $venueId
+            locationName: $locationName
+            locationId: $locationId
+            ownerEmail: $ownerEmail
+            ownerName: $ownerName
+            tempPassword: $tempPassword
+          ) {
+            success
+            message
+            venueId
+            ownerEmail
+          }
+        }
+      `;
+
+      const result = await client.graphql({
+        query: mutation,
+        variables: venueData
+      });
+
+      console.log('✅ Venue created successfully:', result);
+      return result.data.createVenue;
+    } catch (error: any) {
+      console.error('❌ Create venue failed:', error);
+      throw new Error(`Failed to create venue: ${error.message || error.toString()}`);
     }
   }
 }
