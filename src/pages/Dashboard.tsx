@@ -200,8 +200,15 @@ export function Dashboard() {
   }, [venueId]);
   
   const [currentLocationId, setCurrentLocationId] = useState<string>(
-    locationService.getCurrentLocationId() || (locations.length > 0 ? locations[0].id : '')
+    locationService.getCurrentLocationId() || ''
   );
+  
+  // Update currentLocationId when locations load
+  useEffect(() => {
+    if (!currentLocationId && locations.length > 0) {
+      setCurrentLocationId(locations[0].id);
+    }
+  }, [locations, currentLocationId]);
   
   // Update currentLocationId when locations are loaded
   useEffect(() => {
