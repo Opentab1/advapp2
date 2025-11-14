@@ -9,6 +9,7 @@ import type { SongLogEntry } from '../types';
 export function SongLog() {
   const [songs, setSongs] = useState<SongLogEntry[]>([]);
   const [topSongs, setTopSongs] = useState<Array<{ song: string; artist: string; plays: number }>>([]);
+  const [topGenres, setTopGenres] = useState<Array<{ genre: string; plays: number }>>([]);
 
   useEffect(() => {
     loadSongs();
@@ -17,6 +18,7 @@ export function SongLog() {
   const loadSongs = () => {
     setSongs(songLogService.getSongs(100));
     setTopSongs(songLogService.getTopSongs(10));
+    setTopGenres(songLogService.getTopGenres(10));
   };
 
   const handleExport = () => {
@@ -44,7 +46,7 @@ export function SongLog() {
           </motion.button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
           {/* Top Songs */}
           <motion.div
             className="glass-card p-6"
@@ -58,7 +60,7 @@ export function SongLog() {
             </div>
 
             <div className="space-y-3">
-              {topSongs.map((song, index) => (
+              {topSongs.length > 0 ? topSongs.map((song, index) => (
                 <motion.div
                   key={index}
                   className="flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
@@ -75,7 +77,46 @@ export function SongLog() {
                   </div>
                   <div className="text-cyan font-bold">{song.plays}</div>
                 </motion.div>
-              ))}
+              )) : (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  No songs tracked yet
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* Top Genres */}
+          <motion.div
+            className="glass-card p-6"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <Music className="w-5 h-5 text-purple-400" />
+              <h3 className="text-xl font-semibold text-white">Top Genres</h3>
+            </div>
+
+            <div className="space-y-3">
+              {topGenres.length > 0 && topGenres[0].genre !== 'Unknown' ? topGenres.map((genre, index) => (
+                <motion.div
+                  key={index}
+                  className="flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.25 + index * 0.05 }}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-purple-400 font-bold text-lg">{index + 1}</span>
+                    <div className="text-sm font-medium text-white">{genre.genre}</div>
+                  </div>
+                  <div className="text-purple-400 font-bold">{genre.plays}</div>
+                </motion.div>
+              )) : (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  Genre tracking not yet available
+                </div>
+              )}
             </div>
           </motion.div>
 

@@ -179,6 +179,7 @@ export interface SongLogEntry {
   albumArt?: string;
   duration?: number;
   source: 'spotify' | 'youtube' | 'other';
+  genre?: string; // For future genre detection
 }
 
 // AI Weekly Report

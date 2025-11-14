@@ -5,6 +5,31 @@ class SongLogService {
   private readonly MAX_SONGS = 500;
 
   addSong(song: Omit<SongLogEntry, 'id'>) {
+    this.loadSongs();
+
+    // Check if this song was logged within the last 5 minutes (300 seconds)
+    // If so, skip adding it (it's still the same play session)
+    const DUPLICATE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
+    const now = new Date(song.timestamp).getTime();
+    
+    const isDuplicate = this.songs.some(existingSong => {
+      const existingTime = new Date(existingSong.timestamp).getTime();
+      const timeDiff = now - existingTime;
+      
+      // Same song within 5 minutes = duplicate
+      return (
+        existingSong.songName === song.songName &&
+        existingSong.artist === song.artist &&
+        timeDiff >= 0 &&
+        timeDiff < DUPLICATE_THRESHOLD_MS
+      );
+    });
+
+    if (isDuplicate) {
+      console.log(`⏭️ Skipping duplicate song: ${song.songName} (detected within 5 minutes)`);
+      return; // Don't add duplicate
+    }
+
     const entry: SongLogEntry = {
       ...song,
       id: `song-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -50,6 +75,23 @@ class SongLogService {
         artist: data.artist,
         plays: data.plays
       }))
+      .sort((a, b) => b.plays - a.plays)
+      .slice(0, limit);
+  }
+
+  getTopGenres(limit: number = 10): Array<{ genre: string; plays: number }> {
+    this.loadSongs();
+    
+    // Count songs by genre
+    const genreCounts = new Map<string, number>();
+
+    this.songs.forEach(song => {
+      const genre = song.genre || 'Unknown';
+      genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1);
+    });
+
+    return Array.from(genreCounts.entries())
+      .map(([genre, plays]) => ({ genre, plays }))
       .sort((a, b) => b.plays - a.plays)
       .slice(0, limit);
   }
