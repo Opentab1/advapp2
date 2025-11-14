@@ -573,7 +573,7 @@ export function Dashboard() {
                 <>
                   {/* Pulse Score */}
                   <PulseScore
-                    score={comfortLevel}
+                    score={comfortLevel?.score ?? null}
                     breakdown={undefined}
                     trend="stable"
                   />
