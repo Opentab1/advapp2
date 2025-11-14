@@ -455,25 +455,6 @@ export function Dashboard() {
         <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto pb-24 lg:pb-8">
           {activeTab === 'live' || activeTab === 'history' ? (
             <>
-              {/* Connection Warning Banner */}
-              {!usingIoT && !liveError && liveData && (
-                <motion.div
-                  className="mb-4 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-start gap-3"
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-semibold text-yellow-400">⚠️ Using HTTP Polling (Fallback Mode)</span>
-                    </div>
-                    <p className="text-xs text-yellow-300/80">
-                      AWS IoT Core connection is not available. Falling back to HTTP polling. 
-                      Check the browser console for details on why IoT connection failed.
-                    </p>
-                  </div>
-                </motion.div>
-              )}
-
               {/* Time Range Selector */}
               <motion.div
                 className="mb-6"
