@@ -574,12 +574,7 @@ export function Dashboard() {
                   {/* Pulse Score */}
                   <PulseScore
                     score={comfortLevel}
-                    breakdown={comfortBreakdown ? {
-                      sound: comfortBreakdown.sound?.score || 0,
-                      light: comfortBreakdown.lighting?.score || 0,
-                      temperature: comfortBreakdown.temperature?.score || 0,
-                      humidity: comfortBreakdown.humidity?.score || 0,
-                    } : undefined}
+                    breakdown={undefined}
                     trend="stable"
                   />
 
