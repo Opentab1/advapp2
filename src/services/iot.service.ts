@@ -80,11 +80,18 @@ class IoTService {
 
       try {
         const client = generateClient();
+        
+        // Get locationId from locationService if not in JWT
+        if (!locationId) {
+          const { default: locationService } = await import('./location.service');
+          locationId = locationService.getCurrentLocationId() || 'mainfloor';
+        }
+        
         const response = await client.graphql({
           query: getVenueConfig,
           variables: { 
             venueId, 
-            locationId: locationId || 'default' // Use 'default' if locationId not provided
+            locationId: locationId
           },
           authMode: 'userPool'
         }) as any;
