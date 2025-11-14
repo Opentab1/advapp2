@@ -719,16 +719,18 @@ export function Dashboard() {
                     )}
                   </div>
 
-                  {/* Comfort Breakdown & Sports */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                    {comfortBreakdown && (
-                      <ComfortBreakdownCard breakdown={comfortBreakdown} />
-                    )}
-                    <SportsWidget />
-                  </div>
+                  {/* Comfort Breakdown & Sports - History Tab Only */}
+                  {activeTab === 'history' && (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                      {comfortBreakdown && (
+                        <ComfortBreakdownCard breakdown={comfortBreakdown} />
+                      )}
+                      <SportsWidget />
+                    </div>
+                  )}
 
-                  {/* Charts */}
-                  {chartData.length > 0 && (
+                  {/* Charts - History Tab Only */}
+                  {activeTab === 'history' && chartData.length > 0 && (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                       <DataChart
                         data={chartData}
