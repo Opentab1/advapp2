@@ -265,10 +265,12 @@ export function Dashboard() {
     }
   }, [timeRange]);
 
-  // Auto-switch from 'live' to '24h' when switching to history tab
+  // Auto-switch time range based on active tab
   useEffect(() => {
     if (activeTab === 'history' && timeRange === 'live') {
       setTimeRange('24h');
+    } else if (activeTab === 'live' && timeRange !== 'live') {
+      setTimeRange('live');
     }
   }, [activeTab]);
 
@@ -509,11 +511,13 @@ export function Dashboard() {
                   </div>
                 </div>
 
-                <TimeRangeToggle 
-                  selected={timeRange} 
-                  onChange={setTimeRange} 
-                  excludeLive={activeTab === 'history'}
-                />
+                {activeTab === 'history' && (
+                  <TimeRangeToggle 
+                    selected={timeRange} 
+                    onChange={setTimeRange} 
+                    excludeLive={true}
+                  />
+                )}
               </motion.div>
 
               {/* Error Message */}
