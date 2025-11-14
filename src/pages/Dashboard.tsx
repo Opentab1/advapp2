@@ -724,7 +724,8 @@ export function Dashboard() {
                     <div className="lg:col-span-2">
                       {currentData.currentSong && (
                         <NowPlaying 
-                          song={currentData.currentSong} 
+                          song={currentData.currentSong}
+                          artist={currentData.artist}
                           albumArt={currentData.albumArt}
                         />
                       )}

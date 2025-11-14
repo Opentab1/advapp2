@@ -3,10 +3,11 @@ import { Music } from 'lucide-react';
 
 interface NowPlayingProps {
   song?: string;
+  artist?: string;
   albumArt?: string;
 }
 
-export function NowPlaying({ song, albumArt }: NowPlayingProps) {
+export function NowPlaying({ song, artist, albumArt }: NowPlayingProps) {
   if (!song) return null;
 
   return (
@@ -66,9 +67,14 @@ export function NowPlaying({ song, albumArt }: NowPlayingProps) {
               Now Playing
             </span>
           </div>
-          <p className="text-sm font-semibold text-white truncate">
+          <p className="text-lg font-bold text-white truncate">
             {song}
           </p>
+          {artist && (
+            <p className="text-sm text-gray-400 truncate mt-1">
+              {artist}
+            </p>
+          )}
         </div>
       </div>
     </motion.div>
