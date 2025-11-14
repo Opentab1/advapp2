@@ -19,6 +19,7 @@ import { AnimatedBackground } from '../components/AnimatedBackground';
 import { MetricCard } from '../components/MetricCard';
 import { ComfortGauge } from '../components/ComfortGauge';
 import { ComfortBreakdownCard } from '../components/ComfortBreakdown';
+import { PulseScore } from '../components/PulseScore';
 import { SportsWidget } from '../components/SportsWidget';
 import { DataChart } from '../components/DataChart';
 import { TimeRangeToggle } from '../components/TimeRangeToggle';
