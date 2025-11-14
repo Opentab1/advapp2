@@ -6,7 +6,7 @@ This script publishes sensor data to AWS IoT Core for the jimmyneutron venue.
 
 import json
 import time
-import random
+import requests
 from datetime import datetime
 from awscrt import mqtt
 from awsiot import mqtt_connection_builder
@@ -32,7 +32,10 @@ ROOT_CA_PATH = "/home/pi/certs/root-CA.crt"
 PUBLISH_INTERVAL = 15
 
 # Set to True when you have real sensors connected
-USE_REAL_SENSORS = False
+USE_REAL_SENSORS = True
+
+# Your local sensor API endpoint
+SENSOR_API_URL = "http://localhost:8080/api/sensors"
 
 # ============================================================================
 # SENSOR READING FUNCTIONS
@@ -40,37 +43,64 @@ USE_REAL_SENSORS = False
 
 def read_sensor_data():
     """
-    Read sensor data. Replace this with your actual sensor code.
-    For now, generates realistic mock data for testing.
+    Read sensor data from your local API endpoint at http://localhost:8080/api/sensors
     """
     if USE_REAL_SENSORS:
-        # TODO: Replace with your actual sensor reading code
-        # Example:
-        # import board
-        # import adafruit_dht
-        # dht_sensor = adafruit_dht.DHT22(board.D4)
-        # temperature = dht_sensor.temperature
-        # humidity = dht_sensor.humidity
-        
-        return {
-            "sound_level": 0,  # Replace with actual sound sensor
-            "light_level": 0,  # Replace with actual light sensor
-            "indoor_temperature": 0,  # Replace with actual temp sensor
-            "outdoor_temperature": 0,  # Replace with weather API or outdoor sensor
-            "humidity": 0  # Replace with actual humidity sensor
-        }
+        try:
+            # Call your local sensor API
+            response = requests.get(SENSOR_API_URL, timeout=5)
+            response.raise_for_status()
+            api_data = response.json()
+            
+            # Transform API response to AWS format
+            sensors = {
+                "sound_level": api_data.get("noise_db", 0),
+                "light_level": api_data.get("light_level", 0),
+                "indoor_temperature": api_data.get("temperature_f", 0),
+                "outdoor_temperature": api_data.get("temperature_f", 0),  # Use same temp if no outdoor sensor
+                "humidity": api_data.get("humidity", 0)
+            }
+            
+            # Extract occupancy data
+            occupancy = {
+                "current": api_data.get("occupancy", 0),
+                "entries": api_data.get("entries", 0),
+                "exits": api_data.get("exits", 0),
+                "capacity": 200  # Set your venue capacity
+            }
+            
+            # Extract Spotify data if available
+            current_song = api_data.get("current_song", {})
+            spotify = None
+            if current_song and current_song.get("title") != "Unknown":
+                spotify = {
+                    "current_song": current_song.get("title", "Unknown"),
+                    "artist": current_song.get("artist", "Unknown"),
+                    "album_art": None  # Add if your API provides it
+                }
+            
+            return sensors, occupancy, spotify
+            
+        except Exception as e:
+            print(f"⚠️  Error reading from sensor API: {e}")
+            print(f"   Falling back to mock data...")
+            return get_mock_sensor_data(), None, None
     else:
-        # Generate realistic mock data for testing
-        base_time = time.time()
-        variation = (base_time % 60) / 60
-        
-        return {
-            "sound_level": round(65 + random.uniform(-10, 20) + (variation * 15), 2),
-            "light_level": round(300 + random.uniform(-50, 150) + (variation * 100), 2),
-            "indoor_temperature": round(70 + random.uniform(-3, 5) + (variation * 4), 2),
-            "outdoor_temperature": round(65 + random.uniform(-5, 10), 2),
-            "humidity": round(45 + random.uniform(-10, 15) + (variation * 10), 2)
-        }
+        return get_mock_sensor_data(), None, None
+
+def get_mock_sensor_data():
+    """Fallback mock data if API is unavailable."""
+    import random
+    base_time = time.time()
+    variation = (base_time % 60) / 60
+    
+    return {
+        "sound_level": round(65 + random.uniform(-10, 20) + (variation * 15), 2),
+        "light_level": round(300 + random.uniform(-50, 150) + (variation * 100), 2),
+        "indoor_temperature": round(70 + random.uniform(-3, 5) + (variation * 4), 2),
+        "outdoor_temperature": round(65 + random.uniform(-5, 10), 2),
+        "humidity": round(45 + random.uniform(-10, 15) + (variation * 10), 2)
+    }
 
 # ============================================================================
 # MQTT CONNECTION & PUBLISHING
@@ -106,8 +136,8 @@ def create_mqtt_connection():
 def publish_sensor_data(mqtt_connection):
     """Read sensors and publish data to AWS IoT Core."""
     try:
-        # Read sensor data
-        sensors = read_sensor_data()
+        # Read sensor data from API
+        sensors, occupancy, spotify = read_sensor_data()
         
         # Build message payload in the format your app expects
         message = {
@@ -123,20 +153,13 @@ def publish_sensor_data(mqtt_connection):
             }
         }
         
-        # Optional: Add Spotify data if available
-        # message["spotify"] = {
-        #     "current_song": "Song Name",
-        #     "artist": "Artist Name",
-        #     "album_art": "https://..."
-        # }
+        # Add occupancy if available
+        if occupancy:
+            message["occupancy"] = occupancy
         
-        # Optional: Add occupancy data if available
-        # message["occupancy"] = {
-        #     "current": 45,
-        #     "entries": 120,
-        #     "exits": 75,
-        #     "capacity": 200
-        # }
+        # Add Spotify if available
+        if spotify:
+            message["spotify"] = spotify
         
         # Publish to MQTT
         message_json = json.dumps(message)
@@ -154,6 +177,10 @@ def publish_sensor_data(mqtt_connection):
         print(f"   🌡️  Indoor Temp: {sensors['indoor_temperature']:.1f}°F")
         print(f"   ☁️  Outdoor Temp: {sensors['outdoor_temperature']:.1f}°F")
         print(f"   💧 Humidity: {sensors['humidity']:.1f}%")
+        if occupancy:
+            print(f"   👥 Occupancy: {occupancy['current']} people (Entries: {occupancy['entries']}, Exits: {occupancy['exits']})")
+        if spotify:
+            print(f"   🎵 Playing: {spotify['current_song']} - {spotify['artist']}")
         print()
         
         return True
@@ -177,7 +204,9 @@ def main():
     print(f"Location: {LOCATION_ID}")
     print(f"Publishing to: {MQTT_TOPIC}")
     print(f"Interval: Every {PUBLISH_INTERVAL} seconds")
-    print(f"Mode: {'REAL SENSORS' if USE_REAL_SENSORS else '🧪 MOCK DATA (for testing)'}")
+    print(f"Mode: {'✅ REAL SENSORS (API)' if USE_REAL_SENSORS else '🧪 MOCK DATA (for testing)'}")
+    if USE_REAL_SENSORS:
+        print(f"Sensor API: {SENSOR_API_URL}")
     print("=" * 60)
     print()
     
