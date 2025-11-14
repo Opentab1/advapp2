@@ -30,53 +30,26 @@ export function useRealTimeData({ venueId, interval = 15000, enabled = true }: U
   useEffect(() => {
     if (!enabled) return;
 
-    let unsubscribe: (() => void) | undefined;
     let intervalId: NodeJS.Timeout | undefined;
 
-    // DISABLED: IoT real-time streaming (using HTTP polling instead)
-    // iotService.connect(venueId).then(() => {
-    //   if (iotService.isConnected()) {
-    //     console.log('✅ Using AWS IoT for real-time data');
-    //     setUsingIoT(true);
+    // Use HTTP polling only (IoT disabled for now)
+    console.log('📡 Using HTTP polling for data updates');
+    setUsingIoT(false);
     
-    if (false) { // Disabled
-      setUsingIoT(false);
-        setLoading(false);
-        
-        // Subscribe to IoT messages - this replaces polling
-        unsubscribe = iotService.onMessage((sensorData) => {
-          setData(sensorData);
-          setError(null);
-        });
-      } else {
-        // IoT connection failed, fall back to polling
-        console.log('⚠️ AWS IoT unavailable, using polling fallback');
-        fetchData();
-        intervalId = setInterval(() => {
-          fetchData();
-        }, interval);
-      }
-    }).catch((err) => {
-      console.log('⚠️ AWS IoT unavailable, using polling fallback:', err);
-      // IoT connection failed, fall back to polling
+    // Initial fetch
+    fetchData();
+    
+    // Set up polling interval
+    intervalId = setInterval(() => {
       fetchData();
-      intervalId = setInterval(() => {
-        fetchData();
-      }, interval);
-    });
+    }, interval);
 
     return () => {
       if (intervalId) {
         clearInterval(intervalId);
       }
-      if (unsubscribe) {
-        unsubscribe();
-      }
-      if (usingIoT) {
-        iotService.disconnect();
-      }
     };
-  }, [fetchData, interval, enabled, venueId, usingIoT]);
+  }, [fetchData, interval, enabled, venueId]);
 
   return { data, loading, error, refetch: fetchData, usingIoT };
 }
