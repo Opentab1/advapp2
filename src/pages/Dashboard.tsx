@@ -205,19 +205,12 @@ export function Dashboard() {
   
   // Update currentLocationId when locations load
   useEffect(() => {
-    if (!currentLocationId && locations.length > 0) {
-      setCurrentLocationId(locations[0].id);
-    }
-  }, [locations, currentLocationId]);
-  
-  // Update currentLocationId when locations are loaded
-  useEffect(() => {
     if (locations.length > 0 && !currentLocationId) {
       const newLocationId = locations[0].id;
       setCurrentLocationId(newLocationId);
       locationService.setCurrentLocationId(newLocationId);
     }
-  }, [locations]);
+  }, [locations, currentLocationId]);
   
   const currentLocation = locations.find(l => l.id === currentLocationId);
 
