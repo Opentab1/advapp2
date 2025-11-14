@@ -31,6 +31,7 @@ import { TermsModal } from '../components/TermsModal';
 import { Settings } from './Settings';
 import { SongLog } from './SongLog';
 import { Reports } from './Reports';
+import { Support } from './Support';
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -757,8 +758,6 @@ export function Dashboard() {
             <SongLog />
           ) : activeTab === 'reports' ? (
             <Reports />
-          ) : activeTab === 'ai' ? (
-            <AIInsights />
           ) : activeTab === 'support' ? (
             <Support />
           ) : activeTab === 'settings' ? (
