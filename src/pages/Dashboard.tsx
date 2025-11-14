@@ -794,8 +794,6 @@ export function Dashboard() {
             <SongLog />
           ) : activeTab === 'reports' ? (
             <Reports />
-          ) : activeTab === 'settings' ? (
-            <Settings />
           ) : (
             // Placeholder for other tabs
             <motion.div
