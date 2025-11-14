@@ -15,6 +15,9 @@ export function Reports() {
   const [generating, setGenerating] = useState(false);
   const [selectedReportType, setSelectedReportType] = useState<ReportType>('weekly');
   const [showScheduler, setShowScheduler] = useState(false);
+  const [timeRange, setTimeRange] = useState<'1d' | '7d' | '30d' | '90d' | 'custom'>('7d');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
 
   useEffect(() => {
     loadReports();
@@ -32,7 +35,25 @@ export function Reports() {
     setGenerating(true);
     try {
       const weekEnd = new Date();
-      const weekStart = subDays(weekEnd, 7);
+      let weekStart: Date;
+      let daysToFetch: string;
+
+      // Calculate date range based on selection
+      if (timeRange === 'custom') {
+        if (!customStartDate || !customEndDate) {
+          alert('Please select both start and end dates for custom range');
+          setGenerating(false);
+          return;
+        }
+        weekStart = new Date(customStartDate);
+        const customEnd = new Date(customEndDate);
+        const daysDiff = Math.ceil((customEnd.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24));
+        daysToFetch = `${daysDiff}d`;
+      } else {
+        const days = parseInt(timeRange);
+        weekStart = subDays(weekEnd, days);
+        daysToFetch = timeRange;
+      }
 
       // Fetch real historical data from DynamoDB
       const user = authService.getStoredUser();
@@ -43,11 +64,11 @@ export function Reports() {
         return;
       }
 
-      console.log('📊 Fetching historical data for report...');
+      console.log(`📊 Fetching historical data for report (${timeRange})...`);
       
       try {
-        // Fetch 7-day historical data
-        const historicalData = await apiService.getHistoricalData(venueId, '7d');
+        // Fetch historical data based on selected time range
+        const historicalData = await apiService.getHistoricalData(venueId, daysToFetch);
         
         // Calculate metrics from real data
         let totalComfort = 0;
@@ -133,16 +154,57 @@ export function Reports() {
             <h2 className="text-3xl font-bold gradient-text mb-2">📋 AI-Generated Reports</h2>
             <p className="text-gray-400">Intelligent insights and recommendations</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-3 items-end">
+            {/* Time Range Selector */}
+            <div className="flex flex-col gap-2">
+              <label className="text-xs text-gray-400 font-medium">Time Range</label>
+              <select
+                value={timeRange}
+                onChange={(e) => setTimeRange(e.target.value as any)}
+                className="glass-card px-4 py-2 rounded-lg text-white text-sm border border-white/10 focus:border-cyan/50 focus:outline-none transition-colors"
+              >
+                <option value="1d">1 Day</option>
+                <option value="7d">7 Days</option>
+                <option value="30d">30 Days</option>
+                <option value="90d">90 Days</option>
+                <option value="custom">Custom Range</option>
+              </select>
+            </div>
+
+            {/* Custom Date Range (shown when 'custom' is selected) */}
+            {timeRange === 'custom' && (
+              <>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs text-gray-400 font-medium">Start Date</label>
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    onChange={(e) => setCustomStartDate(e.target.value)}
+                    className="glass-card px-4 py-2 rounded-lg text-white text-sm border border-white/10 focus:border-cyan/50 focus:outline-none transition-colors"
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs text-gray-400 font-medium">End Date</label>
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={(e) => setCustomEndDate(e.target.value)}
+                    className="glass-card px-4 py-2 rounded-lg text-white text-sm border border-white/10 focus:border-cyan/50 focus:outline-none transition-colors"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Generate Button */}
             <motion.button
               onClick={generateReport}
               disabled={generating}
-              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+              className="btn-primary flex items-center gap-2 disabled:opacity-50 px-6 py-2 whitespace-nowrap"
               whileHover={{ scale: generating ? 1 : 1.05 }}
               whileTap={{ scale: generating ? 1 : 0.95 }}
             >
               <Sparkles className="w-4 h-4" />
-              {generating ? 'Generating...' : 'Generate New Report'}
+              {generating ? 'Generating...' : 'Generate Report'}
             </motion.button>
           </div>
         </div>

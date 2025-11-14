@@ -225,7 +225,7 @@ class DynamoDBService {
   /**
    * Get historical sensor data for a venue within a time range
    */
-  async getHistoricalSensorData(venueId: string, range: TimeRange): Promise<HistoricalData> {
+  async getHistoricalSensorData(venueId: string, range: TimeRange | string): Promise<HistoricalData> {
     console.log('🔍 Fetching historical sensor data from DynamoDB for venue:', venueId, 'range:', range);
     
     try {
@@ -401,9 +401,18 @@ class DynamoDBService {
   /**
    * Calculate start and end times for a given time range
    */
-  private getTimeRangeValues(range: TimeRange): { startTime: string; endTime: string } {
+  private getTimeRangeValues(range: TimeRange | string): { startTime: string; endTime: string } {
     const endTime = new Date().toISOString();
     let startTime: string;
+
+    // Handle custom day ranges (e.g., "45d", "365d")
+    if (typeof range === 'string' && range.endsWith('d') && !['7d', '30d', '90d'].includes(range)) {
+      const days = parseInt(range.replace('d', ''));
+      if (!isNaN(days) && days > 0) {
+        startTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+        return { startTime, endTime };
+      }
+    }
 
     switch (range) {
       case 'live':
@@ -414,6 +423,9 @@ class DynamoDBService {
         break;
       case '24h':
         startTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        break;
+      case '1d':
+        startTime = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
         break;
       case '7d':
         startTime = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
