@@ -654,7 +654,7 @@ export function Dashboard() {
                   )}
 
                   {/* Hero Metrics Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4 mb-6">
                     <MetricCard
                       title="Sound Level"
                       value={formatDecibels(currentData.decibels).split(' ')[0]}
@@ -683,21 +683,39 @@ export function Dashboard() {
                     />
                     
                     <MetricCard
-                      title="Outdoor Temp"
-                      value={formatTemperature(currentData.outdoorTemp).split('°')[0]}
-                      unit="°F"
-                      icon={Cloud}
-                      color="#60a5fa"
-                      delay={0.25}
-                    />
-                    
-                    <MetricCard
                       title="Humidity"
                       value={formatHumidity(currentData.humidity).replace('%', '')}
                       unit="%"
                       icon={Droplets}
                       color="#4ecdc4"
+                      delay={0.25}
+                    />
+                    
+                    <MetricCard
+                      title="Entries"
+                      value={occupancyMetrics?.todayEntries.toString() || '0'}
+                      unit="people"
+                      icon={UserPlus}
+                      color="#4ade80"
                       delay={0.3}
+                    />
+                    
+                    <MetricCard
+                      title="Exits"
+                      value={occupancyMetrics?.todayExits.toString() || '0'}
+                      unit="people"
+                      icon={UserMinus}
+                      color="#f87171"
+                      delay={0.35}
+                    />
+                    
+                    <MetricCard
+                      title="Total Occupancy"
+                      value={occupancyMetrics?.current.toString() || '0'}
+                      unit="people"
+                      icon={Users}
+                      color="#a78bfa"
+                      delay={0.4}
                     />
                   </div>
 
