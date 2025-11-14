@@ -794,8 +794,6 @@ export function Dashboard() {
             <SongLog />
           ) : activeTab === 'reports' ? (
             <Reports />
-          ) : activeTab === 'support' ? (
-            <Support />
           ) : activeTab === 'settings' ? (
             <Settings />
           ) : (
