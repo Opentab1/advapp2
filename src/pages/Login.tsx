@@ -77,15 +77,17 @@ export function Login({ onLoginSuccess }: LoginProps) {
       >
         {/* Logo & Branding */}
         <div className="text-center mb-8">
-          <Logo className="scale-125 mx-auto mb-4" />
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
           >
-            <h1 className="text-3xl font-bold gradient-text mb-2">Pulse 1.0</h1>
-            <p className="text-gray-400 text-sm">By Advizia</p>
-            <p className="text-gray-500 text-xs mt-2 italic">leave nothing on the table</p>
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <Logo className="scale-110" />
+              <h1 className="text-3xl font-bold gradient-text">Pulse 1.0</h1>
+            </div>
+            <p className="text-gray-400 text-xs mt-3">By Advizia</p>
+            <p className="text-gray-500 text-sm mt-2 italic">leave nothing on the table</p>
           </motion.div>
         </div>
 
