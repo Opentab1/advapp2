@@ -48,7 +48,7 @@ export function TopBar({
         {/* Left: Dynamic Branding + Zone Selection */}
         <div className="flex items-center gap-6">
           <div>
-            <h1 className="text-2xl font-bold text-cyan-400">{venueName}</h1>
+            <h1 className="text-2xl font-bold text-cyan-400">Pulse 1.0</h1>
             {hasLocations && (
               <p className="text-sm text-gray-400">
                 Zone Selection: <span className="text-cyan-300">{currentLocation?.name || 'Select Zone'}</span>
@@ -156,7 +156,7 @@ export function TopBar({
       {/* Mobile branding */}
       <div className="md:hidden flex items-center justify-between mt-3 pt-3 border-t border-white/10">
         <div>
-          <h2 className="text-lg font-bold text-cyan-400">{venueName}</h2>
+          <h2 className="text-lg font-bold text-cyan-400">Pulse 1.0</h2>
           {hasLocations && (
             <p className="text-xs text-gray-400">
               Zone: <span className="text-cyan-300">{currentLocation?.name || 'Select Zone'}</span>
