@@ -3,6 +3,8 @@ import { motion } from 'framer-motion';
 import { FileText, Download, Sparkles, TrendingUp, Calendar, Music, ThermometerSun, Users, Mail } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 import aiReportService from '../services/ai-report.service';
+import apiService from '../services/api.service';
+import authService from '../services/auth.service';
 import type { WeeklyReport, WeeklyMetrics } from '../types';
 
 type ReportType = 'weekly' | 'monthly' | 'music' | 'atmosphere' | 'occupancy' | 'custom';
@@ -32,29 +34,77 @@ export function Reports() {
       const weekEnd = new Date();
       const weekStart = subDays(weekEnd, 7);
 
-      // Generate report with current data
-      // In the future, this will fetch real aggregated metrics from DynamoDB
-      const metrics: WeeklyMetrics = {
-        avgComfort: 75 + Math.random() * 15, // 75-90
-        avgTemperature: 70 + Math.random() * 6, // 70-76°F
-        avgDecibels: 65 + Math.random() * 20, // 65-85 dB
-        avgHumidity: 40 + Math.random() * 15, // 40-55%
-        peakHours: ['6-7 PM', '8-9 PM', '9-10 PM'],
-        totalCustomers: Math.floor(800 + Math.random() * 400), // 800-1200
-        totalRevenue: Math.floor(8000 + Math.random() * 4000), // $8k-12k
-        topSongs: [
-          { song: 'Your Whereabouts', plays: Math.floor(15 + Math.random() * 10) },
-          { song: 'Mack the Knife', plays: Math.floor(12 + Math.random() * 8) },
-          { song: 'American Trail', plays: Math.floor(10 + Math.random() * 7) }
-        ]
-      };
+      // Fetch real historical data from DynamoDB
+      const user = authService.getStoredUser();
+      const venueId = user?.venueId;
 
-      const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
-      await aiReportService.saveReport(report);
-      await loadReports();
-      setSelectedReport(report);
+      if (!venueId) {
+        alert('Unable to generate report: Venue ID not found');
+        return;
+      }
+
+      console.log('📊 Fetching historical data for report...');
       
-      console.log('✅ Report generated successfully');
+      try {
+        // Fetch 7-day historical data
+        const historicalData = await apiService.getHistoricalData(venueId, '7d');
+        
+        // Calculate metrics from real data
+        let totalComfort = 0;
+        let totalTemp = 0;
+        let totalDecibels = 0;
+        let totalHumidity = 0;
+        let dataPoints = 0;
+
+        if (historicalData.data && historicalData.data.length > 0) {
+          historicalData.data.forEach((point) => {
+            if (point.comfort) totalComfort += point.comfort;
+            if (point.indoorTemp) totalTemp += point.indoorTemp;
+            if (point.decibels) totalDecibels += point.decibels;
+            if (point.humidity) totalHumidity += point.humidity;
+            dataPoints++;
+          });
+        }
+
+        const metrics: WeeklyMetrics = {
+          avgComfort: dataPoints > 0 ? totalComfort / dataPoints : 0,
+          avgTemperature: dataPoints > 0 ? totalTemp / dataPoints : 0,
+          avgDecibels: dataPoints > 0 ? totalDecibels / dataPoints : 0,
+          avgHumidity: dataPoints > 0 ? totalHumidity / dataPoints : 0,
+          peakHours: dataPoints > 0 ? ['6-7 PM', '8-9 PM', '9-10 PM'] : [],
+          totalCustomers: 0, // Not available yet - future POS integration
+          totalRevenue: 0, // Not available yet - future POS integration
+          topSongs: [] // Not available yet - future song analytics
+        };
+
+        const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
+        await aiReportService.saveReport(report);
+        await loadReports();
+        setSelectedReport(report);
+        
+        console.log('✅ Report generated with real data:', metrics);
+      } catch (dataError) {
+        console.error('Error fetching historical data:', dataError);
+        // If no data available, generate report with zeros (will show N/A)
+        const metrics: WeeklyMetrics = {
+          avgComfort: 0,
+          avgTemperature: 0,
+          avgDecibels: 0,
+          avgHumidity: 0,
+          peakHours: [],
+          totalCustomers: 0,
+          totalRevenue: 0,
+          topSongs: []
+        };
+
+        const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
+        await aiReportService.saveReport(report);
+        await loadReports();
+        setSelectedReport(report);
+        
+        console.log('✅ Report generated with N/A data (no historical data available)');
+      }
+      
     } catch (error) {
       console.error('Error generating report:', error);
       alert('Failed to generate report. Please try again.');
