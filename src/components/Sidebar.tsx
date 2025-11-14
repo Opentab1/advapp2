@@ -25,7 +25,7 @@ const navItems: NavItem[] = [
   { id: 'live', label: 'Live', icon: Activity },
   { id: 'history', label: 'History', icon: History },
   { id: 'songs', label: 'Songs', icon: Music },
-  { id: 'reports', label: 'Reports', icon: FileText },
+  { id: 'reports', label: 'AI Reports', icon: FileText },
   // { id: 'ai', label: 'AI', icon: Sparkles }, // Hidden until AI features are complete
   { id: 'support', label: 'Support', icon: HelpCircle },
   { id: 'settings', label: 'Settings', icon: Settings }

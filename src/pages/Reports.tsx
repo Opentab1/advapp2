@@ -30,22 +30,21 @@ export function Reports() {
     setGenerating(true);
     try {
       const weekEnd = new Date();
-      const weekStart = subDays(weekEnd, 1);
+      const weekStart = subDays(weekEnd, 7);
 
       // TODO: Fetch real metrics from API when historical data is available
-      // For now, this feature requires at least 1 day of sensor data
-      console.warn('⚠️ Report generation requires 1 day of historical data');
-      alert('Report generation requires at least 1 day of sensor data. This feature will be available once you have sufficient historical data.');
-      
       // Placeholder - will be implemented when real data is available
       // const metrics = await apiService.getWeeklyMetrics(weekStart, weekEnd);
       // const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
       // await aiReportService.saveReport(report);
       // await loadReports();
       // setSelectedReport(report);
+      
+      console.log('📊 Report generation feature coming soon');
+      alert('AI Report generation feature is currently in development. Check back soon!');
     } catch (error) {
       console.error('Error generating report:', error);
-      alert('Failed to generate report. Please ensure you have sufficient historical data.');
+      alert('Failed to generate report.');
     } finally {
       setGenerating(false);
     }
@@ -157,7 +156,7 @@ export function Reports() {
                 <div className="text-center py-8 text-gray-400">
                   <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
                   <p className="text-sm">No reports generated yet</p>
-                  <p className="text-xs mt-2">Requires 1+ day of data</p>
+                  <p className="text-xs mt-2">Generate your first AI report</p>
                 </div>
               ) : (
                 reports.map((report, index) => (
