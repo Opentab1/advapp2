@@ -9,7 +9,7 @@ interface UseRealTimeDataOptions {
   enabled?: boolean;
 }
 
-export function useRealTimeData({ venueId, interval = 15000, enabled = true }: UseRealTimeDataOptions) {
+export function useRealTimeData({ venueId, interval = 10000, enabled = true }: UseRealTimeDataOptions) {
   const [data, setData] = useState<SensorData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
