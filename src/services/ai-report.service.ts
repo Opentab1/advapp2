@@ -56,7 +56,7 @@ class AIReportService {
     const comfortStatus = metrics.avgComfort >= 80 ? 'excellent' : 
                          metrics.avgComfort >= 65 ? 'good' : 'needs improvement';
     
-    return `This week at Ferg's Sports Bar showed ${comfortStatus} environmental conditions with an average comfort score of ${metrics.avgComfort.toFixed(1)}. Total revenue reached $${metrics.totalRevenue.toLocaleString()} across ${metrics.totalCustomers.toLocaleString()} customers, with peak activity during ${metrics.peakHours.join(', ')}.`;
+    return `This week showed ${comfortStatus} environmental conditions with an average comfort score of ${metrics.avgComfort.toFixed(1)}. Total revenue reached $${metrics.totalRevenue.toLocaleString()} across ${metrics.totalCustomers.toLocaleString()} customers, with peak activity during ${metrics.peakHours.join(', ')}.`;
   }
 
   private generateInsights(metrics: WeeklyMetrics): ReportInsight[] {
