@@ -4,6 +4,7 @@ import type { TimeRange } from '../types';
 interface TimeRangeToggleProps {
   selected: TimeRange;
   onChange: (range: TimeRange) => void;
+  excludeLive?: boolean; // Option to hide "Live" for History tab
 }
 
 const ranges: { value: TimeRange; label: string }[] = [
@@ -15,10 +16,12 @@ const ranges: { value: TimeRange; label: string }[] = [
   { value: '90d', label: '90D' }
 ];
 
-export function TimeRangeToggle({ selected, onChange }: TimeRangeToggleProps) {
+export function TimeRangeToggle({ selected, onChange, excludeLive = false }: TimeRangeToggleProps) {
+  const filteredRanges = excludeLive ? ranges.filter(r => r.value !== 'live') : ranges;
+  
   return (
     <div className="flex gap-2 flex-wrap">
-      {ranges.map((range) => (
+      {filteredRanges.map((range) => (
         <motion.button
           key={range.value}
           onClick={() => onChange(range.value)}
