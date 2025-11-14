@@ -30,12 +30,12 @@ export function Reports() {
     setGenerating(true);
     try {
       const weekEnd = new Date();
-      const weekStart = subDays(weekEnd, 7);
+      const weekStart = subDays(weekEnd, 1);
 
       // TODO: Fetch real metrics from API when historical data is available
-      // For now, this feature requires at least 7 days of sensor data
-      console.warn('⚠️ Report generation requires 7 days of historical data');
-      alert('Report generation requires at least 7 days of sensor data. This feature will be available once you have sufficient historical data.');
+      // For now, this feature requires at least 1 day of sensor data
+      console.warn('⚠️ Report generation requires 1 day of historical data');
+      alert('Report generation requires at least 1 day of sensor data. This feature will be available once you have sufficient historical data.');
       
       // Placeholder - will be implemented when real data is available
       // const metrics = await apiService.getWeeklyMetrics(weekStart, weekEnd);
@@ -72,15 +72,6 @@ export function Reports() {
             <p className="text-gray-400">Intelligent insights and recommendations</p>
           </div>
           <div className="flex gap-2">
-            <motion.button
-              onClick={() => setShowScheduler(!showScheduler)}
-              className="btn-secondary flex items-center gap-2"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <Calendar className="w-4 h-4" />
-              Schedule Reports
-            </motion.button>
             <motion.button
               onClick={generateReport}
               disabled={generating}
@@ -166,7 +157,7 @@ export function Reports() {
                 <div className="text-center py-8 text-gray-400">
                   <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
                   <p className="text-sm">No reports generated yet</p>
-                  <p className="text-xs mt-2">Requires 7+ days of data</p>
+                  <p className="text-xs mt-2">Requires 1+ day of data</p>
                 </div>
               ) : (
                 reports.map((report, index) => (
