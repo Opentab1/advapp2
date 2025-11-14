@@ -728,8 +728,8 @@ export function Dashboard() {
                     {comfortBreakdown && (
                       <ComfortBreakdownCard breakdown={comfortBreakdown} />
                     )}
-                    */}
                     <SportsWidget />
+                    */}
                   </div>
 
                   {/* Charts */}
