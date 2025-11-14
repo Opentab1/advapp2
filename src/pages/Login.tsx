@@ -83,9 +83,9 @@ export function Login({ onLoginSuccess }: LoginProps) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
           >
-            <h1 className="text-3xl font-bold gradient-text mb-2">Pulse</h1>
-            <p className="text-gray-400 text-sm">by Advizia</p>
-            <p className="text-gray-500 text-xs mt-2">Real-time venue intelligence</p>
+            <h1 className="text-3xl font-bold gradient-text mb-2">Pulse 1.0</h1>
+            <p className="text-gray-400 text-sm">By Advizia</p>
+            <p className="text-gray-500 text-xs mt-2 italic">leave nothing on the table</p>
           </motion.div>
         </div>
 
