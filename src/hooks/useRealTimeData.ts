@@ -33,11 +33,14 @@ export function useRealTimeData({ venueId, interval = 15000, enabled = true }: U
     let unsubscribe: (() => void) | undefined;
     let intervalId: NodeJS.Timeout | undefined;
 
-    // Try to connect to AWS IoT for real-time streaming
-    iotService.connect(venueId).then(() => {
-      if (iotService.isConnected()) {
-        console.log('✅ Using AWS IoT for real-time data');
-        setUsingIoT(true);
+    // DISABLED: IoT real-time streaming (using HTTP polling instead)
+    // iotService.connect(venueId).then(() => {
+    //   if (iotService.isConnected()) {
+    //     console.log('✅ Using AWS IoT for real-time data');
+    //     setUsingIoT(true);
+    
+    if (false) { // Disabled
+      setUsingIoT(false);
         setLoading(false);
         
         // Subscribe to IoT messages - this replaces polling
