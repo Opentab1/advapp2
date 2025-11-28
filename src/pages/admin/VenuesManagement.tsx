@@ -40,7 +40,10 @@ export function VenuesManagement() {
     setIsCreating(true);
     try {
       // Call API to create venue with auto password generation
-      const tempPassword = `Temp${Math.random().toString(36).slice(2, 10)}!`;
+      // Password must have: uppercase, lowercase, numbers, special chars
+      const randomStr = Math.random().toString(36).slice(2, 10);
+      const randomNum = Math.floor(Math.random() * 900) + 100; // 3-digit number
+      const tempPassword = `Temp${randomNum}${randomStr}!`;
       
       const result = await apiService.createVenue({
         venueName: venueData.venueName,
