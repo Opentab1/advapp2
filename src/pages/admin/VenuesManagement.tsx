@@ -55,6 +55,10 @@ export function VenuesManagement() {
         tempPassword: tempPassword
       });
 
+      console.log('🔍 API Result:', result);
+      console.log('🔍 tempPassword from result:', result.tempPassword);
+      console.log('🔍 deviceData from result:', result.deviceData);
+
       if (result.success) {
         // Download certificates if available
         if (result.deviceData?.credentials) {
