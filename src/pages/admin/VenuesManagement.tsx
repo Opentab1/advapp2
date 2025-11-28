@@ -182,51 +182,10 @@ For support: support@advizia.ai
     setShowConfigGenerator(venue);
   };
 
-  // Fetch real venues from DynamoDB
-  const fetchVenues = async () => {
-    setLoadingVenues(true);
-    try {
-      // Query VenueConfig table to get all unique venues
-      const response = await fetch('https://ui76r6g3a5a6rdqts6cse76gey.appsync-api.us-east-2.amazonaws.com/graphql', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('pulse_auth_token')}`
-        },
-        body: JSON.stringify({
-          query: `
-            query {
-              listAllVenueConfigs {
-                items {
-                  venueId
-                  locationId
-                  venueName
-                  displayName
-                }
-              }
-            }
-          `
-        })
-      });
-      
-      // For now, scan DynamoDB directly - simplified approach
-      // Group by venueId and create venue objects
-      console.log('Fetching venues from DynamoDB...');
-      
-      // Temporary: Just show empty list until we implement proper API
-      setVenues([]);
-      
-    } catch (error) {
-      console.error('Failed to fetch venues:', error);
-      setVenues([]);
-    } finally {
-      setLoadingVenues(false);
-    }
-  };
-
-  // Load venues on mount
+  // Load venues on mount - currently empty, real data fetch coming soon
   useEffect(() => {
-    fetchVenues();
+    setLoadingVenues(false);
+    // TODO: Add GraphQL query to fetch real venues from VenueConfig table
   }, []);
 
   return (
