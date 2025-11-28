@@ -65,7 +65,7 @@ export function VenuesManagement() {
           downloadCertificatesZip(result);
         }
         
-        alert(`✅ Venue "${venueData.venueName}" created successfully!\n\nOwner: ${venueData.ownerEmail}\nTemporary Password: ${result.tempPassword}\n\n⚠️ Save this password! The owner will need it to login.\n\n📥 Certificate package has been downloaded!`);
+        alert(`✅ Venue "${venueData.venueName}" created successfully!\n\nOwner: ${venueData.ownerEmail}\nTemporary Password: ${tempPassword}\n\n⚠️ Save this password! The owner will need it to login.\n\n📥 Certificate package has been downloaded!`);
         
         // Close modal
         setShowCreateModal(false);
