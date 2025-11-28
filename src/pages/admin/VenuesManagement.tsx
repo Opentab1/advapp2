@@ -182,10 +182,26 @@ For support: support@advizia.ai
     setShowConfigGenerator(venue);
   };
 
-  // Load venues on mount - currently empty, real data fetch coming soon
+  // Fetch real venues from DynamoDB
+  const fetchVenues = async () => {
+    setLoadingVenues(true);
+    try {
+      // For now, we need to implement a GraphQL query or use DynamoDB scan
+      // Temporarily show empty list - will be implemented properly next
+      // TODO: Add proper GraphQL query to list all venues from VenueConfig
+      console.log('TODO: Fetch real venues from DynamoDB VenueConfig table');
+      setVenues([]);
+    } catch (error) {
+      console.error('Failed to fetch venues:', error);
+      setVenues([]);
+    } finally {
+      setLoadingVenues(false);
+    }
+  };
+
+  // Load venues on mount
   useEffect(() => {
-    setLoadingVenues(false);
-    // TODO: Add GraphQL query to fetch real venues from VenueConfig table
+    fetchVenues();
   }, []);
 
   return (
