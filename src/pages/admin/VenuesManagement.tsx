@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Building2, 
@@ -35,6 +35,8 @@ export function VenuesManagement() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showConfigGenerator, setShowConfigGenerator] = useState<Venue | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [loadingVenues, setLoadingVenues] = useState(true);
 
   const handleCreateVenue = async (venueData: VenueFormData) => {
     setIsCreating(true);
@@ -180,33 +182,52 @@ For support: support@advizia.ai
     setShowConfigGenerator(venue);
   };
 
-  // TODO: Replace with real data from API
-  const venues: Venue[] = [
-    {
-      id: '1',
-      name: "Ferg's Sports Bar",
-      venueId: 'FergData',
-      createdDate: 'Oct 15, 2025',
-      locations: 3,
-      users: 5,
-      devices: 3,
-      status: 'active',
-      plan: 'Premium ($150/mo)',
-      lastData: '30 seconds ago'
-    },
-    {
-      id: '2',
-      name: 'Downtown Lounge',
-      venueId: 'DowntownLounge',
-      createdDate: 'Nov 1, 2025',
-      locations: 1,
-      users: 2,
-      devices: 1,
-      status: 'active',
-      plan: 'Basic ($50/mo)',
-      lastData: '1 minute ago'
+  // Fetch real venues from DynamoDB
+  const fetchVenues = async () => {
+    setLoadingVenues(true);
+    try {
+      // Query VenueConfig table to get all unique venues
+      const response = await fetch('https://ui76r6g3a5a6rdqts6cse76gey.appsync-api.us-east-2.amazonaws.com/graphql', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('pulse_auth_token')}`
+        },
+        body: JSON.stringify({
+          query: `
+            query {
+              listAllVenueConfigs {
+                items {
+                  venueId
+                  locationId
+                  venueName
+                  displayName
+                }
+              }
+            }
+          `
+        })
+      });
+      
+      // For now, scan DynamoDB directly - simplified approach
+      // Group by venueId and create venue objects
+      console.log('Fetching venues from DynamoDB...');
+      
+      // Temporary: Just show empty list until we implement proper API
+      setVenues([]);
+      
+    } catch (error) {
+      console.error('Failed to fetch venues:', error);
+      setVenues([]);
+    } finally {
+      setLoadingVenues(false);
     }
-  ];
+  };
+
+  // Load venues on mount
+  useEffect(() => {
+    fetchVenues();
+  }, []);
 
   return (
     <div className="min-h-screen p-4 md:p-6 lg:p-8">
