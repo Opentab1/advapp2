@@ -221,6 +221,8 @@ class ApiService {
             message
             venueId
             ownerEmail
+            tempPassword
+            deviceData
           }
         }
       `;
