@@ -53,8 +53,19 @@ export function VenuesManagement() {
       });
 
       if (result.success) {
-        alert(`✅ Venue "${venueData.venueName}" created successfully!\n\nOwner: ${venueData.ownerEmail}\nTemporary Password: ${tempPassword}\n\n⚠️ Save this password! The owner will need it to login.`);
-        // TODO: Refresh venues list from API
+        // Download certificates if available
+        if (result.deviceData?.credentials) {
+          downloadCertificatesZip(result);
+        }
+        
+        alert(`✅ Venue "${venueData.venueName}" created successfully!\n\nOwner: ${venueData.ownerEmail}\nTemporary Password: ${result.tempPassword}\n\n⚠️ Save this password! The owner will need it to login.\n\n📥 Certificate package has been downloaded!`);
+        
+        // Close modal
+        setShowCreateModal(false);
+        
+        // Refresh venues list (when API is connected)
+        // TODO: Fetch real venues from DynamoDB/API
+        console.log('✅ Venue created, list should refresh here');
       } else {
         alert(`❌ Error: ${result.message || 'Failed to create venue'}`);
       }
@@ -63,6 +74,98 @@ export function VenuesManagement() {
       alert(`❌ Failed to create venue: ${error.message || 'Unknown error'}`);
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const downloadCertificatesZip = (venueResult: any) => {
+    try {
+      const { venueId, deviceData } = venueResult;
+      const { credentials, deviceId, iotEndpoint, mqttTopic } = deviceData;
+      
+      // Create certificate files content
+      const files = {
+        'certificates/certificate.pem.crt': credentials.certificatePem,
+        'certificates/private.pem.key': credentials.privateKey,
+        'certificates/public.pem.key': credentials.publicKey,
+        'certificates/root-CA.crt': credentials.rootCA,
+        'config.json': JSON.stringify({
+          venueId,
+          deviceId,
+          iotEndpoint,
+          mqttTopic,
+          publishInterval: 15,
+          version: '2.0.0'
+        }, null, 2),
+        'venue-info.json': JSON.stringify({
+          venueId,
+          venueName: venueResult.venueName || venueId,
+          deviceId,
+          iotEndpoint,
+          mqttTopic,
+          createdAt: new Date().toISOString()
+        }, null, 2),
+        'INSTRUCTIONS.txt': `Pulse Dashboard - Raspberry Pi Setup Instructions
+
+Venue: ${venueId}
+Device: ${deviceId}
+
+SETUP STEPS:
+============
+
+1. Extract this ZIP to your Raspberry Pi
+
+2. Move certificates to the correct location:
+   mkdir -p /home/pi/certs
+   mv certificates/* /home/pi/certs/
+
+3. Update your Python script with these values:
+   VENUE_ID = "${venueId}"
+   DEVICE_ID = "${deviceId}"
+   IOT_ENDPOINT = "${iotEndpoint}"
+   MQTT_TOPIC = "${mqttTopic}"
+   CERT_PATH = "/home/pi/certs/certificate.pem.crt"
+   PRIVATE_KEY_PATH = "/home/pi/certs/private.pem.key"
+   ROOT_CA_PATH = "/home/pi/certs/root-CA.crt"
+
+4. Run your sensor publisher script
+
+For support: support@advizia.ai
+`
+      };
+      
+      // Create a simple text-based "ZIP" (actually a tar-like bundle)
+      // For a real ZIP, you'd need JSZip library
+      // For now, let's download individual files or use a JSON bundle
+      
+      // Create a combined JSON bundle for now
+      const bundle = {
+        venueId,
+        deviceId,
+        files: files,
+        metadata: {
+          createdAt: new Date().toISOString(),
+          venueId,
+          deviceId,
+          iotEndpoint,
+          mqttTopic
+        }
+      };
+      
+      const bundleJson = JSON.stringify(bundle, null, 2);
+      const blob = new Blob([bundleJson], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pulse-${venueId}-certificates.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      console.log('✅ Certificate bundle downloaded');
+    } catch (error) {
+      console.error('Failed to download certificates:', error);
+      alert('⚠️ Venue created but failed to download certificates. Please contact support.');
     }
   };
 
