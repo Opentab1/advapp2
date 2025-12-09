@@ -1,4 +1,4 @@
-import type { SensorData, HistoricalData, TimeRange, OccupancyMetrics, Location } from '../types';
+import type { SensorData, HistoricalData, TimeRange, OccupancyMetrics, Location, WeeklyReport, WeeklyMetrics, ReportInsight } from '../types';
 
 /**
  * Check if this is the demo account
@@ -240,4 +240,163 @@ export function generateDemoLocations(): Location[] {
       deviceId: 'rpi-theshowcaselounge-002'
     }
   ];
+}
+
+/**
+ * Generate demo weekly metrics for AI reports
+ */
+export function generateDemoWeeklyMetrics(): WeeklyMetrics {
+  return {
+    avgComfort: 78.5,
+    avgTemperature: 71.2,
+    avgDecibels: 73.8,
+    avgHumidity: 48.5,
+    peakHours: ['6-7 PM', '8-9 PM', '9-10 PM'],
+    totalCustomers: 1847,
+    totalRevenue: 94250,
+    topSongs: [
+      { song: 'Uptown Funk', plays: 42 },
+      { song: 'Mr. Brightside', plays: 38 },
+      { song: 'Don\'t Stop Believin\'', plays: 35 },
+      { song: 'Shut Up and Dance', plays: 31 },
+      { song: 'September', plays: 28 }
+    ]
+  };
+}
+
+/**
+ * Generate demo weekly report with realistic AI insights
+ */
+export function generateDemoWeeklyReport(weekStart: Date, weekEnd: Date): WeeklyReport {
+  const metrics = generateDemoWeeklyMetrics();
+  
+  const insights: ReportInsight[] = [
+    {
+      category: 'Comfort',
+      title: 'Overall Comfort Level',
+      description: 'Average comfort score of 78.5 indicates good environmental conditions with room for optimization during peak hours.',
+      trend: 'up',
+      value: '78.5'
+    },
+    {
+      category: 'Temperature',
+      title: 'Temperature Management',
+      description: 'Average temperature of 71.2°F maintained throughout the week, providing optimal comfort for most guests.',
+      trend: 'stable',
+      value: '71.2°F'
+    },
+    {
+      category: 'Atmosphere',
+      title: 'Sound Environment',
+      description: 'Average sound level of 73.8 dB creates an energetic atmosphere perfect for social dining and entertainment.',
+      trend: 'stable',
+      value: '73.8 dB'
+    },
+    {
+      category: 'Revenue',
+      title: 'Sales Performance',
+      description: 'Generated $94,250 in revenue with an average of $51.03 per customer, showing strong performance this week.',
+      trend: 'up',
+      value: '$94,250'
+    },
+    {
+      category: 'Entertainment',
+      title: 'Popular Music',
+      description: '"Uptown Funk" was the most played track with 42 plays, resonating well with your guests.',
+      trend: 'up',
+      value: '42 plays'
+    }
+  ];
+
+  const recommendations = [
+    'Excellent comfort levels maintained! Continue current environmental management practices.',
+    'Temperature levels are optimal. Maintain current HVAC settings.',
+    'Sound levels create an energetic atmosphere. Current audio settings are effective.',
+    'Optimize staffing for peak hours: 6-7 PM, 8-9 PM, 9-10 PM. Consider special promotions during slower periods.',
+    'Strong per-customer spend! Continue promoting high-value items and excellent service.',
+    'Top songs (Uptown Funk, Mr. Brightside, Don\'t Stop Believin\') resonate well. Create similar playlists for consistent atmosphere.'
+  ];
+
+  const summary = `This week showed good environmental conditions with an average comfort score of 78.5. Total revenue reached $94,250 across 1,847 customers, with peak activity during 6-7 PM, 8-9 PM, 9-10 PM. The energetic atmosphere and curated music selection contributed to strong guest satisfaction and spending.`;
+
+  return {
+    id: `report-demo-${Date.now()}`,
+    weekStart: weekStart.toISOString(),
+    weekEnd: weekEnd.toISOString(),
+    generatedAt: new Date().toISOString(),
+    summary,
+    insights,
+    metrics,
+    recommendations
+  };
+}
+
+/**
+ * Generate multiple demo reports for history
+ */
+export function generateDemoReportHistory(count: number = 8): WeeklyReport[] {
+  const reports: WeeklyReport[] = [];
+  const now = new Date();
+  
+  for (let i = 0; i < count; i++) {
+    const weekEnd = new Date(now.getTime() - (i * 7 * 24 * 60 * 60 * 1000));
+    const weekStart = new Date(weekEnd.getTime() - (7 * 24 * 60 * 60 * 1000));
+    
+    // Vary the metrics slightly for each week
+    const baseMetrics = generateDemoWeeklyMetrics();
+    const variance = (Math.random() - 0.5) * 10; // +/- 5 points variance
+    
+    const variedMetrics: WeeklyMetrics = {
+      ...baseMetrics,
+      avgComfort: Math.max(60, Math.min(90, baseMetrics.avgComfort + variance)),
+      avgTemperature: Math.max(68, Math.min(75, baseMetrics.avgTemperature + (Math.random() - 0.5) * 3)),
+      avgDecibels: Math.max(65, Math.min(85, baseMetrics.avgDecibels + (Math.random() - 0.5) * 8)),
+      totalCustomers: Math.floor(baseMetrics.totalCustomers * (0.85 + Math.random() * 0.3)),
+      totalRevenue: Math.floor(baseMetrics.totalRevenue * (0.85 + Math.random() * 0.3))
+    };
+
+    const insights: ReportInsight[] = [
+      {
+        category: 'Comfort',
+        title: 'Overall Comfort Level',
+        description: `Average comfort score of ${variedMetrics.avgComfort.toFixed(1)} indicates ${
+          variedMetrics.avgComfort >= 80 ? 'optimal' : variedMetrics.avgComfort >= 65 ? 'good' : 'suboptimal'
+        } environmental conditions.`,
+        trend: variedMetrics.avgComfort > baseMetrics.avgComfort ? 'up' : variedMetrics.avgComfort < baseMetrics.avgComfort ? 'down' : 'stable',
+        value: `${variedMetrics.avgComfort.toFixed(1)}`
+      },
+      {
+        category: 'Temperature',
+        title: 'Temperature Management',
+        description: `Average temperature of ${variedMetrics.avgTemperature.toFixed(1)}°F maintained throughout the week.`,
+        trend: 'stable',
+        value: `${variedMetrics.avgTemperature.toFixed(1)}°F`
+      },
+      {
+        category: 'Revenue',
+        title: 'Sales Performance',
+        description: `Generated $${variedMetrics.totalRevenue.toLocaleString()} in revenue across ${variedMetrics.totalCustomers.toLocaleString()} customers.`,
+        trend: variedMetrics.totalRevenue > baseMetrics.totalRevenue ? 'up' : 'down',
+        value: `$${variedMetrics.totalRevenue.toLocaleString()}`
+      }
+    ];
+
+    const summary = `Week ${i + 1}: Average comfort score of ${variedMetrics.avgComfort.toFixed(1)} with $${variedMetrics.totalRevenue.toLocaleString()} in revenue across ${variedMetrics.totalCustomers.toLocaleString()} customers.`;
+
+    reports.push({
+      id: `report-demo-${weekEnd.getTime()}`,
+      weekStart: weekStart.toISOString(),
+      weekEnd: weekEnd.toISOString(),
+      generatedAt: weekEnd.toISOString(),
+      summary,
+      insights,
+      metrics: variedMetrics,
+      recommendations: [
+        'Continue monitoring environmental conditions for optimal comfort.',
+        'Maintain current operational practices for consistent performance.'
+      ]
+    });
+  }
+  
+  return reports;
 }

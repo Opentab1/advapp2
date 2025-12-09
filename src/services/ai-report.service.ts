@@ -1,4 +1,6 @@
 import type { WeeklyReport, WeeklyMetrics, ReportInsight } from '../types';
+import { isDemoAccount, generateDemoWeeklyReport, generateDemoReportHistory } from '../utils/demoData';
+import authService from './auth.service';
 
 class AIReportService {
   async generateWeeklyReport(
@@ -6,6 +8,14 @@ class AIReportService {
     weekEnd: Date,
     metrics: WeeklyMetrics
   ): Promise<WeeklyReport> {
+    // ✨ DEMO MODE: Return realistic demo report
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId)) {
+      console.log('🎭 Demo mode detected - returning generated AI report');
+      await new Promise(resolve => setTimeout(resolve, 800)); // Simulate AI processing delay
+      return generateDemoWeeklyReport(weekStart, weekEnd);
+    }
+    
     // In production, call OpenAI/Claude API with metrics data
     // For now, generate a template-based report
     
@@ -26,6 +36,14 @@ class AIReportService {
   }
 
   async getRecentReports(limit: number = 10): Promise<WeeklyReport[]> {
+    // ✨ DEMO MODE: Return demo report history
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId)) {
+      console.log('🎭 Demo mode detected - returning demo report history');
+      await new Promise(resolve => setTimeout(resolve, 300)); // Simulate loading delay
+      return generateDemoReportHistory(Math.min(limit, 8));
+    }
+    
     try {
       const stored = localStorage.getItem('weeklyReports');
       if (stored) {
@@ -39,6 +57,13 @@ class AIReportService {
   }
 
   async saveReport(report: WeeklyReport): Promise<void> {
+    // ✨ DEMO MODE: Don't persist demo reports to localStorage
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId)) {
+      console.log('🎭 Demo mode - skipping report save (demo reports are generated on-demand)');
+      return;
+    }
+    
     try {
       const stored = localStorage.getItem('weeklyReports');
       const reports: WeeklyReport[] = stored ? JSON.parse(stored) : [];
