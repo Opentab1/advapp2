@@ -1,6 +1,7 @@
 import { generateClient } from '@aws-amplify/api';
 import { fetchAuthSession } from '@aws-amplify/auth';
 import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '../types';
+import { isDemoAccount, generateDemoLiveData, generateDemoHistoricalData, generateDemoOccupancyMetrics } from '../utils/demoData';
 
 // GraphQL queries for DynamoDB
 const getSensorData = /* GraphQL */ `
@@ -126,6 +127,13 @@ class DynamoDBService {
   async getLiveSensorData(venueId: string): Promise<SensorData> {
     console.log('🔍 Fetching live sensor data from DynamoDB for venue:', venueId);
     
+    // ✨ DEMO MODE: Return fake data for demo account only
+    if (isDemoAccount(venueId)) {
+      console.log('🎭 Demo mode detected - returning generated live data');
+      await new Promise(resolve => setTimeout(resolve, 300)); // Simulate network delay
+      return generateDemoLiveData();
+    }
+    
     try {
       // Check if GraphQL endpoint is configured
       this.checkGraphQLEndpoint();
@@ -228,6 +236,13 @@ class DynamoDBService {
   async getHistoricalSensorData(venueId: string, range: TimeRange | string): Promise<HistoricalData> {
     console.log('🔍 Fetching historical sensor data from DynamoDB for venue:', venueId, 'range:', range);
     
+    // ✨ DEMO MODE: Return fake data for demo account only
+    if (isDemoAccount(venueId)) {
+      console.log('🎭 Demo mode detected - returning generated historical data');
+      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
+      return generateDemoHistoricalData(venueId, range as TimeRange);
+    }
+    
     try {
       // Check if GraphQL endpoint is configured
       this.checkGraphQLEndpoint();
@@ -303,6 +318,13 @@ class DynamoDBService {
    */
   async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
     console.log('🔍 Fetching occupancy metrics from DynamoDB for venue:', venueId);
+    
+    // ✨ DEMO MODE: Return fake data for demo account only
+    if (isDemoAccount(venueId)) {
+      console.log('🎭 Demo mode detected - returning generated occupancy metrics');
+      await new Promise(resolve => setTimeout(resolve, 300)); // Simulate network delay
+      return generateDemoOccupancyMetrics();
+    }
     
     try {
       // Check if GraphQL endpoint is configured

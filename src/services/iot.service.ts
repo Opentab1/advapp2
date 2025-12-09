@@ -3,6 +3,7 @@ import type { SensorData } from '../types';
 import { AWS_CONFIG } from '../config/amplify';
 import { generateClient } from '@aws-amplify/api';
 import { getCurrentUser, fetchAuthSession } from '@aws-amplify/auth';
+import { isDemoAccount, generateDemoLiveData } from '../utils/demoData';
 
 const getVenueConfig = /* GraphQL */ `
   query GetVenueConfig($venueId: ID!, $locationId: String!) {
@@ -72,6 +73,32 @@ class IoTService {
         console.error("Failed to get venueId from Cognito:", err);
         this.isConnecting = false;
         throw new Error('User must be logged in with custom:venueId attribute');
+      }
+
+      // ✨ DEMO MODE: Simulate MQTT with interval-based fake data
+      if (isDemoAccount(venueId)) {
+        console.log('🎭 Demo mode detected - simulating MQTT with generated data');
+        this.isConnecting = false;
+        
+        // Simulate connection success
+        console.log('✅ Demo MQTT simulation connected');
+        
+        // Generate fake data every 15 seconds
+        const demoInterval = setInterval(() => {
+          const fakeData = generateDemoLiveData();
+          console.log('📨 Demo MQTT message generated:', fakeData);
+          
+          // Notify all handlers
+          this.messageHandlers.forEach(handler => handler(fakeData));
+        }, 15000); // Every 15 seconds
+        
+        // Store interval for cleanup
+        (this as any).demoInterval = demoInterval;
+        
+        // Mark as "connected"
+        (this as any).demoConnected = true;
+        
+        return;
       }
 
       // Query DynamoDB VenueConfig for the MQTT topic and IoT endpoint - REQUIRED
@@ -232,6 +259,14 @@ class IoTService {
   }
 
   disconnect(): void {
+    // Clear demo interval if exists
+    if ((this as any).demoInterval) {
+      clearInterval((this as any).demoInterval);
+      (this as any).demoInterval = null;
+      (this as any).demoConnected = false;
+      console.log('🔌 Disconnecting from demo MQTT simulation');
+    }
+    
     if (this.client) {
       console.log('🔌 Disconnecting from AWS IoT Core');
       this.client.end(true);
@@ -242,7 +277,7 @@ class IoTService {
   }
 
   isConnected(): boolean {
-    return this.client?.connected || false;
+    return this.client?.connected || (this as any).demoConnected || false;
   }
 
   // Publish a message to IoT (for testing or commands)

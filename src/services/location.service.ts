@@ -1,6 +1,7 @@
 import type { Location } from '../types';
 import { generateClient } from '@aws-amplify/api';
 import { getCurrentUser, fetchAuthSession } from '@aws-amplify/auth';
+import { isDemoAccount, generateDemoLocations } from '../utils/demoData';
 
 const listVenueLocations = /* GraphQL */ `
   query ListVenueLocations($venueId: ID!) {
@@ -80,9 +81,6 @@ class LocationService {
     try {
       console.log('🔍 Fetching locations from DynamoDB VenueConfig...');
       
-      // Check if GraphQL endpoint is configured
-      this.checkGraphQLEndpoint();
-      
       // Get venueId from parameter or from Cognito session
       let venueId = providedVenueId;
       
@@ -108,6 +106,20 @@ class LocationService {
       if (!venueId) {
         throw new Error('No venueId found in user attributes. Please ensure your Cognito user has custom:venueId attribute.');
       }
+
+      // ✨ DEMO MODE: Return fake locations for demo account only
+      if (isDemoAccount(venueId)) {
+        console.log('🎭 Demo mode detected - returning generated locations');
+        await new Promise(resolve => setTimeout(resolve, 200)); // Simulate network delay
+        const locations = generateDemoLocations();
+        this.setLocations(locations);
+        localStorage.setItem(this.locationsCacheKey, JSON.stringify(locations));
+        localStorage.setItem(this.locationsCacheTimeKey, Date.now().toString());
+        return locations;
+      }
+
+      // Check if GraphQL endpoint is configured
+      this.checkGraphQLEndpoint();
 
       const endpoint = import.meta.env.VITE_GRAPHQL_ENDPOINT;
       console.log('📡 GraphQL Request Details:', {

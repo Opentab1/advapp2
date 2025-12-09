@@ -28,6 +28,7 @@ import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { ConnectionStatus } from '../components/ConnectionStatus';
 import { TermsModal } from '../components/TermsModal';
+import { DemoModeBanner } from '../components/DemoModeBanner';
 import { Settings } from './Settings';
 import { SongLog } from './SongLog';
 import { Reports } from './Reports';
@@ -41,6 +42,7 @@ import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
+import { isDemoAccount } from '../utils/demoData';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location } from '../types';
 
 export function Dashboard() {
@@ -53,6 +55,9 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
+  
+  // Check if this is demo mode
+  const isDemoMode = isDemoAccount(user?.venueId);
   
   // Terms of Service modal state
   const [showTermsModal, setShowTermsModal] = useState(false);
@@ -367,6 +372,9 @@ export function Dashboard() {
   return (
     <div className="min-h-screen flex flex-col relative overflow-hidden">
       <AnimatedBackground />
+      
+      {/* Demo Mode Banner */}
+      {isDemoMode && <DemoModeBanner venueName={user?.venueName} />}
       
       {/* Terms of Service Modal - clients must accept */}
       {showTermsModal && (
