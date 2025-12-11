@@ -279,8 +279,56 @@ class DynamoDBService {
 
       const items = response?.data?.listSensorData?.items || [];
       
+      // If no data in requested range, try to find ANY historical data
       if (items.length === 0) {
-        throw new Error(`No historical data found for venue: ${venueId} in the specified time range.`);
+        console.warn(`⚠️ No data found in requested range (${range}), searching for any historical data...`);
+        
+        // Try to get any data from the last 365 days
+        const expandedEndTime = new Date().toISOString();
+        const expandedStartTime = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+        
+        const expandedResponse = await client.graphql({
+          query: listSensorData,
+          variables: { 
+            venueId, 
+            startTime: expandedStartTime,
+            endTime: expandedEndTime,
+            limit: 1000
+          },
+          authMode: 'userPool'
+        }) as any;
+        
+        const expandedItems = expandedResponse?.data?.listSensorData?.items || [];
+        
+        if (expandedItems.length === 0) {
+          // Truly no data exists - return empty array with helpful message
+          console.warn(`⚠️ No historical data exists in DynamoDB for venue: ${venueId}`);
+          console.warn(`   This usually means:`);
+          console.warn(`   1. IoT device has never published data, or`);
+          console.warn(`   2. Data was never stored in DynamoDB, or`);
+          console.warn(`   3. VenueId mismatch between device and user account`);
+          
+          return {
+            data: [],
+            venueId,
+            range,
+            message: 'No sensor data has been collected yet. Please ensure your IoT device is configured and publishing data.'
+          };
+        }
+        
+        // Found historical data outside requested range
+        console.log(`✅ Found ${expandedItems.length} historical data points (outside requested ${range} range)`);
+        console.log(`   → Oldest: ${expandedItems[expandedItems.length - 1]?.timestamp || 'N/A'}`);
+        console.log(`   → Newest: ${expandedItems[0]?.timestamp || 'N/A'}`);
+        
+        const transformedData = expandedItems.map((item: any) => this.transformDynamoDBData(item));
+        
+        return {
+          data: transformedData,
+          venueId,
+          range,
+          message: `No recent data available. Showing ${expandedItems.length} historical data points. Device may be offline.`
+        };
       }
 
       console.log(`✅ Retrieved ${items.length} historical data points from DynamoDB`);

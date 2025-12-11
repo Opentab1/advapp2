@@ -528,6 +528,26 @@ export function Dashboard() {
                 )}
               </motion.div>
 
+              {/* Warning Message for Limited Historical Data */}
+              {!error && !liveError && historicalData?.message && (
+                <motion.div
+                  className="mb-6 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30"
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="text-yellow-400 text-xl">⚠️</div>
+                    <div className="flex-1">
+                      <h3 className="text-base font-semibold text-yellow-400 mb-1">Device Offline - Showing Historical Data</h3>
+                      <p className="text-sm text-yellow-300">{historicalData.message}</p>
+                      <p className="text-xs text-yellow-300/70 mt-2">
+                        Your IoT device appears to be offline. Check device power, network connection, or restart the Raspberry Pi.
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
               {/* Error Message */}
               {(error || liveError) && (
                 <motion.div

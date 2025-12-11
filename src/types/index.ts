@@ -64,6 +64,7 @@ export interface HistoricalData {
   data: SensorData[];
   venueId: string;
   range: TimeRange;
+  message?: string; // Optional message when data is limited or unavailable
 }
 
 export type TimeRange = 'live' | '6h' | '24h' | '7d' | '30d' | '90d';
