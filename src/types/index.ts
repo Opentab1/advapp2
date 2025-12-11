@@ -58,6 +58,7 @@ export interface OccupancyMetrics {
   thirtyDayAvg: number;
   peakOccupancy: number;
   peakTime?: string;
+  avgDwellTimeMinutes: number | null; // Average dwell time in minutes (calculated via Little's Law)
 }
 
 export interface HistoricalData {

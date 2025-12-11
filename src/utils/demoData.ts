@@ -217,17 +217,34 @@ export function generateDemoOccupancyMetrics(): OccupancyMetrics {
   
   const currentBase = isClosedHours ? 0 : isPeakHour ? 120 : 45;
   const current = Math.floor(Math.max(0, currentBase + (Math.random() * 20 - 10)));
+  const todayEntries = Math.floor(current * 8 + Math.random() * 50);
+  
+  // Calculate realistic dwell time for a nightclub/lounge
+  // During peak hours: longer dwell time (2-3 hours)
+  // During off-peak: moderate dwell time (1-2 hours)
+  // Using Little's Law: W = L / λ
+  let avgDwellTimeMinutes: number | null = null;
+  if (todayEntries > 0 && current > 0) {
+    // Estimate hourly entry rate based on time of day
+    const hourlyEntries = isPeakHour ? todayEntries * 0.15 : todayEntries * 0.08;
+    if (hourlyEntries > 0) {
+      avgDwellTimeMinutes = Math.round((current / hourlyEntries) * 60);
+      // Clamp to reasonable values for a nightclub
+      avgDwellTimeMinutes = Math.max(45, Math.min(240, avgDwellTimeMinutes));
+    }
+  }
   
   return {
     current,
-    todayEntries: Math.floor(current * 8 + Math.random() * 50),
+    todayEntries,
     todayExits: Math.floor(current * 7.5 + Math.random() * 40),
     todayTotal: Math.floor(current * 8),
     peakOccupancy: 156,
     peakTime: '21:30',
     sevenDayAvg: 85,
     fourteenDayAvg: 82,
-    thirtyDayAvg: 78
+    thirtyDayAvg: 78,
+    avgDwellTimeMinutes
   };
 }
 

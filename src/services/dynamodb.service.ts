@@ -2,6 +2,7 @@ import { generateClient } from '@aws-amplify/api';
 import { fetchAuthSession } from '@aws-amplify/auth';
 import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '../types';
 import { isDemoAccount, generateDemoLiveData, generateDemoHistoricalData, generateDemoOccupancyMetrics } from '../utils/demoData';
+import { calculateCurrentHourDwellTime } from '../utils/dwellTime';
 
 // GraphQL queries for DynamoDB
 const getSensorData = /* GraphQL */ `
@@ -421,9 +422,19 @@ class DynamoDBService {
         throw new Error(`No occupancy metrics found for venue: ${venueId}`);
       }
 
+      // Calculate dwell time based on current occupancy and today's entries
+      const avgDwellTimeMinutes = calculateCurrentHourDwellTime(
+        metrics.current || 0,
+        metrics.todayEntries || 0
+      );
+
       console.log('✅ Occupancy metrics retrieved from DynamoDB');
+      console.log(`📊 Calculated dwell time: ${avgDwellTimeMinutes ? avgDwellTimeMinutes + ' minutes' : 'N/A'}`);
       
-      return metrics;
+      return {
+        ...metrics,
+        avgDwellTimeMinutes
+      };
     } catch (error: any) {
       console.error('❌ Failed to fetch occupancy metrics from DynamoDB');
       console.error('🔍 Full Error Object:', {

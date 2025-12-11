@@ -11,7 +11,8 @@ import {
   Users,
   UserPlus,
   UserMinus,
-  TrendingUp
+  TrendingUp,
+  Clock
 } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { Sidebar } from '../components/Sidebar';
@@ -38,6 +39,7 @@ import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { calculateComfortLevel, calculateComfortBreakdown, calculatePulseScore } from '../utils/comfort';
 import { formatTemperature, formatDecibels, formatLight, formatHumidity } from '../utils/format';
+import { formatDwellTime } from '../utils/dwellTime';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
@@ -690,6 +692,20 @@ export function Dashboard() {
                         />
                       </div>
 
+                      {/* Dwell Time Metric */}
+                      <div className="mb-6">
+                        <MetricCard
+                          title="Avg Dwell Time"
+                          value={occupancyMetrics.avgDwellTimeMinutes !== null 
+                            ? formatDwellTime(occupancyMetrics.avgDwellTimeMinutes).replace(' ', '\n')
+                            : '--'}
+                          unit="per visit"
+                          icon={Clock}
+                          color="#a78bfa"
+                          delay={0.2}
+                        />
+                      </div>
+
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div className="glass-card p-4">
                           <div className="text-sm text-gray-400 mb-1">7-Day Average</div>
@@ -781,6 +797,17 @@ export function Dashboard() {
                       icon={Users}
                       color="#a78bfa"
                       delay={0.4}
+                    />
+
+                    <MetricCard
+                      title="Avg Dwell Time"
+                      value={occupancyMetrics?.avgDwellTimeMinutes !== null && occupancyMetrics?.avgDwellTimeMinutes !== undefined
+                        ? formatDwellTime(occupancyMetrics.avgDwellTimeMinutes)
+                        : '--'}
+                      unit="per visit"
+                      icon={Clock}
+                      color="#ec4899"
+                      delay={0.45}
                     />
                   </div>
 
