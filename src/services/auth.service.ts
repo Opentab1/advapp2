@@ -5,6 +5,7 @@ import {
   fetchAuthSession,
   signInWithRedirect,
   confirmSignIn,
+  updatePassword,
   SignInInput,
   SignInOutput
 } from '@aws-amplify/auth';
@@ -183,6 +184,68 @@ class AuthService {
 
   isAuthenticated(): boolean {
     return !!this.getStoredToken();
+  }
+
+  /**
+   * Change password for currently authenticated user
+   * Requires old password for security verification
+   * 
+   * @param oldPassword - Current password
+   * @param newPassword - New password (must meet Cognito requirements)
+   * @throws Error if old password is incorrect or new password doesn't meet requirements
+   */
+  async changePassword(oldPassword: string, newPassword: string): Promise<void> {
+    try {
+      // Verify user is authenticated
+      if (!this.isAuthenticated()) {
+        throw new Error('You must be logged in to change your password');
+      }
+
+      // Validate password requirements
+      if (newPassword.length < 8) {
+        throw new Error('Password must be at least 8 characters long');
+      }
+
+      if (!/[A-Z]/.test(newPassword)) {
+        throw new Error('Password must contain at least one uppercase letter');
+      }
+
+      if (!/[a-z]/.test(newPassword)) {
+        throw new Error('Password must contain at least one lowercase letter');
+      }
+
+      if (!/[0-9]/.test(newPassword)) {
+        throw new Error('Password must contain at least one number');
+      }
+
+      // Call AWS Cognito to update password
+      await updatePassword({ oldPassword, newPassword });
+
+      console.log('✅ Password changed successfully');
+    } catch (error: any) {
+      console.error('Password change error:', error);
+
+      // Provide user-friendly error messages
+      if (error.name === 'NotAuthorizedException' || error.message.includes('Incorrect username or password')) {
+        throw new Error('Current password is incorrect');
+      }
+
+      if (error.name === 'InvalidPasswordException') {
+        throw new Error('New password does not meet requirements');
+      }
+
+      if (error.name === 'LimitExceededException') {
+        throw new Error('Too many password change attempts. Please try again later.');
+      }
+
+      // Pass through our custom validation errors
+      if (error.message.includes('must be at least') || 
+          error.message.includes('must contain')) {
+        throw error;
+      }
+
+      throw new Error(error.message || 'Failed to change password');
+    }
   }
 }
 

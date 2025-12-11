@@ -9,6 +9,7 @@ import authService from '../services/auth.service';
 import toastPOSService from '../services/toast-pos.service';
 import locationService from '../services/location.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
+import { ChangePasswordModal } from '../components/ChangePasswordModal';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -27,6 +28,7 @@ export function Settings() {
   const [cacheCleared, setCacheCleared] = useState(false);
   const [toastRestaurantGuid, setToastRestaurantGuid] = useState('');
   const [activeTab, setActiveTab] = useState<'account' | 'notifications' | 'preferences' | 'integrations' | 'about'>('account');
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
   const user = authService.getStoredUser();
 
   useEffect(() => {
@@ -190,10 +192,23 @@ export function Settings() {
                     <span className="text-green-400 font-medium">Active</span>
                   </div>
                 </div>
-                <button className="btn-secondary w-full">Change Password</button>
+                <button 
+                  onClick={() => setShowPasswordModal(true)}
+                  className="btn-secondary w-full flex items-center justify-center gap-2"
+                >
+                  <Key className="w-4 h-4" />
+                  Change Password
+                </button>
               </div>
             </motion.div>
           )}
+
+          {/* Change Password Modal */}
+          <ChangePasswordModal
+            isOpen={showPasswordModal}
+            onClose={() => setShowPasswordModal(false)}
+          />
+          
 
           {/* Notifications Tab */}
           {activeTab === 'notifications' && (
