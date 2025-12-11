@@ -332,6 +332,214 @@ export function generateDemoWeeklyReport(weekStart: Date, weekEnd: Date): Weekly
 }
 
 /**
+ * Generate demo monthly performance report
+ */
+export function generateDemoMonthlyReport(weekStart: Date, weekEnd: Date): WeeklyReport {
+  const metrics = generateDemoWeeklyMetrics();
+  // Scale up for monthly (30 days vs 7 days)
+  metrics.totalCustomers = Math.floor(metrics.totalCustomers * 4.3);
+  metrics.totalRevenue = Math.floor(metrics.totalRevenue * 4.3);
+  
+  const insights: ReportInsight[] = [
+    {
+      category: 'Performance',
+      title: 'Monthly Overview',
+      description: `This month showed exceptional growth with 7,942 total customers and $405,475 in revenue, representing a 12% increase over last month.`,
+      trend: 'up',
+      value: '$405K'
+    },
+    {
+      category: 'Growth',
+      title: 'Customer Traffic',
+      description: 'Daily average of 265 customers with peak weekends reaching 350+ guests.',
+      trend: 'up',
+      value: '7,942'
+    },
+    {
+      category: 'Revenue',
+      title: 'Sales Trends',
+      description: 'Average spend per customer maintained at $51.03, with strong performance in premium menu items.',
+      trend: 'stable',
+      value: '$51.03'
+    }
+  ];
+
+  return {
+    id: `report-monthly-${Date.now()}`,
+    weekStart: weekStart.toISOString(),
+    weekEnd: weekEnd.toISOString(),
+    generatedAt: new Date().toISOString(),
+    summary: 'Monthly performance exceeded targets with 12% revenue growth. Peak activity during weekend evenings, with Friday and Saturday showing the strongest performance. Customer satisfaction remained high with optimal environmental conditions.',
+    insights,
+    metrics,
+    recommendations: [
+      'Capitalize on weekend success by introducing premium tasting menus on Fridays and Saturdays.',
+      'Consider extending happy hour on Wednesdays to boost mid-week traffic.',
+      'Launch loyalty program to convert first-time weekend visitors into regulars.',
+      'Optimize staffing for identified peak hours: 6-10 PM on weekends.'
+    ]
+  };
+}
+
+/**
+ * Generate demo music analytics report
+ */
+export function generateDemoMusicReport(weekStart: Date, weekEnd: Date): WeeklyReport {
+  const metrics = generateDemoWeeklyMetrics();
+  
+  const insights: ReportInsight[] = [
+    {
+      category: 'Top Tracks',
+      title: 'Most Popular Songs',
+      description: '"Uptown Funk" dominated with 42 plays, followed closely by "Mr. Brightside" (38 plays) and "Don\'t Stop Believin\'" (35 plays).',
+      trend: 'up',
+      value: '42 plays'
+    },
+    {
+      category: 'Genre Mix',
+      title: 'Music Diversity',
+      description: 'Classic rock (35%), Pop (40%), and R&B (25%) created an energetic yet balanced atmosphere.',
+      trend: 'stable',
+      value: '3 genres'
+    },
+    {
+      category: 'Peak Response',
+      title: 'Guest Engagement',
+      description: 'Upbeat tempo tracks during 8-10 PM correlated with 18% higher bar sales and increased dwell time.',
+      trend: 'up',
+      value: '+18%'
+    }
+  ];
+
+  return {
+    id: `report-music-${Date.now()}`,
+    weekStart: weekStart.toISOString(),
+    weekEnd: weekEnd.toISOString(),
+    generatedAt: new Date().toISOString(),
+    summary: 'Music selection successfully created an energetic atmosphere with strong guest engagement. Upbeat classics during peak hours (8-10 PM) showed the highest correlation with bar sales and extended guest stays.',
+    insights,
+    metrics,
+    recommendations: [
+      'Increase rotation of high-energy classics during 8-10 PM peak hours.',
+      'Create themed music nights (80s, 90s) on slower weekdays to drive traffic.',
+      'Add more contemporary pop hits to attract younger demographics.',
+      'Implement guest song request system via QR codes to boost engagement.',
+      'Lower tempo during 11 PM-close to facilitate natural guest transition.'
+    ]
+  };
+}
+
+/**
+ * Generate demo atmosphere optimization report
+ */
+export function generateDemoAtmosphereReport(weekStart: Date, weekEnd: Date): WeeklyReport {
+  const metrics = generateDemoWeeklyMetrics();
+  
+  const insights: ReportInsight[] = [
+    {
+      category: 'Temperature',
+      title: 'Thermal Comfort',
+      description: 'Average temperature of 71.2°F maintained optimal comfort. Slight cooling during peak hours (70°F) prevented overcrowding discomfort.',
+      trend: 'stable',
+      value: '71.2°F'
+    },
+    {
+      category: 'Sound',
+      title: 'Audio Environment',
+      description: 'Average 73.8 dB created energetic atmosphere without overwhelming conversation. Perfect balance for social dining.',
+      trend: 'stable',
+      value: '73.8 dB'
+    },
+    {
+      category: 'Lighting',
+      title: 'Ambient Conditions',
+      description: 'Lighting levels successfully transitioned from bright afternoon (400 lux) to intimate evening ambiance (180 lux).',
+      trend: 'up',
+      value: 'Optimal'
+    },
+    {
+      category: 'Humidity',
+      title: 'Air Quality',
+      description: 'Humidity maintained at comfortable 48.5%, preventing both dryness and stuffiness.',
+      trend: 'stable',
+      value: '48.5%'
+    }
+  ];
+
+  return {
+    id: `report-atmosphere-${Date.now()}`,
+    weekStart: weekStart.toISOString(),
+    weekEnd: weekEnd.toISOString(),
+    generatedAt: new Date().toISOString(),
+    summary: 'Environmental conditions remained optimal throughout the week with strong comfort scores (78.5 average). Temperature, sound, and lighting adjustments successfully created distinct atmospheres for lunch vs. dinner/evening service.',
+    insights,
+    metrics,
+    recommendations: [
+      'Maintain current HVAC schedule - temperature management is excellent.',
+      'Consider adding subtle scent diffusion in entry area to enhance first impressions.',
+      'Install dimmable warm LED accents to create more intimate booth areas.',
+      'Add acoustic panels in high-ceiling areas to improve sound quality.',
+      'Implement CO2 monitoring to optimize air exchange during capacity crowds.'
+    ]
+  };
+}
+
+/**
+ * Generate demo occupancy trends report
+ */
+export function generateDemoOccupancyReport(weekStart: Date, weekEnd: Date): WeeklyReport {
+  const metrics = generateDemoWeeklyMetrics();
+  
+  const insights: ReportInsight[] = [
+    {
+      category: 'Peak Times',
+      title: 'Traffic Patterns',
+      description: 'Highest occupancy during 8-9 PM (avg 135 guests), followed by 7-8 PM (125 guests) and 9-10 PM (120 guests).',
+      trend: 'up',
+      value: '135 peak'
+    },
+    {
+      category: 'Capacity',
+      title: 'Space Utilization',
+      description: 'Average 67.5% capacity during peak hours. Reached 78% capacity on Saturday nights.',
+      trend: 'up',
+      value: '67.5%'
+    },
+    {
+      category: 'Dwell Time',
+      title: 'Guest Duration',
+      description: 'Average guest stay of 87 minutes during dinner service, optimal for table turnover.',
+      trend: 'stable',
+      value: '87 min'
+    },
+    {
+      category: 'Weekend vs Weekday',
+      title: 'Weekly Patterns',
+      description: 'Weekends show 45% higher occupancy than weekdays. Wednesday happy hour successfully drives mid-week traffic.',
+      trend: 'up',
+      value: '+45%'
+    }
+  ];
+
+  return {
+    id: `report-occupancy-${Date.now()}`,
+    weekStart: weekStart.toISOString(),
+    weekEnd: weekEnd.toISOString(),
+    generatedAt: new Date().toISOString(),
+    summary: 'Occupancy patterns show strong weekend performance with clear peak hours from 7-10 PM. Mid-week traffic remains opportunity area, though Wednesday happy hour shows promise. Average capacity utilization of 67.5% during peaks indicates room for strategic growth.',
+    insights,
+    metrics,
+    recommendations: [
+      'Implement reservation system for Friday/Saturday 7-9 PM to optimize table turnover.',
+      'Launch "Tuesday Trivia" or "Thursday Live Music" to boost weekday occupancy.',
+      'Consider prix fixe early bird menu (5-6:30 PM) to spread peak hour demand.',
+      'Add bar-only seating area to capture walk-in overflow during peak times.',
+      'Partner with local hotels for post-event dining to fill 10 PM-close window.'
+    ]
+  };
+}
+
+/**
  * Generate multiple demo reports for history
  */
 export function generateDemoReportHistory(count: number = 8): WeeklyReport[] {

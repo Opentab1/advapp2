@@ -5,6 +5,7 @@ import { format, subDays } from 'date-fns';
 import aiReportService from '../services/ai-report.service';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
+import { isDemoAccount, generateDemoMonthlyReport, generateDemoMusicReport, generateDemoAtmosphereReport, generateDemoOccupancyReport, generateDemoWeeklyMetrics } from '../utils/demoData';
 import type { WeeklyReport, WeeklyMetrics } from '../types';
 
 type ReportType = 'weekly' | 'monthly' | 'music' | 'atmosphere' | 'occupancy' | 'custom';
@@ -38,7 +39,7 @@ export function Reports() {
       let weekStart: Date;
       let daysToFetch: string;
 
-      // Calculate date range based on selection
+      // Calculate date range based on selection and report type
       if (timeRange === 'custom') {
         if (!customStartDate || !customEndDate) {
           alert('Please select both start and end dates for custom range');
@@ -49,6 +50,11 @@ export function Reports() {
         const customEnd = new Date(customEndDate);
         const daysDiff = Math.ceil((customEnd.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24));
         daysToFetch = `${daysDiff}d`;
+      } else if (selectedReportType === 'monthly') {
+        // Monthly report - 30 days
+        const days = 30;
+        weekStart = subDays(weekEnd, days);
+        daysToFetch = '30d';
       } else {
         const days = parseInt(timeRange);
         weekStart = subDays(weekEnd, days);
@@ -64,7 +70,44 @@ export function Reports() {
         return;
       }
 
-      console.log(`📊 Fetching historical data for report (${timeRange})...`);
+      // ✨ DEMO MODE: Generate specialized report based on type
+      if (isDemoAccount(venueId)) {
+        console.log(`🎭 Demo mode - generating ${selectedReportType} report`);
+        let demoReport: WeeklyReport;
+        
+        switch (selectedReportType) {
+          case 'monthly':
+            demoReport = generateDemoMonthlyReport(weekStart, weekEnd);
+            break;
+          case 'music':
+            demoReport = generateDemoMusicReport(weekStart, weekEnd);
+            break;
+          case 'atmosphere':
+            demoReport = generateDemoAtmosphereReport(weekStart, weekEnd);
+            break;
+          case 'occupancy':
+            demoReport = generateDemoOccupancyReport(weekStart, weekEnd);
+            break;
+          case 'custom':
+            // For custom, use the weekly report with custom date range
+            demoReport = await aiReportService.generateWeeklyReport(weekStart, weekEnd, generateDemoWeeklyMetrics());
+            break;
+          case 'weekly':
+          default:
+            // Use the standard weekly report generator
+            demoReport = await aiReportService.generateWeeklyReport(weekStart, weekEnd, generateDemoWeeklyMetrics());
+            break;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 800)); // Simulate processing
+        setSelectedReport(demoReport);
+        // For demo, prepend to reports list temporarily (not persisted)
+        setReports([demoReport, ...reports]);
+        setGenerating(false);
+        return;
+      }
+
+      console.log(`📊 Fetching historical data for ${selectedReportType} report (${daysToFetch})...`);
       
       try {
         // Fetch historical data based on selected time range
@@ -320,9 +363,16 @@ export function Reports() {
               {/* Summary */}
               <div className="glass-card p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-2xl font-bold text-white">
-                    Week of {format(new Date(selectedReport.weekStart), 'MMMM d, yyyy')}
-                  </h3>
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/50 text-purple-300 text-xs font-medium">
+                        {reportTypes.find(t => t.id === selectedReportType)?.label || 'Weekly Summary'}
+                      </span>
+                    </div>
+                    <h3 className="text-2xl font-bold text-white">
+                      {format(new Date(selectedReport.weekStart), 'MMMM d')} - {format(new Date(selectedReport.weekEnd), 'MMMM d, yyyy')}
+                    </h3>
+                  </div>
                   <motion.button
                     className="btn-secondary flex items-center gap-2"
                     whileHover={{ scale: 1.05 }}
