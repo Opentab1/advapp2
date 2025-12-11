@@ -641,7 +641,7 @@ export function Dashboard() {
                         />
                         
                         <MetricCard
-                          title="Today's Entries"
+                          title="Entries Today"
                           value={occupancyMetrics.todayEntries.toString()}
                           unit="people"
                           icon={UserPlus}
@@ -650,7 +650,7 @@ export function Dashboard() {
                         />
                         
                         <MetricCard
-                          title="Today's Exits"
+                          title="Exits Today"
                           value={occupancyMetrics.todayExits.toString()}
                           unit="people"
                           icon={UserMinus}
@@ -735,7 +735,7 @@ export function Dashboard() {
                     />
                     
                     <MetricCard
-                      title="Entries"
+                      title="Entries Today"
                       value={occupancyMetrics?.todayEntries.toString() || '0'}
                       unit="people"
                       icon={UserPlus}
@@ -744,7 +744,7 @@ export function Dashboard() {
                     />
                     
                     <MetricCard
-                      title="Exits"
+                      title="Exits Today"
                       value={occupancyMetrics?.todayExits.toString() || '0'}
                       unit="people"
                       icon={UserMinus}
