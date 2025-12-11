@@ -557,8 +557,11 @@ export function Dashboard() {
                 </motion.div>
               )}
 
-              {/* Error Message - Only show in Live tab OR when History has no data at all */}
-              {(error || liveError) && (activeTab === 'live' || (activeTab === 'history' && (!historicalData || historicalData.data.length === 0))) && (
+              {/* Error Message - Only show for critical setup errors, not routine device offline */}
+              {(error || liveError) && 
+               (activeTab === 'history' && (!historicalData || historicalData.data.length === 0)) && 
+               !error?.includes('No sensor data found') && 
+               !liveError?.includes('No sensor data found') && (
                 <motion.div
                   className="mb-6 p-6 rounded-lg bg-red-500/10 border border-red-500/30"
                   initial={{ opacity: 0, y: -10 }}
@@ -602,12 +605,12 @@ export function Dashboard() {
               {/* Loading State */}
               {loading && <LoadingSpinner />}
 
-              {/* Dashboard Content */}
-              {!loading && currentData && (
+              {/* Dashboard Content - Always show cards, use dashes when no data */}
+              {!loading && (
                 <>
-                  {/* Pulse Score */}
+                  {/* Pulse Score - Show with null when no data */}
                   <PulseScore
-                    score={comfortLevel?.score ?? null}
+                    score={currentData && comfortLevel ? comfortLevel.score : null}
                     breakdown={undefined}
                     trend="stable"
                   />
@@ -694,7 +697,7 @@ export function Dashboard() {
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4 mb-6">
                     <MetricCard
                       title="Sound Level"
-                      value={formatDecibels(currentData.decibels).split(' ')[0]}
+                      value={currentData ? formatDecibels(currentData.decibels).split(' ')[0] : '--'}
                       unit="dB"
                       icon={Volume2}
                       color="#00d4ff"
@@ -703,7 +706,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Light Level"
-                      value={formatLight(currentData.light).split(' ')[0]}
+                      value={currentData ? formatLight(currentData.light).split(' ')[0] : '--'}
                       unit="lux"
                       icon={Sun}
                       color="#ffd700"
@@ -712,7 +715,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Indoor Temp"
-                      value={formatTemperature(currentData.indoorTemp).split('°')[0]}
+                      value={currentData ? formatTemperature(currentData.indoorTemp).split('°')[0] : '--'}
                       unit="°F"
                       icon={Thermometer}
                       color="#ff6b6b"
@@ -721,7 +724,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Humidity"
-                      value={formatHumidity(currentData.humidity).replace('%', '')}
+                      value={currentData ? formatHumidity(currentData.humidity).replace('%', '') : '--'}
                       unit="%"
                       icon={Droplets}
                       color="#4ecdc4"
@@ -756,24 +759,26 @@ export function Dashboard() {
                     />
                   </div>
 
-                  {/* Now Playing & Comfort Level */}
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                    <div className="lg:col-span-2">
-                      {currentData.currentSong && (
-                        <NowPlaying 
-                          song={currentData.currentSong}
-                          artist={currentData.artist}
-                          albumArt={currentData.albumArt}
-                        />
+                  {/* Now Playing & Comfort Level - Only show when data available */}
+                  {currentData && (
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                      <div className="lg:col-span-2">
+                        {currentData.currentSong && (
+                          <NowPlaying 
+                            song={currentData.currentSong}
+                            artist={currentData.artist}
+                            albumArt={currentData.albumArt}
+                          />
+                        )}
+                      </div>
+                      
+                      {comfortLevel && (
+                        <div className="flex justify-center lg:justify-end">
+                          <ComfortGauge comfortLevel={comfortLevel} />
+                        </div>
                       )}
                     </div>
-                    
-                    {comfortLevel && (
-                      <div className="flex justify-center lg:justify-end">
-                        <ComfortGauge comfortLevel={comfortLevel} />
-                      </div>
-                    )}
-                  </div>
+                  )}
 
                   {/* Comfort Breakdown & Sports - History Tab Only */}
                   {activeTab === 'history' && (
