@@ -492,7 +492,8 @@ export function Dashboard() {
                     <h2 className="text-2xl font-bold gradient-text">
                       {timeRange === 'live' ? 'Live Monitoring' : 'Historical Data'}
                     </h2>
-                    {currentLocation && (
+                    {/* Only show connection status in Live tab, not History tab */}
+                    {currentLocation && activeTab === 'live' && (
                       <ConnectionStatus 
                         isConnected={!!liveData}
                         usingIoT={usingIoT}
