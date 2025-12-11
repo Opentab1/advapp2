@@ -336,10 +336,10 @@ export function Dashboard() {
     window.location.reload();
   };
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts - Export only available in History tab
   useKeyboardShortcuts({
     onRefresh: refetch,
-    onExport: handleExport
+    onExport: activeTab === 'history' ? handleExport : undefined
   });
 
   // Get current data based on view
@@ -514,17 +514,20 @@ export function Dashboard() {
                       <span className="hidden sm:inline">Refresh</span>
                     </motion.button>
                     
-                    <motion.button
-                      onClick={handleExport}
-                      className="btn-primary px-4 py-2 flex items-center gap-2"
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      title="Export CSV (E)"
-                      disabled={!currentData}
-                    >
-                      <Download className="w-4 h-4" />
-                      <span className="hidden sm:inline">Export</span>
-                    </motion.button>
+                    {/* Export button only shows in History tab */}
+                    {activeTab === 'history' && (
+                      <motion.button
+                        onClick={handleExport}
+                        className="btn-primary px-4 py-2 flex items-center gap-2"
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        title="Export CSV (E)"
+                        disabled={!currentData}
+                      >
+                        <Download className="w-4 h-4" />
+                        <span className="hidden sm:inline">Export</span>
+                      </motion.button>
+                    )}
                   </div>
                 </div>
 
