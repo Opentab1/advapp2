@@ -306,8 +306,16 @@ export function Dashboard() {
       // Use venueId for data isolation, not locationId
       const data = await apiService.getHistoricalData(venueId, timeRange);
       setHistoricalData(data);
+      // Clear any previous errors since we successfully got data (even if empty/old)
+      setError(null);
     } catch (err: any) {
-      setError(err.message);
+      // Only set error if we truly failed to connect to DynamoDB
+      // Don't show error for "device offline" scenarios (handled by warning banner)
+      if (err.message && !err.message.includes('No sensor data has been collected yet')) {
+        setError(err.message);
+      }
+      // If it's a "no data yet" message, just set empty historical data
+      setHistoricalData(null);
     } finally {
       setLoading(false);
     }
@@ -548,8 +556,8 @@ export function Dashboard() {
                 </motion.div>
               )}
 
-              {/* Error Message */}
-              {(error || liveError) && (
+              {/* Error Message - Only show in Live tab OR when History has no data at all */}
+              {(error || liveError) && (activeTab === 'live' || (activeTab === 'history' && (!historicalData || historicalData.data.length === 0))) && (
                 <motion.div
                   className="mb-6 p-6 rounded-lg bg-red-500/10 border border-red-500/30"
                   initial={{ opacity: 0, y: -10 }}
