@@ -36,14 +36,14 @@ import { Support } from './Support';
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { calculateComfortLevel, calculateComfortBreakdown } from '../utils/comfort';
+import { calculateComfortLevel, calculateComfortBreakdown, calculatePulseScore } from '../utils/comfort';
 import { formatTemperature, formatDecibels, formatLight, formatHumidity } from '../utils/format';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
 import { isDemoAccount } from '../utils/demoData';
-import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location } from '../types';
+import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location, PulseScoreResult } from '../types';
 
 export function Dashboard() {
   const [user, setUser] = useState(authService.getStoredUser());
@@ -55,6 +55,7 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
+  const [pulseScoreResult, setPulseScoreResult] = useState<PulseScoreResult | null>(null);
   
   // Check if this is demo mode
   const isDemoMode = isDemoAccount(user?.venueId);
@@ -354,6 +355,26 @@ export function Dashboard() {
   const comfortLevel = currentData ? calculateComfortLevel(currentData) : null;
   const comfortBreakdown = currentData ? calculateComfortBreakdown(currentData) : null;
 
+  // Calculate pulse score with progressive learning
+  useEffect(() => {
+    const updatePulseScore = async () => {
+      if (currentData && user?.venueId) {
+        try {
+          const result = await calculatePulseScore(user.venueId, currentData);
+          setPulseScoreResult(result);
+        } catch (error) {
+          console.error('Error calculating pulse score:', error);
+          // Fallback to null if calculation fails
+          setPulseScoreResult(null);
+        }
+      } else {
+        setPulseScoreResult(null);
+      }
+    };
+
+    updatePulseScore();
+  }, [currentData, user?.venueId]);
+
   // Show loading state
   if (timeRange === 'live' && liveLoading && !liveData) {
     return <LoadingSpinner fullScreen />;
@@ -616,6 +637,7 @@ export function Dashboard() {
                     score={currentData && comfortLevel ? comfortLevel.score : null}
                     breakdown={undefined}
                     trend="stable"
+                    pulseScoreResult={pulseScoreResult}
                   />
 
                   {/* Occupancy Metrics Section */}

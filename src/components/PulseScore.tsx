@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Clock, CheckCircle, Sparkles } from 'lucide-react';
+import type { PulseScoreResult } from '../types';
 
 interface PulseScoreProps {
   score: number | null; // 0-100, null if no data
@@ -11,14 +12,20 @@ interface PulseScoreProps {
   };
   trend?: 'up' | 'down' | 'stable';
   message?: string;
+  // NEW: Progressive learning data
+  pulseScoreResult?: PulseScoreResult | null;
 }
 
 export const PulseScore: React.FC<PulseScoreProps> = ({ 
   score, 
   breakdown,
   trend = 'stable',
-  message 
+  message,
+  pulseScoreResult
 }) => {
+  // Use new pulse score result if available
+  const displayScore = pulseScoreResult?.score ?? score;
+  const displayBreakdown = pulseScoreResult?.breakdown.factorScores ?? breakdown;
   // Determine color based on score
   const getScoreColor = (score: number) => {
     if (score >= 85) return 'from-green-500 to-emerald-600';
@@ -45,8 +52,40 @@ export const PulseScore: React.FC<PulseScoreProps> = ({
     }
   };
 
+  // Learning status indicator
+  const getLearningStatusIcon = () => {
+    if (!pulseScoreResult) return null;
+    
+    const { status, confidence } = pulseScoreResult;
+    
+    if (status === 'learning' && confidence < 0.3) {
+      return (
+        <div className="flex items-center gap-2 text-sm text-yellow-400 bg-yellow-400/10 px-3 py-1.5 rounded-full border border-yellow-400/30">
+          <Clock className="w-4 h-4 animate-pulse" />
+          <span>Learning your venue... {Math.round(confidence * 100)}%</span>
+        </div>
+      );
+    } else if (status === 'refining' && confidence >= 0.3 && confidence < 0.7) {
+      return (
+        <div className="flex items-center gap-2 text-sm text-blue-400 bg-blue-400/10 px-3 py-1.5 rounded-full border border-blue-400/30">
+          <TrendingUp className="w-4 h-4" />
+          <span>Refining ranges... {Math.round(confidence * 100)}% confidence</span>
+        </div>
+      );
+    } else if (status === 'optimized' && confidence >= 0.7) {
+      return (
+        <div className="flex items-center gap-2 text-sm text-green-400 bg-green-400/10 px-3 py-1.5 rounded-full border border-green-400/30">
+          <CheckCircle className="w-4 h-4" />
+          <span>Optimized for your venue - {Math.round(confidence * 100)}%</span>
+        </div>
+      );
+    }
+    
+    return null;
+  };
+
   // No data state
-  if (score === null) {
+  if (displayScore === null) {
     return (
       <motion.div
         className="glass-card p-8 mb-6 border border-purple-500/20"
@@ -76,20 +115,25 @@ export const PulseScore: React.FC<PulseScoreProps> = ({
       initial={{ opacity: 0, y: -20 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-white flex items-center gap-3">
-          🎯 PULSE SCORE
-          {getTrendIcon()}
-        </h2>
-        <div className="text-sm text-gray-400">
-          Updated: <span className="text-white">Just now</span>
+      <div className="flex flex-col gap-3 mb-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+            🎯 PULSE SCORE
+            {getTrendIcon()}
+          </h2>
+          <div className="text-sm text-gray-400">
+            Updated: <span className="text-white">Just now</span>
+          </div>
         </div>
+        
+        {/* Learning Status Indicator */}
+        {getLearningStatusIcon()}
       </div>
 
       {/* Score Display */}
       <div className="flex items-center justify-center mb-6">
         <motion.div
-          className={`relative w-48 h-48 rounded-full bg-gradient-to-br ${getScoreColor(score)} p-1`}
+          className={`relative w-48 h-48 rounded-full bg-gradient-to-br ${getScoreColor(displayScore)} p-1`}
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ delay: 0.2 }}
@@ -102,7 +146,7 @@ export const PulseScore: React.FC<PulseScoreProps> = ({
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.4 }}
               >
-                {score}
+                {displayScore}
               </motion.div>
               <div className="text-gray-400 text-sm">/ 100</div>
             </div>
@@ -114,9 +158,9 @@ export const PulseScore: React.FC<PulseScoreProps> = ({
       <div className="mb-6">
         <div className="h-3 bg-gray-800 rounded-full overflow-hidden">
           <motion.div
-            className={`h-full bg-gradient-to-r ${getScoreColor(score)}`}
+            className={`h-full bg-gradient-to-r ${getScoreColor(displayScore)}`}
             initial={{ width: 0 }}
-            animate={{ width: `${score}%` }}
+            animate={{ width: `${displayScore}%` }}
             transition={{ delay: 0.6, duration: 1 }}
           />
         </div>
@@ -135,11 +179,42 @@ export const PulseScore: React.FC<PulseScoreProps> = ({
         animate={{ opacity: 1 }}
         transition={{ delay: 0.8 }}
       >
-        "{message || getScoreMessage(score)}"
+        "{message || getScoreMessage(displayScore)}"
       </motion.p>
 
+      {/* Score Blend Info (if learning) */}
+      {pulseScoreResult && pulseScoreResult.confidence > 0 && (
+        <motion.div
+          className="glass-card p-4 mb-6 bg-purple-500/5 border border-purple-500/20"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.9 }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="w-4 h-4 text-purple-400" />
+            <span className="text-sm font-semibold text-purple-300">Progressive Learning Active</span>
+          </div>
+          <div className="text-xs text-gray-400 space-y-1">
+            <div className="flex justify-between">
+              <span>Generic Baseline:</span>
+              <span className="text-white">{pulseScoreResult.breakdown.genericScore} × {Math.round(pulseScoreResult.breakdown.weights.genericWeight * 100)}%</span>
+            </div>
+            {pulseScoreResult.breakdown.learnedScore !== null && (
+              <div className="flex justify-between">
+                <span>Your Venue's Data:</span>
+                <span className="text-white">{pulseScoreResult.breakdown.learnedScore} × {Math.round(pulseScoreResult.breakdown.weights.learnedWeight * 100)}%</span>
+              </div>
+            )}
+            <div className="flex justify-between font-semibold pt-1 border-t border-purple-500/20">
+              <span>Final Score:</span>
+              <span className="text-purple-300">{displayScore}</span>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* Breakdown */}
-      {breakdown && (
+      {displayBreakdown && (
         <motion.div
           className="grid grid-cols-2 md:grid-cols-4 gap-4"
           initial={{ opacity: 0 }}
@@ -148,26 +223,26 @@ export const PulseScore: React.FC<PulseScoreProps> = ({
         >
           <div className="text-center">
             <div className="text-sm text-gray-400 mb-1">Sound</div>
-            <div className={`text-xl font-bold ${breakdown.sound >= 85 ? 'text-green-400' : breakdown.sound >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {breakdown.sound >= 85 ? '✓' : breakdown.sound >= 70 ? '⚠' : '✗'} {breakdown.sound}%
+            <div className={`text-xl font-bold ${displayBreakdown.sound >= 85 ? 'text-green-400' : displayBreakdown.sound >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
+              {displayBreakdown.sound >= 85 ? '✓' : displayBreakdown.sound >= 70 ? '⚠' : '✗'} {displayBreakdown.sound}%
             </div>
           </div>
           <div className="text-center">
             <div className="text-sm text-gray-400 mb-1">Light</div>
-            <div className={`text-xl font-bold ${breakdown.light >= 85 ? 'text-green-400' : breakdown.light >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {breakdown.light >= 85 ? '✓' : breakdown.light >= 70 ? '⚠' : '✗'} {breakdown.light}%
+            <div className={`text-xl font-bold ${displayBreakdown.light >= 85 ? 'text-green-400' : displayBreakdown.light >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
+              {displayBreakdown.light >= 85 ? '✓' : displayBreakdown.light >= 70 ? '⚠' : '✗'} {displayBreakdown.light}%
             </div>
           </div>
           <div className="text-center">
             <div className="text-sm text-gray-400 mb-1">Temp</div>
-            <div className={`text-xl font-bold ${breakdown.temperature >= 85 ? 'text-green-400' : breakdown.temperature >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {breakdown.temperature >= 85 ? '✓' : breakdown.temperature >= 70 ? '⚠' : '✗'} {breakdown.temperature}%
+            <div className={`text-xl font-bold ${displayBreakdown.temperature >= 85 ? 'text-green-400' : displayBreakdown.temperature >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
+              {displayBreakdown.temperature >= 85 ? '✓' : displayBreakdown.temperature >= 70 ? '⚠' : '✗'} {displayBreakdown.temperature}%
             </div>
           </div>
           <div className="text-center">
             <div className="text-sm text-gray-400 mb-1">Humidity</div>
-            <div className={`text-xl font-bold ${breakdown.humidity >= 85 ? 'text-green-400' : breakdown.humidity >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {breakdown.humidity >= 85 ? '✓' : breakdown.humidity >= 70 ? '⚠' : '✗'} {breakdown.humidity}%
+            <div className={`text-xl font-bold ${displayBreakdown.humidity >= 85 ? 'text-green-400' : displayBreakdown.humidity >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
+              {displayBreakdown.humidity >= 85 ? '✓' : displayBreakdown.humidity >= 70 ? '⚠' : '✗'} {displayBreakdown.humidity}%
             </div>
           </div>
         </motion.div>

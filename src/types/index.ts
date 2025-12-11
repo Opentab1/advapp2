@@ -213,3 +213,88 @@ export interface WeeklyMetrics {
   totalRevenue: number;
   topSongs: Array<{ song: string; plays: number }>;
 }
+
+// Progressive Learning Pulse Score System
+export interface VenuePerformanceHistory {
+  venueId: string;
+  timestamp: string;
+  hour: number; // 0-23
+  dayOfWeek: number; // 0-6 (Sunday = 0)
+  
+  // Environmental snapshot (hourly average)
+  environmental: {
+    temperature: number;
+    light: number;
+    sound: number;
+    humidity: number;
+  };
+  
+  // Performance metrics
+  performance: {
+    avgDwellTimeMinutes: number; // Proxy: occupancy stability
+    avgOccupancy: number; // Average people count for the hour
+    peakOccupancy: number; // Max people count in the hour
+    entryCount: number;
+    exitCount: number;
+    retentionRate: number; // % of people who stayed (entries vs exits)
+    revenue?: number; // Optional if POS integrated
+  };
+}
+
+export interface OptimalRange {
+  min: number;
+  max: number;
+  confidence: number; // 0-1, how confident we are in this range
+}
+
+export interface VenueOptimalRanges {
+  venueId: string;
+  lastCalculated: string;
+  dataPointsAnalyzed: number; // Number of hours analyzed
+  learningConfidence: number; // 0-1, overall confidence in learned data
+  
+  // Learned optimal ranges from top 20% performance hours
+  optimalRanges: {
+    temperature: OptimalRange;
+    light: OptimalRange;
+    sound: OptimalRange;
+    humidity: OptimalRange;
+  };
+  
+  // Factor importance weights (sum to 1.0)
+  weights: {
+    temperature: number;
+    light: number;
+    sound: number;
+    humidity: number;
+  };
+  
+  // Performance benchmarks from top 20% hours
+  benchmarks: {
+    avgDwellTimeTop20: number;
+    avgOccupancyTop20: number;
+    avgRevenueTop20?: number;
+  };
+}
+
+export interface PulseScoreResult {
+  score: number; // 0-100, final blended score
+  confidence: number; // 0-1, learning confidence
+  status: 'learning' | 'refining' | 'optimized';
+  statusMessage: string;
+  breakdown: {
+    genericScore: number;
+    learnedScore: number | null;
+    weights: {
+      genericWeight: number;
+      learnedWeight: number;
+    };
+    optimalRanges?: VenueOptimalRanges['optimalRanges'];
+    factorScores?: {
+      temperature: number;
+      light: number;
+      sound: number;
+      humidity: number;
+    };
+  };
+}

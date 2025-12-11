@@ -1,4 +1,15 @@
-import type { SensorData, HistoricalData, TimeRange, OccupancyMetrics, Location, WeeklyReport, WeeklyMetrics, ReportInsight } from '../types';
+import type { 
+  SensorData, 
+  HistoricalData, 
+  TimeRange, 
+  OccupancyMetrics, 
+  Location, 
+  WeeklyReport, 
+  WeeklyMetrics, 
+  ReportInsight,
+  VenueOptimalRanges,
+  PulseScoreResult 
+} from '../types';
 
 /**
  * Check if this is the demo account
@@ -607,4 +618,135 @@ export function generateDemoReportHistory(count: number = 8): WeeklyReport[] {
   }
   
   return reports;
+}
+
+/**
+ * Generate demo optimal ranges for pulse score learning
+ * Simulates a nightclub/lounge with 60 days of learned data
+ */
+export function generateDemoOptimalRanges(): VenueOptimalRanges {
+  return {
+    venueId: 'theshowcaselounge',
+    lastCalculated: new Date().toISOString(),
+    dataPointsAnalyzed: 1440, // 60 days × 24 hours
+    learningConfidence: 0.75, // 75% confidence (refining stage)
+    
+    // Learned optimal ranges for a nightclub/lounge
+    optimalRanges: {
+      temperature: {
+        min: 67,
+        max: 70,
+        confidence: 0.82 // High confidence - temperature is consistent
+      },
+      light: {
+        min: 160,
+        max: 210,
+        confidence: 0.78 // Good confidence - some variation by event
+      },
+      sound: {
+        min: 78,
+        max: 86,
+        confidence: 0.85 // Very high confidence - sound is key metric
+      },
+      humidity: {
+        min: 42,
+        max: 52,
+        confidence: 0.68 // Moderate confidence - less controllable
+      }
+    },
+    
+    // Learned factor weights (sound is most important for nightclub)
+    weights: {
+      temperature: 0.22,
+      light: 0.26,
+      sound: 0.38, // Sound is most important for atmosphere
+      humidity: 0.14
+    },
+    
+    // Benchmarks from top 20% performance hours
+    benchmarks: {
+      avgDwellTimeTop20: 185, // 3+ hours during best nights
+      avgOccupancyTop20: 94, // High occupancy
+      avgRevenueTop20: 5850 // Strong revenue
+    }
+  };
+}
+
+/**
+ * Generate demo pulse score result
+ * Shows the progressive learning system in action
+ */
+export function generateDemoPulseScoreResult(currentData: SensorData): PulseScoreResult {
+  const optimalRanges = generateDemoOptimalRanges();
+  
+  // Calculate individual factor scores
+  const tempScore = scoreFactorDemo(currentData.indoorTemp, optimalRanges.optimalRanges.temperature);
+  const lightScore = scoreFactorDemo(currentData.light, optimalRanges.optimalRanges.light);
+  const soundScore = scoreFactorDemo(currentData.decibels, optimalRanges.optimalRanges.sound);
+  const humidityScore = scoreFactorDemo(currentData.humidity, optimalRanges.optimalRanges.humidity);
+  
+  // Weighted learned score
+  const learnedScore = Math.round(
+    (tempScore * optimalRanges.weights.temperature) +
+    (lightScore * optimalRanges.weights.light) +
+    (soundScore * optimalRanges.weights.sound) +
+    (humidityScore * optimalRanges.weights.humidity)
+  );
+  
+  // Calculate generic score (industry standard)
+  const genericTempScore = currentData.indoorTemp >= 72 && currentData.indoorTemp <= 76 ? 100 : 75;
+  const genericLightScore = currentData.light >= 300 ? 100 : (currentData.light / 300) * 100;
+  const genericSoundScore = currentData.decibels <= 75 ? 100 : Math.max(0, 100 - (currentData.decibels - 75) * 2);
+  const genericHumidityScore = currentData.humidity >= 40 && currentData.humidity <= 60 ? 100 : 70;
+  const genericScore = Math.round((genericTempScore + genericLightScore + genericSoundScore + genericHumidityScore) / 4);
+  
+  // Blend scores (75% learned, 25% generic)
+  const confidence = optimalRanges.learningConfidence;
+  const finalScore = Math.round((genericScore * (1 - confidence)) + (learnedScore * confidence));
+  
+  return {
+    score: finalScore,
+    confidence: confidence,
+    status: 'refining',
+    statusMessage: `Refining optimal ranges... ${Math.round(confidence * 100)}% confidence`,
+    breakdown: {
+      genericScore,
+      learnedScore,
+      weights: {
+        genericWeight: 1 - confidence,
+        learnedWeight: confidence
+      },
+      optimalRanges: optimalRanges.optimalRanges,
+      factorScores: {
+        temperature: tempScore,
+        light: lightScore,
+        sound: soundScore,
+        humidity: humidityScore
+      }
+    }
+  };
+}
+
+/**
+ * Helper function to score an environmental factor against optimal range
+ */
+function scoreFactorDemo(value: number, range: { min: number; max: number }): number {
+  // Perfect score if within range
+  if (value >= range.min && value <= range.max) {
+    return 100;
+  }
+  
+  // Calculate tolerance (20% of range)
+  const rangeSize = range.max - range.min;
+  const tolerance = rangeSize * 0.2;
+  
+  // Below range
+  if (value < range.min) {
+    const deviation = range.min - value;
+    return Math.max(0, Math.round(100 - (deviation / tolerance) * 100));
+  }
+  
+  // Above range
+  const deviation = value - range.max;
+  return Math.max(0, Math.round(100 - (deviation / tolerance) * 100));
 }

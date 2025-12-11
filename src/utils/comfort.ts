@@ -1,5 +1,10 @@
-import type { ComfortLevel, SensorData } from '../types';
+import type { ComfortLevel, SensorData, PulseScoreResult } from '../types';
+import pulseLearningService from '../services/pulse-learning.service';
 
+/**
+ * Legacy comfort level calculation (now used as generic baseline)
+ * Uses industry standard ranges: 72-76°F, 300+ lux, ≤75 dB
+ */
 export function calculateComfortLevel(data: SensorData): ComfortLevel {
   // Temperature score (optimal: 72-76°F)
   let tempScore = 0;
@@ -169,4 +174,171 @@ export function calculateComfortBreakdown(data: SensorData): import('../types').
       message: lightMessage
     }
   };
+}
+
+/**
+ * Calculate generic score using industry standard ranges
+ * This is the baseline formula, now includes humidity
+ * 
+ * @param data - Current sensor data
+ * @returns Score 0-100
+ */
+export function calculateGenericScore(data: SensorData): number {
+  // Temperature score (optimal: 72-76°F)
+  let tempScore = 0;
+  if (data.indoorTemp >= 72 && data.indoorTemp <= 76) {
+    tempScore = 100;
+  } else if (data.indoorTemp >= 68 && data.indoorTemp <= 80) {
+    const distanceFromIdeal = Math.min(
+      Math.abs(data.indoorTemp - 72),
+      Math.abs(data.indoorTemp - 76)
+    );
+    tempScore = 100 - (distanceFromIdeal * 12.5);
+  } else {
+    tempScore = 0;
+  }
+
+  // Light score (optimal: >= 300 lux)
+  const lightScore = data.light >= 300 ? 100 : (data.light / 300) * 100;
+
+  // Sound score (optimal: <= 75 dB)
+  const soundScore = data.decibels <= 75 ? 100 : Math.max(0, 100 - (data.decibels - 75) * 2);
+
+  // Humidity score (optimal: 40-60%)
+  let humidityScore = 0;
+  if (data.humidity >= 40 && data.humidity <= 60) {
+    humidityScore = 100;
+  } else if (data.humidity >= 30 && data.humidity <= 70) {
+    const distanceFromIdeal = Math.min(
+      Math.abs(data.humidity - 40),
+      Math.abs(data.humidity - 60)
+    );
+    humidityScore = 100 - (distanceFromIdeal * 5);
+  } else {
+    humidityScore = 0;
+  }
+
+  // Calculate weighted average (equal weights for generic)
+  const score = Math.round((tempScore + lightScore + soundScore + humidityScore) / 4);
+  
+  return score;
+}
+
+/**
+ * NEW: Progressive Learning Pulse Score
+ * 
+ * Calculates a blended score that starts with generic industry standards
+ * and progressively learns venue-specific optimal conditions based on
+ * historical performance data (dwell time, occupancy, revenue).
+ * 
+ * @param venueId - Venue identifier
+ * @param data - Current sensor data
+ * @returns Complete pulse score result with breakdown
+ */
+export async function calculatePulseScore(
+  venueId: string,
+  data: SensorData
+): Promise<PulseScoreResult> {
+  // Step 1: Always calculate generic score (baseline fallback)
+  const genericScore = calculateGenericScore(data);
+
+  // Step 2: Get learning confidence for this venue
+  const confidence = await pulseLearningService.calculateLearningConfidence(venueId);
+
+  // Step 3: If we have learned data, calculate learned score
+  let learnedScore: number | null = null;
+  let optimalRanges = null;
+  let factorScores = undefined;
+
+  if (confidence > 0) {
+    const ranges = await pulseLearningService.getOptimalRanges(venueId);
+    if (ranges) {
+      optimalRanges = ranges.optimalRanges;
+      learnedScore = pulseLearningService.calculateLearnedScore(data, ranges);
+
+      // Calculate individual factor scores for breakdown
+      factorScores = {
+        temperature: pulseLearningService.scoreEnvironmentalFactor(
+          data.indoorTemp,
+          ranges.optimalRanges.temperature
+        ),
+        light: pulseLearningService.scoreEnvironmentalFactor(
+          data.light,
+          ranges.optimalRanges.light
+        ),
+        sound: pulseLearningService.scoreEnvironmentalFactor(
+          data.decibels,
+          ranges.optimalRanges.sound
+        ),
+        humidity: pulseLearningService.scoreEnvironmentalFactor(
+          data.humidity,
+          ranges.optimalRanges.humidity
+        )
+      };
+    }
+  }
+
+  // Step 4: Blend scores based on confidence
+  const weights = pulseLearningService.calculateWeights(confidence);
+  
+  const finalScore = learnedScore !== null
+    ? Math.round((genericScore * weights.genericWeight) + (learnedScore * weights.learnedWeight))
+    : genericScore; // Fallback to 100% generic if no learned data
+
+  // Step 5: Get learning status
+  const statusInfo = pulseLearningService.getLearningStatus(confidence);
+
+  // Step 6: Determine color and status based on score
+  let status: ComfortLevel['status'];
+  let color: string;
+
+  if (finalScore >= 80) {
+    status = 'excellent';
+    color = '#00ff88';
+  } else if (finalScore >= 60) {
+    status = 'good';
+    color = '#00d4ff';
+  } else if (finalScore >= 40) {
+    status = 'fair';
+    color = '#ffd700';
+  } else {
+    status = 'poor';
+    color = '#ff4444';
+  }
+
+  return {
+    score: finalScore,
+    confidence,
+    status: statusInfo.status,
+    statusMessage: statusInfo.message,
+    breakdown: {
+      genericScore,
+      learnedScore,
+      weights,
+      optimalRanges,
+      factorScores
+    }
+  };
+}
+
+/**
+ * Get message based on pulse score result
+ * 
+ * @param result - Pulse score result
+ * @returns Human-readable message
+ */
+export function getPulseScoreMessage(result: PulseScoreResult): string {
+  if (result.score >= 90) {
+    return 'Exceptional atmosphere! Your venue is perfectly optimized.';
+  }
+  if (result.score >= 85) {
+    return 'Your atmosphere is optimized for peak customer engagement.';
+  }
+  if (result.score >= 70) {
+    return 'Good atmosphere with room for improvement.';
+  }
+  if (result.score >= 50) {
+    return 'Several factors need attention to optimize atmosphere.';
+  }
+  return 'Multiple issues detected. Review recommendations below.';
 }
