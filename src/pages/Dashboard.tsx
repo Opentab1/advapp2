@@ -657,7 +657,7 @@ export function Dashboard() {
                       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                         <MetricCard
                           title="Current Occupancy"
-                          value={occupancyMetrics.current.toString()}
+                          value={(occupancyMetrics.current ?? liveData?.occupancy?.current ?? 0).toString()}
                           unit="people"
                           icon={Users}
                           color="#00d4ff"
@@ -666,7 +666,7 @@ export function Dashboard() {
                         
                         <MetricCard
                           title="Entries Today"
-                          value={occupancyMetrics.todayEntries.toString()}
+                          value={(occupancyMetrics.todayEntries ?? liveData?.occupancy?.entries ?? 0).toString()}
                           unit="people"
                           icon={UserPlus}
                           color="#4ade80"
@@ -675,7 +675,7 @@ export function Dashboard() {
                         
                         <MetricCard
                           title="Exits Today"
-                          value={occupancyMetrics.todayExits.toString()}
+                          value={(occupancyMetrics.todayExits ?? liveData?.occupancy?.exits ?? 0).toString()}
                           unit="people"
                           icon={UserMinus}
                           color="#f87171"
@@ -684,7 +684,7 @@ export function Dashboard() {
                         
                         <MetricCard
                           title="Peak Today"
-                          value={occupancyMetrics.peakOccupancy.toString()}
+                          value={(occupancyMetrics.peakOccupancy ?? 0).toString()}
                           unit={occupancyMetrics.peakTime ? `@ ${occupancyMetrics.peakTime}` : 'people'}
                           icon={TrendingUp}
                           color="#fbbf24"
@@ -710,7 +710,7 @@ export function Dashboard() {
                         <div className="glass-card p-4">
                           <div className="text-sm text-gray-400 mb-1">7-Day Average</div>
                           <div className="text-2xl font-bold text-cyan-400">
-                            {occupancyMetrics.sevenDayAvg}
+                            {occupancyMetrics.sevenDayAvg ?? 0}
                             <span className="text-sm text-gray-400 ml-2">people/day</span>
                           </div>
                         </div>
@@ -718,7 +718,7 @@ export function Dashboard() {
                         <div className="glass-card p-4">
                           <div className="text-sm text-gray-400 mb-1">14-Day Average</div>
                           <div className="text-2xl font-bold text-cyan-400">
-                            {occupancyMetrics.fourteenDayAvg}
+                            {occupancyMetrics.fourteenDayAvg ?? 0}
                             <span className="text-sm text-gray-400 ml-2">people/day</span>
                           </div>
                         </div>
@@ -726,7 +726,7 @@ export function Dashboard() {
                         <div className="glass-card p-4">
                           <div className="text-sm text-gray-400 mb-1">30-Day Average</div>
                           <div className="text-2xl font-bold text-cyan-400">
-                            {occupancyMetrics.thirtyDayAvg}
+                            {occupancyMetrics.thirtyDayAvg ?? 0}
                             <span className="text-sm text-gray-400 ml-2">people/day</span>
                           </div>
                         </div>
@@ -774,7 +774,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Entries Today"
-                      value={occupancyMetrics?.todayEntries.toString() || '0'}
+                      value={(occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries ?? 0).toString()}
                       unit="people"
                       icon={UserPlus}
                       color="#4ade80"
@@ -783,7 +783,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Exits Today"
-                      value={occupancyMetrics?.todayExits.toString() || '0'}
+                      value={(occupancyMetrics?.todayExits ?? liveData?.occupancy?.exits ?? 0).toString()}
                       unit="people"
                       icon={UserMinus}
                       color="#f87171"
@@ -792,7 +792,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Total Occupancy"
-                      value={occupancyMetrics?.current.toString() || '0'}
+                      value={(occupancyMetrics?.current ?? liveData?.occupancy?.current ?? 0).toString()}
                       unit="people"
                       icon={Users}
                       color="#a78bfa"
