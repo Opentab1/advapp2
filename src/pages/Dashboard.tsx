@@ -371,6 +371,20 @@ export function Dashboard() {
             periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
         }
         
+        // Log the data range we received
+        const sortedData = [...data.data].sort((a, b) => 
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+        const oldestData = sortedData[0];
+        const newestData = sortedData[sortedData.length - 1];
+        
+        console.log(`📊 Historical data received for ${timeRange}:`, {
+          requestedRange: `${periodStart.toISOString()} to ${now.toISOString()}`,
+          actualRange: `${oldestData?.timestamp} to ${newestData?.timestamp}`,
+          totalRecords: data.data.length,
+          recordsWithOccupancy: data.data.filter(d => d.occupancy).length
+        });
+        
         const periodStats = aggregateOccupancyByBarDay(data.data, periodStart, now, timezone);
         
         // Get peak occupancy from data
@@ -387,13 +401,15 @@ export function Dashboard() {
           current: peakCurrent
         });
         
-        console.log(`📊 Period occupancy for ${timeRange}:`, {
+        console.log(`📊 Period occupancy calculated for ${timeRange}:`, {
           entries: periodStats.totalEntries,
           exits: periodStats.totalExits,
           peakCurrent,
-          daysProcessed: periodStats.dailyBreakdown.length
+          daysProcessed: periodStats.dailyBreakdown.length,
+          dailyBreakdown: periodStats.dailyBreakdown
         });
       } else {
+        console.log(`⚠️ No historical data for ${timeRange}`);
         setPeriodOccupancy(null);
       }
     } catch (err: any) {

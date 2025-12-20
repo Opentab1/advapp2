@@ -257,13 +257,37 @@ class DynamoDBService {
       const { startTime, endTime } = this.getTimeRangeValues(range);
       const client = this.getClient();
 
+      // Calculate appropriate limit based on time range
+      // For occupancy aggregation, we need enough data points to capture each bar day
+      // Minimum: at least 1 reading per hour for accurate calculations
+      const getLimitForRange = (r: TimeRange | string): number => {
+        switch (r) {
+          case 'live': return 100;
+          case '6h': return 500;
+          case '24h': return 2000;
+          case '7d': return 10000;
+          case '30d': return 30000;
+          case '90d': return 50000;
+          default: 
+            // Custom day ranges
+            if (typeof r === 'string' && r.endsWith('d')) {
+              const days = parseInt(r.replace('d', ''));
+              return Math.min(days * 1000, 50000);
+            }
+            return 5000;
+        }
+      };
+      
+      const queryLimit = getLimitForRange(range);
+      console.log(`📊 Fetching historical data: range=${range}, limit=${queryLimit}`);
+
       const response = await client.graphql({
         query: listSensorData,
         variables: { 
           venueId, 
           startTime,
           endTime,
-          limit: 1000 // Adjust based on your needs
+          limit: queryLimit
         },
         authMode: 'userPool'
       }) as any;
@@ -294,7 +318,7 @@ class DynamoDBService {
             venueId, 
             startTime: expandedStartTime,
             endTime: expandedEndTime,
-            limit: 1000
+            limit: queryLimit
           },
           authMode: 'userPool'
         }) as any;
