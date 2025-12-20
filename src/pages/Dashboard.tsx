@@ -40,6 +40,7 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { calculateComfortLevel, calculateComfortBreakdown, calculatePulseScore } from '../utils/comfort';
 import { formatTemperature, formatDecibels, formatLight, formatHumidity } from '../utils/format';
 import { formatDwellTime } from '../utils/dwellTime';
+import { calculateBarDayOccupancy, formatBarDayRange } from '../utils/barDay';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
@@ -58,6 +59,7 @@ export function Dashboard() {
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   const [pulseScoreResult, setPulseScoreResult] = useState<PulseScoreResult | null>(null);
+  const [barDayOccupancy, setBarDayOccupancy] = useState<{ entries: number; exits: number; current: number } | null>(null);
   
   // Check if this is demo mode
   const isDemoMode = isDemoAccount(user?.venueId);
@@ -300,6 +302,35 @@ export function Dashboard() {
       // If it fails, the section just won't render
     }
   };
+
+  // Load bar day occupancy (3am-3am for bars)
+  const loadBarDayOccupancy = async () => {
+    try {
+      // Get venue timezone from current location or default to EST
+      const timezone = currentLocation?.timezone || 'America/New_York';
+      
+      // Fetch last 24 hours of data to ensure we capture the full bar day
+      const data = await apiService.getHistoricalData(venueId, '24h');
+      
+      if (data?.data && data.data.length > 0) {
+        const barDayStats = calculateBarDayOccupancy(data.data, timezone);
+        setBarDayOccupancy(barDayStats);
+        console.log('📊 Bar day occupancy calculated:', barDayStats, `(${formatBarDayRange(timezone)})`);
+      }
+    } catch (err: any) {
+      console.error('Failed to load bar day occupancy:', err);
+      // Don't set error - this is supplementary data
+    }
+  };
+
+  // Load bar day occupancy on mount and refresh every 30 seconds
+  useEffect(() => {
+    if (venueId && currentLocation) {
+      loadBarDayOccupancy();
+      const interval = setInterval(loadBarDayOccupancy, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [venueId, currentLocation]);
 
   const loadHistoricalData = async () => {
     setLoading(true);
@@ -657,7 +688,7 @@ export function Dashboard() {
                       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                         <MetricCard
                           title="Current Occupancy"
-                          value={(occupancyMetrics.current ?? liveData?.occupancy?.current ?? 0).toString()}
+                          value={(barDayOccupancy?.current ?? occupancyMetrics.current ?? liveData?.occupancy?.current ?? 0).toString()}
                           unit="people"
                           icon={Users}
                           color="#00d4ff"
@@ -666,7 +697,7 @@ export function Dashboard() {
                         
                         <MetricCard
                           title="Entries Today"
-                          value={(occupancyMetrics.todayEntries ?? liveData?.occupancy?.entries ?? 0).toString()}
+                          value={(barDayOccupancy?.entries ?? occupancyMetrics.todayEntries ?? liveData?.occupancy?.entries ?? 0).toString()}
                           unit="people"
                           icon={UserPlus}
                           color="#4ade80"
@@ -675,7 +706,7 @@ export function Dashboard() {
                         
                         <MetricCard
                           title="Exits Today"
-                          value={(occupancyMetrics.todayExits ?? liveData?.occupancy?.exits ?? 0).toString()}
+                          value={(barDayOccupancy?.exits ?? occupancyMetrics.todayExits ?? liveData?.occupancy?.exits ?? 0).toString()}
                           unit="people"
                           icon={UserMinus}
                           color="#f87171"
@@ -774,7 +805,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Entries Today"
-                      value={(occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries ?? 0).toString()}
+                      value={(barDayOccupancy?.entries ?? occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries ?? 0).toString()}
                       unit="people"
                       icon={UserPlus}
                       color="#4ade80"
@@ -783,7 +814,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Exits Today"
-                      value={(occupancyMetrics?.todayExits ?? liveData?.occupancy?.exits ?? 0).toString()}
+                      value={(barDayOccupancy?.exits ?? occupancyMetrics?.todayExits ?? liveData?.occupancy?.exits ?? 0).toString()}
                       unit="people"
                       icon={UserMinus}
                       color="#f87171"
@@ -792,7 +823,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Total Occupancy"
-                      value={(occupancyMetrics?.current ?? liveData?.occupancy?.current ?? 0).toString()}
+                      value={(barDayOccupancy?.current ?? occupancyMetrics?.current ?? liveData?.occupancy?.current ?? 0).toString()}
                       unit="people"
                       icon={Users}
                       color="#a78bfa"
