@@ -40,7 +40,7 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { calculateComfortLevel, calculateComfortBreakdown, calculatePulseScore } from '../utils/comfort';
 import { formatTemperature, formatDecibels, formatLight, formatHumidity } from '../utils/format';
 import { formatDwellTime } from '../utils/dwellTime';
-import { calculateBarDayOccupancy, formatBarDayRange } from '../utils/barDay';
+import { calculateBarDayOccupancy, formatBarDayRange, aggregateOccupancyByBarDay } from '../utils/barDay';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
@@ -60,6 +60,7 @@ export function Dashboard() {
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   const [pulseScoreResult, setPulseScoreResult] = useState<PulseScoreResult | null>(null);
   const [barDayOccupancy, setBarDayOccupancy] = useState<{ entries: number; exits: number; current: number } | null>(null);
+  const [periodOccupancy, setPeriodOccupancy] = useState<{ entries: number; exits: number; current: number } | null>(null);
   
   // Check if this is demo mode
   const isDemoMode = isDemoAccount(user?.venueId);
@@ -342,6 +343,59 @@ export function Dashboard() {
       setHistoricalData(data);
       // Clear any previous errors since we successfully got data (even if empty/old)
       setError(null);
+      
+      // Calculate period-specific occupancy using bar day logic
+      if (data?.data && data.data.length > 0) {
+        const timezone = currentLocation?.timezone || 'America/New_York';
+        const now = new Date();
+        let periodStart: Date;
+        
+        // Calculate period start based on timeRange
+        switch (timeRange) {
+          case '6h':
+            periodStart = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+            break;
+          case '24h':
+            periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            break;
+          case '7d':
+            periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            break;
+          case '30d':
+            periodStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            break;
+          case '90d':
+            periodStart = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+            break;
+          default:
+            periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        }
+        
+        const periodStats = aggregateOccupancyByBarDay(data.data, periodStart, now, timezone);
+        
+        // Get peak occupancy from data
+        let peakCurrent = 0;
+        data.data.forEach(item => {
+          if (item.occupancy?.current && item.occupancy.current > peakCurrent) {
+            peakCurrent = item.occupancy.current;
+          }
+        });
+        
+        setPeriodOccupancy({
+          entries: periodStats.totalEntries,
+          exits: periodStats.totalExits,
+          current: peakCurrent
+        });
+        
+        console.log(`📊 Period occupancy for ${timeRange}:`, {
+          entries: periodStats.totalEntries,
+          exits: periodStats.totalExits,
+          peakCurrent,
+          daysProcessed: periodStats.dailyBreakdown.length
+        });
+      } else {
+        setPeriodOccupancy(null);
+      }
     } catch (err: any) {
       // Only set error if we truly failed to connect to DynamoDB
       // Don't show error for "device offline" scenarios (handled by warning banner)
@@ -350,6 +404,7 @@ export function Dashboard() {
       }
       // If it's a "no data yet" message, just set empty historical data
       setHistoricalData(null);
+      setPeriodOccupancy(null);
     } finally {
       setLoading(false);
     }
@@ -687,8 +742,11 @@ export function Dashboard() {
                       </h3>
                       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                         <MetricCard
-                          title="Current Occupancy"
-                          value={(barDayOccupancy?.current ?? occupancyMetrics.current ?? liveData?.occupancy?.current ?? 0).toString()}
+                          title={timeRange === 'live' ? "Current Occupancy" : "Peak Occupancy"}
+                          value={(timeRange === 'live' 
+                            ? (barDayOccupancy?.current ?? occupancyMetrics.current ?? liveData?.occupancy?.current ?? 0)
+                            : (periodOccupancy?.current ?? 0)
+                          ).toString()}
                           unit="people"
                           icon={Users}
                           color="#00d4ff"
@@ -696,8 +754,11 @@ export function Dashboard() {
                         />
                         
                         <MetricCard
-                          title="Entries Today"
-                          value={(barDayOccupancy?.entries ?? occupancyMetrics.todayEntries ?? liveData?.occupancy?.entries ?? 0).toString()}
+                          title={timeRange === 'live' ? "Entries Today" : `Entries (${timeRange})`}
+                          value={(timeRange === 'live'
+                            ? (barDayOccupancy?.entries ?? occupancyMetrics.todayEntries ?? liveData?.occupancy?.entries ?? 0)
+                            : (periodOccupancy?.entries ?? 0)
+                          ).toString()}
                           unit="people"
                           icon={UserPlus}
                           color="#4ade80"
@@ -705,8 +766,11 @@ export function Dashboard() {
                         />
                         
                         <MetricCard
-                          title="Exits Today"
-                          value={(barDayOccupancy?.exits ?? occupancyMetrics.todayExits ?? liveData?.occupancy?.exits ?? 0).toString()}
+                          title={timeRange === 'live' ? "Exits Today" : `Exits (${timeRange})`}
+                          value={(timeRange === 'live'
+                            ? (barDayOccupancy?.exits ?? occupancyMetrics.todayExits ?? liveData?.occupancy?.exits ?? 0)
+                            : (periodOccupancy?.exits ?? 0)
+                          ).toString()}
                           unit="people"
                           icon={UserMinus}
                           color="#f87171"
@@ -804,8 +868,11 @@ export function Dashboard() {
                     />
                     
                     <MetricCard
-                      title="Entries Today"
-                      value={(barDayOccupancy?.entries ?? occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries ?? 0).toString()}
+                      title={timeRange === 'live' ? "Entries Today" : `Entries (${timeRange})`}
+                      value={(timeRange === 'live'
+                        ? (barDayOccupancy?.entries ?? occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries ?? 0)
+                        : (periodOccupancy?.entries ?? 0)
+                      ).toString()}
                       unit="people"
                       icon={UserPlus}
                       color="#4ade80"
@@ -813,8 +880,11 @@ export function Dashboard() {
                     />
                     
                     <MetricCard
-                      title="Exits Today"
-                      value={(barDayOccupancy?.exits ?? occupancyMetrics?.todayExits ?? liveData?.occupancy?.exits ?? 0).toString()}
+                      title={timeRange === 'live' ? "Exits Today" : `Exits (${timeRange})`}
+                      value={(timeRange === 'live'
+                        ? (barDayOccupancy?.exits ?? occupancyMetrics?.todayExits ?? liveData?.occupancy?.exits ?? 0)
+                        : (periodOccupancy?.exits ?? 0)
+                      ).toString()}
                       unit="people"
                       icon={UserMinus}
                       color="#f87171"
@@ -822,8 +892,11 @@ export function Dashboard() {
                     />
                     
                     <MetricCard
-                      title="Total Occupancy"
-                      value={(barDayOccupancy?.current ?? occupancyMetrics?.current ?? liveData?.occupancy?.current ?? 0).toString()}
+                      title={timeRange === 'live' ? "Current Occupancy" : "Peak Occupancy"}
+                      value={(timeRange === 'live'
+                        ? (barDayOccupancy?.current ?? occupancyMetrics?.current ?? liveData?.occupancy?.current ?? 0)
+                        : (periodOccupancy?.current ?? 0)
+                      ).toString()}
                       unit="people"
                       icon={Users}
                       color="#a78bfa"
