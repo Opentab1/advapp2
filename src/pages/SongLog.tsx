@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Music, Download, Clock, TrendingUp } from 'lucide-react';
+import { Music, Download, Clock, TrendingUp, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import songLogService from '../services/song-log.service';
 import authService from '../services/auth.service';
@@ -10,21 +10,45 @@ export function SongLog() {
   const [songs, setSongs] = useState<SongLogEntry[]>([]);
   const [topSongs, setTopSongs] = useState<Array<{ song: string; artist: string; plays: number }>>([]);
   const [topGenres, setTopGenres] = useState<Array<{ genre: string; plays: number }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalSongs, setTotalSongs] = useState(0);
 
   useEffect(() => {
     loadSongs();
   }, []);
 
-  const loadSongs = () => {
-    setSongs(songLogService.getSongs(100));
-    setTopSongs(songLogService.getTopSongs(10));
-    setTopGenres(songLogService.getTopGenres(10));
+  const loadSongs = async () => {
+    setLoading(true);
+    try {
+      // Fetch all songs from DynamoDB + localStorage
+      const allSongs = await songLogService.getAllSongs();
+      setSongs(allSongs.slice(0, 200)); // Show first 200 in list
+      setTotalSongs(allSongs.length);
+      
+      // Get top songs from all sources
+      const top = await songLogService.getTopSongsFromAll(10);
+      setTopSongs(top);
+      
+      // Top genres still from localStorage (genre detection not in DynamoDB)
+      setTopGenres(songLogService.getTopGenres(10));
+      
+      console.log(`🎵 Loaded ${allSongs.length} songs from DynamoDB + localStorage`);
+    } catch (error) {
+      console.error('Error loading songs:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleExport = () => {
+  const handleRefresh = () => {
+    songLogService.clearCache();
+    loadSongs();
+  };
+
+  const handleExport = async () => {
     const user = authService.getStoredUser();
     const venueName = user?.venueName || user?.email?.split('@')[0] || undefined;
-    songLogService.exportToCSV(venueName);
+    await songLogService.exportAllToCSV(venueName);
   };
 
   return (
@@ -34,16 +58,34 @@ export function SongLog() {
         animate={{ opacity: 1, y: 0 }}
       >
         <div className="flex items-center justify-between mb-8">
-          <h2 className="text-3xl font-bold gradient-text">Song History</h2>
-          <motion.button
-            onClick={handleExport}
-            className="btn-primary flex items-center gap-2"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <Download className="w-4 h-4" />
-            Export CSV
-          </motion.button>
+          <div>
+            <h2 className="text-3xl font-bold gradient-text">Song History</h2>
+            <p className="text-sm text-gray-400 mt-1">
+              {loading ? 'Loading songs from DynamoDB...' : `${totalSongs.toLocaleString()} songs tracked`}
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <motion.button
+              onClick={handleRefresh}
+              disabled={loading}
+              className="btn-secondary flex items-center gap-2"
+              whileHover={{ scale: loading ? 1 : 1.05 }}
+              whileTap={{ scale: loading ? 1 : 0.95 }}
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </motion.button>
+            <motion.button
+              onClick={handleExport}
+              disabled={loading}
+              className="btn-primary flex items-center gap-2"
+              whileHover={{ scale: loading ? 1 : 1.05 }}
+              whileTap={{ scale: loading ? 1 : 0.95 }}
+            >
+              <Download className="w-4 h-4" />
+              Export CSV
+            </motion.button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
@@ -167,7 +209,14 @@ export function SongLog() {
                 </motion.div>
               ))}
 
-              {songs.length === 0 && (
+              {loading && (
+                <div className="text-center py-12">
+                  <RefreshCw className="w-16 h-16 text-cyan animate-spin mx-auto mb-4" />
+                  <p className="text-gray-400">Loading songs from DynamoDB...</p>
+                </div>
+              )}
+
+              {!loading && songs.length === 0 && (
                 <div className="text-center py-12">
                   <Music className="w-16 h-16 text-gray-600 mx-auto mb-4" />
                   <p className="text-gray-400">No songs played yet</p>

@@ -1,8 +1,13 @@
-import type { SongLogEntry } from '../types';
+import type { SongLogEntry, SensorData } from '../types';
+import dynamoDBService from './dynamodb.service';
+import authService from './auth.service';
 
 class SongLogService {
   private songs: SongLogEntry[] = [];
   private readonly MAX_SONGS = 500;
+  private dynamoDBSongs: SongLogEntry[] = [];
+  private lastDynamoDBFetch: number = 0;
+  private readonly DYNAMODB_CACHE_TTL = 60000; // 1 minute cache
 
   addSong(song: Omit<SongLogEntry, 'id'>) {
     this.loadSongs();
@@ -125,6 +130,159 @@ class SongLogService {
     }
   }
 
+  /**
+   * Fetch all songs from DynamoDB historical sensor data
+   * This is the primary source of truth for song history
+   */
+  async fetchSongsFromDynamoDB(days: number = 90): Promise<SongLogEntry[]> {
+    const now = Date.now();
+    
+    // Use cache if valid
+    if (this.dynamoDBSongs.length > 0 && (now - this.lastDynamoDBFetch) < this.DYNAMODB_CACHE_TTL) {
+      console.log('🎵 Using cached DynamoDB songs');
+      return this.dynamoDBSongs;
+    }
+    
+    try {
+      const user = authService.getStoredUser();
+      const venueId = user?.venueId;
+      
+      if (!venueId) {
+        console.warn('⚠️ No venueId found, cannot fetch songs from DynamoDB');
+        return [];
+      }
+      
+      console.log(`🎵 Fetching songs from DynamoDB for last ${days} days...`);
+      
+      // Fetch historical data - use custom day range
+      const timeRange = `${days}d`;
+      const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, timeRange);
+      
+      if (!historicalData.data || historicalData.data.length === 0) {
+        console.log('🎵 No historical data found in DynamoDB');
+        return [];
+      }
+      
+      // Extract songs from sensor data
+      const songs = this.extractSongsFromSensorData(historicalData.data);
+      
+      console.log(`🎵 Extracted ${songs.length} songs from ${historicalData.data.length} sensor readings`);
+      
+      // Cache the results
+      this.dynamoDBSongs = songs;
+      this.lastDynamoDBFetch = now;
+      
+      return songs;
+    } catch (error) {
+      console.error('❌ Error fetching songs from DynamoDB:', error);
+      return [];
+    }
+  }
+  
+  /**
+   * Extract unique songs from sensor data readings
+   * Deduplicates consecutive plays of the same song
+   */
+  private extractSongsFromSensorData(sensorData: SensorData[]): SongLogEntry[] {
+    const songs: SongLogEntry[] = [];
+    let lastSongKey = '';
+    
+    // Sort by timestamp ascending
+    const sorted = [...sensorData].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    for (const reading of sorted) {
+      if (!reading.currentSong) continue;
+      
+      // Create a unique key for this song
+      const songKey = `${reading.currentSong}|${reading.artist || 'Unknown'}`;
+      
+      // Skip if it's the same song as the last one (still playing)
+      if (songKey === lastSongKey) continue;
+      
+      lastSongKey = songKey;
+      
+      songs.push({
+        id: `db-${reading.timestamp}-${Math.random().toString(36).substr(2, 5)}`,
+        timestamp: reading.timestamp,
+        songName: reading.currentSong,
+        artist: reading.artist || 'Unknown Artist',
+        albumArt: reading.albumArt,
+        source: 'spotify',
+        genre: undefined
+      });
+    }
+    
+    // Return in reverse chronological order (newest first)
+    return songs.reverse();
+  }
+  
+  /**
+   * Get all songs - combines DynamoDB and localStorage
+   * DynamoDB is the primary source, localStorage is supplementary
+   */
+  async getAllSongs(limit?: number): Promise<SongLogEntry[]> {
+    // Fetch from DynamoDB
+    const dynamoSongs = await this.fetchSongsFromDynamoDB(90);
+    
+    // Load localStorage songs
+    this.loadSongs();
+    
+    // Combine and deduplicate
+    const allSongs = [...dynamoSongs];
+    
+    // Add localStorage songs that aren't already in DynamoDB
+    for (const localSong of this.songs) {
+      const exists = allSongs.some(s => 
+        s.songName === localSong.songName && 
+        s.artist === localSong.artist &&
+        Math.abs(new Date(s.timestamp).getTime() - new Date(localSong.timestamp).getTime()) < 5 * 60 * 1000
+      );
+      if (!exists) {
+        allSongs.push(localSong);
+      }
+    }
+    
+    // Sort by timestamp descending (newest first)
+    allSongs.sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    
+    return limit ? allSongs.slice(0, limit) : allSongs;
+  }
+  
+  /**
+   * Get top songs from all sources
+   */
+  async getTopSongsFromAll(limit: number = 10): Promise<Array<{ song: string; artist: string; plays: number }>> {
+    const allSongs = await this.getAllSongs();
+    const songCounts = new Map<string, { artist: string; plays: number }>();
+
+    allSongs.forEach(song => {
+      const key = `${song.songName}|${song.artist}`;
+      const current = songCounts.get(key) || { artist: song.artist, plays: 0 };
+      songCounts.set(key, { artist: current.artist, plays: current.plays + 1 });
+    });
+
+    return Array.from(songCounts.entries())
+      .map(([key, data]) => ({
+        song: key.split('|')[0],
+        artist: data.artist,
+        plays: data.plays
+      }))
+      .sort((a, b) => b.plays - a.plays)
+      .slice(0, limit);
+  }
+  
+  /**
+   * Clear the DynamoDB cache to force a refresh
+   */
+  clearCache(): void {
+    this.dynamoDBSongs = [];
+    this.lastDynamoDBFetch = 0;
+  }
+  
   exportToCSV(venueName?: string): void {
     this.loadSongs();
     const headers = ['Timestamp', 'Song', 'Artist', 'Source', 'Duration'];
@@ -148,6 +306,39 @@ class SongLogService {
     
     link.setAttribute('href', url);
     link.setAttribute('download', `${venuePrefix}-song-log-${new Date().toISOString()}.csv`);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+  
+  /**
+   * Export all songs (including DynamoDB) to CSV
+   */
+  async exportAllToCSV(venueName?: string): Promise<void> {
+    const allSongs = await this.getAllSongs();
+    const headers = ['Timestamp', 'Song', 'Artist', 'Source', 'Album Art'];
+    const rows = allSongs.map(song => [
+      song.timestamp,
+      song.songName,
+      song.artist,
+      song.source,
+      song.albumArt || 'N/A'
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const venuePrefix = venueName ? venueName.toLowerCase().replace(/\s+/g, '-') : 'song';
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${venuePrefix}-all-songs-${new Date().toISOString()}.csv`);
     link.style.visibility = 'hidden';
     
     document.body.appendChild(link);
