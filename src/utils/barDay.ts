@@ -55,6 +55,10 @@ export function getBarDayStartISO(timezone: string = 'America/New_York'): string
  * Calculate total entries and exits from sensor data array
  * for the current bar day (3am to now)
  * 
+ * Strategy: If the device sends cumulative values (since device start or midnight),
+ * we calculate the DIFFERENCE between the first reading at 3am and the latest reading.
+ * This gives us only the activity since 3am.
+ * 
  * @param data - Array of sensor data with occupancy info
  * @param timezone - Venue timezone
  * @returns Object with total entries and exits for the bar day
@@ -65,40 +69,72 @@ export function calculateBarDayOccupancy(
 ): { entries: number; exits: number; current: number } {
   const barDayStart = getBarDayStart(timezone);
   
-  let totalEntries = 0;
-  let totalExits = 0;
-  let latestCurrent = 0;
+  // Filter data to only include records with occupancy data
+  const dataWithOccupancy = data.filter(item => item.occupancy);
   
-  // Filter data to only include records from bar day start
-  const barDayData = data.filter(item => {
-    const itemTime = new Date(item.timestamp);
-    return itemTime >= barDayStart;
-  });
-  
-  // If we have data points, we need to determine if entries/exits are cumulative or incremental
-  // Assuming they're cumulative (reset at some point), we take the latest values
-  // If they're incremental, we'd sum them up
-  
-  // For now, let's assume the IoT device sends cumulative values that reset
-  // So we take the max values we've seen (or latest if monotonically increasing)
-  if (barDayData.length > 0) {
-    // Sort by timestamp descending to get latest first
-    const sorted = [...barDayData].sort((a, b) => 
-      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
-    
-    // Get the latest record's values
-    const latest = sorted[0];
-    if (latest.occupancy) {
-      totalEntries = latest.occupancy.entries || 0;
-      totalExits = latest.occupancy.exits || 0;
-      latestCurrent = latest.occupancy.current || 0;
-    }
+  if (dataWithOccupancy.length === 0) {
+    return { entries: 0, exits: 0, current: 0 };
   }
   
+  // Sort by timestamp ascending (oldest first)
+  const sorted = [...dataWithOccupancy].sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  
+  // Find the first reading at or after bar day start (3am)
+  const firstAfterBarDayStart = sorted.find(item => 
+    new Date(item.timestamp) >= barDayStart
+  );
+  
+  // Get the latest reading (last in sorted array)
+  const latest = sorted[sorted.length - 1];
+  
+  // Get the current occupancy from latest reading
+  const latestCurrent = latest.occupancy?.current || 0;
+  
+  // If we have a reading from bar day start, calculate the difference
+  // Otherwise, fall back to the latest values (device may have reset at 3am)
+  if (firstAfterBarDayStart && firstAfterBarDayStart !== latest) {
+    const startEntries = firstAfterBarDayStart.occupancy?.entries || 0;
+    const startExits = firstAfterBarDayStart.occupancy?.exits || 0;
+    const latestEntries = latest.occupancy?.entries || 0;
+    const latestExits = latest.occupancy?.exits || 0;
+    
+    // Calculate difference (activity since bar day start)
+    const barDayEntries = Math.max(0, latestEntries - startEntries);
+    const barDayExits = Math.max(0, latestExits - startExits);
+    
+    console.log('📊 Bar day calculation (difference method):', {
+      barDayStart: barDayStart.toISOString(),
+      firstReading: firstAfterBarDayStart.timestamp,
+      latestReading: latest.timestamp,
+      startEntries,
+      latestEntries,
+      barDayEntries,
+      startExits,
+      latestExits,
+      barDayExits
+    });
+    
+    return {
+      entries: barDayEntries,
+      exits: barDayExits,
+      current: latestCurrent
+    };
+  }
+  
+  // Fallback: If no reading from before bar day start, 
+  // the device likely reset at 3am, so use latest values directly
+  console.log('📊 Bar day calculation (direct method - device likely reset at 3am):', {
+    barDayStart: barDayStart.toISOString(),
+    latestReading: latest.timestamp,
+    entries: latest.occupancy?.entries || 0,
+    exits: latest.occupancy?.exits || 0
+  });
+  
   return {
-    entries: totalEntries,
-    exits: totalExits,
+    entries: latest.occupancy?.entries || 0,
+    exits: latest.occupancy?.exits || 0,
     current: latestCurrent
   };
 }
