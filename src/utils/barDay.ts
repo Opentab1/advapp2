@@ -155,3 +155,135 @@ export function formatBarDayRange(timezone: string = 'America/New_York'): string
   }
   return '3:00 AM - Now';
 }
+
+/**
+ * Get all bar day boundaries within a date range
+ * Each bar day runs from 3am to 3am the next day
+ * 
+ * @param startDate - Start of the range
+ * @param endDate - End of the range
+ * @param timezone - Venue timezone
+ * @returns Array of bar day periods with start/end times
+ */
+export function getBarDayBoundaries(
+  startDate: Date,
+  endDate: Date,
+  timezone: string = 'America/New_York'
+): Array<{ start: Date; end: Date; label: string }> {
+  const boundaries: Array<{ start: Date; end: Date; label: string }> = [];
+  
+  // Convert to venue timezone to work with local times
+  const startVenue = new Date(startDate.toLocaleString('en-US', { timeZone: timezone }));
+  const endVenue = new Date(endDate.toLocaleString('en-US', { timeZone: timezone }));
+  
+  // Find the first 3am on or before startDate
+  let current = new Date(startVenue);
+  current.setHours(BAR_DAY_START_HOUR, 0, 0, 0);
+  if (startVenue.getHours() < BAR_DAY_START_HOUR) {
+    current.setDate(current.getDate() - 1);
+  }
+  
+  // Iterate through bar days
+  while (current < endVenue) {
+    const barDayStart = new Date(current);
+    const barDayEnd = new Date(current);
+    barDayEnd.setDate(barDayEnd.getDate() + 1);
+    
+    // Format label as "Mon Dec 18" (the date the bar day starts on)
+    const label = barDayStart.toLocaleDateString('en-US', { 
+      weekday: 'short', 
+      month: 'short', 
+      day: 'numeric',
+      timeZone: timezone 
+    });
+    
+    boundaries.push({
+      start: barDayStart,
+      end: barDayEnd,
+      label
+    });
+    
+    current = barDayEnd;
+  }
+  
+  return boundaries;
+}
+
+/**
+ * Aggregate occupancy data by bar day for a date range
+ * Returns daily totals for entries/exits based on 3am-3am boundaries
+ * 
+ * @param data - Array of sensor data with occupancy info
+ * @param startDate - Start of the range
+ * @param endDate - End of the range  
+ * @param timezone - Venue timezone
+ * @returns Object with total entries/exits and daily breakdown
+ */
+export function aggregateOccupancyByBarDay(
+  data: Array<{ timestamp: string; occupancy?: { entries: number; exits: number; current?: number } }>,
+  startDate: Date,
+  endDate: Date,
+  timezone: string = 'America/New_York'
+): {
+  totalEntries: number;
+  totalExits: number;
+  dailyBreakdown: Array<{ date: string; entries: number; exits: number }>;
+} {
+  const barDays = getBarDayBoundaries(startDate, endDate, timezone);
+  const dailyBreakdown: Array<{ date: string; entries: number; exits: number }> = [];
+  let totalEntries = 0;
+  let totalExits = 0;
+  
+  // Filter data to only include records with occupancy
+  const dataWithOccupancy = data.filter(item => item.occupancy);
+  
+  if (dataWithOccupancy.length === 0) {
+    return { totalEntries: 0, totalExits: 0, dailyBreakdown: [] };
+  }
+  
+  // Sort by timestamp ascending
+  const sorted = [...dataWithOccupancy].sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  
+  // Process each bar day
+  for (const barDay of barDays) {
+    // Get data points within this bar day
+    const barDayData = sorted.filter(item => {
+      const itemTime = new Date(item.timestamp);
+      return itemTime >= barDay.start && itemTime < barDay.end;
+    });
+    
+    if (barDayData.length === 0) {
+      dailyBreakdown.push({ date: barDay.label, entries: 0, exits: 0 });
+      continue;
+    }
+    
+    // Get first and last readings for this bar day
+    const first = barDayData[0];
+    const last = barDayData[barDayData.length - 1];
+    
+    // Calculate entries/exits as difference (handles cumulative values)
+    const dayEntries = Math.max(0, (last.occupancy?.entries || 0) - (first.occupancy?.entries || 0));
+    const dayExits = Math.max(0, (last.occupancy?.exits || 0) - (first.occupancy?.exits || 0));
+    
+    dailyBreakdown.push({ 
+      date: barDay.label, 
+      entries: dayEntries, 
+      exits: dayExits 
+    });
+    
+    totalEntries += dayEntries;
+    totalExits += dayExits;
+  }
+  
+  console.log('📊 Bar day aggregation complete:', {
+    period: `${startDate.toISOString()} to ${endDate.toISOString()}`,
+    barDaysProcessed: barDays.length,
+    totalEntries,
+    totalExits,
+    dailyBreakdown
+  });
+  
+  return { totalEntries, totalExits, dailyBreakdown };
+}

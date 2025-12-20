@@ -78,22 +78,31 @@ class AIReportService {
   }
 
   private generateSummary(metrics: WeeklyMetrics): string {
-    if (metrics.avgComfort === 0 && metrics.avgTemperature === 0) {
+    if (metrics.avgComfort === 0 && metrics.avgTemperature === 0 && !metrics.totalEntries) {
       return 'Insufficient historical data available to generate a comprehensive weekly summary. Continue collecting sensor data to enable detailed AI insights and recommendations.';
     }
 
     const comfortStatus = metrics.avgComfort >= 80 ? 'excellent' : 
                          metrics.avgComfort >= 65 ? 'good' : 'needs improvement';
     
+    // Occupancy summary (using bar day calculation)
+    const occupancyText = metrics.totalEntries && metrics.totalEntries > 0
+      ? `Recorded ${metrics.totalEntries.toLocaleString()} customer entries (${metrics.avgDailyEntries?.toLocaleString() || 0} daily average, calculated using 3am-3am bar days)`
+      : 'Customer entry data not yet available';
+    
     const revenueText = metrics.totalRevenue > 0 
-      ? `Total revenue reached $${metrics.totalRevenue.toLocaleString()} across ${metrics.totalCustomers.toLocaleString()} customers`
-      : 'Revenue data not yet available (requires POS integration)';
+      ? `. Total revenue reached $${metrics.totalRevenue.toLocaleString()}`
+      : '';
     
     const peakText = metrics.peakHours.length > 0
       ? `, with peak activity during ${metrics.peakHours.join(', ')}`
       : '';
 
-    return `This week showed ${comfortStatus} environmental conditions with an average comfort score of ${metrics.avgComfort.toFixed(1)}. ${revenueText}${peakText}.`;
+    const envText = metrics.avgTemperature > 0 
+      ? `This period showed ${comfortStatus} environmental conditions with an average temperature of ${metrics.avgTemperature.toFixed(1)}°F. `
+      : '';
+
+    return `${envText}${occupancyText}${revenueText}${peakText}.`;
   }
 
   private generateInsights(metrics: WeeklyMetrics): ReportInsight[] {
@@ -167,6 +176,26 @@ class AIReportService {
       });
     }
 
+    // Occupancy Insight (using bar day 3am-3am calculation)
+    if (metrics.totalEntries && metrics.totalEntries > 0) {
+      const avgDaily = metrics.avgDailyEntries || 0;
+      insights.push({
+        category: 'Occupancy',
+        title: 'Customer Traffic',
+        description: `Total of ${metrics.totalEntries.toLocaleString()} entries recorded (bar days: 3am-3am). Average of ${avgDaily.toLocaleString()} customers per day.`,
+        trend: 'up',
+        value: `${metrics.totalEntries.toLocaleString()} entries`
+      });
+    } else {
+      insights.push({
+        category: 'Occupancy',
+        title: 'Customer Traffic',
+        description: 'Occupancy tracking data not yet available. Ensure sensors are reporting entries/exits.',
+        trend: 'stable',
+        value: 'N/A'
+      });
+    }
+
     return insights;
   }
 
@@ -224,6 +253,25 @@ class AIReportService {
     // Music recommendations (only if data available)
     if (metrics.topSongs.length >= 3) {
       recommendations.push(`Top songs (${metrics.topSongs.slice(0, 3).map(s => s.song).join(', ')}) resonate well. Create similar playlists for consistent atmosphere.`);
+    }
+
+    // Occupancy recommendations (using bar day data)
+    if (metrics.totalEntries && metrics.avgDailyEntries) {
+      if (metrics.avgDailyEntries > 200) {
+        recommendations.push(`Strong customer traffic with ${metrics.avgDailyEntries} average daily entries. Consider expanding capacity during peak hours.`);
+      } else if (metrics.avgDailyEntries > 100) {
+        recommendations.push(`Healthy customer flow with ${metrics.avgDailyEntries} average daily entries. Focus on retention and repeat visits.`);
+      } else if (metrics.avgDailyEntries > 0) {
+        recommendations.push(`Customer traffic averaging ${metrics.avgDailyEntries} daily entries. Consider promotions or events to boost foot traffic.`);
+      }
+      
+      // Entry/exit ratio insight
+      if (metrics.totalExits && metrics.totalEntries > 0) {
+        const ratio = metrics.totalExits / metrics.totalEntries;
+        if (ratio < 0.9) {
+          recommendations.push('Entry/exit ratio suggests some customers may be staying overnight or exits not fully captured. Verify sensor accuracy.');
+        }
+      }
     }
 
     // If we have some recommendations, return them

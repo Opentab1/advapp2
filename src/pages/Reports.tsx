@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Download, Sparkles, TrendingUp, Calendar, Music, ThermometerSun, Users, Mail } from 'lucide-react';
+import { FileText, Download, Sparkles, TrendingUp, Calendar, Music, ThermometerSun, Users } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 import aiReportService from '../services/ai-report.service';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import { isDemoAccount, generateDemoMonthlyReport, generateDemoMusicReport, generateDemoAtmosphereReport, generateDemoOccupancyReport, generateDemoWeeklyMetrics } from '../utils/demoData';
+import { aggregateOccupancyByBarDay } from '../utils/barDay';
+import locationService from '../services/location.service';
 import type { WeeklyReport, WeeklyMetrics } from '../types';
 
 type ReportType = 'weekly' | 'monthly' | 'music' | 'atmosphere' | 'occupancy' | 'custom';
@@ -111,7 +113,7 @@ export function Reports() {
       
       try {
         // Fetch historical data based on selected time range
-        const historicalData = await apiService.getHistoricalData(venueId, daysToFetch);
+        const historicalData = await apiService.getHistoricalData(venueId, daysToFetch as any);
         
         // Calculate metrics from real data
         let totalComfort = 0;
@@ -119,16 +121,33 @@ export function Reports() {
         let totalDecibels = 0;
         let totalHumidity = 0;
         let dataPoints = 0;
+        let maxOccupancy = 0;
 
         if (historicalData.data && historicalData.data.length > 0) {
           historicalData.data.forEach((point) => {
-            if (point.comfort) totalComfort += point.comfort;
             if (point.indoorTemp) totalTemp += point.indoorTemp;
             if (point.decibels) totalDecibels += point.decibels;
             if (point.humidity) totalHumidity += point.humidity;
+            if (point.occupancy?.current && point.occupancy.current > maxOccupancy) {
+              maxOccupancy = point.occupancy.current;
+            }
             dataPoints++;
           });
         }
+
+        // Get venue timezone for bar day calculations
+        const locations = locationService.getLocations();
+        const timezone = locations[0]?.timezone || 'America/New_York';
+        
+        // Calculate occupancy using bar day (3am-3am) boundaries
+        const occupancyStats = aggregateOccupancyByBarDay(
+          historicalData.data || [],
+          weekStart,
+          weekEnd,
+          timezone
+        );
+        
+        const daysInPeriod = occupancyStats.dailyBreakdown.length || 1;
 
         const metrics: WeeklyMetrics = {
           avgComfort: dataPoints > 0 ? totalComfort / dataPoints : 0,
@@ -136,10 +155,19 @@ export function Reports() {
           avgDecibels: dataPoints > 0 ? totalDecibels / dataPoints : 0,
           avgHumidity: dataPoints > 0 ? totalHumidity / dataPoints : 0,
           peakHours: dataPoints > 0 ? ['6-7 PM', '8-9 PM', '9-10 PM'] : [],
-          totalCustomers: 0, // Not available yet - future POS integration
+          totalCustomers: occupancyStats.totalEntries, // Use bar day entries as customer count
           totalRevenue: 0, // Not available yet - future POS integration
-          topSongs: [] // Not available yet - future song analytics
+          topSongs: [], // Not available yet - future song analytics
+          // Bar day occupancy metrics
+          totalEntries: occupancyStats.totalEntries,
+          totalExits: occupancyStats.totalExits,
+          avgDailyEntries: Math.round(occupancyStats.totalEntries / daysInPeriod),
+          avgDailyExits: Math.round(occupancyStats.totalExits / daysInPeriod),
+          peakOccupancy: maxOccupancy,
+          dailyOccupancy: occupancyStats.dailyBreakdown
         };
+        
+        console.log('📊 Report metrics with bar day occupancy:', metrics);
 
         const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
         await aiReportService.saveReport(report);
@@ -158,7 +186,13 @@ export function Reports() {
           peakHours: [],
           totalCustomers: 0,
           totalRevenue: 0,
-          topSongs: []
+          topSongs: [],
+          totalEntries: 0,
+          totalExits: 0,
+          avgDailyEntries: 0,
+          avgDailyExits: 0,
+          peakOccupancy: 0,
+          dailyOccupancy: []
         };
 
         const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
@@ -388,20 +422,50 @@ export function Reports() {
               {/* Key Metrics */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="glass-card p-4">
-                  <div className="text-sm text-gray-400 mb-1">Comfort Score</div>
-                  <div className="text-2xl font-bold text-cyan">{selectedReport.metrics.avgComfort.toFixed(1)}</div>
+                  <div className="text-sm text-gray-400 mb-1">Total Entries</div>
+                  <div className="text-2xl font-bold text-green-400">
+                    {(selectedReport.metrics.totalEntries ?? selectedReport.metrics.totalCustomers).toLocaleString()}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">3am-3am bar days</div>
+                </div>
+                <div className="glass-card p-4">
+                  <div className="text-sm text-gray-400 mb-1">Total Exits</div>
+                  <div className="text-2xl font-bold text-red-400">
+                    {(selectedReport.metrics.totalExits ?? 0).toLocaleString()}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">3am-3am bar days</div>
+                </div>
+                <div className="glass-card p-4">
+                  <div className="text-sm text-gray-400 mb-1">Avg Daily Entries</div>
+                  <div className="text-2xl font-bold text-cyan">
+                    {(selectedReport.metrics.avgDailyEntries ?? 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="glass-card p-4">
+                  <div className="text-sm text-gray-400 mb-1">Peak Occupancy</div>
+                  <div className="text-2xl font-bold text-yellow-400">
+                    {(selectedReport.metrics.peakOccupancy ?? 0).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Environmental Metrics */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="glass-card p-4">
+                  <div className="text-sm text-gray-400 mb-1">Avg Temp</div>
+                  <div className="text-2xl font-bold text-orange-400">{selectedReport.metrics.avgTemperature.toFixed(1)}°F</div>
+                </div>
+                <div className="glass-card p-4">
+                  <div className="text-sm text-gray-400 mb-1">Avg Sound</div>
+                  <div className="text-2xl font-bold text-purple-400">{selectedReport.metrics.avgDecibels.toFixed(1)} dB</div>
+                </div>
+                <div className="glass-card p-4">
+                  <div className="text-sm text-gray-400 mb-1">Avg Humidity</div>
+                  <div className="text-2xl font-bold text-blue-400">{selectedReport.metrics.avgHumidity.toFixed(1)}%</div>
                 </div>
                 <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Revenue</div>
                   <div className="text-2xl font-bold text-green-400">${selectedReport.metrics.totalRevenue.toLocaleString()}</div>
-                </div>
-                <div className="glass-card p-4">
-                  <div className="text-sm text-gray-400 mb-1">Customers</div>
-                  <div className="text-2xl font-bold text-yellow-400">{selectedReport.metrics.totalCustomers.toLocaleString()}</div>
-                </div>
-                <div className="glass-card p-4">
-                  <div className="text-sm text-gray-400 mb-1">Avg Temp</div>
-                  <div className="text-2xl font-bold text-orange-400">{selectedReport.metrics.avgTemperature.toFixed(1)}°F</div>
                 </div>
               </div>
 

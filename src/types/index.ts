@@ -213,6 +213,13 @@ export interface WeeklyMetrics {
   totalCustomers: number;
   totalRevenue: number;
   topSongs: Array<{ song: string; plays: number }>;
+  // Occupancy metrics (using bar day 3am-3am calculation)
+  totalEntries?: number;
+  totalExits?: number;
+  avgDailyEntries?: number;
+  avgDailyExits?: number;
+  peakOccupancy?: number;
+  dailyOccupancy?: Array<{ date: string; entries: number; exits: number }>;
 }
 
 // Progressive Learning Pulse Score System
