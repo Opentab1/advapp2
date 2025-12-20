@@ -133,12 +133,13 @@ class SongLogService {
   /**
    * Fetch all songs from DynamoDB historical sensor data
    * This is the primary source of truth for song history
+   * Fetches in 3-day chunks to get ALL data and avoid query limits
    */
   async fetchSongsFromDynamoDB(days: number = 90): Promise<SongLogEntry[]> {
-    const now = Date.now();
+    const nowTime = Date.now();
     
     // Use cache if valid
-    if (this.dynamoDBSongs.length > 0 && (now - this.lastDynamoDBFetch) < this.DYNAMODB_CACHE_TTL) {
+    if (this.dynamoDBSongs.length > 0 && (nowTime - this.lastDynamoDBFetch) < this.DYNAMODB_CACHE_TTL) {
       console.log('🎵 Using cached DynamoDB songs');
       return this.dynamoDBSongs;
     }
@@ -152,21 +153,71 @@ class SongLogService {
         return [];
       }
       
-      console.log(`🎵 Fetching songs from DynamoDB for last ${days} days...`);
+      console.log(`🎵 Fetching ALL songs from DynamoDB for last ${days} days...`);
       
-      // Fetch historical data - use custom day range
-      const timeRange = `${days}d`;
-      const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, timeRange);
+      // Fetch in 3-day chunks to ensure we get ALL data
+      // With 15-second intervals, 3 days = ~17,280 readings, well under 50k limit
+      const allSensorData: SensorData[] = [];
+      const chunkSizeDays = 3;
+      const now = new Date();
       
-      if (!historicalData.data || historicalData.data.length === 0) {
+      // Calculate number of chunks needed
+      const chunks = Math.ceil(days / chunkSizeDays);
+      let totalReadings = 0;
+      
+      for (let i = 0; i < chunks; i++) {
+        // Calculate the time window for this chunk
+        // Chunk 0 = most recent 3 days, Chunk 1 = 3-6 days ago, etc.
+        const chunkEndDaysAgo = i * chunkSizeDays;
+        const chunkStartDaysAgo = Math.min((i + 1) * chunkSizeDays, days);
+        
+        const chunkEnd = new Date(now.getTime() - chunkEndDaysAgo * 24 * 60 * 60 * 1000);
+        const chunkStart = new Date(now.getTime() - chunkStartDaysAgo * 24 * 60 * 60 * 1000);
+        
+        console.log(`🎵 Chunk ${i + 1}/${chunks}: ${chunkStart.toLocaleDateString()} to ${chunkEnd.toLocaleDateString()}`);
+        
+        try {
+          // Use the new date range method with high limit
+          const chunkData = await dynamoDBService.getSensorDataByDateRange(
+            venueId, 
+            chunkStart, 
+            chunkEnd, 
+            20000 // High limit per chunk
+          );
+          
+          if (chunkData && chunkData.length > 0) {
+            allSensorData.push(...chunkData);
+            totalReadings += chunkData.length;
+            console.log(`🎵 Chunk ${i + 1}: ${chunkData.length} readings (total: ${totalReadings})`);
+          }
+        } catch (chunkError) {
+          console.warn(`⚠️ Error fetching chunk ${i + 1}:`, chunkError);
+          // Continue with other chunks
+        }
+        
+        // Small delay to avoid rate limiting
+        if (i < chunks - 1) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      }
+      
+      if (allSensorData.length === 0) {
         console.log('🎵 No historical data found in DynamoDB');
         return [];
       }
       
-      // Extract songs from sensor data
-      const songs = this.extractSongsFromSensorData(historicalData.data);
+      // Remove duplicates by timestamp
+      const uniqueData = Array.from(
+        new Map(allSensorData.map(d => [d.timestamp, d])).values()
+      );
       
-      console.log(`🎵 Extracted ${songs.length} songs from ${historicalData.data.length} sensor readings`);
+      // Sort by timestamp (newest first)
+      uniqueData.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      
+      // Extract songs from sensor data
+      const songs = this.extractSongsFromSensorData(uniqueData);
+      
+      console.log(`🎵 Extracted ${songs.length} unique songs from ${uniqueData.length} sensor readings (${chunks} chunks, ${totalReadings} total fetched)`);
       
       // Cache the results
       this.dynamoDBSongs = songs;

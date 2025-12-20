@@ -387,6 +387,55 @@ class DynamoDBService {
   }
 
   /**
+   * Get sensor data for a specific date range (used for chunked fetching like song history)
+   * Returns raw sensor data between absolute start and end times
+   */
+  async getSensorDataByDateRange(venueId: string, startTime: Date, endTime: Date, limit: number = 10000): Promise<SensorData[]> {
+    console.log(`🔍 Fetching sensor data for date range: ${startTime.toISOString()} to ${endTime.toISOString()}`);
+    
+    // Demo mode check
+    if (isDemoAccount(venueId)) {
+      console.log('🎭 Demo mode - skipping date range query');
+      return [];
+    }
+    
+    try {
+      this.checkGraphQLEndpoint();
+      
+      const session = await fetchAuthSession();
+      if (!session.tokens) {
+        throw new Error('Not authenticated. Please log in again.');
+      }
+
+      const client = this.getClient();
+      
+      const response = await client.graphql({
+        query: listSensorData,
+        variables: { 
+          venueId, 
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          limit
+        },
+        authMode: 'userPool'
+      }) as any;
+
+      if (response?.errors && response.errors.length > 0) {
+        console.error('❌ GraphQL errors:', response.errors);
+        throw new Error(`GraphQL error: ${response.errors.map((e: any) => e.message).join(', ')}`);
+      }
+
+      const items = response?.data?.listSensorData?.items || [];
+      console.log(`✅ Retrieved ${items.length} items for date range`);
+      
+      return items.map((item: any) => this.transformDynamoDBData(item));
+    } catch (error: any) {
+      console.error('❌ Error fetching sensor data by date range:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get occupancy metrics for a venue
    */
   async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
