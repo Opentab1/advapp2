@@ -35,6 +35,7 @@ import { Settings } from './Settings';
 import { SongLog } from './SongLog';
 import { Reports } from './Reports';
 import { Support } from './Support';
+import { PulseRecommendations } from './PulseRecommendations';
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -1030,6 +1031,8 @@ export function Dashboard() {
                 </>
               )}
             </>
+          ) : activeTab === 'pulse' ? (
+            <PulseRecommendations />
           ) : activeTab === 'songs' ? (
             <SongLog />
           ) : activeTab === 'reports' ? (
