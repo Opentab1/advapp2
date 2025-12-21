@@ -5,6 +5,7 @@ import type {
   SensorData 
 } from '../types';
 import { isDemoAccount, generateDemoOptimalRanges } from '../utils/demoData';
+import dynamoDBService from './dynamodb.service';
 
 /**
  * Pulse Learning Service
@@ -19,6 +20,7 @@ class PulseLearningService {
 
   /**
    * Calculate learning confidence based on data availability
+   * Uses actual sensor data from DynamoDB to determine how much data we have
    * 
    * @param venueId - Venue identifier
    * @returns Confidence level (0-0.90)
@@ -30,20 +32,24 @@ class PulseLearningService {
         return 0.75;
       }
       
-      const performanceData = await this.getPerformanceHistory(venueId);
+      // Fetch 90 days of sensor data from DynamoDB
+      const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '90d');
       
-      if (!performanceData || performanceData.length < this.MIN_DATA_POINTS) {
+      if (!historicalData?.data || historicalData.data.length < this.MIN_DATA_POINTS) {
+        console.log(`📊 Learning: Insufficient data (${historicalData?.data?.length || 0} points, need ${this.MIN_DATA_POINTS})`);
         return 0;
       }
 
       // Calculate unique days with data
       const uniqueDays = new Set(
-        performanceData.map(d => new Date(d.timestamp).toDateString())
+        historicalData.data.map(d => new Date(d.timestamp).toDateString())
       ).size;
 
       // Confidence grows with more days of data
-      // 0 days = 0%, 30 days = 30%, 60 days = 60%, 100+ days = 90%
+      // 1 day = 1%, 7 days = 7%, 30 days = 30%, 60 days = 60%, 90+ days = 90%
       const confidence = Math.min(this.LEARNING_CAP, uniqueDays / 100);
+      
+      console.log(`📊 Learning: ${uniqueDays} unique days of data → ${Math.round(confidence * 100)}% confidence`);
 
       return confidence;
     } catch (error) {
@@ -352,6 +358,7 @@ class PulseLearningService {
 
   /**
    * Get learned optimal ranges for a venue
+   * Calculates optimal ranges from actual sensor data
    * 
    * @param venueId - Venue identifier
    * @returns Optimal ranges or null if not yet learned
@@ -359,15 +366,68 @@ class PulseLearningService {
   async getOptimalRanges(venueId: string): Promise<VenueOptimalRanges | null> {
     // Demo account: return simulated learned ranges
     if (isDemoAccount(venueId)) {
-      // Simulate async delay
       await new Promise(resolve => setTimeout(resolve, 100));
       return generateDemoOptimalRanges();
     }
     
-    // TODO: Implement actual DynamoDB query to VenueOptimalRanges table
-    
-    // For now, return null (no learned data yet)
-    return null;
+    try {
+      // Fetch 90 days of sensor data
+      const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '90d');
+      
+      if (!historicalData?.data || historicalData.data.length < this.MIN_DATA_POINTS) {
+        return null;
+      }
+      
+      const data = historicalData.data;
+      
+      // Extract environmental values
+      const temperatures = data.map(d => d.indoorTemp).filter(v => v !== undefined && v > 0);
+      const lights = data.map(d => d.light).filter(v => v !== undefined && v >= 0);
+      const sounds = data.map(d => d.decibels).filter(v => v !== undefined && v > 0);
+      const humidities = data.map(d => d.humidity).filter(v => v !== undefined && v > 0);
+      
+      if (temperatures.length === 0 || lights.length === 0 || sounds.length === 0 || humidities.length === 0) {
+        return null;
+      }
+      
+      // Calculate optimal ranges from actual data
+      const tempRange = this.calculateOptimalRange(temperatures);
+      const lightRange = this.calculateOptimalRange(lights);
+      const soundRange = this.calculateOptimalRange(sounds);
+      const humidityRange = this.calculateOptimalRange(humidities);
+      
+      // Calculate confidence
+      const uniqueDays = new Set(data.map(d => new Date(d.timestamp).toDateString())).size;
+      const confidence = Math.min(this.LEARNING_CAP, uniqueDays / 100);
+      
+      console.log(`📊 Optimal ranges calculated from ${data.length} data points (${uniqueDays} days)`);
+      
+      return {
+        venueId,
+        lastCalculated: new Date().toISOString(),
+        dataPointsAnalyzed: data.length,
+        learningConfidence: confidence,
+        optimalRanges: {
+          temperature: tempRange,
+          light: lightRange,
+          sound: soundRange,
+          humidity: humidityRange
+        },
+        weights: {
+          temperature: 0.30,
+          light: 0.20,
+          sound: 0.30,
+          humidity: 0.20
+        },
+        benchmarks: {
+          avgDwellTimeTop20: 120, // Default benchmark
+          avgOccupancyTop20: 50
+        }
+      };
+    } catch (error) {
+      console.error('Error getting optimal ranges:', error);
+      return null;
+    }
   }
 
   /**
