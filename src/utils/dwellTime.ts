@@ -96,6 +96,79 @@ export function calculateCurrentHourDwellTime(
 }
 
 /**
+ * Calculate dwell time from recent sensor data (last N hours)
+ * Filters data to only include readings from the specified time window
+ * and calculates using Little's Law
+ * 
+ * @param data - Array of sensor data points (should include recent history)
+ * @param hoursBack - How many hours of recent data to use (default 2)
+ * @returns Average dwell time in minutes, or null if cannot calculate
+ */
+export function calculateRecentDwellTime(
+  data: SensorData[],
+  hoursBack: number = 2
+): number | null {
+  if (!data || data.length === 0) {
+    return null;
+  }
+
+  const now = new Date();
+  const cutoffTime = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
+
+  // Filter to only recent data
+  const recentData = data.filter(d => {
+    const timestamp = new Date(d.timestamp);
+    return timestamp >= cutoffTime;
+  });
+
+  if (recentData.length < 2) {
+    // Need at least 2 data points to calculate entry difference
+    return null;
+  }
+
+  // Sort by timestamp (oldest first)
+  const sorted = [...recentData].sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+
+  // Calculate average occupancy from recent data
+  const occupancyValues = sorted
+    .filter(d => d.occupancy?.current !== undefined && d.occupancy.current > 0)
+    .map(d => d.occupancy!.current);
+
+  if (occupancyValues.length === 0) {
+    return null;
+  }
+
+  const avgOccupancy = occupancyValues.reduce((sum, val) => sum + val, 0) / occupancyValues.length;
+
+  // Get entries difference in the time window
+  const entryData = sorted.filter(d => d.occupancy?.entries !== undefined);
+  
+  if (entryData.length < 2) {
+    return null;
+  }
+
+  const firstEntries = entryData[0].occupancy!.entries;
+  const lastEntries = entryData[entryData.length - 1].occupancy!.entries;
+  const totalEntries = Math.max(0, lastEntries - firstEntries);
+
+  // Calculate actual time span (might be less than hoursBack if data is limited)
+  const firstTime = new Date(sorted[0].timestamp).getTime();
+  const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
+  const actualHours = (lastTime - firstTime) / (1000 * 60 * 60);
+
+  // Need a reasonable time span
+  if (actualHours < 0.25 || totalEntries === 0) {
+    return null;
+  }
+
+  console.log(`📊 Dwell time calc: avgOccupancy=${avgOccupancy.toFixed(1)}, entries=${totalEntries}, hours=${actualHours.toFixed(2)}`);
+
+  return calculateDwellTime(avgOccupancy, totalEntries, actualHours);
+}
+
+/**
  * Format dwell time for display
  * 
  * @param dwellTimeMinutes - Dwell time in minutes

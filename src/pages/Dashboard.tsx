@@ -39,7 +39,7 @@ import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { calculateComfortLevel, calculateComfortBreakdown, calculatePulseScore } from '../utils/comfort';
 import { formatTemperature, formatDecibels, formatLight, formatHumidity } from '../utils/format';
-import { formatDwellTime } from '../utils/dwellTime';
+import { formatDwellTime, calculateRecentDwellTime } from '../utils/dwellTime';
 import { calculateBarDayOccupancy, formatBarDayRange, aggregateOccupancyByBarDay } from '../utils/barDay';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
@@ -61,6 +61,7 @@ export function Dashboard() {
   const [pulseScoreResult, setPulseScoreResult] = useState<PulseScoreResult | null>(null);
   const [barDayOccupancy, setBarDayOccupancy] = useState<{ entries: number; exits: number; current: number } | null>(null);
   const [periodOccupancy, setPeriodOccupancy] = useState<{ entries: number; exits: number; current: number } | null>(null);
+  const [calculatedDwellTime, setCalculatedDwellTime] = useState<number | null>(null);
   
   // Check if this is demo mode
   const isDemoMode = isDemoAccount(user?.venueId);
@@ -304,7 +305,7 @@ export function Dashboard() {
     }
   };
 
-  // Load bar day occupancy (3am-3am for bars)
+  // Load bar day occupancy (3am-3am for bars) and calculate dwell time
   const loadBarDayOccupancy = async () => {
     try {
       // Get venue timezone from current location or default to EST
@@ -317,6 +318,11 @@ export function Dashboard() {
         const barDayStats = calculateBarDayOccupancy(data.data, timezone);
         setBarDayOccupancy(barDayStats);
         console.log('📊 Bar day occupancy calculated:', barDayStats, `(${formatBarDayRange(timezone)})`);
+        
+        // Calculate dwell time from last 2 hours of sensor data
+        const dwellTime = calculateRecentDwellTime(data.data, 2);
+        setCalculatedDwellTime(dwellTime);
+        console.log('📊 Dwell time calculated from recent data:', dwellTime ? `${dwellTime} minutes` : 'N/A');
       }
     } catch (err: any) {
       console.error('Failed to load bar day occupancy:', err);
@@ -807,8 +813,8 @@ export function Dashboard() {
                       <div className="mb-6">
                         <MetricCard
                           title="Avg Dwell Time"
-                          value={occupancyMetrics.avgDwellTimeMinutes !== null 
-                            ? formatDwellTime(occupancyMetrics.avgDwellTimeMinutes).replace(' ', '\n')
+                          value={calculatedDwellTime !== null 
+                            ? formatDwellTime(calculatedDwellTime).replace(' ', '\n')
                             : '--'}
                           unit="per visit"
                           icon={Clock}
@@ -921,8 +927,8 @@ export function Dashboard() {
 
                     <MetricCard
                       title="Avg Dwell Time"
-                      value={occupancyMetrics?.avgDwellTimeMinutes !== null && occupancyMetrics?.avgDwellTimeMinutes !== undefined
-                        ? formatDwellTime(occupancyMetrics.avgDwellTimeMinutes)
+                      value={calculatedDwellTime !== null
+                        ? formatDwellTime(calculatedDwellTime)
                         : '--'}
                       unit="per visit"
                       icon={Clock}
