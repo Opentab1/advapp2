@@ -8,6 +8,7 @@ import {
   Download,
   RefreshCw,
   Cloud,
+  CloudSun,
   Users,
   UserPlus,
   UserMinus,
@@ -852,7 +853,7 @@ export function Dashboard() {
                   )}
 
                   {/* Hero Metrics Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4 mb-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4 mb-6">
                     <MetricCard
                       title="Sound Level"
                       value={currentData ? formatDecibels(currentData.decibels).split(' ')[0] : '--'}
@@ -878,6 +879,15 @@ export function Dashboard() {
                       icon={Thermometer}
                       color="#ff6b6b"
                       delay={0.2}
+                    />
+                    
+                    <MetricCard
+                      title="Outdoor Temp"
+                      value="Soon"
+                      unit="coming"
+                      icon={CloudSun}
+                      color="#87CEEB"
+                      delay={0.22}
                     />
                     
                     <MetricCard
@@ -999,12 +1009,22 @@ export function Dashboard() {
                         color="#ff6b6b"
                       />
                       
-                      <DataChart
-                        data={chartData}
-                        metric="outdoorTemp"
-                        title="Outdoor Temperature"
-                        color="#60a5fa"
-                      />
+                      {/* Outdoor Temperature - Coming Soon */}
+                      <motion.div 
+                        className="glass-card p-6"
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                      >
+                        <div className="flex items-center gap-3 mb-4">
+                          <CloudSun className="w-5 h-5 text-sky-400" />
+                          <h3 className="text-lg font-semibold text-white">Outdoor Temperature</h3>
+                        </div>
+                        <div className="flex flex-col items-center justify-center h-48 bg-white/5 rounded-xl border border-dashed border-white/20">
+                          <CloudSun className="w-12 h-12 text-sky-400/50 mb-3" />
+                          <p className="text-lg font-medium text-white/70">Coming Soon</p>
+                          <p className="text-sm text-gray-500 mt-1">Weather API integration</p>
+                        </div>
+                      </motion.div>
                     </div>
                   )}
                 </>
