@@ -332,6 +332,197 @@ class SongLogService {
   clearCache(): void {
     this.dynamoDBSongs = [];
     this.lastDynamoDBFetch = 0;
+    this.performingSongsCache = [];
+    this.lastPerformanceCalc = 0;
+  }
+  
+  private performingSongsCache: Array<{
+    song: string;
+    artist: string;
+    plays: number;
+    avgOccupancy: number;
+    avgOccupancyChange: number;
+    performanceScore: number;
+    albumArt?: string;
+  }> = [];
+  private lastPerformanceCalc: number = 0;
+  private readonly PERFORMANCE_CACHE_TTL = 300000; // 5 minute cache
+  
+  /**
+   * Get highest performing songs based on occupancy correlation
+   * "Best performing" = songs that correlate with stable/growing occupancy
+   */
+  async getHighestPerformingSongs(limit: number = 10): Promise<Array<{
+    song: string;
+    artist: string;
+    plays: number;
+    avgOccupancy: number;
+    avgOccupancyChange: number;
+    performanceScore: number;
+    albumArt?: string;
+  }>> {
+    const now = Date.now();
+    
+    // Use cache if valid
+    if (this.performingSongsCache.length > 0 && (now - this.lastPerformanceCalc) < this.PERFORMANCE_CACHE_TTL) {
+      return this.performingSongsCache.slice(0, limit);
+    }
+    
+    try {
+      const user = authService.getStoredUser();
+      const venueId = user?.venueId;
+      
+      if (!venueId) {
+        return [];
+      }
+      
+      // Get 30 days of sensor data (includes occupancy)
+      const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '30d');
+      
+      if (!historicalData?.data || historicalData.data.length === 0) {
+        return [];
+      }
+      
+      // Sort sensor data by timestamp
+      const sensorData = [...historicalData.data].sort((a, b) => 
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      );
+      
+      // Build a map of song performances
+      const songPerformance = new Map<string, {
+        song: string;
+        artist: string;
+        plays: number;
+        occupancyReadings: number[];
+        occupancyChanges: number[];
+        albumArt?: string;
+      }>();
+      
+      // Analyze each sensor reading that has a song
+      for (let i = 0; i < sensorData.length; i++) {
+        const reading = sensorData[i];
+        if (!reading.currentSong || !reading.occupancy?.current) continue;
+        
+        const key = `${reading.currentSong}|${reading.artist || 'Unknown'}`;
+        
+        if (!songPerformance.has(key)) {
+          songPerformance.set(key, {
+            song: reading.currentSong,
+            artist: reading.artist || 'Unknown',
+            plays: 0,
+            occupancyReadings: [],
+            occupancyChanges: [],
+            albumArt: reading.albumArt
+          });
+        }
+        
+        const perf = songPerformance.get(key)!;
+        
+        // Only count as new play if song changed
+        const prevReading = i > 0 ? sensorData[i - 1] : null;
+        if (!prevReading || prevReading.currentSong !== reading.currentSong) {
+          perf.plays++;
+        }
+        
+        // Record occupancy during this song
+        perf.occupancyReadings.push(reading.occupancy.current);
+        
+        // Calculate occupancy change (compare to reading ~5 min ago)
+        const fiveMinAgo = new Date(reading.timestamp).getTime() - 5 * 60 * 1000;
+        const prevIndex = sensorData.findIndex((r, idx) => 
+          idx < i && new Date(r.timestamp).getTime() >= fiveMinAgo
+        );
+        
+        if (prevIndex >= 0 && sensorData[prevIndex].occupancy?.current) {
+          const change = reading.occupancy.current - sensorData[prevIndex].occupancy!.current;
+          perf.occupancyChanges.push(change);
+        }
+      }
+      
+      // Calculate performance scores
+      const results: Array<{
+        song: string;
+        artist: string;
+        plays: number;
+        avgOccupancy: number;
+        avgOccupancyChange: number;
+        performanceScore: number;
+        albumArt?: string;
+      }> = [];
+      
+      songPerformance.forEach((perf) => {
+        if (perf.plays < 2) return; // Need at least 2 plays for meaningful data
+        
+        const avgOccupancy = perf.occupancyReadings.length > 0
+          ? perf.occupancyReadings.reduce((a, b) => a + b, 0) / perf.occupancyReadings.length
+          : 0;
+          
+        const avgChange = perf.occupancyChanges.length > 0
+          ? perf.occupancyChanges.reduce((a, b) => a + b, 0) / perf.occupancyChanges.length
+          : 0;
+        
+        // Performance score formula:
+        // - Base score from average occupancy (normalized 0-50)
+        // - Bonus for positive occupancy change (0-30)
+        // - Bonus for consistency/plays (0-20)
+        const maxOccupancy = 200; // Assumed max for normalization
+        const occupancyScore = Math.min(50, (avgOccupancy / maxOccupancy) * 50);
+        const changeScore = Math.min(30, Math.max(0, (avgChange + 5) * 3)); // +5 offset so neutral = 15
+        const playsScore = Math.min(20, perf.plays * 2);
+        
+        const performanceScore = Math.round(occupancyScore + changeScore + playsScore);
+        
+        results.push({
+          song: perf.song,
+          artist: perf.artist,
+          plays: perf.plays,
+          avgOccupancy: Math.round(avgOccupancy),
+          avgOccupancyChange: Math.round(avgChange * 10) / 10,
+          performanceScore,
+          albumArt: perf.albumArt
+        });
+      });
+      
+      // Sort by performance score descending
+      results.sort((a, b) => b.performanceScore - a.performanceScore);
+      
+      // Cache results
+      this.performingSongsCache = results;
+      this.lastPerformanceCalc = now;
+      
+      console.log(`🎵 Calculated performance scores for ${results.length} songs`);
+      
+      return results.slice(0, limit);
+    } catch (error) {
+      console.error('Error calculating song performance:', error);
+      return [];
+    }
+  }
+  
+  /**
+   * Generate a "Top Performers" playlist data
+   * Returns songs formatted for playlist display/export
+   */
+  async getTopPerformersPlaylist(limit: number = 20): Promise<Array<{
+    position: number;
+    song: string;
+    artist: string;
+    performanceScore: number;
+    albumArt?: string;
+    reason: string;
+  }>> {
+    const topSongs = await this.getHighestPerformingSongs(limit);
+    
+    return topSongs.map((song, index) => ({
+      position: index + 1,
+      song: song.song,
+      artist: song.artist,
+      performanceScore: song.performanceScore,
+      albumArt: song.albumArt,
+      reason: song.avgOccupancyChange >= 0 
+        ? `+${song.avgOccupancyChange} people during plays`
+        : `Avg ${song.avgOccupancy} people during plays`
+    }));
   }
   
   exportToCSV(venueName?: string): void {
