@@ -104,6 +104,10 @@ export function calculateBarDayOccupancy(
     const barDayEntries = Math.max(0, latestEntries - startEntries);
     const barDayExits = Math.max(0, latestExits - startExits);
     
+    // Calculate current occupancy as entries - exits for the bar day
+    // This is more accurate than the sensor's "current" value which may be cumulative
+    const calculatedCurrent = Math.max(0, barDayEntries - barDayExits);
+    
     console.log('📊 Bar day calculation (difference method):', {
       barDayStart: barDayStart.toISOString(),
       firstReading: firstAfterBarDayStart.timestamp,
@@ -113,29 +117,37 @@ export function calculateBarDayOccupancy(
       barDayEntries,
       startExits,
       latestExits,
-      barDayExits
+      barDayExits,
+      sensorCurrent: latestCurrent,
+      calculatedCurrent
     });
     
     return {
       entries: barDayEntries,
       exits: barDayExits,
-      current: latestCurrent
+      current: calculatedCurrent
     };
   }
   
   // Fallback: If no reading from before bar day start, 
   // the device likely reset at 3am, so use latest values directly
+  const fallbackEntries = latest.occupancy?.entries || 0;
+  const fallbackExits = latest.occupancy?.exits || 0;
+  const fallbackCurrent = Math.max(0, fallbackEntries - fallbackExits);
+  
   console.log('📊 Bar day calculation (direct method - device likely reset at 3am):', {
     barDayStart: barDayStart.toISOString(),
     latestReading: latest.timestamp,
-    entries: latest.occupancy?.entries || 0,
-    exits: latest.occupancy?.exits || 0
+    entries: fallbackEntries,
+    exits: fallbackExits,
+    sensorCurrent: latestCurrent,
+    calculatedCurrent: fallbackCurrent
   });
   
   return {
-    entries: latest.occupancy?.entries || 0,
-    exits: latest.occupancy?.exits || 0,
-    current: latestCurrent
+    entries: fallbackEntries,
+    exits: fallbackExits,
+    current: fallbackCurrent
   };
 }
 

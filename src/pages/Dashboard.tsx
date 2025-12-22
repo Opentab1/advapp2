@@ -768,7 +768,7 @@ export function Dashboard() {
                         <MetricCard
                           title={timeRange === 'live' ? "Current Occupancy" : "Peak Occupancy"}
                           value={(timeRange === 'live' 
-                            ? (liveData?.occupancy?.current ?? barDayOccupancy?.current ?? occupancyMetrics.current ?? 0)
+                            ? (barDayOccupancy?.current ?? occupancyMetrics.current ?? 0)
                             : (periodOccupancy?.current ?? 0)
                           ).toString()}
                           unit="people"
@@ -927,7 +927,7 @@ export function Dashboard() {
 <MetricCard
                       title={timeRange === 'live' ? "Current Occupancy" : "Peak Occupancy"}
                       value={(timeRange === 'live' 
-                        ? (liveData?.occupancy?.current ?? barDayOccupancy?.current ?? occupancyMetrics?.current ?? 0)
+                        ? (barDayOccupancy?.current ?? occupancyMetrics?.current ?? 0)
                         : (periodOccupancy?.current ?? 0)
                       ).toString()}
                       unit="people"
