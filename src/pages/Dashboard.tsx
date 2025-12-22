@@ -47,6 +47,7 @@ import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
+import weatherService, { WeatherData } from '../services/weather.service';
 import { isDemoAccount } from '../utils/demoData';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location, PulseScoreResult } from '../types';
 
@@ -64,6 +65,7 @@ export function Dashboard() {
   const [barDayOccupancy, setBarDayOccupancy] = useState<{ entries: number; exits: number; current: number } | null>(null);
   const [periodOccupancy, setPeriodOccupancy] = useState<{ entries: number; exits: number; current: number } | null>(null);
   const [calculatedDwellTime, setCalculatedDwellTime] = useState<number | null>(null);
+  const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
   
   // Check if this is demo mode
   const isDemoMode = isDemoAccount(user?.venueId);
@@ -340,6 +342,32 @@ export function Dashboard() {
       return () => clearInterval(interval);
     }
   }, [venueId, currentLocation]);
+
+  // Load weather data based on venue address
+  const loadWeatherData = async () => {
+    if (!currentLocation?.address) {
+      console.log('⛅ No address available for weather lookup');
+      return;
+    }
+    
+    try {
+      const weather = await weatherService.getWeatherByAddress(currentLocation.address);
+      if (weather) {
+        setWeatherData(weather);
+      }
+    } catch (err) {
+      console.error('Failed to load weather data:', err);
+    }
+  };
+
+  // Load weather on mount and refresh every 90 minutes
+  useEffect(() => {
+    if (currentLocation?.address) {
+      loadWeatherData();
+      const interval = setInterval(loadWeatherData, 90 * 60 * 1000); // 90 minutes
+      return () => clearInterval(interval);
+    }
+  }, [currentLocation?.address]);
 
   const loadHistoricalData = async () => {
     setLoading(true);
@@ -884,8 +912,8 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Outdoor Temp"
-                      value="Soon"
-                      unit="coming"
+                      value={weatherData ? weatherData.temperature.toString() : '--'}
+                      unit={weatherData ? `°F ${weatherData.icon}` : '°F'}
                       icon={CloudSun}
                       color="#87CEEB"
                       delay={0.22}
@@ -1010,7 +1038,7 @@ export function Dashboard() {
                         color="#ff6b6b"
                       />
                       
-                      {/* Outdoor Temperature - Coming Soon */}
+                      {/* Outdoor Weather */}
                       <motion.div 
                         className="glass-card p-6"
                         initial={{ opacity: 0, y: 20 }}
@@ -1018,13 +1046,26 @@ export function Dashboard() {
                       >
                         <div className="flex items-center gap-3 mb-4">
                           <CloudSun className="w-5 h-5 text-sky-400" />
-                          <h3 className="text-lg font-semibold text-white">Outdoor Temperature</h3>
+                          <h3 className="text-lg font-semibold text-white">Outdoor Weather</h3>
                         </div>
-                        <div className="flex flex-col items-center justify-center h-48 bg-white/5 rounded-xl border border-dashed border-white/20">
-                          <CloudSun className="w-12 h-12 text-sky-400/50 mb-3" />
-                          <p className="text-lg font-medium text-white/70">Coming Soon</p>
-                          <p className="text-sm text-gray-500 mt-1">Weather API integration</p>
-                        </div>
+                        {weatherData ? (
+                          <div className="flex flex-col items-center justify-center h-48 bg-gradient-to-br from-sky-500/10 to-blue-500/10 rounded-xl border border-sky-500/20">
+                            <div className="text-5xl mb-2">{weatherData.icon}</div>
+                            <div className="text-4xl font-bold text-white">{weatherData.temperature}°F</div>
+                            <div className="text-lg text-sky-300 mt-1">{weatherData.conditions}</div>
+                            <div className="flex items-center gap-4 mt-3 text-sm text-gray-400">
+                              <span>Feels like {weatherData.feelsLike}°F</span>
+                              <span>•</span>
+                              <span>{weatherData.humidity}% humidity</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-48 bg-white/5 rounded-xl border border-dashed border-white/20">
+                            <CloudSun className="w-12 h-12 text-sky-400/50 mb-3" />
+                            <p className="text-lg font-medium text-white/70">Loading weather...</p>
+                            <p className="text-sm text-gray-500 mt-1">Based on venue address</p>
+                          </div>
+                        )}
                       </motion.div>
                     </div>
                   )}
