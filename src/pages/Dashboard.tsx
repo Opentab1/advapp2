@@ -345,13 +345,18 @@ export function Dashboard() {
 
   // Load weather data based on venue address
   const loadWeatherData = async () => {
-    if (!currentLocation?.address) {
-      console.log('⛅ No address available for weather lookup');
+    const address = currentLocation?.address;
+    console.log('⛅ Weather lookup - currentLocation:', currentLocation);
+    console.log('⛅ Weather lookup - address:', address);
+    
+    if (!address || address === 'No address provided' || address.trim() === '') {
+      console.log('⛅ No valid address available for weather lookup');
       return;
     }
     
     try {
-      const weather = await weatherService.getWeatherByAddress(currentLocation.address);
+      const weather = await weatherService.getWeatherByAddress(address);
+      console.log('⛅ Weather result:', weather);
       if (weather) {
         setWeatherData(weather);
       }
@@ -362,7 +367,8 @@ export function Dashboard() {
 
   // Load weather on mount and refresh every 90 minutes
   useEffect(() => {
-    if (currentLocation?.address) {
+    const address = currentLocation?.address;
+    if (address && address !== 'No address provided' && address.trim() !== '') {
       loadWeatherData();
       const interval = setInterval(loadWeatherData, 90 * 60 * 1000); // 90 minutes
       return () => clearInterval(interval);
@@ -911,9 +917,9 @@ export function Dashboard() {
                     />
                     
                     <MetricCard
-                      title="Outdoor Temp"
+                      title="Outdoor"
                       value={weatherData ? weatherData.temperature.toString() : '--'}
-                      unit={weatherData ? `°F ${weatherData.icon}` : '°F'}
+                      unit={weatherData ? `${weatherData.icon}` : '°F'}
                       icon={CloudSun}
                       color="#87CEEB"
                       delay={0.22}
@@ -1062,8 +1068,16 @@ export function Dashboard() {
                         ) : (
                           <div className="flex flex-col items-center justify-center h-48 bg-white/5 rounded-xl border border-dashed border-white/20">
                             <CloudSun className="w-12 h-12 text-sky-400/50 mb-3" />
-                            <p className="text-lg font-medium text-white/70">Loading weather...</p>
-                            <p className="text-sm text-gray-500 mt-1">Based on venue address</p>
+                            <p className="text-lg font-medium text-white/70">
+                              {currentLocation?.address && currentLocation.address !== 'No address provided' 
+                                ? 'Loading weather...' 
+                                : 'No Address Set'}
+                            </p>
+                            <p className="text-sm text-gray-500 mt-1">
+                              {currentLocation?.address && currentLocation.address !== 'No address provided'
+                                ? 'Based on venue address'
+                                : 'Add venue address in DynamoDB'}
+                            </p>
                           </div>
                         )}
                       </motion.div>
