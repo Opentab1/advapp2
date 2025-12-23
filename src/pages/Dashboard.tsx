@@ -49,6 +49,7 @@ import authService from '../services/auth.service';
 import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
 import weatherService, { WeatherData } from '../services/weather.service';
+import venueSettingsService from '../services/venue-settings.service';
 import { isDemoAccount } from '../utils/demoData';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location, PulseScoreResult } from '../types';
 
@@ -346,9 +347,18 @@ export function Dashboard() {
 
   // Load weather data based on venue address
   const loadWeatherData = async () => {
-    const address = currentLocation?.address;
-    console.log('⛅ Weather lookup - currentLocation:', currentLocation);
-    console.log('⛅ Weather lookup - address:', address);
+    // First try to get address from venue settings (user-configured)
+    let address = venueId ? venueSettingsService.getFormattedAddress(venueId) : null;
+    
+    // Fall back to location address from DynamoDB
+    if (!address) {
+      address = currentLocation?.address || null;
+    }
+    
+    console.log('⛅ Weather lookup - venueId:', venueId);
+    console.log('⛅ Weather lookup - address from settings:', venueSettingsService.getFormattedAddress(venueId || ''));
+    console.log('⛅ Weather lookup - address from location:', currentLocation?.address);
+    console.log('⛅ Weather lookup - using address:', address);
     
     if (!address || address === 'No address provided' || address.trim() === '') {
       console.log('⛅ No valid address available for weather lookup');
@@ -368,13 +378,28 @@ export function Dashboard() {
 
   // Load weather on mount and refresh every 90 minutes
   useEffect(() => {
-    const address = currentLocation?.address;
+    // Check for address from venue settings or location
+    const settingsAddress = venueId ? venueSettingsService.getFormattedAddress(venueId) : null;
+    const locationAddress = currentLocation?.address;
+    const address = settingsAddress || locationAddress;
+    
     if (address && address !== 'No address provided' && address.trim() !== '') {
       loadWeatherData();
       const interval = setInterval(loadWeatherData, 90 * 60 * 1000); // 90 minutes
       return () => clearInterval(interval);
     }
-  }, [currentLocation?.address]);
+  }, [currentLocation?.address, venueId]);
+
+  // Refresh weather when switching tabs (in case address was updated in settings)
+  useEffect(() => {
+    if (activeTab === 'live' || activeTab === 'history') {
+      // Check if we have a new address that might need weather data
+      const settingsAddress = venueId ? venueSettingsService.getFormattedAddress(venueId) : null;
+      if (settingsAddress && !weatherData) {
+        loadWeatherData();
+      }
+    }
+  }, [activeTab]);
 
   const loadHistoricalData = async () => {
     setLoading(true);
@@ -924,6 +949,8 @@ export function Dashboard() {
                       icon={CloudSun}
                       color="#87CEEB"
                       delay={0.22}
+                      onClick={!weatherData ? () => setActiveTab('settings') : undefined}
+                      clickHint={!weatherData ? 'Click to set venue address' : undefined}
                     />
                     
                     <MetricCard
@@ -1069,16 +1096,30 @@ export function Dashboard() {
                         ) : (
                           <div className="flex flex-col items-center justify-center h-48 bg-white/5 rounded-xl border border-dashed border-white/20">
                             <CloudSun className="w-12 h-12 text-sky-400/50 mb-3" />
-                            <p className="text-lg font-medium text-white/70">
-                              {currentLocation?.address && currentLocation.address !== 'No address provided' 
-                                ? 'Loading weather...' 
-                                : 'No Address Set'}
-                            </p>
-                            <p className="text-sm text-gray-500 mt-1">
-                              {currentLocation?.address && currentLocation.address !== 'No address provided'
-                                ? 'Based on venue address'
-                                : 'Add venue address in DynamoDB'}
-                            </p>
+                            {(() => {
+                              const settingsAddress = venueId ? venueSettingsService.getFormattedAddress(venueId) : null;
+                              const hasAddress = settingsAddress || (currentLocation?.address && currentLocation.address !== 'No address provided');
+                              return (
+                                <>
+                                  <p className="text-lg font-medium text-white/70">
+                                    {hasAddress ? 'Loading weather...' : 'No Address Set'}
+                                  </p>
+                                  <p className="text-sm text-gray-500 mt-1 text-center px-4">
+                                    {hasAddress
+                                      ? 'Based on venue address'
+                                      : 'Add your venue address in Settings'}
+                                  </p>
+                                  {!hasAddress && (
+                                    <button
+                                      onClick={() => setActiveTab('settings')}
+                                      className="mt-3 px-4 py-2 text-sm bg-cyan/20 hover:bg-cyan/30 text-cyan border border-cyan/30 rounded-lg transition-colors"
+                                    >
+                                      Go to Settings
+                                    </button>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         )}
                       </motion.div>
@@ -1093,6 +1134,8 @@ export function Dashboard() {
             <SongLog />
           ) : activeTab === 'reports' ? (
             <Reports />
+          ) : activeTab === 'settings' ? (
+            <Settings />
           ) : (
             // Placeholder for other tabs
             <motion.div

@@ -2,14 +2,17 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Save, Key, MapPin, DollarSign, Check, Building2, Trash2, AlertTriangle,
-  User, Bell, Settings as SettingsIcon, Info, Mail, Phone, Palette, Globe
+  User, Bell, Settings as SettingsIcon, Info, Mail, Phone, Palette, Globe, CloudSun
 } from 'lucide-react';
 import type { AppSettings } from '../types';
 import authService from '../services/auth.service';
 import toastPOSService from '../services/toast-pos.service';
 import locationService from '../services/location.service';
+import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
+import weatherService from '../services/weather.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
+import { AddressSettings } from '../components/AddressSettings';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -27,12 +30,18 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
   const [cacheCleared, setCacheCleared] = useState(false);
   const [toastRestaurantGuid, setToastRestaurantGuid] = useState('');
-  const [activeTab, setActiveTab] = useState<'account' | 'notifications' | 'preferences' | 'integrations' | 'about'>('account');
+  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'notifications' | 'preferences' | 'integrations' | 'about'>('account');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [savedAddress, setSavedAddress] = useState<VenueAddress | null>(null);
   const user = authService.getStoredUser();
 
   useEffect(() => {
     loadSettings();
+    // Load saved address
+    if (user?.venueId) {
+      const address = venueSettingsService.getAddress(user.venueId);
+      setSavedAddress(address);
+    }
   }, []);
 
   const loadSettings = () => {
@@ -128,6 +137,7 @@ export function Settings() {
         <div className="flex gap-2 mb-6 overflow-x-auto">
           {[
             { id: 'account' as const, label: 'Account', icon: User },
+            { id: 'venue' as const, label: 'Venue', icon: MapPin },
             { id: 'notifications' as const, label: 'Notifications', icon: Bell },
             { id: 'preferences' as const, label: 'Preferences', icon: SettingsIcon },
             { id: 'integrations' as const, label: 'Integrations', icon: DollarSign },
@@ -208,7 +218,88 @@ export function Settings() {
             isOpen={showPasswordModal}
             onClose={() => setShowPasswordModal(false)}
           />
-          
+
+          {/* Venue Tab */}
+          {activeTab === 'venue' && (
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="space-y-6"
+            >
+              {/* Address Settings */}
+              <div className="glass-card p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <CloudSun className="w-5 h-5 text-cyan" />
+                  <h3 className="text-xl font-semibold text-white">Venue Address</h3>
+                </div>
+                <p className="text-sm text-gray-400 mb-6">
+                  Set your venue's address to enable outdoor weather display on your dashboard. 
+                  This address is used to fetch current weather conditions from our weather service.
+                </p>
+                
+                {user?.venueId ? (
+                  <AddressSettings 
+                    venueId={user.venueId}
+                    inline={true}
+                    onAddressSaved={(address) => {
+                      setSavedAddress(address);
+                      // Clear weather cache to trigger refresh
+                      weatherService.clearCache();
+                    }}
+                  />
+                ) : (
+                  <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                    <p className="text-sm text-yellow-300">
+                      Venue ID not configured. Please contact your administrator.
+                    </p>
+                  </div>
+                )}
+                
+                {savedAddress && (
+                  <div className="mt-4 p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Check className="w-4 h-4 text-green-400" />
+                      <span className="text-sm font-medium text-green-400">Current Address</span>
+                    </div>
+                    <p className="text-sm text-green-300">
+                      {savedAddress.street}, {savedAddress.city}, {savedAddress.state} {savedAddress.zipCode}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Venue Info (read-only) */}
+              <div className="glass-card p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <Building2 className="w-5 h-5 text-cyan" />
+                  <h3 className="text-xl font-semibold text-white">Venue Information</h3>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">Venue Name</label>
+                    <input
+                      type="text"
+                      value={user?.venueName || 'Not configured'}
+                      disabled
+                      className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">Venue ID</label>
+                    <input
+                      type="text"
+                      value={user?.venueId || 'Not configured'}
+                      disabled
+                      className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-400 cursor-not-allowed"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Venue information is managed by your system administrator. Contact support to make changes.
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
 
           {/* Notifications Tab */}
           {activeTab === 'notifications' && (

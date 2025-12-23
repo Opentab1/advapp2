@@ -10,6 +10,8 @@ interface MetricCardProps {
   trendValue?: string;
   color?: string;
   delay?: number;
+  onClick?: () => void;
+  clickHint?: string;
 }
 
 export function MetricCard({
@@ -20,7 +22,9 @@ export function MetricCard({
   trend = 'neutral',
   trendValue,
   color = 'cyan',
-  delay = 0
+  delay = 0,
+  onClick,
+  clickHint
 }: MetricCardProps) {
   const trendColors = {
     up: 'text-green-400',
@@ -30,10 +34,14 @@ export function MetricCard({
 
   return (
     <motion.div
-      className="glass-card-hover p-6 relative overflow-hidden"
+      className={`glass-card-hover p-6 relative overflow-hidden ${onClick ? 'cursor-pointer' : ''}`}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.5 }}
+      onClick={onClick}
+      whileHover={onClick ? { scale: 1.02 } : undefined}
+      whileTap={onClick ? { scale: 0.98 } : undefined}
+      title={clickHint}
     >
       {/* Background gradient */}
       <div 
