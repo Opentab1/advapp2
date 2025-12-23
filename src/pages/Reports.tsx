@@ -8,6 +8,7 @@ import authService from '../services/auth.service';
 import { isDemoAccount, generateDemoMonthlyReport, generateDemoMusicReport, generateDemoAtmosphereReport, generateDemoOccupancyReport, generateDemoWeeklyMetrics } from '../utils/demoData';
 import { aggregateOccupancyByBarDay } from '../utils/barDay';
 import locationService from '../services/location.service';
+import { formatValueAllowZero, formatValueNoZero } from '../utils/dataDisplay';
 import type { WeeklyReport, WeeklyMetrics } from '../types';
 
 type ReportType = 'weekly' | 'monthly' | 'music' | 'atmosphere' | 'occupancy' | 'custom';
@@ -424,27 +425,35 @@ export function Reports() {
                 <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Total Entries</div>
                   <div className="text-2xl font-bold text-green-400">
-                    {(selectedReport.metrics.totalEntries ?? selectedReport.metrics.totalCustomers).toLocaleString()}
+                    {formatValueAllowZero(selectedReport.metrics.totalEntries ?? selectedReport.metrics.totalCustomers) === '--' 
+                      ? '--' 
+                      : (selectedReport.metrics.totalEntries ?? selectedReport.metrics.totalCustomers).toLocaleString()}
                   </div>
                   <div className="text-xs text-gray-500 mt-1">3am-3am bar days</div>
                 </div>
                 <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Total Exits</div>
                   <div className="text-2xl font-bold text-red-400">
-                    {(selectedReport.metrics.totalExits ?? 0).toLocaleString()}
+                    {formatValueAllowZero(selectedReport.metrics.totalExits) === '--' 
+                      ? '--' 
+                      : (selectedReport.metrics.totalExits ?? 0).toLocaleString()}
                   </div>
                   <div className="text-xs text-gray-500 mt-1">3am-3am bar days</div>
                 </div>
                 <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Avg Daily Entries</div>
                   <div className="text-2xl font-bold text-cyan">
-                    {(selectedReport.metrics.avgDailyEntries ?? 0).toLocaleString()}
+                    {formatValueAllowZero(selectedReport.metrics.avgDailyEntries) === '--' 
+                      ? '--' 
+                      : (selectedReport.metrics.avgDailyEntries ?? 0).toLocaleString()}
                   </div>
                 </div>
                 <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Peak Occupancy</div>
                   <div className="text-2xl font-bold text-yellow-400">
-                    {(selectedReport.metrics.peakOccupancy ?? 0).toLocaleString()}
+                    {formatValueAllowZero(selectedReport.metrics.peakOccupancy) === '--' 
+                      ? '--' 
+                      : (selectedReport.metrics.peakOccupancy ?? 0).toLocaleString()}
                   </div>
                 </div>
               </div>
@@ -453,19 +462,35 @@ export function Reports() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Avg Temp</div>
-                  <div className="text-2xl font-bold text-orange-400">{selectedReport.metrics.avgTemperature.toFixed(1)}°F</div>
+                  <div className="text-2xl font-bold text-orange-400">
+                    {formatValueNoZero(selectedReport.metrics.avgTemperature, 1) === '--' 
+                      ? '--' 
+                      : `${selectedReport.metrics.avgTemperature.toFixed(1)}°F`}
+                  </div>
                 </div>
                 <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Avg Sound</div>
-                  <div className="text-2xl font-bold text-purple-400">{selectedReport.metrics.avgDecibels.toFixed(1)} dB</div>
+                  <div className="text-2xl font-bold text-purple-400">
+                    {formatValueNoZero(selectedReport.metrics.avgDecibels, 1) === '--' 
+                      ? '--' 
+                      : `${selectedReport.metrics.avgDecibels.toFixed(1)} dB`}
+                  </div>
                 </div>
                 <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Avg Humidity</div>
-                  <div className="text-2xl font-bold text-blue-400">{selectedReport.metrics.avgHumidity.toFixed(1)}%</div>
+                  <div className="text-2xl font-bold text-blue-400">
+                    {formatValueNoZero(selectedReport.metrics.avgHumidity, 1) === '--' 
+                      ? '--' 
+                      : `${selectedReport.metrics.avgHumidity.toFixed(1)}%`}
+                  </div>
                 </div>
                 <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Revenue</div>
-                  <div className="text-2xl font-bold text-green-400">${selectedReport.metrics.totalRevenue.toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-green-400">
+                    {selectedReport.metrics.totalRevenue > 0 
+                      ? `$${selectedReport.metrics.totalRevenue.toLocaleString()}` 
+                      : '--'}
+                  </div>
                 </div>
               </div>
 

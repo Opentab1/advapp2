@@ -40,8 +40,9 @@ import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { calculateComfortLevel, calculateComfortBreakdown, calculatePulseScore } from '../utils/comfort';
-import { formatTemperature, formatDecibels, formatLight, formatHumidity } from '../utils/format';
+import { formatTemperature, formatDecibels as formatDecibelsLegacy, formatLight as formatLightLegacy, formatHumidity as formatHumidityLegacy } from '../utils/format';
 import { formatDwellTime, calculateRecentDwellTime } from '../utils/dwellTime';
+import { formatValueNoZero, formatValueAllowZero, formatOccupancy } from '../utils/dataDisplay';
 import { calculateBarDayOccupancy, formatBarDayRange, aggregateOccupancyByBarDay } from '../utils/barDay';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
@@ -801,10 +802,10 @@ export function Dashboard() {
                       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                         <MetricCard
                           title={timeRange === 'live' ? "Current Occupancy" : "Peak Occupancy"}
-                          value={(timeRange === 'live' 
-                            ? (barDayOccupancy?.current ?? occupancyMetrics.current ?? 0)
-                            : (periodOccupancy?.current ?? 0)
-                          ).toString()}
+                          value={formatOccupancy(timeRange === 'live' 
+                            ? (barDayOccupancy?.current ?? occupancyMetrics.current)
+                            : periodOccupancy?.current
+                          )}
                           unit="people"
                           icon={Users}
                           color="#00d4ff"
@@ -813,10 +814,10 @@ export function Dashboard() {
                         
                         <MetricCard
                           title={timeRange === 'live' ? "Entries Today" : `Entries (${timeRange})`}
-                          value={(timeRange === 'live'
-                            ? (barDayOccupancy?.entries ?? occupancyMetrics.todayEntries ?? liveData?.occupancy?.entries ?? 0)
-                            : (periodOccupancy?.entries ?? 0)
-                          ).toString()}
+                          value={formatOccupancy(timeRange === 'live'
+                            ? (barDayOccupancy?.entries ?? occupancyMetrics.todayEntries ?? liveData?.occupancy?.entries)
+                            : periodOccupancy?.entries
+                          )}
                           unit="people"
                           icon={UserPlus}
                           color="#4ade80"
@@ -825,10 +826,10 @@ export function Dashboard() {
                         
                         <MetricCard
                           title={timeRange === 'live' ? "Exits Today" : `Exits (${timeRange})`}
-                          value={(timeRange === 'live'
-                            ? (barDayOccupancy?.exits ?? occupancyMetrics.todayExits ?? liveData?.occupancy?.exits ?? 0)
-                            : (periodOccupancy?.exits ?? 0)
-                          ).toString()}
+                          value={formatOccupancy(timeRange === 'live'
+                            ? (barDayOccupancy?.exits ?? occupancyMetrics.todayExits ?? liveData?.occupancy?.exits)
+                            : periodOccupancy?.exits
+                          )}
                           unit="people"
                           icon={UserMinus}
                           color="#f87171"
@@ -837,7 +838,7 @@ export function Dashboard() {
                         
                         <MetricCard
                           title="Peak Today"
-                          value={(occupancyMetrics.peakOccupancy ?? 0).toString()}
+                          value={formatOccupancy(occupancyMetrics.peakOccupancy)}
                           unit={occupancyMetrics.peakTime ? `@ ${occupancyMetrics.peakTime}` : 'people'}
                           icon={TrendingUp}
                           color="#fbbf24"
@@ -863,7 +864,7 @@ export function Dashboard() {
                         <div className="glass-card p-4">
                           <div className="text-sm text-gray-400 mb-1">7-Day Average</div>
                           <div className="text-2xl font-bold text-cyan-400">
-                            {occupancyMetrics.sevenDayAvg ?? 0}
+                            {formatOccupancy(occupancyMetrics.sevenDayAvg)}
                             <span className="text-sm text-gray-400 ml-2">people/day</span>
                           </div>
                         </div>
@@ -871,7 +872,7 @@ export function Dashboard() {
                         <div className="glass-card p-4">
                           <div className="text-sm text-gray-400 mb-1">14-Day Average</div>
                           <div className="text-2xl font-bold text-cyan-400">
-                            {occupancyMetrics.fourteenDayAvg ?? 0}
+                            {formatOccupancy(occupancyMetrics.fourteenDayAvg)}
                             <span className="text-sm text-gray-400 ml-2">people/day</span>
                           </div>
                         </div>
@@ -879,7 +880,7 @@ export function Dashboard() {
                         <div className="glass-card p-4">
                           <div className="text-sm text-gray-400 mb-1">30-Day Average</div>
                           <div className="text-2xl font-bold text-cyan-400">
-                            {occupancyMetrics.thirtyDayAvg ?? 0}
+                            {formatOccupancy(occupancyMetrics.thirtyDayAvg)}
                             <span className="text-sm text-gray-400 ml-2">people/day</span>
                           </div>
                         </div>
@@ -891,7 +892,7 @@ export function Dashboard() {
                   <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4 mb-6">
                     <MetricCard
                       title="Sound Level"
-                      value={currentData ? formatDecibels(currentData.decibels).split(' ')[0] : '--'}
+                      value={formatValueNoZero(currentData?.decibels)}
                       unit="dB"
                       icon={Volume2}
                       color="#00d4ff"
@@ -900,7 +901,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Light Level"
-                      value={currentData ? formatLight(currentData.light).split(' ')[0] : '--'}
+                      value={formatValueAllowZero(currentData?.light)}
                       unit="lux"
                       icon={Sun}
                       color="#ffd700"
@@ -909,7 +910,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Indoor Temp"
-                      value={currentData ? formatTemperature(currentData.indoorTemp).split('°')[0] : '--'}
+                      value={formatValueNoZero(currentData?.indoorTemp)}
                       unit="°F"
                       icon={Thermometer}
                       color="#ff6b6b"
@@ -927,7 +928,7 @@ export function Dashboard() {
                     
                     <MetricCard
                       title="Humidity"
-                      value={currentData ? formatHumidity(currentData.humidity).replace('%', '') : '--'}
+                      value={formatValueNoZero(currentData?.humidity)}
                       unit="%"
                       icon={Droplets}
                       color="#4ecdc4"
@@ -936,10 +937,10 @@ export function Dashboard() {
                     
                     <MetricCard
                       title={timeRange === 'live' ? "Entries Today" : `Entries (${timeRange})`}
-                      value={(timeRange === 'live'
-                        ? (barDayOccupancy?.entries ?? occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries ?? 0)
-                        : (periodOccupancy?.entries ?? 0)
-                      ).toString()}
+                      value={formatOccupancy(timeRange === 'live'
+                        ? (barDayOccupancy?.entries ?? occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries)
+                        : periodOccupancy?.entries
+                      )}
                       unit="people"
                       icon={UserPlus}
                       color="#4ade80"
@@ -948,22 +949,22 @@ export function Dashboard() {
                     
                     <MetricCard
                       title={timeRange === 'live' ? "Exits Today" : `Exits (${timeRange})`}
-                      value={(timeRange === 'live'
-                        ? (barDayOccupancy?.exits ?? occupancyMetrics?.todayExits ?? liveData?.occupancy?.exits ?? 0)
-                        : (periodOccupancy?.exits ?? 0)
-                      ).toString()}
+                      value={formatOccupancy(timeRange === 'live'
+                        ? (barDayOccupancy?.exits ?? occupancyMetrics?.todayExits ?? liveData?.occupancy?.exits)
+                        : periodOccupancy?.exits
+                      )}
                       unit="people"
                       icon={UserMinus}
                       color="#f87171"
                       delay={0.35}
                     />
                     
-<MetricCard
+                    <MetricCard
                       title={timeRange === 'live' ? "Current Occupancy" : "Peak Occupancy"}
-                      value={(timeRange === 'live' 
-                        ? (barDayOccupancy?.current ?? occupancyMetrics?.current ?? 0)
-                        : (periodOccupancy?.current ?? 0)
-                      ).toString()}
+                      value={formatOccupancy(timeRange === 'live' 
+                        ? (barDayOccupancy?.current ?? occupancyMetrics?.current)
+                        : periodOccupancy?.current
+                      )}
                       unit="people"
                       icon={Users}
                       color="#a78bfa"
