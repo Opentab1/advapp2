@@ -2,12 +2,66 @@ import type { SongLogEntry, SensorData } from '../types';
 import dynamoDBService from './dynamodb.service';
 import authService from './auth.service';
 
+// Types for enhanced analytics
+export interface PerformingSong {
+  song: string;
+  artist: string;
+  plays: number;
+  avgOccupancy: number;
+  avgOccupancyChange: number;
+  avgDwellExtension: number; // minutes gained during this song
+  performanceScore: number;
+  albumArt?: string;
+  genre?: string;
+}
+
+export interface PlaylistSong {
+  position: number;
+  song: string;
+  artist: string;
+  plays: number;
+  performanceScore: number;
+  albumArt?: string;
+  reason: string;
+  genre?: string;
+}
+
+export interface GenreStats {
+  genre: string;
+  plays: number;
+  avgDwellTime: number; // average dwell time during genre plays
+  avgOccupancy: number;
+  totalMinutes: number; // total playtime
+  performanceScore: number;
+}
+
+export type AnalyticsTimeRange = '7d' | '14d' | '30d' | '90d';
+
+// Simple genre detection based on common patterns
+const GENRE_PATTERNS: { [key: string]: string[] } = {
+  'Country': ['country', 'nashville', 'honky tonk', 'bluegrass', 'luke bryan', 'morgan wallen', 'zach bryan', 'chris stapleton', 'luke combs', 'jason aldean', 'kenny chesney', 'carrie underwood', 'blake shelton', 'dolly parton', 'johnny cash', 'willie nelson', 'reba mcentire', 'garth brooks'],
+  'Hip Hop': ['hip hop', 'rap', 'trap', 'drake', 'kanye', 'kendrick', 'travis scott', 'j. cole', 'future', 'lil', 'young thug', 'migos', '21 savage', 'post malone', 'cardi b', 'nicki minaj', 'jay-z', 'eminem'],
+  'Pop': ['pop', 'taylor swift', 'ariana grande', 'dua lipa', 'ed sheeran', 'justin bieber', 'the weeknd', 'bruno mars', 'billie eilish', 'olivia rodrigo', 'harry styles', 'shawn mendes', 'selena gomez', 'katy perry', 'lady gaga'],
+  'Rock': ['rock', 'alternative', 'indie rock', 'foo fighters', 'imagine dragons', 'coldplay', 'arctic monkeys', 'the killers', 'muse', 'green day', 'linkin park', 'nirvana', 'red hot chili', 'queens of the stone age'],
+  'Electronic': ['edm', 'house', 'techno', 'electronic', 'dj', 'dance', 'marshmello', 'calvin harris', 'david guetta', 'tiesto', 'avicii', 'deadmau5', 'skrillex', 'diplo', 'zedd', 'chainsmokers'],
+  'R&B': ['r&b', 'rnb', 'soul', 'sza', 'daniel caesar', 'h.e.r.', 'frank ocean', 'chris brown', 'usher', 'beyoncé', 'rihanna', 'the weeknd', 'john legend', 'alicia keys'],
+  'Latin': ['latin', 'reggaeton', 'bad bunny', 'j balvin', 'daddy yankee', 'ozuna', 'anuel', 'maluma', 'shakira', 'enrique iglesias', 'pitbull', 'bachata', 'salsa'],
+  'Classic Rock': ['classic rock', 'led zeppelin', 'pink floyd', 'the beatles', 'rolling stones', 'queen', 'ac/dc', 'guns n roses', 'aerosmith', 'journey', 'bon jovi', 'def leppard', 'van halen']
+};
+
 class SongLogService {
   private songs: SongLogEntry[] = [];
   private readonly MAX_SONGS = 500;
   private dynamoDBSongs: SongLogEntry[] = [];
   private lastDynamoDBFetch: number = 0;
   private readonly DYNAMODB_CACHE_TTL = 60000; // 1 minute cache
+  
+  // Cache for different time ranges
+  private analyticsCache: Map<AnalyticsTimeRange, {
+    performingSongs: PerformingSong[];
+    genreStats: GenreStats[];
+    timestamp: number;
+  }> = new Map();
 
   addSong(song: Omit<SongLogEntry, 'id'>) {
     this.loadSongs();
@@ -334,38 +388,54 @@ class SongLogService {
     this.lastDynamoDBFetch = 0;
     this.performingSongsCache = [];
     this.lastPerformanceCalc = 0;
+    this.analyticsCache.clear();
   }
   
-  private performingSongsCache: Array<{
-    song: string;
-    artist: string;
-    plays: number;
-    avgOccupancy: number;
-    avgOccupancyChange: number;
-    performanceScore: number;
-    albumArt?: string;
-  }> = [];
+  /**
+   * Detect genre based on song name and artist
+   */
+  detectGenre(songName: string, artist: string): string {
+    const searchText = `${songName} ${artist}`.toLowerCase();
+    
+    for (const [genre, patterns] of Object.entries(GENRE_PATTERNS)) {
+      for (const pattern of patterns) {
+        if (searchText.includes(pattern.toLowerCase())) {
+          return genre;
+        }
+      }
+    }
+    
+    return 'Other';
+  }
+  
+  /**
+   * Get days for time range
+   */
+  private getDaysForRange(range: AnalyticsTimeRange): number {
+    switch (range) {
+      case '7d': return 7;
+      case '14d': return 14;
+      case '30d': return 30;
+      case '90d': return 90;
+      default: return 30;
+    }
+  }
+  
+  private performingSongsCache: PerformingSong[] = [];
   private lastPerformanceCalc: number = 0;
   private readonly PERFORMANCE_CACHE_TTL = 300000; // 5 minute cache
   
   /**
-   * Get highest performing songs based on occupancy correlation
-   * "Best performing" = songs that correlate with stable/growing occupancy
+   * Get highest performing songs based on occupancy/dwell time correlation
+   * "Best performing" = songs that correlate with stable/growing occupancy and longer dwell
    */
-  async getHighestPerformingSongs(limit: number = 10): Promise<Array<{
-    song: string;
-    artist: string;
-    plays: number;
-    avgOccupancy: number;
-    avgOccupancyChange: number;
-    performanceScore: number;
-    albumArt?: string;
-  }>> {
+  async getHighestPerformingSongs(limit: number = 10, timeRange: AnalyticsTimeRange = '30d'): Promise<PerformingSong[]> {
     const now = Date.now();
     
-    // Use cache if valid
-    if (this.performingSongsCache.length > 0 && (now - this.lastPerformanceCalc) < this.PERFORMANCE_CACHE_TTL) {
-      return this.performingSongsCache.slice(0, limit);
+    // Check analytics cache
+    const cached = this.analyticsCache.get(timeRange);
+    if (cached && (now - cached.timestamp) < this.PERFORMANCE_CACHE_TTL) {
+      return cached.performingSongs.slice(0, limit);
     }
     
     try {
@@ -376,10 +446,11 @@ class SongLogService {
         return [];
       }
       
-      // Get 30 days of sensor data (includes occupancy)
-      const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '30d');
+      // Get sensor data for the specified time range
+      const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, timeRange);
       
       if (!historicalData?.data || historicalData.data.length === 0) {
+        console.log(`🎵 No data available for ${timeRange}`);
         return [];
       }
       
@@ -388,6 +459,8 @@ class SongLogService {
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
       
+      console.log(`🎵 Analyzing ${sensorData.length} readings for song performance (${timeRange})`);
+      
       // Build a map of song performances
       const songPerformance = new Map<string, {
         song: string;
@@ -395,63 +468,93 @@ class SongLogService {
         plays: number;
         occupancyReadings: number[];
         occupancyChanges: number[];
+        dwellExtensions: number[]; // estimated dwell time extension per play
         albumArt?: string;
+        genre?: string;
+        playDurations: number[]; // how long each play lasted in minutes
       }>();
+      
+      // Track when each song starts playing
+      let currentSongStart: { song: string; startIndex: number; startTime: number } | null = null;
       
       // Analyze each sensor reading that has a song
       for (let i = 0; i < sensorData.length; i++) {
         const reading = sensorData[i];
-        if (!reading.currentSong || !reading.occupancy?.current) continue;
+        if (!reading.currentSong) continue;
         
         const key = `${reading.currentSong}|${reading.artist || 'Unknown'}`;
+        const currentTime = new Date(reading.timestamp).getTime();
         
+        // Initialize song entry if needed
         if (!songPerformance.has(key)) {
+          const genre = this.detectGenre(reading.currentSong, reading.artist || '');
           songPerformance.set(key, {
             song: reading.currentSong,
             artist: reading.artist || 'Unknown',
             plays: 0,
             occupancyReadings: [],
             occupancyChanges: [],
-            albumArt: reading.albumArt
+            dwellExtensions: [],
+            albumArt: reading.albumArt,
+            genre,
+            playDurations: []
           });
         }
         
         const perf = songPerformance.get(key)!;
         
-        // Only count as new play if song changed
+        // Check if song changed (new play)
         const prevReading = i > 0 ? sensorData[i - 1] : null;
-        if (!prevReading || prevReading.currentSong !== reading.currentSong) {
+        const songChanged = !prevReading || prevReading.currentSong !== reading.currentSong;
+        
+        if (songChanged) {
+          // If we were tracking a previous song, record its duration
+          if (currentSongStart && currentSongStart.song !== key) {
+            const prevPerf = songPerformance.get(currentSongStart.song);
+            if (prevPerf) {
+              const duration = (currentTime - currentSongStart.startTime) / 60000; // minutes
+              if (duration > 0 && duration < 30) { // Sanity check: songs < 30 min
+                prevPerf.playDurations.push(duration);
+              }
+            }
+          }
+          
+          // Start tracking this song
+          currentSongStart = { song: key, startIndex: i, startTime: currentTime };
           perf.plays++;
         }
         
         // Record occupancy during this song
-        perf.occupancyReadings.push(reading.occupancy.current);
+        if (reading.occupancy?.current !== undefined) {
+          perf.occupancyReadings.push(reading.occupancy.current);
+        }
         
         // Calculate occupancy change (compare to reading ~5 min ago)
-        const fiveMinAgo = new Date(reading.timestamp).getTime() - 5 * 60 * 1000;
-        const prevIndex = sensorData.findIndex((r, idx) => 
-          idx < i && new Date(r.timestamp).getTime() >= fiveMinAgo
-        );
-        
-        if (prevIndex >= 0 && sensorData[prevIndex].occupancy?.current) {
-          const change = reading.occupancy.current - sensorData[prevIndex].occupancy!.current;
-          perf.occupancyChanges.push(change);
+        if (reading.occupancy?.current !== undefined) {
+          const fiveMinAgo = currentTime - 5 * 60 * 1000;
+          for (let j = i - 1; j >= 0; j--) {
+            const checkTime = new Date(sensorData[j].timestamp).getTime();
+            if (checkTime <= fiveMinAgo && sensorData[j].occupancy?.current !== undefined) {
+              const change = reading.occupancy.current - sensorData[j].occupancy!.current;
+              perf.occupancyChanges.push(change);
+              break;
+            }
+          }
         }
       }
       
+      // Calculate dwell time extension for each song
+      // Songs with high occupancy stability = longer dwell
+      // We estimate dwell extension as: (avgOccupancy / maxOccupancy) * avgPlayDuration
+      const maxOccupancy = Math.max(...Array.from(songPerformance.values())
+        .flatMap(p => p.occupancyReadings)
+        .filter(v => v > 0), 100);
+      
       // Calculate performance scores
-      const results: Array<{
-        song: string;
-        artist: string;
-        plays: number;
-        avgOccupancy: number;
-        avgOccupancyChange: number;
-        performanceScore: number;
-        albumArt?: string;
-      }> = [];
+      const results: PerformingSong[] = [];
       
       songPerformance.forEach((perf) => {
-        if (perf.plays < 2) return; // Need at least 2 plays for meaningful data
+        if (perf.plays < 1) return; // Need at least 1 play
         
         const avgOccupancy = perf.occupancyReadings.length > 0
           ? perf.occupancyReadings.reduce((a, b) => a + b, 0) / perf.occupancyReadings.length
@@ -461,16 +564,25 @@ class SongLogService {
           ? perf.occupancyChanges.reduce((a, b) => a + b, 0) / perf.occupancyChanges.length
           : 0;
         
-        // Performance score formula:
-        // - Base score from average occupancy (normalized 0-50)
-        // - Bonus for positive occupancy change (0-30)
-        // - Bonus for consistency/plays (0-20)
-        const maxOccupancy = 200; // Assumed max for normalization
-        const occupancyScore = Math.min(50, (avgOccupancy / maxOccupancy) * 50);
-        const changeScore = Math.min(30, Math.max(0, (avgChange + 5) * 3)); // +5 offset so neutral = 15
-        const playsScore = Math.min(20, perf.plays * 2);
+        const avgPlayDuration = perf.playDurations.length > 0
+          ? perf.playDurations.reduce((a, b) => a + b, 0) / perf.playDurations.length
+          : 3.5; // Default avg song ~3.5 min
         
-        const performanceScore = Math.round(occupancyScore + changeScore + playsScore);
+        // Estimate dwell extension: positive occupancy change during song = people staying
+        // Formula: avgChange * avgPlayDuration (capped at reasonable bounds)
+        const dwellExtension = Math.max(-5, Math.min(10, avgChange * 0.5));
+        
+        // Performance score formula (0-100):
+        // - Base score from average occupancy (normalized 0-40)
+        // - Bonus for positive occupancy change (0-35)
+        // - Bonus for play count (0-15)
+        // - Bonus for dwell extension (0-10)
+        const occupancyScore = Math.min(40, (avgOccupancy / maxOccupancy) * 40);
+        const changeScore = Math.min(35, Math.max(0, (avgChange + 3) * 5)); // +3 offset so neutral = 15
+        const playsScore = Math.min(15, Math.log2(perf.plays + 1) * 5);
+        const dwellScore = Math.min(10, Math.max(0, (dwellExtension + 2) * 2));
+        
+        const performanceScore = Math.round(occupancyScore + changeScore + playsScore + dwellScore);
         
         results.push({
           song: perf.song,
@@ -478,19 +590,30 @@ class SongLogService {
           plays: perf.plays,
           avgOccupancy: Math.round(avgOccupancy),
           avgOccupancyChange: Math.round(avgChange * 10) / 10,
-          performanceScore,
-          albumArt: perf.albumArt
+          avgDwellExtension: Math.round(dwellExtension * 10) / 10,
+          performanceScore: Math.min(100, performanceScore),
+          albumArt: perf.albumArt,
+          genre: perf.genre
         });
       });
       
       // Sort by performance score descending
       results.sort((a, b) => b.performanceScore - a.performanceScore);
       
-      // Cache results
+      // Cache results (also compute genre stats while we have the data)
+      const genreStats = this.computeGenreStats(songPerformance, maxOccupancy);
+      
+      this.analyticsCache.set(timeRange, {
+        performingSongs: results,
+        genreStats,
+        timestamp: now
+      });
+      
+      // Also update the legacy cache for backwards compatibility
       this.performingSongsCache = results;
       this.lastPerformanceCalc = now;
       
-      console.log(`🎵 Calculated performance scores for ${results.length} songs`);
+      console.log(`🎵 Calculated performance scores for ${results.length} songs (${timeRange})`);
       
       return results.slice(0, limit);
     } catch (error) {
@@ -500,29 +623,224 @@ class SongLogService {
   }
   
   /**
+   * Compute genre statistics from song performance data
+   */
+  private computeGenreStats(
+    songPerformance: Map<string, {
+      song: string;
+      artist: string;
+      plays: number;
+      occupancyReadings: number[];
+      occupancyChanges: number[];
+      dwellExtensions: number[];
+      albumArt?: string;
+      genre?: string;
+      playDurations: number[];
+    }>,
+    maxOccupancy: number
+  ): GenreStats[] {
+    const genreMap = new Map<string, {
+      plays: number;
+      occupancySum: number;
+      occupancyCount: number;
+      changeSum: number;
+      changeCount: number;
+      totalDuration: number;
+    }>();
+    
+    songPerformance.forEach((perf) => {
+      const genre = perf.genre || 'Other';
+      
+      if (!genreMap.has(genre)) {
+        genreMap.set(genre, {
+          plays: 0,
+          occupancySum: 0,
+          occupancyCount: 0,
+          changeSum: 0,
+          changeCount: 0,
+          totalDuration: 0
+        });
+      }
+      
+      const stats = genreMap.get(genre)!;
+      stats.plays += perf.plays;
+      
+      perf.occupancyReadings.forEach(o => {
+        stats.occupancySum += o;
+        stats.occupancyCount++;
+      });
+      
+      perf.occupancyChanges.forEach(c => {
+        stats.changeSum += c;
+        stats.changeCount++;
+      });
+      
+      const songDuration = perf.playDurations.reduce((a, b) => a + b, 0);
+      stats.totalDuration += songDuration || (perf.plays * 3.5); // Default 3.5 min per play
+    });
+    
+    const results: GenreStats[] = [];
+    
+    genreMap.forEach((stats, genre) => {
+      if (stats.plays < 1) return;
+      
+      const avgOccupancy = stats.occupancyCount > 0 
+        ? stats.occupancySum / stats.occupancyCount 
+        : 0;
+      
+      const avgChange = stats.changeCount > 0 
+        ? stats.changeSum / stats.changeCount 
+        : 0;
+      
+      // Estimate avg dwell time based on occupancy stability
+      // Higher occupancy with positive change = longer dwell
+      const avgDwellTime = Math.max(5, 15 + avgChange * 2); // 5-30 minute range
+      
+      // Performance score for genre
+      const occupancyScore = Math.min(40, (avgOccupancy / maxOccupancy) * 40);
+      const changeScore = Math.min(35, Math.max(0, (avgChange + 3) * 5));
+      const playsScore = Math.min(25, Math.log10(stats.plays + 1) * 10);
+      
+      results.push({
+        genre,
+        plays: stats.plays,
+        avgDwellTime: Math.round(avgDwellTime),
+        avgOccupancy: Math.round(avgOccupancy),
+        totalMinutes: Math.round(stats.totalDuration),
+        performanceScore: Math.round(Math.min(100, occupancyScore + changeScore + playsScore))
+      });
+    });
+    
+    // Sort by plays descending
+    results.sort((a, b) => b.plays - a.plays);
+    
+    return results;
+  }
+  
+  /**
+   * Get genre statistics for the specified time range
+   */
+  async getGenreStats(limit: number = 10, timeRange: AnalyticsTimeRange = '30d'): Promise<GenreStats[]> {
+    // Ensure we have computed the analytics
+    const cached = this.analyticsCache.get(timeRange);
+    if (cached && (Date.now() - cached.timestamp) < this.PERFORMANCE_CACHE_TTL) {
+      return cached.genreStats.slice(0, limit);
+    }
+    
+    // Trigger computation by getting performing songs
+    await this.getHighestPerformingSongs(10, timeRange);
+    
+    // Now get from cache
+    const updated = this.analyticsCache.get(timeRange);
+    return updated?.genreStats.slice(0, limit) || [];
+  }
+  
+  /**
    * Generate a "Top Performers" playlist data
    * Returns songs formatted for playlist display/export
    */
-  async getTopPerformersPlaylist(limit: number = 20): Promise<Array<{
-    position: number;
-    song: string;
-    artist: string;
-    performanceScore: number;
-    albumArt?: string;
-    reason: string;
-  }>> {
-    const topSongs = await this.getHighestPerformingSongs(limit);
+  async getTopPerformersPlaylist(limit: number = 20, timeRange: AnalyticsTimeRange = '30d'): Promise<PlaylistSong[]> {
+    const topSongs = await this.getHighestPerformingSongs(limit, timeRange);
     
     return topSongs.map((song, index) => ({
       position: index + 1,
       song: song.song,
       artist: song.artist,
+      plays: song.plays,
       performanceScore: song.performanceScore,
       albumArt: song.albumArt,
-      reason: song.avgOccupancyChange >= 0 
-        ? `+${song.avgOccupancyChange} people during plays`
-        : `Avg ${song.avgOccupancy} people during plays`
+      genre: song.genre,
+      reason: song.avgDwellExtension >= 0 
+        ? `+${song.avgDwellExtension} min dwell`
+        : song.avgOccupancyChange >= 0 
+          ? `+${song.avgOccupancyChange} people during plays`
+          : `${song.plays} plays, avg ${song.avgOccupancy} people`
     }));
+  }
+  
+  /**
+   * Export playlist to various formats
+   */
+  async exportPlaylist(format: 'csv' | 'txt' | 'json' = 'csv', timeRange: AnalyticsTimeRange = '30d', venueName?: string): Promise<void> {
+    const playlist = await this.getTopPerformersPlaylist(50, timeRange);
+    
+    if (playlist.length === 0) {
+      console.warn('No playlist data to export');
+      return;
+    }
+    
+    let content: string;
+    let filename: string;
+    let mimeType: string;
+    
+    const venuePrefix = venueName ? venueName.toLowerCase().replace(/\s+/g, '-') : 'venue';
+    const dateStr = new Date().toISOString().split('T')[0];
+    
+    switch (format) {
+      case 'txt':
+        // Simple text format for easy copy/paste
+        content = `Top Performers Playlist (${timeRange})\n`;
+        content += `Generated: ${new Date().toLocaleDateString()}\n\n`;
+        playlist.forEach(song => {
+          content += `${song.position}. ${song.song} - ${song.artist}\n`;
+        });
+        filename = `${venuePrefix}-playlist-${dateStr}.txt`;
+        mimeType = 'text/plain;charset=utf-8;';
+        break;
+        
+      case 'json':
+        // JSON format for integrations
+        content = JSON.stringify({
+          name: `${venuePrefix} Top Performers`,
+          description: `Auto-generated playlist based on ${timeRange} venue performance data`,
+          generatedAt: new Date().toISOString(),
+          tracks: playlist.map(song => ({
+            name: song.song,
+            artist: song.artist,
+            performanceScore: song.performanceScore,
+            genre: song.genre
+          }))
+        }, null, 2);
+        filename = `${venuePrefix}-playlist-${dateStr}.json`;
+        mimeType = 'application/json;charset=utf-8;';
+        break;
+        
+      case 'csv':
+      default:
+        // CSV format
+        const headers = ['Position', 'Song', 'Artist', 'Plays', 'Performance Score', 'Genre', 'Reason'];
+        const rows = playlist.map(song => [
+          song.position,
+          song.song,
+          song.artist,
+          song.plays,
+          song.performanceScore,
+          song.genre || 'Unknown',
+          song.reason
+        ]);
+        content = [
+          headers.join(','),
+          ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+        ].join('\n');
+        filename = `${venuePrefix}-playlist-${dateStr}.csv`;
+        mimeType = 'text/csv;charset=utf-8;';
+        break;
+    }
+    
+    // Download the file
+    const blob = new Blob([content], { type: mimeType });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    console.log(`📥 Exported playlist as ${format}: ${filename}`);
   }
   
   exportToCSV(venueName?: string): void {
