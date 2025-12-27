@@ -90,17 +90,30 @@ export function PulseScoreDropdown({
     return { icon: '✗', color: 'text-red-400', bg: 'bg-red-500/20' };
   };
 
-  // No score available
-  if (displayScore === null) {
+  // No score available - still learning
+  if (displayScore === null || displayScore === undefined) {
+    const isLearning = pulseScoreResult?.status === 'learning';
     return (
-      <div className={`glass-card ${compact ? 'p-4' : 'p-6'} border border-gray-500/30`}>
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-full bg-gray-700/50 flex items-center justify-center">
-            <span className="text-2xl text-gray-500">?</span>
+      <div className={`glass-card ${compact ? 'p-4' : 'p-6'} border border-purple-500/30 bg-purple-500/5`}>
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500/30 to-pink-500/30 flex items-center justify-center animate-pulse">
+            <Brain className="w-7 h-7 text-purple-400" />
           </div>
-          <div>
-            <div className="text-lg font-bold text-gray-400">Pulse Score Unavailable</div>
-            <div className="text-sm text-gray-500">Waiting for sensor data...</div>
+          <div className="flex-1">
+            <div className="text-lg font-bold text-white flex items-center gap-2">
+              🎯 PULSE SCORE
+              <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400">
+                Learning
+              </span>
+            </div>
+            <div className="text-sm text-gray-400">
+              {isLearning 
+                ? 'Collecting venue data to learn your optimal conditions...'
+                : 'Waiting for sensor data...'}
+            </div>
+            <div className="mt-2 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full animate-pulse" style={{ width: '30%' }} />
+            </div>
           </div>
         </div>
       </div>
@@ -274,7 +287,7 @@ export function PulseScoreDropdown({
               )}
 
               {/* Score Calculation Section */}
-              {hasDetailedBreakdown && (
+              {hasDetailedBreakdown && pulseScoreResult.breakdown.learnedScore !== null && (
                 <div>
                   <div className="flex items-center gap-2 mb-4">
                     <Calculator className="w-4 h-4 text-green-400" />
@@ -283,31 +296,28 @@ export function PulseScoreDropdown({
                   
                   <div className="p-4 rounded-lg bg-gray-800/50 border border-white/10 font-mono text-sm">
                     <div className="space-y-2">
-                      <div className="flex justify-between text-gray-400">
-                        <span>Generic Baseline:</span>
-                        <span>
-                          <span className="text-white">{pulseScoreResult.breakdown.genericScore}</span>
-                          <span className="text-gray-500"> × </span>
-                          <span className="text-blue-400">{Math.round(pulseScoreResult.breakdown.weights.genericWeight * 100)}%</span>
-                          <span className="text-gray-500"> = </span>
-                          <span className="text-white">
-                            {(pulseScoreResult.breakdown.genericScore * pulseScoreResult.breakdown.weights.genericWeight).toFixed(1)}
-                          </span>
-                        </span>
-                      </div>
+                      <p className="text-xs text-gray-500 mb-3">
+                        100% venue-specific — learned from your historical performance data
+                      </p>
                       
-                      {pulseScoreResult.breakdown.learnedScore !== null && (
-                        <div className="flex justify-between text-gray-400">
-                          <span>Venue Learned:</span>
-                          <span>
-                            <span className="text-white">{pulseScoreResult.breakdown.learnedScore}</span>
-                            <span className="text-gray-500"> × </span>
-                            <span className="text-purple-400">{Math.round(pulseScoreResult.breakdown.weights.learnedWeight * 100)}%</span>
-                            <span className="text-gray-500"> = </span>
-                            <span className="text-white">
-                              {(pulseScoreResult.breakdown.learnedScore * pulseScoreResult.breakdown.weights.learnedWeight).toFixed(1)}
-                            </span>
-                          </span>
+                      {pulseScoreResult.breakdown.factorScores && (
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-gray-400">
+                            <span>Sound:</span>
+                            <span className="text-white">{pulseScoreResult.breakdown.factorScores.sound}% × 30%</span>
+                          </div>
+                          <div className="flex justify-between text-gray-400">
+                            <span>Temperature:</span>
+                            <span className="text-white">{pulseScoreResult.breakdown.factorScores.temperature}% × 30%</span>
+                          </div>
+                          <div className="flex justify-between text-gray-400">
+                            <span>Light:</span>
+                            <span className="text-white">{pulseScoreResult.breakdown.factorScores.light}% × 20%</span>
+                          </div>
+                          <div className="flex justify-between text-gray-400">
+                            <span>Humidity:</span>
+                            <span className="text-white">{pulseScoreResult.breakdown.factorScores.humidity}% × 20%</span>
+                          </div>
                         </div>
                       )}
                       
@@ -343,7 +353,7 @@ export function PulseScoreDropdown({
                         <span className="text-white font-medium capitalize">{pulseScoreResult.status}</span>
                       </div>
                       <span className="text-lg font-bold text-purple-400">
-                        {Math.round(pulseScoreResult.confidence * 100)}%
+                        {Math.round(pulseScoreResult.confidence * 100)}% confidence
                       </span>
                     </div>
                     
@@ -360,18 +370,12 @@ export function PulseScoreDropdown({
                     <p className="text-xs text-gray-400">
                       {pulseScoreResult.status === 'learning' && 'Collecting data to understand your venue\'s optimal conditions...'}
                       {pulseScoreResult.status === 'refining' && 'Refining optimal ranges based on your venue\'s performance data...'}
-                      {pulseScoreResult.status === 'optimized' && 'Score is optimized for your specific venue characteristics!'}
+                      {pulseScoreResult.status === 'optimized' && 'Score is fully optimized for your specific venue!'}
                     </p>
                     
-                    <div className="mt-3 pt-3 border-t border-purple-500/20 grid grid-cols-2 gap-4 text-xs">
-                      <div>
-                        <span className="text-gray-500">Generic Weight:</span>
-                        <span className="text-white ml-2">{Math.round(pulseScoreResult.breakdown.weights.genericWeight * 100)}%</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Learned Weight:</span>
-                        <span className="text-white ml-2">{Math.round(pulseScoreResult.breakdown.weights.learnedWeight * 100)}%</span>
-                      </div>
+                    <div className="mt-3 pt-3 border-t border-purple-500/20 text-xs text-center">
+                      <span className="text-purple-400 font-medium">100% Venue-Specific</span>
+                      <span className="text-gray-500 ml-2">— No generic industry baseline</span>
                     </div>
                   </div>
                 </div>

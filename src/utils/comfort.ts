@@ -225,11 +225,11 @@ export function calculateGenericScore(data: SensorData): number {
 }
 
 /**
- * NEW: Progressive Learning Pulse Score
+ * Venue-Specific Pulse Score
  * 
- * Calculates a blended score that starts with generic industry standards
- * and progressively learns venue-specific optimal conditions based on
- * historical performance data (dwell time, occupancy, revenue).
+ * Calculates pulse score based purely on venue-specific learned optimal conditions.
+ * Learns from historical performance data (dwell time, occupancy, revenue).
+ * Returns null score if insufficient data to learn from.
  * 
  * @param venueId - Venue identifier
  * @param data - Current sensor data
@@ -239,72 +239,58 @@ export async function calculatePulseScore(
   venueId: string,
   data: SensorData
 ): Promise<PulseScoreResult> {
-  // Step 1: Always calculate generic score (baseline fallback)
-  const genericScore = calculateGenericScore(data);
-
-  // Step 2: Get learning confidence for this venue
+  // Step 1: Get learning confidence for this venue
   const confidence = await pulseLearningService.calculateLearningConfidence(venueId);
 
-  // Step 3: If we have learned data, calculate learned score
-  let learnedScore: number | null = null;
-  let optimalRanges = null;
-  let factorScores = undefined;
-
-  if (confidence > 0) {
-    const ranges = await pulseLearningService.getOptimalRanges(venueId);
-    if (ranges) {
-      optimalRanges = ranges.optimalRanges;
-      learnedScore = pulseLearningService.calculateLearnedScore(data, ranges);
-
-      // Calculate individual factor scores for breakdown
-      factorScores = {
-        temperature: pulseLearningService.scoreEnvironmentalFactor(
-          data.indoorTemp,
-          ranges.optimalRanges.temperature
-        ),
-        light: pulseLearningService.scoreEnvironmentalFactor(
-          data.light,
-          ranges.optimalRanges.light
-        ),
-        sound: pulseLearningService.scoreEnvironmentalFactor(
-          data.decibels,
-          ranges.optimalRanges.sound
-        ),
-        humidity: pulseLearningService.scoreEnvironmentalFactor(
-          data.humidity,
-          ranges.optimalRanges.humidity
-        )
-      };
-    }
-  }
-
-  // Step 4: Blend scores based on confidence
-  const weights = pulseLearningService.calculateWeights(confidence);
+  // Step 2: Get learned optimal ranges
+  const ranges = await pulseLearningService.getOptimalRanges(venueId);
   
-  const finalScore = learnedScore !== null
-    ? Math.round((genericScore * weights.genericWeight) + (learnedScore * weights.learnedWeight))
-    : genericScore; // Fallback to 100% generic if no learned data
-
-  // Step 5: Get learning status
-  const statusInfo = pulseLearningService.getLearningStatus(confidence);
-
-  // Step 6: Determine color and status based on score
-  let status: ComfortLevel['status'];
-  let color: string;
-
-  if (finalScore >= 80) {
-    status = 'excellent';
-    color = '#00ff88';
-  } else if (finalScore >= 60) {
-    status = 'good';
-    color = '#00d4ff';
-  } else if (finalScore >= 40) {
-    status = 'fair';
-    color = '#ffd700';
-  } else {
-    status = 'poor';
-    color = '#ff4444';
+  // Step 3: If no learned data yet, return learning state
+  if (!ranges || confidence === 0) {
+    return {
+      score: null as unknown as number, // No score yet - still learning
+      confidence: 0,
+      status: 'learning',
+      statusMessage: 'Collecting venue data to calculate your Pulse Score...',
+      breakdown: {
+        genericScore: 0,
+        learnedScore: null,
+        weights: { learnedWeight: 1, genericWeight: 0 },
+        optimalRanges: null,
+        factorScores: undefined
+      }
+    };
   }
+
+  // Step 4: Calculate learned score from venue-specific optimal ranges
+  const learnedScore = pulseLearningService.calculateLearnedScore(data, ranges);
+  const optimalRanges = ranges.optimalRanges;
+
+  // Step 5: Calculate individual factor scores for breakdown
+  const factorScores = {
+    temperature: pulseLearningService.scoreEnvironmentalFactor(
+      data.indoorTemp,
+      ranges.optimalRanges.temperature
+    ),
+    light: pulseLearningService.scoreEnvironmentalFactor(
+      data.light,
+      ranges.optimalRanges.light
+    ),
+    sound: pulseLearningService.scoreEnvironmentalFactor(
+      data.decibels,
+      ranges.optimalRanges.sound
+    ),
+    humidity: pulseLearningService.scoreEnvironmentalFactor(
+      data.humidity,
+      ranges.optimalRanges.humidity
+    )
+  };
+
+  // Step 6: Final score is 100% learned (venue-specific)
+  const finalScore = learnedScore;
+
+  // Step 7: Get learning status
+  const statusInfo = pulseLearningService.getLearningStatus(confidence);
 
   return {
     score: finalScore,
@@ -312,9 +298,9 @@ export async function calculatePulseScore(
     status: statusInfo.status,
     statusMessage: statusInfo.message,
     breakdown: {
-      genericScore,
+      genericScore: 0, // No longer used
       learnedScore,
-      weights,
+      weights: { learnedWeight: 1, genericWeight: 0 }, // 100% learned
       optimalRanges,
       factorScores
     }
