@@ -21,7 +21,7 @@ import { AnimatedBackground } from '../components/AnimatedBackground';
 import { MetricCard } from '../components/MetricCard';
 import { ComfortGauge } from '../components/ComfortGauge';
 import { ComfortBreakdownCard } from '../components/ComfortBreakdown';
-import { PulseScore } from '../components/PulseScore';
+import { PulseScoreDropdown } from '../components/PulseScoreDropdown';
 import { SportsWidget } from '../components/SportsWidget';
 import { DataChart } from '../components/DataChart';
 import { TimeRangeToggle } from '../components/TimeRangeToggle';
@@ -804,13 +804,14 @@ export function Dashboard() {
               {/* Dashboard Content - Always show cards, use dashes when no data */}
               {!loading && (
                 <>
-                  {/* Pulse Score - Show with null when no data */}
-                  <PulseScore
-                    score={currentData && comfortLevel ? comfortLevel.score : null}
-                    breakdown={undefined}
-                    trend="stable"
-                    pulseScoreResult={pulseScoreResult}
-                  />
+                  {/* Pulse Score - Collapsible with full breakdown */}
+                  <div className="mb-6">
+                    <PulseScoreDropdown
+                      score={currentData && comfortLevel ? comfortLevel.score : null}
+                      pulseScoreResult={pulseScoreResult}
+                      sensorData={currentData}
+                    />
+                  </div>
 
                   {/* Occupancy Metrics Section */}
                   {occupancyMetrics && (

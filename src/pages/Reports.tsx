@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { FileText, Download, Sparkles, TrendingUp, Calendar, Music, ThermometerSun, Users } from 'lucide-react';
 import { format, subDays } from 'date-fns';
@@ -9,7 +9,9 @@ import { isDemoAccount, generateDemoMonthlyReport, generateDemoMusicReport, gene
 import { aggregateOccupancyByBarDay } from '../utils/barDay';
 import locationService from '../services/location.service';
 import { formatValueAllowZero, formatValueNoZero } from '../utils/dataDisplay';
-import type { WeeklyReport, WeeklyMetrics } from '../types';
+import { PulseScoreDropdown } from '../components/PulseScoreDropdown';
+import { calculateGenericScore } from '../utils/comfort';
+import type { WeeklyReport, WeeklyMetrics, SensorData, PulseScoreResult } from '../types';
 
 type ReportType = 'weekly' | 'monthly' | 'music' | 'atmosphere' | 'occupancy' | 'custom';
 
@@ -419,6 +421,69 @@ export function Reports() {
                 </div>
                 <p className="text-gray-300 leading-relaxed">{selectedReport.summary}</p>
               </div>
+
+              {/* Report Pulse Score */}
+              {(() => {
+                // Calculate pulse score from report averages
+                const hasData = selectedReport.metrics.avgTemperature > 0 || 
+                               selectedReport.metrics.avgDecibels > 0 || 
+                               selectedReport.metrics.avgHumidity > 0;
+                
+                if (!hasData) return null;
+
+                // Create sensor-like data from report averages
+                const reportSensorData: SensorData = {
+                  venueId: 'report',
+                  deviceId: 'report',
+                  timestamp: new Date().toISOString(),
+                  indoorTemp: selectedReport.metrics.avgTemperature || 72,
+                  outdoorTemp: 70,
+                  humidity: selectedReport.metrics.avgHumidity || 50,
+                  decibels: selectedReport.metrics.avgDecibels || 75,
+                  light: 500, // Default light value
+                  occupancy: {
+                    current: selectedReport.metrics.peakOccupancy || 0,
+                    trend: 'stable'
+                  }
+                };
+
+                // Use the synchronous generic score calculator
+                const genericScore = calculateGenericScore(reportSensorData);
+
+                // Create a PulseScoreResult for the report
+                const pulseResult: PulseScoreResult = {
+                  score: genericScore,
+                  confidence: 0.5, // Report is based on averages
+                  status: 'learning',
+                  statusMessage: 'Based on period averages',
+                  breakdown: {
+                    genericScore: genericScore,
+                    learnedScore: null,
+                    weights: { genericWeight: 1, learnedWeight: 0 },
+                    optimalRanges: {
+                      temperature: { min: 72, max: 76 },
+                      light: { min: 300, max: 500 },
+                      sound: { min: 70, max: 80 },
+                      humidity: { min: 45, max: 55 }
+                    },
+                    factorScores: undefined
+                  }
+                };
+
+                return (
+                  <div className="mb-4">
+                    <PulseScoreDropdown
+                      score={pulseResult.score}
+                      pulseScoreResult={pulseResult}
+                      sensorData={reportSensorData}
+                      compact
+                    />
+                    <p className="text-xs text-gray-500 mt-2 text-center">
+                      Calculated from report period averages
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Key Metrics */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
