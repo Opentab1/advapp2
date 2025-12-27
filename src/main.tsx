@@ -4,6 +4,10 @@ import './config/initAmplify';
 import App from './App';
 import './index.css';
 
+// Initialize theme before render to prevent flash
+import themeService from './services/theme.service';
+themeService.loadTheme();
+
 // Register service worker for PWA
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
