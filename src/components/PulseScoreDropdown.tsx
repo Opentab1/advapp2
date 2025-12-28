@@ -35,7 +35,10 @@ export function PulseScoreDropdown({
   const [isExpanded, setIsExpanded] = useState(false);
   const [topGenre, setTopGenre] = useState<{ genre: string; avgDwellTime: number } | null>(null);
 
-  // Fetch top genre by dwell time
+  const [currentGenre, setCurrentGenre] = useState<string | null>(null);
+  const [genreScore, setGenreScore] = useState<number>(50); // Default 50 if unknown
+
+  // Fetch top genre by dwell time and calculate genre score
   useEffect(() => {
     const fetchTopGenre = async () => {
       try {
@@ -43,17 +46,45 @@ export function PulseScoreDropdown({
         if (genreStats && genreStats.length > 0) {
           // Sort by avgDwellTime to find the genre with longest dwell time
           const sorted = [...genreStats].sort((a, b) => b.avgDwellTime - a.avgDwellTime);
+          const optimalGenre = sorted[0].genre;
+          const maxDwell = sorted[0].avgDwellTime;
+          
           setTopGenre({
-            genre: sorted[0].genre,
-            avgDwellTime: sorted[0].avgDwellTime
+            genre: optimalGenre,
+            avgDwellTime: maxDwell
           });
+
+          // Get current playing song's genre from sensor data
+          const currentSongGenre = sensorData?.currentSong 
+            ? songLogService.detectGenre(sensorData.currentSong, sensorData.artist || '')
+            : null;
+          
+          setCurrentGenre(currentSongGenre);
+
+          // Calculate genre score based on how well current genre matches optimal
+          if (currentSongGenre) {
+            if (currentSongGenre === optimalGenre) {
+              setGenreScore(100); // Perfect match
+            } else {
+              // Find the current genre's dwell time and score proportionally
+              const currentGenreStats = genreStats.find(g => g.genre === currentSongGenre);
+              if (currentGenreStats && maxDwell > 0) {
+                const score = Math.round((currentGenreStats.avgDwellTime / maxDwell) * 100);
+                setGenreScore(Math.max(20, Math.min(100, score))); // Clamp between 20-100
+              } else {
+                setGenreScore(50); // Unknown genre gets 50
+              }
+            }
+          } else {
+            setGenreScore(50); // No current song
+          }
         }
       } catch (error) {
         console.error('Error fetching genre stats:', error);
       }
     };
     fetchTopGenre();
-  }, []);
+  }, [sensorData?.currentSong, sensorData?.artist]);
 
   // Use pulse score result if available, otherwise fall back to basic score
   const displayScore = pulseScoreResult?.score ?? score;
@@ -72,6 +103,7 @@ export function PulseScoreDropdown({
       case 'light': return Sun;
       case 'temperature': return Thermometer;
       case 'humidity': return Droplets;
+      case 'genre': return Music;
       default: return AlertCircle;
     }
   };
@@ -82,6 +114,7 @@ export function PulseScoreDropdown({
       case 'light': return 'Lighting';
       case 'temperature': return 'Outdoor Temp';
       case 'humidity': return 'Humidity';
+      case 'genre': return 'Music Genre';
       default: return factor;
     }
   };
@@ -92,17 +125,19 @@ export function PulseScoreDropdown({
       case 'light': return 'lux';
       case 'temperature': return '°F';
       case 'humidity': return '%';
+      case 'genre': return '';
       default: return '';
     }
   };
 
-  const getCurrentValue = (factor: string): number | null => {
+  const getCurrentValue = (factor: string): number | string | null => {
     if (!sensorData) return null;
     switch (factor) {
       case 'sound': return sensorData.decibels;
       case 'light': return sensorData.light;
       case 'temperature': return sensorData.outdoorTemp;
       case 'humidity': return sensorData.humidity;
+      case 'genre': return currentGenre || 'None';
       default: return null;
     }
   };
@@ -137,9 +172,12 @@ export function PulseScoreDropdown({
 
   // Get factor scores - always calculate when we have sensor data
   const getFactorScores = () => {
-    // If we have factor scores from the result, use them
+    // If we have factor scores from the result, add genre to them
     if (pulseScoreResult?.breakdown?.factorScores) {
-      return pulseScoreResult.breakdown.factorScores;
+      return {
+        ...pulseScoreResult.breakdown.factorScores,
+        genre: genreScore
+      };
     }
     
     // If we have sensor data, calculate factor scores
@@ -150,7 +188,8 @@ export function PulseScoreDropdown({
         sound: calculateFactorScore(sensorData.decibels, ranges.sound),
         temperature: calculateFactorScore(sensorData.outdoorTemp, ranges.temperature),
         light: calculateFactorScore(sensorData.light, ranges.light),
-        humidity: calculateFactorScore(sensorData.humidity, ranges.humidity)
+        humidity: calculateFactorScore(sensorData.humidity, ranges.humidity),
+        genre: genreScore
       };
     }
     
@@ -161,7 +200,8 @@ export function PulseScoreDropdown({
         sound: displayScore,
         temperature: displayScore,
         light: displayScore,
-        humidity: displayScore
+        humidity: displayScore,
+        genre: genreScore
       };
     }
     
@@ -269,7 +309,7 @@ export function PulseScoreDropdown({
                 </div>
                 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {['sound', 'light', 'temperature', 'humidity'].map((factor) => {
+                  {['sound', 'light', 'temperature', 'humidity', 'genre'].map((factor) => {
                     const Icon = getFactorIcon(factor);
                     const factorScore = factorScores?.[factor as keyof typeof factorScores] ?? null;
                     const currentValue = getCurrentValue(factor);
@@ -333,34 +373,26 @@ export function PulseScoreDropdown({
                 </div>
               </div>
 
-              {/* Top Genre by Dwell Time */}
+              {/* Optimal Genre Info */}
               {topGenre && (
-                <div>
-                  <div className="flex items-center gap-2 mb-4">
-                    <Music className="w-4 h-4 text-purple-400" />
-                    <h4 className="text-sm font-semibold text-white uppercase tracking-wide">Top Genre (Longest Dwell Time)</h4>
-                  </div>
-                  
-                  <div className="p-4 rounded-lg bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded-full bg-purple-500/20 flex items-center justify-center">
-                          <Music className="w-6 h-6 text-purple-400" />
-                        </div>
-                        <div>
-                          <div className="text-xl font-bold text-white">{topGenre.genre}</div>
-                          <div className="text-sm text-gray-400">Best performing genre</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold text-purple-400">{topGenre.avgDwellTime}m</div>
-                        <div className="text-xs text-gray-500">avg dwell time</div>
-                      </div>
+                <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Music className="w-4 h-4 text-purple-400" />
+                      <span className="text-sm text-gray-300">
+                        <span className="text-purple-400 font-semibold">{topGenre.genre}</span> = longest dwell ({topGenre.avgDwellTime}m avg)
+                      </span>
                     </div>
-                    <p className="text-xs text-gray-400 mt-3">
-                      Guests stay longest when <span className="text-purple-400 font-medium">{topGenre.genre}</span> music is playing. 
-                      Consider playing more of this genre during peak hours.
-                    </p>
+                    {currentGenre && currentGenre === topGenre.genre && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">
+                        ✓ Playing now
+                      </span>
+                    )}
+                    {currentGenre && currentGenre !== topGenre.genre && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400">
+                        Now: {currentGenre}
+                      </span>
+                    )}
                   </div>
                 </div>
               )}
@@ -376,10 +408,11 @@ export function PulseScoreDropdown({
                   
                   <div className="space-y-2">
                     {[
-                      { factor: 'sound', label: 'Sound', weight: 0.38, color: 'bg-cyan' },
-                      { factor: 'light', label: 'Light', weight: 0.26, color: 'bg-yellow-400' },
-                      { factor: 'temperature', label: 'Temp', weight: 0.22, color: 'bg-red-400' },
-                      { factor: 'humidity', label: 'Humidity', weight: 0.14, color: 'bg-blue-400' }
+                      { factor: 'sound', label: 'Sound', weight: 0.25, color: 'bg-cyan' },
+                      { factor: 'temperature', label: 'Outdoor Temp', weight: 0.20, color: 'bg-red-400' },
+                      { factor: 'light', label: 'Light', weight: 0.15, color: 'bg-yellow-400' },
+                      { factor: 'humidity', label: 'Humidity', weight: 0.15, color: 'bg-blue-400' },
+                      { factor: 'genre', label: 'Music Genre', weight: 0.25, color: 'bg-purple-400' }
                     ].map(({ factor, label, weight, color }) => (
                       <div key={factor} className="flex items-center gap-3">
                         <span className="text-xs text-gray-400 w-16">{label}</span>
@@ -423,33 +456,38 @@ export function PulseScoreDropdown({
                             <div className="inline-block min-w-max">
                               <span className="text-gray-400">Pulse = (</span>
                               <span className="text-cyan font-bold">{factorScores.sound}</span>
-                              <span className="text-gray-400">×.30) + (</span>
+                              <span className="text-gray-400">×.25) + (</span>
                               <span className="text-red-400 font-bold">{factorScores.temperature}</span>
-                              <span className="text-gray-400">×.30) + (</span>
-                              <span className="text-yellow-400 font-bold">{factorScores.light}</span>
                               <span className="text-gray-400">×.20) + (</span>
+                              <span className="text-yellow-400 font-bold">{factorScores.light}</span>
+                              <span className="text-gray-400">×.15) + (</span>
                               <span className="text-blue-400 font-bold">{factorScores.humidity}</span>
-                              <span className="text-gray-400">×.20)</span>
+                              <span className="text-gray-400">×.15) + (</span>
+                              <span className="text-purple-400 font-bold">{factorScores.genre}</span>
+                              <span className="text-gray-400">×.25)</span>
                             </div>
                           </div>
-                          <div className="flex justify-center gap-4 mt-2 text-xs text-gray-500">
+                          <div className="flex flex-wrap justify-center gap-3 mt-2 text-xs text-gray-500">
                             <span><span className="text-cyan">{factorScores.sound}</span> Sound</span>
                             <span><span className="text-red-400">{factorScores.temperature}</span> Temp</span>
                             <span><span className="text-yellow-400">{factorScores.light}</span> Light</span>
                             <span><span className="text-blue-400">{factorScores.humidity}</span> Humidity</span>
+                            <span><span className="text-purple-400">{factorScores.genre}</span> Genre</span>
                           </div>
                         </>
                       ) : (
                         <div className="font-mono text-sm text-white text-center">
                           <span className="text-gray-400">Pulse = (</span>
                           <span className="text-cyan">Sound</span>
-                          <span className="text-gray-400">×.30) + (</span>
+                          <span className="text-gray-400">×.25) + (</span>
                           <span className="text-red-400">Temp</span>
-                          <span className="text-gray-400">×.30) + (</span>
-                          <span className="text-yellow-400">Light</span>
                           <span className="text-gray-400">×.20) + (</span>
+                          <span className="text-yellow-400">Light</span>
+                          <span className="text-gray-400">×.15) + (</span>
                           <span className="text-blue-400">Humidity</span>
-                          <span className="text-gray-400">×.20)</span>
+                          <span className="text-gray-400">×.15) + (</span>
+                          <span className="text-purple-400">Genre</span>
+                          <span className="text-gray-400">×.25)</span>
                         </div>
                       )}
                     </div>
@@ -467,18 +505,18 @@ export function PulseScoreDropdown({
                               </div>
                               <div className="text-white">
                                 <span className="text-cyan">{factorScores.sound}</span>
-                                <span className="text-gray-500"> × 0.30 = </span>
-                                <span className="text-white font-medium">{(factorScores.sound * 0.30).toFixed(1)}</span>
+                                <span className="text-gray-500"> × 0.25 = </span>
+                                <span className="text-white font-medium">{(factorScores.sound * 0.25).toFixed(1)}</span>
                               </div>
                             </div>
                             <div className="p-2 rounded bg-white/5">
                               <div className="text-xs text-gray-500 flex items-center gap-1">
-                                <Thermometer className="w-3 h-3" /> Temp Score
+                                <Thermometer className="w-3 h-3" /> Outdoor Temp
                               </div>
                               <div className="text-white">
                                 <span className="text-red-400">{factorScores.temperature}</span>
-                                <span className="text-gray-500"> × 0.30 = </span>
-                                <span className="text-white font-medium">{(factorScores.temperature * 0.30).toFixed(1)}</span>
+                                <span className="text-gray-500"> × 0.20 = </span>
+                                <span className="text-white font-medium">{(factorScores.temperature * 0.20).toFixed(1)}</span>
                               </div>
                             </div>
                             <div className="p-2 rounded bg-white/5">
@@ -487,8 +525,8 @@ export function PulseScoreDropdown({
                               </div>
                               <div className="text-white">
                                 <span className="text-yellow-400">{factorScores.light}</span>
-                                <span className="text-gray-500"> × 0.20 = </span>
-                                <span className="text-white font-medium">{(factorScores.light * 0.20).toFixed(1)}</span>
+                                <span className="text-gray-500"> × 0.15 = </span>
+                                <span className="text-white font-medium">{(factorScores.light * 0.15).toFixed(1)}</span>
                               </div>
                             </div>
                             <div className="p-2 rounded bg-white/5">
@@ -497,8 +535,20 @@ export function PulseScoreDropdown({
                               </div>
                               <div className="text-white">
                                 <span className="text-blue-400">{factorScores.humidity}</span>
-                                <span className="text-gray-500"> × 0.20 = </span>
-                                <span className="text-white font-medium">{(factorScores.humidity * 0.20).toFixed(1)}</span>
+                                <span className="text-gray-500"> × 0.15 = </span>
+                                <span className="text-white font-medium">{(factorScores.humidity * 0.15).toFixed(1)}</span>
+                              </div>
+                            </div>
+                            <div className="p-2 rounded bg-white/5 col-span-2">
+                              <div className="text-xs text-gray-500 flex items-center gap-1">
+                                <Music className="w-3 h-3" /> Genre Score
+                                {currentGenre && <span className="text-purple-400 ml-1">({currentGenre})</span>}
+                                {topGenre && <span className="text-gray-600 ml-1">• Best: {topGenre.genre}</span>}
+                              </div>
+                              <div className="text-white">
+                                <span className="text-purple-400">{factorScores.genre}</span>
+                                <span className="text-gray-500"> × 0.25 = </span>
+                                <span className="text-white font-medium">{(factorScores.genre * 0.25).toFixed(1)}</span>
                               </div>
                             </div>
                           </div>
@@ -507,11 +557,19 @@ export function PulseScoreDropdown({
                           <div className="border-t border-white/10 pt-3 mt-3">
                             <div className="flex items-center justify-between">
                               <div className="text-gray-400 text-xs">
-                                {(factorScores.sound * 0.30).toFixed(1)} + {(factorScores.temperature * 0.30).toFixed(1)} + {(factorScores.light * 0.20).toFixed(1)} + {(factorScores.humidity * 0.20).toFixed(1)}
+                                {(factorScores.sound * 0.25).toFixed(1)} + {(factorScores.temperature * 0.20).toFixed(1)} + {(factorScores.light * 0.15).toFixed(1)} + {(factorScores.humidity * 0.15).toFixed(1)} + {(factorScores.genre * 0.25).toFixed(1)}
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-gray-400">=</span>
-                                <span className={`text-2xl font-bold ${colors.text}`}>{displayScore}</span>
+                                <span className={`text-2xl font-bold ${colors.text}`}>
+                                  {Math.round(
+                                    (factorScores.sound * 0.25) + 
+                                    (factorScores.temperature * 0.20) + 
+                                    (factorScores.light * 0.15) + 
+                                    (factorScores.humidity * 0.15) + 
+                                    (factorScores.genre * 0.25)
+                                  )}
+                                </span>
                               </div>
                             </div>
                           </div>
