@@ -295,73 +295,82 @@ export function PulseScoreDropdown({
                   </div>
                   
                   <div className="p-4 rounded-lg bg-gray-800/50 border border-white/10">
-                    {/* Formula Display */}
-                    <div className="mb-4 p-3 rounded-lg bg-gradient-to-r from-cyan/10 to-purple-500/10 border border-cyan/20">
-                      <p className="text-xs text-gray-400 mb-2">Formula:</p>
-                      <div className="font-mono text-sm text-white text-center">
-                        <span className="text-cyan">Pulse Score</span>
-                        <span className="text-gray-400"> = </span>
-                        <span className="text-gray-300">(</span>
-                        <span className="text-cyan">S</span>
-                        <span className="text-gray-400">×</span>
-                        <span className="text-purple-400">.30</span>
-                        <span className="text-gray-300">) + (</span>
-                        <span className="text-red-400">T</span>
-                        <span className="text-gray-400">×</span>
-                        <span className="text-purple-400">.30</span>
-                        <span className="text-gray-300">) + (</span>
-                        <span className="text-yellow-400">L</span>
-                        <span className="text-gray-400">×</span>
-                        <span className="text-purple-400">.20</span>
-                        <span className="text-gray-300">) + (</span>
-                        <span className="text-blue-400">H</span>
-                        <span className="text-gray-400">×</span>
-                        <span className="text-purple-400">.20</span>
-                        <span className="text-gray-300">)</span>
-                      </div>
-                      <div className="flex justify-center gap-4 mt-2 text-xs text-gray-500">
-                        <span><span className="text-cyan">S</span>=Sound</span>
-                        <span><span className="text-red-400">T</span>=Temp</span>
-                        <span><span className="text-yellow-400">L</span>=Light</span>
-                        <span><span className="text-blue-400">H</span>=Humidity</span>
-                      </div>
+                    {/* How It Works Blurb */}
+                    <div className="mb-4 p-3 rounded-lg bg-white/5 border border-white/10">
+                      <p className="text-sm text-gray-300 leading-relaxed">
+                        <span className="text-cyan font-semibold">How it works:</span> Each environmental factor (Sound, Temperature, Light, Humidity) receives a score from 0-100 based on how close your current reading is to your venue's <span className="text-purple-400">learned optimal range</span>. These optimal ranges are calculated from your venue's top-performing hours — when guests stayed longest and engagement was highest. The factor scores are then weighted and combined to create your final Pulse Score.
+                      </p>
                     </div>
 
-                    {/* Actual Calculation */}
+                    {/* Live Formula Display */}
+                    {pulseScoreResult.breakdown.factorScores && (
+                      <div className="mb-4 p-3 rounded-lg bg-gradient-to-r from-cyan/10 to-purple-500/10 border border-cyan/20">
+                        <p className="text-xs text-gray-400 mb-2">Live Formula (updates in real-time):</p>
+                        <div className="font-mono text-sm text-white text-center overflow-x-auto">
+                          <div className="inline-block min-w-max">
+                            <span className="text-gray-400">Pulse = (</span>
+                            <span className="text-cyan font-bold">{pulseScoreResult.breakdown.factorScores.sound}</span>
+                            <span className="text-gray-400">×.30) + (</span>
+                            <span className="text-red-400 font-bold">{pulseScoreResult.breakdown.factorScores.temperature}</span>
+                            <span className="text-gray-400">×.30) + (</span>
+                            <span className="text-yellow-400 font-bold">{pulseScoreResult.breakdown.factorScores.light}</span>
+                            <span className="text-gray-400">×.20) + (</span>
+                            <span className="text-blue-400 font-bold">{pulseScoreResult.breakdown.factorScores.humidity}</span>
+                            <span className="text-gray-400">×.20)</span>
+                          </div>
+                        </div>
+                        <div className="flex justify-center gap-4 mt-2 text-xs text-gray-500">
+                          <span><span className="text-cyan">{pulseScoreResult.breakdown.factorScores.sound}</span> Sound</span>
+                          <span><span className="text-red-400">{pulseScoreResult.breakdown.factorScores.temperature}</span> Temp</span>
+                          <span><span className="text-yellow-400">{pulseScoreResult.breakdown.factorScores.light}</span> Light</span>
+                          <span><span className="text-blue-400">{pulseScoreResult.breakdown.factorScores.humidity}</span> Humidity</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Step by Step Calculation */}
                     {pulseScoreResult.breakdown.factorScores && (
                       <div className="space-y-2 font-mono text-sm">
-                        <p className="text-xs text-gray-500 mb-2">Your current calculation:</p>
+                        <p className="text-xs text-gray-500 mb-2">Step-by-step breakdown:</p>
                         
                         <div className="grid grid-cols-2 gap-2">
                           <div className="p-2 rounded bg-white/5">
-                            <div className="text-xs text-gray-500">Sound</div>
+                            <div className="text-xs text-gray-500 flex items-center gap-1">
+                              <Volume2 className="w-3 h-3" /> Sound Score
+                            </div>
                             <div className="text-white">
                               <span className="text-cyan">{pulseScoreResult.breakdown.factorScores.sound}</span>
-                              <span className="text-gray-500"> × .30 = </span>
+                              <span className="text-gray-500"> × 0.30 = </span>
                               <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.sound * 0.30).toFixed(1)}</span>
                             </div>
                           </div>
                           <div className="p-2 rounded bg-white/5">
-                            <div className="text-xs text-gray-500">Temperature</div>
+                            <div className="text-xs text-gray-500 flex items-center gap-1">
+                              <Thermometer className="w-3 h-3" /> Temp Score
+                            </div>
                             <div className="text-white">
                               <span className="text-red-400">{pulseScoreResult.breakdown.factorScores.temperature}</span>
-                              <span className="text-gray-500"> × .30 = </span>
+                              <span className="text-gray-500"> × 0.30 = </span>
                               <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.temperature * 0.30).toFixed(1)}</span>
                             </div>
                           </div>
                           <div className="p-2 rounded bg-white/5">
-                            <div className="text-xs text-gray-500">Light</div>
+                            <div className="text-xs text-gray-500 flex items-center gap-1">
+                              <Sun className="w-3 h-3" /> Light Score
+                            </div>
                             <div className="text-white">
                               <span className="text-yellow-400">{pulseScoreResult.breakdown.factorScores.light}</span>
-                              <span className="text-gray-500"> × .20 = </span>
+                              <span className="text-gray-500"> × 0.20 = </span>
                               <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.light * 0.20).toFixed(1)}</span>
                             </div>
                           </div>
                           <div className="p-2 rounded bg-white/5">
-                            <div className="text-xs text-gray-500">Humidity</div>
+                            <div className="text-xs text-gray-500 flex items-center gap-1">
+                              <Droplets className="w-3 h-3" /> Humidity Score
+                            </div>
                             <div className="text-white">
                               <span className="text-blue-400">{pulseScoreResult.breakdown.factorScores.humidity}</span>
-                              <span className="text-gray-500"> × .20 = </span>
+                              <span className="text-gray-500"> × 0.20 = </span>
                               <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.humidity * 0.20).toFixed(1)}</span>
                             </div>
                           </div>
