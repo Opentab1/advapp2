@@ -412,7 +412,7 @@ export function SongLog() {
                   <RefreshCw className="w-6 h-6 text-purple-400 animate-spin mx-auto mb-2" />
                   <p className="text-xs text-gray-400">Analyzing genres...</p>
                 </div>
-              ) : genreStats.length > 0 && genreStats[0].genre !== 'Other' ? (
+              ) : genreStats.length > 0 ? (
                 genreStats.map((genre, index) => (
                   <motion.div
                     key={genre.genre}

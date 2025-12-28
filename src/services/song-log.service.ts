@@ -723,7 +723,7 @@ class SongLogService {
   async getGenreStats(limit: number = 10, timeRange: AnalyticsTimeRange = '30d'): Promise<GenreStats[]> {
     // Ensure we have computed the analytics
     const cached = this.analyticsCache.get(timeRange);
-    if (cached && (Date.now() - cached.timestamp) < this.PERFORMANCE_CACHE_TTL) {
+    if (cached && (Date.now() - cached.timestamp) < this.PERFORMANCE_CACHE_TTL && cached.genreStats.length > 0) {
       return cached.genreStats.slice(0, limit);
     }
     
@@ -732,7 +732,59 @@ class SongLogService {
     
     // Now get from cache
     const updated = this.analyticsCache.get(timeRange);
-    return updated?.genreStats.slice(0, limit) || [];
+    if (updated?.genreStats && updated.genreStats.length > 0) {
+      return updated.genreStats.slice(0, limit);
+    }
+    
+    // Fallback: compute genres directly from all songs
+    console.log('📊 Genre: Computing genres from song list fallback');
+    return this.computeGenresFromSongs(limit);
+  }
+
+  /**
+   * Fallback: compute genre stats directly from song list
+   */
+  private computeGenresFromSongs(limit: number): GenreStats[] {
+    this.loadSongs();
+    
+    const genreMap = new Map<string, { plays: number; songs: string[] }>();
+    
+    this.songs.forEach(song => {
+      // Detect genre for each song
+      const genre = this.detectGenre(song.songName, song.artist);
+      
+      if (!genreMap.has(genre)) {
+        genreMap.set(genre, { plays: 0, songs: [] });
+      }
+      
+      const stats = genreMap.get(genre)!;
+      stats.plays++;
+      if (!stats.songs.includes(song.songName)) {
+        stats.songs.push(song.songName);
+      }
+    });
+    
+    const results: GenreStats[] = [];
+    
+    genreMap.forEach((stats, genre) => {
+      if (stats.plays < 1) return;
+      
+      results.push({
+        genre,
+        plays: stats.plays,
+        avgDwellTime: 45, // Default estimate
+        avgOccupancy: 30, // Default estimate
+        totalMinutes: stats.plays * 3.5, // Estimate 3.5 min per song
+        performanceScore: Math.min(100, Math.round(50 + (stats.plays / 10) * 5)) // Score based on plays
+      });
+    });
+    
+    // Sort by plays descending
+    results.sort((a, b) => b.plays - a.plays);
+    
+    console.log(`📊 Genre: Computed ${results.length} genres from ${this.songs.length} songs`);
+    
+    return results.slice(0, limit);
   }
   
   /**
