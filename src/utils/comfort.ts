@@ -240,24 +240,52 @@ export async function calculatePulseScore(
   data: SensorData
 ): Promise<PulseScoreResult> {
   // Step 1: Get learning confidence for this venue
-  const confidence = await pulseLearningService.calculateLearningConfidence(venueId);
+  let confidence = await pulseLearningService.calculateLearningConfidence(venueId);
+  
+  // Ensure minimum confidence of 30% when we have sensor data
+  if (confidence < 0.30 && data) {
+    console.log('📊 PulseScore: Boosting confidence to minimum 30%');
+    confidence = 0.30;
+  }
 
-  // Step 2: Get learned optimal ranges
+  // Step 2: Get learned optimal ranges (will return defaults if no data)
   const ranges = await pulseLearningService.getOptimalRanges(venueId);
   
-  // Step 3: If no learned data yet, return learning state
-  if (!ranges || confidence === 0) {
+  // Step 3: If truly no ranges available, create defaults
+  if (!ranges) {
+    console.log('📊 PulseScore: No ranges available, using inline defaults');
+    // Use inline defaults - should rarely happen since getOptimalRanges now has fallbacks
+    const defaultRanges = {
+      temperature: { min: 65, max: 80, confidence: 0.5 },
+      light: { min: 150, max: 400, confidence: 0.5 },
+      sound: { min: 70, max: 85, confidence: 0.5 },
+      humidity: { min: 35, max: 60, confidence: 0.5 }
+    };
+    
+    // Calculate basic scores using defaults
+    const tempScore = data.outdoorTemp >= 65 && data.outdoorTemp <= 80 ? 100 : 70;
+    const lightScore = data.light >= 150 && data.light <= 400 ? 100 : 70;
+    const soundScore = data.decibels >= 70 && data.decibels <= 85 ? 100 : 70;
+    const humidityScore = data.humidity >= 35 && data.humidity <= 60 ? 100 : 70;
+    
+    const basicScore = Math.round((tempScore + lightScore + soundScore + humidityScore) / 4);
+    
     return {
-      score: null as unknown as number, // No score yet - still learning
-      confidence: 0,
+      score: basicScore,
+      confidence: confidence,
       status: 'learning',
-      statusMessage: 'Collecting venue data to calculate your Pulse Score...',
+      statusMessage: `Learning your venue's patterns... ${Math.round(confidence * 100)}% complete`,
       breakdown: {
-        genericScore: 0,
-        learnedScore: null,
+        genericScore: basicScore,
+        learnedScore: basicScore,
         weights: { learnedWeight: 1, genericWeight: 0 },
-        optimalRanges: null,
-        factorScores: undefined
+        optimalRanges: defaultRanges,
+        factorScores: {
+          temperature: tempScore,
+          light: lightScore,
+          sound: soundScore,
+          humidity: humidityScore
+        }
       }
     };
   }
