@@ -90,11 +90,20 @@ export function PulseScoreDropdown({
     return { icon: '✗', color: 'text-red-400', bg: 'bg-red-500/20' };
   };
 
-  // Helper to calculate factor score if not provided
+  // Default optimal ranges (used as fallback)
+  const defaultRanges = {
+    sound: { min: 70, max: 85 },
+    temperature: { min: 68, max: 76 },
+    light: { min: 200, max: 500 },
+    humidity: { min: 40, max: 60 }
+  };
+
+  // Helper to calculate factor score
   const calculateFactorScore = (current: number, optimal: { min: number; max: number }): number => {
+    if (!current || !optimal) return 50; // Default if missing
     if (current >= optimal.min && current <= optimal.max) return 100;
     const range = optimal.max - optimal.min;
-    const tolerance = range * 0.2;
+    const tolerance = Math.max(range * 0.5, 10); // More forgiving tolerance
     if (current < optimal.min) {
       const deviation = optimal.min - current;
       return Math.max(0, Math.round(100 - (deviation / tolerance) * 100));
@@ -103,21 +112,33 @@ export function PulseScoreDropdown({
     return Math.max(0, Math.round(100 - (deviation / tolerance) * 100));
   };
 
-  // Get factor scores - use provided or calculate from sensor data
+  // Get factor scores - always calculate when we have sensor data
   const getFactorScores = () => {
     // If we have factor scores from the result, use them
     if (pulseScoreResult?.breakdown?.factorScores) {
       return pulseScoreResult.breakdown.factorScores;
     }
     
-    // Otherwise, calculate from sensor data and optimal ranges if available
-    if (sensorData && pulseScoreResult?.breakdown?.optimalRanges) {
-      const ranges = pulseScoreResult.breakdown.optimalRanges;
+    // If we have sensor data, calculate factor scores
+    if (sensorData) {
+      // Use optimal ranges from result, or fall back to defaults
+      const ranges = pulseScoreResult?.breakdown?.optimalRanges || defaultRanges;
       return {
         sound: calculateFactorScore(sensorData.decibels, ranges.sound),
         temperature: calculateFactorScore(sensorData.indoorTemp, ranges.temperature),
         light: calculateFactorScore(sensorData.light, ranges.light),
         humidity: calculateFactorScore(sensorData.humidity, ranges.humidity)
+      };
+    }
+    
+    // If we have a score but no sensor data, estimate from the score
+    if (displayScore !== null && displayScore !== undefined) {
+      // Estimate all factors are roughly equal to the overall score
+      return {
+        sound: displayScore,
+        temperature: displayScore,
+        light: displayScore,
+        humidity: displayScore
       };
     }
     
