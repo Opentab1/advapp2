@@ -301,22 +301,16 @@ class SongLogService {
   }
 
   private saveSongs() {
-    try {
-      localStorage.setItem('songLog', JSON.stringify(this.songs));
-    } catch (error) {
-      console.error('Error saving songs to localStorage:', error);
-    }
+    // Songs are stored in DynamoDB via sensor data - no localStorage needed
+    // In-memory cache is sufficient for the current session
+    console.log('🎵 Songs cached in memory (DynamoDB is source of truth)');
   }
 
   private loadSongs() {
-    try {
-      const stored = localStorage.getItem('songLog');
-      if (stored) {
-        this.songs = JSON.parse(stored);
-      }
-    } catch (error) {
-      console.error('Error loading songs from localStorage:', error);
-      this.songs = [];
+    // Songs are loaded from DynamoDB - no localStorage needed
+    // In-memory cache persists for the session
+    if (this.songs.length === 0 && this.dynamoDBSongs.length > 0) {
+      this.songs = [...this.dynamoDBSongs];
     }
   }
 

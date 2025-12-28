@@ -35,6 +35,9 @@ class AIReportService {
     };
   }
 
+  // In-memory cache for reports (source of truth is generated on-demand or from DynamoDB)
+  private reportsCache: WeeklyReport[] = [];
+
   async getRecentReports(limit: number = 10): Promise<WeeklyReport[]> {
     // ✨ DEMO MODE: Return demo report history
     const user = authService.getStoredUser();
@@ -44,37 +47,28 @@ class AIReportService {
       return generateDemoReportHistory(Math.min(limit, 8));
     }
     
-    try {
-      const stored = localStorage.getItem('weeklyReports');
-      if (stored) {
-        const reports: WeeklyReport[] = JSON.parse(stored);
-        return reports.slice(0, limit);
-      }
-    } catch (error) {
-      console.error('Error loading reports:', error);
-    }
-    return [];
+    // Return from in-memory cache (reports are generated on-demand)
+    return this.reportsCache.slice(0, limit);
   }
 
   async saveReport(report: WeeklyReport): Promise<void> {
-    // ✨ DEMO MODE: Don't persist demo reports to localStorage
+    // ✨ DEMO MODE: Don't persist demo reports
     const user = authService.getStoredUser();
     if (isDemoAccount(user?.venueId)) {
       console.log('🎭 Demo mode - skipping report save (demo reports are generated on-demand)');
       return;
     }
     
-    try {
-      const stored = localStorage.getItem('weeklyReports');
-      const reports: WeeklyReport[] = stored ? JSON.parse(stored) : [];
-      reports.unshift(report);
-      
-      // Keep only last 52 weeks (1 year)
-      const trimmed = reports.slice(0, 52);
-      localStorage.setItem('weeklyReports', JSON.stringify(trimmed));
-    } catch (error) {
-      console.error('Error saving report:', error);
+    // Save to in-memory cache only
+    // Reports are generated on-demand from historical DynamoDB data
+    this.reportsCache.unshift(report);
+    
+    // Keep only last 52 weeks (1 year)
+    if (this.reportsCache.length > 52) {
+      this.reportsCache = this.reportsCache.slice(0, 52);
     }
+    
+    console.log('📊 Report cached in memory');
   }
 
   private generateSummary(metrics: WeeklyMetrics): string {

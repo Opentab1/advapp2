@@ -1,7 +1,8 @@
 import type { ToastOrder, ToastMetrics } from '../types';
+import userSettingsService from './user-settings.service';
+import authService from './auth.service';
 
 const TOAST_API_BASE = 'https://ws-api.toasttab.com';
-const TOAST_CREDENTIALS_KEY = 'pulse_toast_credentials';
 
 interface ToastCredentials {
   apiKey: string;
@@ -9,36 +10,47 @@ interface ToastCredentials {
 }
 
 class ToastPOSService {
+  // In-memory cache for current session
   private apiKey: string | null = null;
   private restaurantGuid: string | null = null;
+  private credentialsLoaded: boolean = false;
 
-  constructor() {
-    // Load saved credentials from localStorage
-    this.loadCredentials();
-  }
+  /**
+   * Load credentials from DynamoDB (async)
+   */
+  async loadCredentials(): Promise<void> {
+    if (this.credentialsLoaded) return;
 
-  private loadCredentials() {
     try {
-      const saved = localStorage.getItem(TOAST_CREDENTIALS_KEY);
-      if (saved) {
-        const credentials: ToastCredentials = JSON.parse(saved);
+      const user = authService.getStoredUser();
+      if (!user?.venueId) return;
+
+      const credentials = await userSettingsService.getToastCredentials(user.venueId);
+      if (credentials) {
         this.apiKey = credentials.apiKey;
         this.restaurantGuid = credentials.restaurantGuid;
-        console.log('✅ Toast POS credentials loaded');
+        console.log('✅ Toast POS credentials loaded from DynamoDB');
       }
+      this.credentialsLoaded = true;
     } catch (error) {
       console.error('Failed to load Toast credentials:', error);
     }
   }
 
-  setCredentials(apiKey: string, restaurantGuid: string) {
+  async setCredentials(apiKey: string, restaurantGuid: string): Promise<void> {
     this.apiKey = apiKey;
     this.restaurantGuid = restaurantGuid;
     
-    // Save to localStorage
     try {
-      localStorage.setItem(TOAST_CREDENTIALS_KEY, JSON.stringify({ apiKey, restaurantGuid }));
-      console.log('✅ Toast POS credentials saved');
+      const user = authService.getStoredUser();
+      if (user?.venueId) {
+        const success = await userSettingsService.saveToastCredentials(user.venueId, apiKey, restaurantGuid);
+        if (success) {
+          console.log('✅ Toast POS credentials saved to DynamoDB');
+        } else {
+          console.log('⚠️ Toast POS credentials cached locally (DynamoDB save pending backend update)');
+        }
+      }
     } catch (error) {
       console.error('Failed to save Toast credentials:', error);
     }
@@ -54,11 +66,19 @@ class ToastPOSService {
     return null;
   }
 
-  clearCredentials() {
+  async clearCredentials(): Promise<void> {
     this.apiKey = null;
     this.restaurantGuid = null;
-    localStorage.removeItem(TOAST_CREDENTIALS_KEY);
-    console.log('✅ Toast POS credentials cleared');
+
+    try {
+      const user = authService.getStoredUser();
+      if (user?.venueId) {
+        await userSettingsService.clearToastCredentials(user.venueId);
+        console.log('✅ Toast POS credentials cleared');
+      }
+    } catch (error) {
+      console.error('Failed to clear Toast credentials:', error);
+    }
   }
 
   isConfigured(): boolean {
@@ -74,6 +94,9 @@ class ToastPOSService {
   }
 
   async getRecentOrders(_limit: number = 50): Promise<ToastOrder[]> {
+    // Ensure credentials are loaded
+    await this.loadCredentials();
+
     if (!this.isConfigured()) {
       throw new Error('Toast POS credentials not configured. Please add your API key and Restaurant GUID in Settings.');
     }
@@ -101,6 +124,9 @@ class ToastPOSService {
   }
 
   async getMetrics(_startDate: Date, _endDate: Date): Promise<ToastMetrics> {
+    // Ensure credentials are loaded
+    await this.loadCredentials();
+
     if (!this.isConfigured()) {
       throw new Error('Toast POS credentials not configured. Please add your API key and Restaurant GUID in Settings.');
     }

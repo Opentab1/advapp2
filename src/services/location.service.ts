@@ -20,26 +20,14 @@ const listVenueLocations = /* GraphQL */ `
 `;
 
 class LocationService {
-  private storageKey = 'pulse_locations';
-  private currentLocationKey = 'pulse_current_location';
-  private locationsCacheKey = 'pulse_locations_cache';
-  private locationsCacheTimeKey = 'pulse_locations_cache_time';
+  // In-memory cache instead of localStorage
+  private locationsCache: Location[] = [];
+  private cacheTime: number = 0;
+  private currentLocationId: string | null = null;
   private cacheExpiryMs = 5 * 60 * 1000; // 5 minutes
 
   constructor() {
-    // Clear expired cache on initialization
-    this.cleanupExpiredCache();
-  }
-
-  private cleanupExpiredCache(): void {
-    const cachedTime = localStorage.getItem(this.locationsCacheTimeKey);
-    if (cachedTime) {
-      const age = Date.now() - parseInt(cachedTime);
-      if (age >= this.cacheExpiryMs) {
-        console.log('🧹 Clearing expired location cache...');
-        this.clearCache();
-      }
-    }
+    // No localStorage cleanup needed
   }
 
   /**
@@ -112,9 +100,8 @@ class LocationService {
         console.log('🎭 Demo mode detected - returning generated locations');
         await new Promise(resolve => setTimeout(resolve, 200)); // Simulate network delay
         const locations = generateDemoLocations();
-        this.setLocations(locations);
-        localStorage.setItem(this.locationsCacheKey, JSON.stringify(locations));
-        localStorage.setItem(this.locationsCacheTimeKey, Date.now().toString());
+        this.locationsCache = locations;
+        this.cacheTime = Date.now();
         return locations;
       }
 
@@ -164,10 +151,9 @@ class LocationService {
 
       console.log(`✅ Loaded ${locations.length} locations from DynamoDB`);
       
-      // Cache the locations
-      this.setLocations(locations);
-      localStorage.setItem(this.locationsCacheKey, JSON.stringify(locations));
-      localStorage.setItem(this.locationsCacheTimeKey, Date.now().toString());
+      // Cache in memory
+      this.locationsCache = locations;
+      this.cacheTime = Date.now();
       
       return locations;
     } catch (error: any) {
@@ -200,45 +186,26 @@ class LocationService {
   }
 
   getLocations(): Location[] {
-    try {
-      // Check if we have cached locations and they're not expired
-      const cachedTime = localStorage.getItem(this.locationsCacheTimeKey);
-      const cached = localStorage.getItem(this.locationsCacheKey);
-      
-      if (cachedTime && cached) {
-        const age = Date.now() - parseInt(cachedTime);
-        if (age < this.cacheExpiryMs) {
-          return JSON.parse(cached);
-        }
+    // Check if cache is still valid
+    if (this.locationsCache.length > 0 && this.cacheTime > 0) {
+      const age = Date.now() - this.cacheTime;
+      if (age < this.cacheExpiryMs) {
+        return this.locationsCache;
       }
-
-      // Try to get from regular storage
-      const stored = localStorage.getItem(this.storageKey);
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (error) {
-      console.error('Error loading locations:', error);
     }
     
     // Return empty array - locations must be fetched from DynamoDB
     return [];
   }
 
-  private setLocations(locations: Location[]): void {
-    try {
-      localStorage.setItem(this.storageKey, JSON.stringify(locations));
-    } catch (error) {
-      console.error('Error saving locations:', error);
-    }
-  }
-
   getCurrentLocationId(): string | null {
-    return localStorage.getItem(this.currentLocationKey);
+    // Current location is device-specific (kept local for multi-venue operators)
+    return this.currentLocationId;
   }
 
   setCurrentLocationId(locationId: string): void {
-    localStorage.setItem(this.currentLocationKey, locationId);
+    // Current location is device-specific
+    this.currentLocationId = locationId;
   }
 
   getCurrentLocation(): Location | null {
@@ -250,9 +217,8 @@ class LocationService {
   }
 
   clearCache(): void {
-    localStorage.removeItem(this.locationsCacheKey);
-    localStorage.removeItem(this.locationsCacheTimeKey);
-    localStorage.removeItem(this.storageKey);
+    this.locationsCache = [];
+    this.cacheTime = 0;
     console.log('✅ Locations cache cleared');
   }
 }

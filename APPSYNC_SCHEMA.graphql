@@ -86,8 +86,110 @@ type Query {
 
   getVenueConfig(venueId: ID!, locationId: String!): VenueConfig
     @aws_cognito_user_pools
+
+  getUserSettings(userId: ID!): UserSettings
+    @aws_cognito_user_pools
+
+  getVenueSettings(venueId: ID!): VenueSettingsData
+    @aws_cognito_user_pools
+}
+
+# User Settings for cross-device sync
+type UserSettings {
+  userId: ID!
+  theme: String
+  soundAlerts: Boolean
+  refreshInterval: Int
+  temperatureUnit: String
+  timezone: String
+  notifications: Boolean
+  emailNotifications: EmailNotificationSettings
+  termsAccepted: Boolean
+  termsAcceptedDate: String
+}
+
+type EmailNotificationSettings {
+  dailySummary: Boolean
+  highOccupancyAlerts: Boolean
+  temperatureAlerts: Boolean
+  weeklyReports: Boolean
+  monthlyInsights: Boolean
+  sensorOfflineAlerts: Boolean
+}
+
+input EmailNotificationSettingsInput {
+  dailySummary: Boolean
+  highOccupancyAlerts: Boolean
+  temperatureAlerts: Boolean
+  weeklyReports: Boolean
+  monthlyInsights: Boolean
+  sensorOfflineAlerts: Boolean
+}
+
+input UserSettingsInput {
+  userId: ID!
+  theme: String
+  soundAlerts: Boolean
+  refreshInterval: Int
+  temperatureUnit: String
+  timezone: String
+  notifications: Boolean
+  emailNotifications: EmailNotificationSettingsInput
+  termsAccepted: Boolean
+  termsAcceptedDate: String
+}
+
+# Venue Settings for cross-device sync
+type VenueSettingsData {
+  venueId: ID!
+  address: VenueAddress
+  toastPOS: ToastPOSConfig
+  lastUpdated: String
+}
+
+type VenueAddress {
+  street: String
+  city: String
+  state: String
+  zipCode: String
+  country: String
+}
+
+type ToastPOSConfig {
+  enabled: Boolean
+  apiKey: String
+  restaurantGuid: String
+}
+
+input VenueAddressInput {
+  street: String
+  city: String
+  state: String
+  zipCode: String
+  country: String
+}
+
+input ToastPOSConfigInput {
+  enabled: Boolean
+  apiKey: String
+  restaurantGuid: String
+}
+
+input VenueSettingsInput {
+  venueId: ID!
+  address: VenueAddressInput
+  toastPOS: ToastPOSConfigInput
+}
+
+type Mutation {
+  saveUserSettings(input: UserSettingsInput!): UserSettings
+    @aws_cognito_user_pools
+
+  saveVenueSettings(input: VenueSettingsInput!): VenueSettingsData
+    @aws_cognito_user_pools
 }
 
 type Schema {
   query: Query
+  mutation: Mutation
 }

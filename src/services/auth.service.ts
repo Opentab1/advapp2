@@ -74,20 +74,15 @@ class AuthService {
     try {
       await signOut();
       
-      // Clear all Cognito-related tokens from localStorage
-      // AWS Amplify stores tokens with various keys
+      // Clear auth tokens from localStorage (only auth-related keys remain in localStorage)
       const keysToRemove: string[] = [
         this.tokenKey,
         this.userKey,
         'CognitoIdentityServiceProvider',
         'aws-amplify-cache',
         'aws-amplify-federatedInfo',
-        'appSettings', // Also clear appSettings on logout
-        'lastSongLogged',
-        'pulse_locations', // Clear location caches
-        'pulse_current_location',
-        'pulse_locations_cache',
-        'pulse_locations_cache_time'
+        // Theme is kept local (device-specific preference)
+        // 'pulse_theme'
       ];
       
       // Remove all localStorage items that start with Cognito-related prefixes
@@ -102,11 +97,12 @@ class AuthService {
         }
       });
       
-      console.log('✅ Logout complete - all tokens cleared');
+      console.log('✅ Logout complete - auth tokens cleared');
     } catch (error) {
       console.error('Logout error:', error);
-      // Still clear localStorage even if signOut fails
-      localStorage.clear();
+      // Clear only auth-related keys on error
+      localStorage.removeItem(this.tokenKey);
+      localStorage.removeItem(this.userKey);
       throw new Error('Failed to logout');
     }
   }

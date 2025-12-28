@@ -50,6 +50,7 @@ import locationService from '../services/location.service';
 import songLogService from '../services/song-log.service';
 import weatherService, { WeatherData } from '../services/weather.service';
 import venueSettingsService from '../services/venue-settings.service';
+import userSettingsService from '../services/user-settings.service';
 import { isDemoAccount } from '../utils/demoData';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location, PulseScoreResult } from '../types';
 
@@ -77,20 +78,20 @@ export function Dashboard() {
   
   // Check if user has accepted terms on mount
   useEffect(() => {
-    if (user?.email) {
-      const termsKey = `pulse_terms_accepted_${user.email}`;
-      const hasAccepted = localStorage.getItem(termsKey);
-      if (!hasAccepted) {
-        setShowTermsModal(true);
+    const checkTermsAcceptance = async () => {
+      if (user?.email) {
+        const hasAccepted = await userSettingsService.hasAcceptedTerms();
+        if (!hasAccepted) {
+          setShowTermsModal(true);
+        }
       }
-    }
+    };
+    checkTermsAcceptance();
   }, [user?.email]);
   
-  const handleAcceptTerms = () => {
+  const handleAcceptTerms = async () => {
     if (user?.email) {
-      const termsKey = `pulse_terms_accepted_${user.email}`;
-      localStorage.setItem(termsKey, 'true');
-      localStorage.setItem(`pulse_terms_accepted_date_${user.email}`, new Date().toISOString());
+      await userSettingsService.acceptTerms();
       setShowTermsModal(false);
     }
   };
@@ -245,22 +246,17 @@ export function Dashboard() {
     enabled: timeRange === 'live'
   });
   
-  // Log songs when they change
+  // Track last logged song in memory (deduplication handled by songLogService)
   useEffect(() => {
     if (liveData?.currentSong) {
-      const lastSong = localStorage.getItem('lastSongLogged');
-      const currentSongKey = `${liveData.currentSong}-${liveData.timestamp}`;
-      
-      if (lastSong !== currentSongKey) {
-        songLogService.addSong({
-          timestamp: liveData.timestamp,
-          songName: liveData.currentSong,
-          artist: liveData.artist || 'Unknown Artist',
-          albumArt: liveData.albumArt,
-          source: 'spotify'
-        });
-        localStorage.setItem('lastSongLogged', currentSongKey);
-      }
+      // songLogService handles deduplication internally
+      songLogService.addSong({
+        timestamp: liveData.timestamp,
+        songName: liveData.currentSong,
+        artist: liveData.artist || 'Unknown Artist',
+        albumArt: liveData.albumArt,
+        source: 'spotify'
+      });
     }
   }, [liveData?.currentSong, liveData?.timestamp]);
   

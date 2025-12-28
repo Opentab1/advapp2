@@ -9,6 +9,7 @@ import authService from '../services/auth.service';
 import toastPOSService from '../services/toast-pos.service';
 import locationService from '../services/location.service';
 import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
+import userSettingsService from '../services/user-settings.service';
 import weatherService from '../services/weather.service';
 import themeService, { Theme } from '../services/theme.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
@@ -52,10 +53,13 @@ export function Settings() {
     }
   }, []);
 
-  const loadSettings = () => {
+  const loadSettings = async () => {
     try {
-      // Get venueId and locationId from authenticated user, not localStorage
+      // Get venueId and locationId from authenticated user
       const user = authService.getStoredUser();
+      
+      // Load user settings from DynamoDB
+      const userSettings = await userSettingsService.getUserSettings();
       
       // Load Toast POS credentials
       const toastCreds = toastPOSService.getCredentials();
@@ -63,26 +67,15 @@ export function Settings() {
         setToastRestaurantGuid(toastCreds.restaurantGuid);
       }
       
-      // Load other settings from localStorage (excluding venueId/locationId)
-      const stored = localStorage.getItem('appSettings');
-      let parsedSettings: Partial<AppSettings> = {};
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        // Explicitly exclude venueId and locationId from stored settings
-        parsedSettings = {
-          theme: parsed.theme,
-          soundAlerts: parsed.soundAlerts,
-          refreshInterval: parsed.refreshInterval,
-          notifications: parsed.notifications,
-          toastPOSEnabled: toastCreds?.apiKey ? true : parsed.toastPOSEnabled || false,
-          toastAPIKey: toastCreds?.apiKey || parsed.toastAPIKey || ''
-        };
-      }
-      
-      // Set venueId and locationId from user, not from stored settings
+      // Set settings from DynamoDB (with user's venue info)
       setSettings({
         ...DEFAULT_SETTINGS,
-        ...parsedSettings,
+        theme: userSettings.theme,
+        soundAlerts: userSettings.soundAlerts,
+        refreshInterval: userSettings.refreshInterval,
+        notifications: userSettings.notifications,
+        toastPOSEnabled: toastCreds?.apiKey ? true : false,
+        toastAPIKey: toastCreds?.apiKey || '',
         venueId: user?.venueId || '',
         locationId: user?.locations?.[0]?.id || ''
       });
@@ -91,26 +84,23 @@ export function Settings() {
     }
   };
 
-  const saveSettings = () => {
+  const saveSettings = async () => {
     try {
-      // Save Toast POS credentials to the service
+      // Save Toast POS credentials to the service (stored in DynamoDB)
       if (settings.toastPOSEnabled && settings.toastAPIKey && toastRestaurantGuid) {
-        toastPOSService.setCredentials(settings.toastAPIKey, toastRestaurantGuid);
+        await toastPOSService.setCredentials(settings.toastAPIKey, toastRestaurantGuid);
       } else if (!settings.toastPOSEnabled) {
-        toastPOSService.clearCredentials();
+        await toastPOSService.clearCredentials();
       }
       
-      // Save settings but exclude venueId and locationId (they come from user attributes)
-      const settingsToSave = {
-        theme: settings.theme,
+      // Save user settings to DynamoDB
+      await userSettingsService.saveUserSettings({
+        theme: settings.theme as 'light' | 'dark' | 'auto',
         soundAlerts: settings.soundAlerts,
         refreshInterval: settings.refreshInterval,
         notifications: settings.notifications,
-        toastPOSEnabled: settings.toastPOSEnabled,
-        toastAPIKey: '' // Don't store API key in settings, it's in Toast service
-      };
+      });
       
-      localStorage.setItem('appSettings', JSON.stringify(settingsToSave));
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {

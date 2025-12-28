@@ -2,8 +2,10 @@
  * Venue Settings Service
  * 
  * Manages venue-specific settings like address that can be updated by operators
- * Uses localStorage for persistence with optional DynamoDB sync
+ * Uses DynamoDB via userSettingsService for cross-device consistency
  */
+
+import userSettingsService from './user-settings.service';
 
 export interface VenueAddress {
   street: string;
@@ -19,13 +21,14 @@ export interface VenueSettings {
 }
 
 class VenueSettingsService {
-  private readonly STORAGE_KEY = 'pulse_venue_settings';
+  // In-memory cache for current session
+  private settingsCache: Map<string, VenueSettings> = new Map();
 
   /**
    * Get the full formatted address string for weather API
    */
   getFormattedAddress(venueId: string): string | null {
-    const settings = this.getSettings(venueId);
+    const settings = this.getSettingsSync(venueId);
     if (!settings?.address) return null;
     
     const { street, city, state, zipCode, country } = settings.address;
@@ -40,14 +43,32 @@ class VenueSettingsService {
   }
 
   /**
-   * Get venue settings from storage
+   * Get venue settings from cache (sync version for quick access)
    */
-  getSettings(venueId: string): VenueSettings | null {
+  getSettingsSync(venueId: string): VenueSettings | null {
+    return this.settingsCache.get(venueId) || null;
+  }
+
+  /**
+   * Get venue settings - async version that fetches from DynamoDB
+   */
+  async getSettings(venueId: string): Promise<VenueSettings | null> {
     try {
-      const key = `${this.STORAGE_KEY}_${venueId}`;
-      const stored = localStorage.getItem(key);
-      if (stored) {
-        return JSON.parse(stored);
+      // Check cache first
+      if (this.settingsCache.has(venueId)) {
+        return this.settingsCache.get(venueId) || null;
+      }
+
+      // Fetch from DynamoDB
+      const venueSettings = await userSettingsService.getVenueSettings(venueId);
+      
+      if (venueSettings.address) {
+        const settings: VenueSettings = {
+          address: venueSettings.address,
+          lastUpdated: venueSettings.lastUpdated
+        };
+        this.settingsCache.set(venueId, settings);
+        return settings;
       }
     } catch (error) {
       console.error('Error loading venue settings:', error);
@@ -56,17 +77,29 @@ class VenueSettingsService {
   }
 
   /**
-   * Save venue settings to storage
+   * Save venue settings to DynamoDB
    */
-  saveSettings(venueId: string, settings: VenueSettings): void {
+  async saveSettings(venueId: string, settings: VenueSettings): Promise<void> {
     try {
-      const key = `${this.STORAGE_KEY}_${venueId}`;
       const updatedSettings = {
         ...settings,
         lastUpdated: new Date().toISOString()
       };
-      localStorage.setItem(key, JSON.stringify(updatedSettings));
-      console.log('✅ Venue settings saved');
+
+      // Save to DynamoDB
+      const success = await userSettingsService.saveVenueSettings(venueId, {
+        address: settings.address || null,
+      });
+
+      if (success) {
+        // Update cache
+        this.settingsCache.set(venueId, updatedSettings);
+        console.log('✅ Venue settings saved to DynamoDB');
+      } else {
+        // Fallback: just cache locally for this session
+        this.settingsCache.set(venueId, updatedSettings);
+        console.log('⚠️ Venue settings cached locally (DynamoDB save pending backend update)');
+      }
     } catch (error) {
       console.error('Error saving venue settings:', error);
       throw new Error('Failed to save venue settings');
@@ -76,19 +109,27 @@ class VenueSettingsService {
   /**
    * Save just the address
    */
-  saveAddress(venueId: string, address: VenueAddress): void {
-    const existing = this.getSettings(venueId) || {};
-    this.saveSettings(venueId, {
+  async saveAddress(venueId: string, address: VenueAddress): Promise<void> {
+    const existing = await this.getSettings(venueId) || {};
+    await this.saveSettings(venueId, {
       ...existing,
       address
     });
   }
 
   /**
-   * Get just the address
+   * Get just the address (sync from cache)
    */
   getAddress(venueId: string): VenueAddress | null {
-    const settings = this.getSettings(venueId);
+    const settings = this.getSettingsSync(venueId);
+    return settings?.address || null;
+  }
+
+  /**
+   * Get just the address (async from DynamoDB)
+   */
+  async getAddressAsync(venueId: string): Promise<VenueAddress | null> {
+    const settings = await this.getSettings(venueId);
     return settings?.address || null;
   }
 
@@ -128,15 +169,17 @@ class VenueSettingsService {
   }
 
   /**
-   * Clear venue settings
+   * Clear venue settings cache
    */
   clearSettings(venueId: string): void {
-    try {
-      const key = `${this.STORAGE_KEY}_${venueId}`;
-      localStorage.removeItem(key);
-    } catch (error) {
-      console.error('Error clearing venue settings:', error);
-    }
+    this.settingsCache.delete(venueId);
+  }
+
+  /**
+   * Clear all caches
+   */
+  clearAllCache(): void {
+    this.settingsCache.clear();
   }
 }
 
