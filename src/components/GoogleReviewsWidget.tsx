@@ -30,7 +30,12 @@ export function GoogleReviewsWidget() {
   }, [venueId]);
 
   const loadReviews = async () => {
+    console.log('🎯 GoogleReviewsWidget loadReviews called');
+    console.log('📍 venueId:', venueId);
+    console.log('📍 venueName:', venueName);
+    
     if (!venueId || !venueName) {
+      console.warn('⚠️ Missing venueId or venueName, skipping load');
       setLoading(false);
       return;
     }
@@ -41,19 +46,26 @@ export function GoogleReviewsWidget() {
 
       // Get venue address for better search accuracy
       const address = venueSettingsService.getFormattedAddress(venueId) || '';
+      console.log('📍 Venue address:', address || '(not set)');
       
       // Check cache age
       const age = googleReviewsService.getCacheAge(venueId);
       setCacheAge(age);
+      console.log('📦 Cache age:', age, 'days');
 
       // Fetch reviews
+      console.log('🔍 Calling googleReviewsService.getReviews...');
       const data = await googleReviewsService.getReviews(venueName, address, venueId);
+      console.log('📊 Received data:', data);
+      
       setReviewsData(data);
       
       if (!data && googleReviewsService.isConfigured()) {
+        console.warn('⚠️ No data returned but API is configured');
         setError('Could not find your venue on Google Maps');
       }
     } catch (err: any) {
+      console.error('❌ Error loading reviews:', err);
       setError(err.message);
     } finally {
       setLoading(false);

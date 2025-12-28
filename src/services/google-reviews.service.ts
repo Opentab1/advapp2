@@ -89,6 +89,8 @@ class GoogleReviewsService {
    * Fetch Google Reviews for a venue
    */
   async getReviews(venueName: string, venueAddress: string, venueId: string): Promise<GoogleReviewsData | null> {
+    console.log('🔍 getReviews called with:', { venueName, venueAddress, venueId });
+    
     // Check cache first
     const cached = this.getCachedData(venueId);
     if (cached) {
@@ -98,15 +100,22 @@ class GoogleReviewsService {
 
     // Check if API key is configured
     if (!this.isConfigured()) {
-      console.warn('⚠️ SerpAPI key not configured');
+      console.warn('⚠️ SerpAPI key not configured. Key value:', this.getApiKey()?.substring(0, 10) + '...');
+      return null;
+    }
+
+    // Check if we have venue info
+    if (!venueName || venueName.trim() === '') {
+      console.warn('⚠️ No venue name provided for Google Reviews');
       return null;
     }
 
     try {
-      console.log('🔍 Fetching Google Reviews via SerpAPI...');
-      
       const apiKey = this.getApiKey();
-      const query = `${venueName} ${venueAddress}`;
+      const query = venueAddress ? `${venueName} ${venueAddress}` : venueName;
+      
+      console.log('🔍 Fetching Google Reviews via SerpAPI...');
+      console.log('📍 Search query:', query);
       
       // Use SerpAPI Google Maps endpoint
       const params = new URLSearchParams({
@@ -116,26 +125,42 @@ class GoogleReviewsService {
         api_key: apiKey!,
       });
 
-      const response = await fetch(`${SERPAPI_BASE}?${params}`);
+      const url = `${SERPAPI_BASE}?${params}`;
+      console.log('🌐 Fetching from:', url.replace(apiKey!, 'API_KEY_HIDDEN'));
+      
+      const response = await fetch(url);
+      
+      console.log('📡 Response status:', response.status);
       
       if (!response.ok) {
-        throw new Error(`SerpAPI returned ${response.status}`);
+        const errorText = await response.text();
+        console.error('❌ SerpAPI error response:', errorText);
+        throw new Error(`SerpAPI returned ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
+      console.log('📦 SerpAPI response:', JSON.stringify(data).substring(0, 500) + '...');
       
       // Check for errors
       if (data.error) {
+        console.error('❌ SerpAPI returned error:', data.error);
         throw new Error(data.error);
       }
 
       // Get the first local result (most relevant match)
+      console.log('🔍 Looking for local_results in response...');
+      console.log('📊 local_results:', data.local_results ? `Found ${data.local_results.length} results` : 'Not found');
+      console.log('📊 place_results:', data.place_results ? 'Found' : 'Not found');
+      
       const place = data.local_results?.[0] || data.place_results;
       
       if (!place) {
-        console.warn('⚠️ No Google place found for:', query);
+        console.warn('⚠️ No Google place found in response');
+        console.log('📦 Full response keys:', Object.keys(data));
         return null;
       }
+
+      console.log('✅ Found place:', place.title, '- Rating:', place.rating, '- Reviews:', place.reviews);
 
       const reviewsData: GoogleReviewsData = {
         name: place.title || venueName,
@@ -148,6 +173,8 @@ class GoogleReviewsService {
         lastUpdated: new Date().toISOString(),
         recentReviews: this.extractRecentReviews(place),
       };
+      
+      console.log('📊 Parsed reviews data:', reviewsData);
 
       // Cache the data
       this.cacheData(venueId, reviewsData);
