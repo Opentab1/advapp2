@@ -14,8 +14,8 @@ import dynamoDBService from './dynamodb.service';
  * Learns optimal environmental conditions based on historical performance data.
  */
 class PulseLearningService {
-  private readonly LEARNING_CAP = 0.90; // Max 90% learned, always keep 10% generic baseline
-  private readonly MIN_DATA_POINTS = 24; // Minimum 24 hours of data before learning starts
+  private readonly LEARNING_CAP = 0.95; // Max 95% learned
+  private readonly MIN_DATA_POINTS = 1; // Start learning immediately with any data
   private readonly TOP_PERFORMANCE_PERCENTILE = 0.20; // Top 20% of hours
 
   /**
@@ -35,8 +35,10 @@ class PulseLearningService {
       // Fetch 90 days of sensor data from DynamoDB
       const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '90d');
       
-      if (!historicalData?.data || historicalData.data.length < this.MIN_DATA_POINTS) {
-        console.log(`📊 Learning: Insufficient data (${historicalData?.data?.length || 0} points, need ${this.MIN_DATA_POINTS})`);
+      const dataPoints = historicalData?.data?.length || 0;
+      
+      if (dataPoints < this.MIN_DATA_POINTS) {
+        console.log(`📊 Learning: No data yet (${dataPoints} points)`);
         return 0;
       }
 
@@ -45,11 +47,15 @@ class PulseLearningService {
         historicalData.data.map(d => new Date(d.timestamp).toDateString())
       ).size;
 
-      // Confidence grows with more days of data
-      // 1 day = 1%, 7 days = 7%, 30 days = 30%, 60 days = 60%, 90+ days = 90%
-      const confidence = Math.min(this.LEARNING_CAP, uniqueDays / 100);
+      // Confidence based on both data points AND unique days
+      // More data points = faster learning
+      // 100 points = 30%, 500 points = 60%, 1000+ points = 80%, with days bonus
+      const pointsConfidence = Math.min(0.80, dataPoints / 1250); // Max 80% from points
+      const daysBonus = Math.min(0.15, uniqueDays / 100); // Max 15% bonus from days
       
-      console.log(`📊 Learning: ${uniqueDays} unique days of data → ${Math.round(confidence * 100)}% confidence`);
+      const confidence = Math.min(this.LEARNING_CAP, pointsConfidence + daysBonus);
+      
+      console.log(`📊 Learning: ${dataPoints} data points, ${uniqueDays} days → ${Math.round(confidence * 100)}% confidence`);
 
       return confidence;
     } catch (error) {
@@ -396,11 +402,13 @@ class PulseLearningService {
       const soundRange = this.calculateOptimalRange(sounds);
       const humidityRange = this.calculateOptimalRange(humidities);
       
-      // Calculate confidence
+      // Calculate confidence based on data points and unique days
       const uniqueDays = new Set(data.map(d => new Date(d.timestamp).toDateString())).size;
-      const confidence = Math.min(this.LEARNING_CAP, uniqueDays / 100);
+      const pointsConfidence = Math.min(0.80, data.length / 1250);
+      const daysBonus = Math.min(0.15, uniqueDays / 100);
+      const confidence = Math.min(this.LEARNING_CAP, pointsConfidence + daysBonus);
       
-      console.log(`📊 Optimal ranges calculated from ${data.length} data points (${uniqueDays} days)`);
+      console.log(`📊 Optimal ranges calculated from ${data.length} data points (${uniqueDays} days) → ${Math.round(confidence * 100)}% confidence`);
       
       return {
         venueId,
