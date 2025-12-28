@@ -269,7 +269,7 @@ export async function calculatePulseScore(
   // Step 5: Calculate individual factor scores for breakdown
   const factorScores = {
     temperature: pulseLearningService.scoreEnvironmentalFactor(
-      data.indoorTemp,
+      data.outdoorTemp,
       ranges.optimalRanges.temperature
     ),
     light: pulseLearningService.scoreEnvironmentalFactor(

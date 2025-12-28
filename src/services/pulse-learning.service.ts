@@ -299,7 +299,7 @@ class PulseLearningService {
     optimalRanges: VenueOptimalRanges
   ): number {
     const tempScore = this.scoreEnvironmentalFactor(
-      currentData.indoorTemp,
+      currentData.outdoorTemp,
       optimalRanges.optimalRanges.temperature
     );
 
@@ -381,7 +381,7 @@ class PulseLearningService {
       const data = historicalData.data;
       
       // Extract environmental values
-      const temperatures = data.map(d => d.indoorTemp).filter(v => v !== undefined && v > 0);
+      const temperatures = data.map(d => d.outdoorTemp).filter(v => v !== undefined && v > 0);
       const lights = data.map(d => d.light).filter(v => v !== undefined && v >= 0);
       const sounds = data.map(d => d.decibels).filter(v => v !== undefined && v > 0);
       const humidities = data.map(d => d.humidity).filter(v => v !== undefined && v > 0);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ChevronDown, 
@@ -13,9 +13,11 @@ import {
   TrendingUp,
   Clock,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Music
 } from 'lucide-react';
 import type { PulseScoreResult, SensorData } from '../types';
+import songLogService from '../services/song-log.service';
 
 interface PulseScoreDropdownProps {
   score: number | null;
@@ -31,6 +33,27 @@ export function PulseScoreDropdown({
   compact = false 
 }: PulseScoreDropdownProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [topGenre, setTopGenre] = useState<{ genre: string; avgDwellTime: number } | null>(null);
+
+  // Fetch top genre by dwell time
+  useEffect(() => {
+    const fetchTopGenre = async () => {
+      try {
+        const genreStats = await songLogService.getGenreStats(10, '30d');
+        if (genreStats && genreStats.length > 0) {
+          // Sort by avgDwellTime to find the genre with longest dwell time
+          const sorted = [...genreStats].sort((a, b) => b.avgDwellTime - a.avgDwellTime);
+          setTopGenre({
+            genre: sorted[0].genre,
+            avgDwellTime: sorted[0].avgDwellTime
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching genre stats:', error);
+      }
+    };
+    fetchTopGenre();
+  }, []);
 
   // Use pulse score result if available, otherwise fall back to basic score
   const displayScore = pulseScoreResult?.score ?? score;
@@ -57,7 +80,7 @@ export function PulseScoreDropdown({
     switch (factor) {
       case 'sound': return 'Sound Level';
       case 'light': return 'Lighting';
-      case 'temperature': return 'Temperature';
+      case 'temperature': return 'Outdoor Temp';
       case 'humidity': return 'Humidity';
       default: return factor;
     }
@@ -78,7 +101,7 @@ export function PulseScoreDropdown({
     switch (factor) {
       case 'sound': return sensorData.decibels;
       case 'light': return sensorData.light;
-      case 'temperature': return sensorData.indoorTemp;
+      case 'temperature': return sensorData.outdoorTemp;
       case 'humidity': return sensorData.humidity;
       default: return null;
     }
@@ -125,7 +148,7 @@ export function PulseScoreDropdown({
       const ranges = pulseScoreResult?.breakdown?.optimalRanges || defaultRanges;
       return {
         sound: calculateFactorScore(sensorData.decibels, ranges.sound),
-        temperature: calculateFactorScore(sensorData.indoorTemp, ranges.temperature),
+        temperature: calculateFactorScore(sensorData.outdoorTemp, ranges.temperature),
         light: calculateFactorScore(sensorData.light, ranges.light),
         humidity: calculateFactorScore(sensorData.humidity, ranges.humidity)
       };
@@ -309,6 +332,38 @@ export function PulseScoreDropdown({
                   })}
                 </div>
               </div>
+
+              {/* Top Genre by Dwell Time */}
+              {topGenre && (
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Music className="w-4 h-4 text-purple-400" />
+                    <h4 className="text-sm font-semibold text-white uppercase tracking-wide">Top Genre (Longest Dwell Time)</h4>
+                  </div>
+                  
+                  <div className="p-4 rounded-lg bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-full bg-purple-500/20 flex items-center justify-center">
+                          <Music className="w-6 h-6 text-purple-400" />
+                        </div>
+                        <div>
+                          <div className="text-xl font-bold text-white">{topGenre.genre}</div>
+                          <div className="text-sm text-gray-400">Best performing genre</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-purple-400">{topGenre.avgDwellTime}m</div>
+                        <div className="text-xs text-gray-500">avg dwell time</div>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-3">
+                      Guests stay longest when <span className="text-purple-400 font-medium">{topGenre.genre}</span> music is playing. 
+                      Consider playing more of this genre during peak hours.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Weight Distribution Section */}
               {hasDetailedBreakdown && pulseScoreResult?.breakdown?.optimalRanges && (
