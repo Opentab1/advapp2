@@ -271,8 +271,94 @@ mutation {
 
 ---
 
+---
+
+## 7. Google Reviews Proxy (SerpAPI)
+
+The Google Reviews widget requires a Lambda proxy because SerpAPI blocks browser requests (CORS).
+
+### Create Lambda Function: `serpapi-proxy`
+
+**Runtime:** Node.js 18.x
+
+**Code:**
+```javascript
+const https = require('https');
+
+exports.handler = async (event) => {
+  const { query } = event.queryStringParameters || {};
+  const apiKey = process.env.SERPAPI_KEY;
+  
+  if (!query) {
+    return {
+      statusCode: 400,
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ error: 'Missing query parameter' })
+    };
+  }
+  
+  const url = `https://serpapi.com/search.json?engine=google_maps&q=${encodeURIComponent(query)}&type=search&api_key=${apiKey}`;
+  
+  return new Promise((resolve) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        resolve({
+          statusCode: 200,
+          headers: { 
+            'Access-Control-Allow-Origin': '*',
+            'Content-Type': 'application/json'
+          },
+          body: data
+        });
+      });
+    }).on('error', (err) => {
+      resolve({
+        statusCode: 500,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({ error: err.message })
+      });
+    });
+  });
+};
+```
+
+**Environment Variables:**
+- `SERPAPI_KEY`: Your SerpAPI key
+
+### Create API Gateway
+
+1. Create HTTP API (not REST API - simpler)
+2. Add route: `GET /serpapi`
+3. Integrate with Lambda function
+4. Deploy to stage `prod`
+5. Note the endpoint URL
+
+### Update Frontend
+
+Add to `.env`:
+```
+VITE_SERPAPI_PROXY_URL=https://xxxxx.execute-api.us-east-1.amazonaws.com/serpapi
+```
+
+Update `google-reviews.service.ts` to use proxy URL instead of direct SerpAPI call.
+
+### Checklist
+
+- [ ] Create Lambda function `serpapi-proxy`
+- [ ] Add SERPAPI_KEY environment variable to Lambda
+- [ ] Create API Gateway HTTP API
+- [ ] Add GET /serpapi route
+- [ ] Deploy API Gateway
+- [ ] Add VITE_SERPAPI_PROXY_URL to Amplify environment
+- [ ] Update frontend service to use proxy
+
+---
+
 ## Notes
 
 - Frontend gracefully handles missing backend (uses defaults until backend is ready)
 - All caches are now in-memory only (no localStorage pollution)
 - Settings sync automatically when user logs in on any device
+- Google Reviews widget shows "View on Google Maps" link until Lambda proxy is set up
