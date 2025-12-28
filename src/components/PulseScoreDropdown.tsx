@@ -294,40 +294,93 @@ export function PulseScoreDropdown({
                     <h4 className="text-sm font-semibold text-white uppercase tracking-wide">Score Calculation</h4>
                   </div>
                   
-                  <div className="p-4 rounded-lg bg-gray-800/50 border border-white/10 font-mono text-sm">
-                    <div className="space-y-2">
-                      <p className="text-xs text-gray-500 mb-3">
-                        100% venue-specific — learned from your historical performance data
-                      </p>
-                      
-                      {pulseScoreResult.breakdown.factorScores && (
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-gray-400">
-                            <span>Sound:</span>
-                            <span className="text-white">{pulseScoreResult.breakdown.factorScores.sound}% × 30%</span>
-                          </div>
-                          <div className="flex justify-between text-gray-400">
-                            <span>Temperature:</span>
-                            <span className="text-white">{pulseScoreResult.breakdown.factorScores.temperature}% × 30%</span>
-                          </div>
-                          <div className="flex justify-between text-gray-400">
-                            <span>Light:</span>
-                            <span className="text-white">{pulseScoreResult.breakdown.factorScores.light}% × 20%</span>
-                          </div>
-                          <div className="flex justify-between text-gray-400">
-                            <span>Humidity:</span>
-                            <span className="text-white">{pulseScoreResult.breakdown.factorScores.humidity}% × 20%</span>
-                          </div>
-                        </div>
-                      )}
-                      
-                      <div className="border-t border-white/10 pt-2 mt-2">
-                        <div className="flex justify-between">
-                          <span className="text-white font-semibold">Final Score:</span>
-                          <span className={`text-xl font-bold ${colors.text}`}>{displayScore}</span>
-                        </div>
+                  <div className="p-4 rounded-lg bg-gray-800/50 border border-white/10">
+                    {/* Formula Display */}
+                    <div className="mb-4 p-3 rounded-lg bg-gradient-to-r from-cyan/10 to-purple-500/10 border border-cyan/20">
+                      <p className="text-xs text-gray-400 mb-2">Formula:</p>
+                      <div className="font-mono text-sm text-white text-center">
+                        <span className="text-cyan">Pulse Score</span>
+                        <span className="text-gray-400"> = </span>
+                        <span className="text-gray-300">(</span>
+                        <span className="text-cyan">S</span>
+                        <span className="text-gray-400">×</span>
+                        <span className="text-purple-400">.30</span>
+                        <span className="text-gray-300">) + (</span>
+                        <span className="text-red-400">T</span>
+                        <span className="text-gray-400">×</span>
+                        <span className="text-purple-400">.30</span>
+                        <span className="text-gray-300">) + (</span>
+                        <span className="text-yellow-400">L</span>
+                        <span className="text-gray-400">×</span>
+                        <span className="text-purple-400">.20</span>
+                        <span className="text-gray-300">) + (</span>
+                        <span className="text-blue-400">H</span>
+                        <span className="text-gray-400">×</span>
+                        <span className="text-purple-400">.20</span>
+                        <span className="text-gray-300">)</span>
+                      </div>
+                      <div className="flex justify-center gap-4 mt-2 text-xs text-gray-500">
+                        <span><span className="text-cyan">S</span>=Sound</span>
+                        <span><span className="text-red-400">T</span>=Temp</span>
+                        <span><span className="text-yellow-400">L</span>=Light</span>
+                        <span><span className="text-blue-400">H</span>=Humidity</span>
                       </div>
                     </div>
+
+                    {/* Actual Calculation */}
+                    {pulseScoreResult.breakdown.factorScores && (
+                      <div className="space-y-2 font-mono text-sm">
+                        <p className="text-xs text-gray-500 mb-2">Your current calculation:</p>
+                        
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="p-2 rounded bg-white/5">
+                            <div className="text-xs text-gray-500">Sound</div>
+                            <div className="text-white">
+                              <span className="text-cyan">{pulseScoreResult.breakdown.factorScores.sound}</span>
+                              <span className="text-gray-500"> × .30 = </span>
+                              <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.sound * 0.30).toFixed(1)}</span>
+                            </div>
+                          </div>
+                          <div className="p-2 rounded bg-white/5">
+                            <div className="text-xs text-gray-500">Temperature</div>
+                            <div className="text-white">
+                              <span className="text-red-400">{pulseScoreResult.breakdown.factorScores.temperature}</span>
+                              <span className="text-gray-500"> × .30 = </span>
+                              <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.temperature * 0.30).toFixed(1)}</span>
+                            </div>
+                          </div>
+                          <div className="p-2 rounded bg-white/5">
+                            <div className="text-xs text-gray-500">Light</div>
+                            <div className="text-white">
+                              <span className="text-yellow-400">{pulseScoreResult.breakdown.factorScores.light}</span>
+                              <span className="text-gray-500"> × .20 = </span>
+                              <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.light * 0.20).toFixed(1)}</span>
+                            </div>
+                          </div>
+                          <div className="p-2 rounded bg-white/5">
+                            <div className="text-xs text-gray-500">Humidity</div>
+                            <div className="text-white">
+                              <span className="text-blue-400">{pulseScoreResult.breakdown.factorScores.humidity}</span>
+                              <span className="text-gray-500"> × .20 = </span>
+                              <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.humidity * 0.20).toFixed(1)}</span>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Sum line */}
+                        <div className="border-t border-white/10 pt-3 mt-3">
+                          <div className="flex items-center justify-between">
+                            <div className="text-gray-400 text-xs">
+                              {(pulseScoreResult.breakdown.factorScores.sound * 0.30).toFixed(1)} + {(pulseScoreResult.breakdown.factorScores.temperature * 0.30).toFixed(1)} + {(pulseScoreResult.breakdown.factorScores.light * 0.20).toFixed(1)} + {(pulseScoreResult.breakdown.factorScores.humidity * 0.20).toFixed(1)}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400">=</span>
+                              <span className={`text-2xl font-bold ${colors.text}`}>{displayScore}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
