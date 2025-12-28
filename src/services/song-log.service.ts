@@ -37,16 +37,152 @@ export interface GenreStats {
 
 export type AnalyticsTimeRange = '7d' | '14d' | '30d' | '90d';
 
-// Simple genre detection based on common patterns
+// Comprehensive genre detection based on artist/song patterns
 const GENRE_PATTERNS: { [key: string]: string[] } = {
-  'Country': ['country', 'nashville', 'honky tonk', 'bluegrass', 'luke bryan', 'morgan wallen', 'zach bryan', 'chris stapleton', 'luke combs', 'jason aldean', 'kenny chesney', 'carrie underwood', 'blake shelton', 'dolly parton', 'johnny cash', 'willie nelson', 'reba mcentire', 'garth brooks'],
-  'Hip Hop': ['hip hop', 'rap', 'trap', 'drake', 'kanye', 'kendrick', 'travis scott', 'j. cole', 'future', 'lil', 'young thug', 'migos', '21 savage', 'post malone', 'cardi b', 'nicki minaj', 'jay-z', 'eminem'],
-  'Pop': ['pop', 'taylor swift', 'ariana grande', 'dua lipa', 'ed sheeran', 'justin bieber', 'the weeknd', 'bruno mars', 'billie eilish', 'olivia rodrigo', 'harry styles', 'shawn mendes', 'selena gomez', 'katy perry', 'lady gaga'],
-  'Rock': ['rock', 'alternative', 'indie rock', 'foo fighters', 'imagine dragons', 'coldplay', 'arctic monkeys', 'the killers', 'muse', 'green day', 'linkin park', 'nirvana', 'red hot chili', 'queens of the stone age'],
-  'Electronic': ['edm', 'house', 'techno', 'electronic', 'dj', 'dance', 'marshmello', 'calvin harris', 'david guetta', 'tiesto', 'avicii', 'deadmau5', 'skrillex', 'diplo', 'zedd', 'chainsmokers'],
-  'R&B': ['r&b', 'rnb', 'soul', 'sza', 'daniel caesar', 'h.e.r.', 'frank ocean', 'chris brown', 'usher', 'beyoncé', 'rihanna', 'the weeknd', 'john legend', 'alicia keys'],
-  'Latin': ['latin', 'reggaeton', 'bad bunny', 'j balvin', 'daddy yankee', 'ozuna', 'anuel', 'maluma', 'shakira', 'enrique iglesias', 'pitbull', 'bachata', 'salsa'],
-  'Classic Rock': ['classic rock', 'led zeppelin', 'pink floyd', 'the beatles', 'rolling stones', 'queen', 'ac/dc', 'guns n roses', 'aerosmith', 'journey', 'bon jovi', 'def leppard', 'van halen']
+  'Country': [
+    'country', 'nashville', 'honky tonk', 'bluegrass', 'americana',
+    'luke bryan', 'morgan wallen', 'zach bryan', 'chris stapleton', 'luke combs', 
+    'jason aldean', 'kenny chesney', 'carrie underwood', 'blake shelton', 'dolly parton', 
+    'johnny cash', 'willie nelson', 'reba mcentire', 'garth brooks', 'tim mcgraw',
+    'faith hill', 'shania twain', 'george strait', 'alan jackson', 'toby keith',
+    'dierks bentley', 'eric church', 'miranda lambert', 'kacey musgraves', 'maren morris',
+    'thomas rhett', 'dan + shay', 'old dominion', 'brett young', 'kane brown',
+    'cody johnson', 'parker mccollum', 'hardy', 'jelly roll', 'tyler childers',
+    'lainey wilson', 'ashley mcbryde', 'carly pearce', 'gabby barrett', 'jon pardi',
+    'midland', 'brothers osborne', 'little big town', 'lady a', 'zac brown',
+    'florida georgia line', 'dustin lynch', 'cole swindell', 'russell dickerson'
+  ],
+  'Hip Hop': [
+    'hip hop', 'rap', 'trap', 'hip-hop',
+    'drake', 'kanye', 'kendrick', 'travis scott', 'j. cole', 'j cole',
+    'future', 'lil wayne', 'lil baby', 'lil uzi', 'lil durk', 'lil nas',
+    'young thug', 'migos', 'quavo', 'offset', 'takeoff', '21 savage', 
+    'post malone', 'cardi b', 'nicki minaj', 'jay-z', 'jay z', 'eminem',
+    'snoop dogg', 'dr. dre', 'ice cube', '50 cent', 'nas', 'tupac', '2pac',
+    'biggie', 'notorious', 'a$ap', 'asap rocky', 'tyler the creator',
+    'childish gambino', 'chance the rapper', 'mac miller', 'logic', 'j.i.d',
+    'metro boomin', 'gunna', 'roddy ricch', 'dababy', 'megan thee stallion',
+    'doja cat', 'jack harlow', 'latto', 'glorilla', 'ice spice', 'central cee',
+    'playboi carti', 'yeat', 'don toliver', 'baby keem', 'sexxy red',
+    'nba youngboy', 'youngboy', 'moneybagg yo', 'est gee', 'finesse2tymes'
+  ],
+  'Pop': [
+    'pop',
+    'taylor swift', 'ariana grande', 'dua lipa', 'ed sheeran', 'justin bieber',
+    'bruno mars', 'billie eilish', 'olivia rodrigo', 'harry styles', 'shawn mendes',
+    'selena gomez', 'katy perry', 'lady gaga', 'miley cyrus', 'demi lovato',
+    'charlie puth', 'halsey', 'camila cabello', 'bebe rexha', 'ava max',
+    'sia', 'lizzo', 'doja cat', 'sabrina carpenter', 'tate mcrae',
+    'lewis capaldi', 'sam smith', 'ellie goulding', 'lorde', 'lana del rey',
+    'adele', 'p!nk', 'pink', 'christina aguilera', 'britney spears',
+    'backstreet boys', 'nsync', 'one direction', 'jonas brothers', 'bts',
+    'blackpink', 'twice', 'seventeen', 'stray kids', 'newjeans', 'le sserafim',
+    'maroon 5', 'onerepublic', 'the script', 'train', 'jason mraz',
+    'meghan trainor', 'carly rae jepsen', 'charli xcx', 'kim petras', 'troye sivan'
+  ],
+  'Rock': [
+    'rock', 'alternative', 'indie rock', 'punk', 'grunge', 'metal',
+    'foo fighters', 'imagine dragons', 'coldplay', 'arctic monkeys', 'the killers',
+    'muse', 'green day', 'linkin park', 'nirvana', 'red hot chili', 'rhcp',
+    'queens of the stone age', 'pearl jam', 'soundgarden', 'alice in chains',
+    'weezer', 'the strokes', 'franz ferdinand', 'interpol', 'bloc party',
+    'fall out boy', 'panic! at the disco', 'my chemical romance', 'paramore',
+    'twenty one pilots', 'bastille', 'the 1975', 'tame impala', 'glass animals',
+    'cage the elephant', 'the black keys', 'jack white', 'royal blood',
+    'greta van fleet', 'måneskin', 'the war on drugs', 'vampire weekend',
+    'florence and the machine', 'hozier', 'kaleo', 'nothing but thieves'
+  ],
+  'Electronic': [
+    'edm', 'house', 'techno', 'electronic', 'dance', 'dubstep', 'drum and bass',
+    'trance', 'electro', 'future bass', 'tropical house',
+    'marshmello', 'calvin harris', 'david guetta', 'tiësto', 'tiesto',
+    'avicii', 'deadmau5', 'skrillex', 'diplo', 'zedd', 'chainsmokers',
+    'kygo', 'martin garrix', 'alan walker', 'illenium', 'odesza',
+    'flume', 'disclosure', 'rufus du sol', 'lane 8', 'above & beyond',
+    'armin van buuren', 'hardwell', 'afrojack', 'steve aoki', 'dillon francis',
+    'excision', 'rezz', 'seven lions', 'porter robinson', 'madeon',
+    'rl grime', 'what so not', 'san holo', 'gryffin', 'said the sky',
+    'fisher', 'chris lake', 'john summit', 'dom dolla', 'fred again'
+  ],
+  'R&B': [
+    'r&b', 'rnb', 'soul', 'neo soul', 'rhythm and blues',
+    'sza', 'daniel caesar', 'h.e.r.', 'frank ocean', 'chris brown',
+    'usher', 'beyoncé', 'beyonce', 'rihanna', 'the weeknd', 'john legend',
+    'alicia keys', 'mary j. blige', 'r. kelly', 'trey songz', 'miguel',
+    'khalid', 'summer walker', 'kehlani', 'jhene aiko', 'ella mai',
+    'victoria monet', 'chloe x halle', '6lack', 'brent faiyaz', 'giveon',
+    'lucky daye', 'jazmine sullivan', 'ari lennox', 'snoh aalegra',
+    'erykah badu', 'lauryn hill', 'd\'angelo', 'anderson .paak', 'silk sonic',
+    'tyler the creator', 'steve lacy', 'omar apollo', 'kali uchis'
+  ],
+  'Latin': [
+    'latin', 'reggaeton', 'latino', 'spanish', 'bachata', 'salsa', 'cumbia',
+    'bad bunny', 'j balvin', 'daddy yankee', 'ozuna', 'anuel', 'maluma',
+    'shakira', 'enrique iglesias', 'pitbull', 'nicky jam', 'farruko',
+    'rauw alejandro', 'jhay cortez', 'myke towers', 'feid', 'sech',
+    'karol g', 'becky g', 'rosalia', 'anitta', 'natti natasha',
+    'romeo santos', 'prince royce', 'marc anthony', 'luis fonsi',
+    'peso pluma', 'grupo frontera', 'eslabon armado', 'junior h', 'natanael cano',
+    'fuerza regida', 'legado 7', 'carin leon', 'banda ms', 'calibre 50'
+  ],
+  'Classic Rock': [
+    'classic rock',
+    'led zeppelin', 'pink floyd', 'the beatles', 'beatles', 'rolling stones',
+    'queen', 'ac/dc', 'acdc', 'guns n roses', 'gnr', 'aerosmith',
+    'journey', 'bon jovi', 'def leppard', 'van halen', 'kiss',
+    'the who', 'deep purple', 'black sabbath', 'jimi hendrix', 'cream',
+    'the doors', 'eagles', 'fleetwood mac', 'lynyrd skynyrd', 'zz top',
+    'bruce springsteen', 'tom petty', 'bob seger', 'steve miller',
+    'ccr', 'creedence', 'boston', 'foreigner', 'styx', 'kansas', 'toto',
+    'elton john', 'billy joel', 'eric clapton', 'santana', 'chicago'
+  ],
+  'Jazz': [
+    'jazz', 'smooth jazz', 'bebop', 'swing',
+    'miles davis', 'john coltrane', 'louis armstrong', 'duke ellington',
+    'charlie parker', 'thelonious monk', 'dizzy gillespie', 'herbie hancock',
+    'bill evans', 'dave brubeck', 'stan getz', 'oscar peterson',
+    'kamasi washington', 'robert glasper', 'esperanza spalding', 'snarky puppy'
+  ],
+  'Indie': [
+    'indie', 'indie pop', 'indie folk', 'bedroom pop',
+    'bon iver', 'fleet foxes', 'the national', 'arcade fire', 'beach house',
+    'mgmt', 'foster the people', 'alt-j', 'two door cinema', 'phoenix',
+    'phoebe bridgers', 'boygenius', 'beabadoobee', 'clairo', 'girl in red',
+    'wallows', 'dayglow', 'still woozy', 'rex orange county', 'mac demarco',
+    'khruangbin', 'men i trust', 'boy pablo', 'peach pit', 'current joys'
+  ],
+  'Reggae': [
+    'reggae', 'dancehall', 'ska', 'dub',
+    'bob marley', 'peter tosh', 'jimmy cliff', 'damian marley', 'ziggy marley',
+    'sean paul', 'shaggy', 'buju banton', 'vybz kartel', 'popcaan',
+    'chronixx', 'koffee', 'protoje', 'kranium', 'spice'
+  ],
+  'Blues': [
+    'blues', 'delta blues', 'chicago blues',
+    'b.b. king', 'muddy waters', 'howlin wolf', 'robert johnson',
+    'stevie ray vaughan', 'john lee hooker', 'buddy guy', 'albert king',
+    'joe bonamassa', 'gary clark jr', 'kenny wayne shepherd', 'beth hart'
+  ],
+  'Folk': [
+    'folk', 'acoustic', 'singer-songwriter',
+    'bob dylan', 'joni mitchell', 'james taylor', 'simon and garfunkel',
+    'john denver', 'cat stevens', 'paul simon', 'leonard cohen',
+    'mumford and sons', 'lumineers', 'of monsters and men', 'vance joy',
+    'noah kahan', 'hozier', 'iron and wine', 'the head and the heart'
+  ],
+  'Metal': [
+    'metal', 'heavy metal', 'thrash', 'death metal', 'metalcore',
+    'metallica', 'iron maiden', 'slayer', 'megadeth', 'pantera',
+    'slipknot', 'korn', 'system of a down', 'tool', 'rammstein',
+    'avenged sevenfold', 'disturbed', 'five finger death punch', 'ghost',
+    'bring me the horizon', 'architects', 'parkway drive', 'polyphia', 'spiritbox'
+  ],
+  'Gospel': [
+    'gospel', 'christian', 'worship', 'praise',
+    'kirk franklin', 'fred hammond', 'cece winans', 'yolanda adams',
+    'tasha cobbs', 'travis greene', 'todd dulaney', 'william mcdowell',
+    'hillsong', 'elevation worship', 'bethel music', 'maverick city'
+  ]
 };
 
 class SongLogService {
