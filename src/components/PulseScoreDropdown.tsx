@@ -90,6 +90,42 @@ export function PulseScoreDropdown({
     return { icon: '✗', color: 'text-red-400', bg: 'bg-red-500/20' };
   };
 
+  // Helper to calculate factor score if not provided
+  const calculateFactorScore = (current: number, optimal: { min: number; max: number }): number => {
+    if (current >= optimal.min && current <= optimal.max) return 100;
+    const range = optimal.max - optimal.min;
+    const tolerance = range * 0.2;
+    if (current < optimal.min) {
+      const deviation = optimal.min - current;
+      return Math.max(0, Math.round(100 - (deviation / tolerance) * 100));
+    }
+    const deviation = current - optimal.max;
+    return Math.max(0, Math.round(100 - (deviation / tolerance) * 100));
+  };
+
+  // Get factor scores - use provided or calculate from sensor data
+  const getFactorScores = () => {
+    // If we have factor scores from the result, use them
+    if (pulseScoreResult?.breakdown?.factorScores) {
+      return pulseScoreResult.breakdown.factorScores;
+    }
+    
+    // Otherwise, calculate from sensor data and optimal ranges if available
+    if (sensorData && pulseScoreResult?.breakdown?.optimalRanges) {
+      const ranges = pulseScoreResult.breakdown.optimalRanges;
+      return {
+        sound: calculateFactorScore(sensorData.decibels, ranges.sound),
+        temperature: calculateFactorScore(sensorData.indoorTemp, ranges.temperature),
+        light: calculateFactorScore(sensorData.light, ranges.light),
+        humidity: calculateFactorScore(sensorData.humidity, ranges.humidity)
+      };
+    }
+    
+    return null;
+  };
+
+  const factorScores = getFactorScores();
+
   // No score available - still learning
   if (displayScore === null || displayScore === undefined) {
     const isLearning = pulseScoreResult?.status === 'learning';
@@ -191,7 +227,7 @@ export function PulseScoreDropdown({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {['sound', 'light', 'temperature', 'humidity'].map((factor) => {
                     const Icon = getFactorIcon(factor);
-                    const factorScore = pulseScoreResult?.breakdown?.factorScores?.[factor as keyof typeof pulseScoreResult.breakdown.factorScores] ?? null;
+                    const factorScore = factorScores?.[factor as keyof typeof factorScores] ?? null;
                     const currentValue = getCurrentValue(factor);
                     const optimalRange = pulseScoreResult?.breakdown?.optimalRanges?.[factor as keyof typeof pulseScoreResult.breakdown.optimalRanges];
                     const indicator = factorScore !== null ? getScoreIndicator(factorScore) : null;
@@ -298,33 +334,33 @@ export function PulseScoreDropdown({
                     {/* How It Works Blurb */}
                     <div className="mb-4 p-3 rounded-lg bg-white/5 border border-white/10">
                       <p className="text-sm text-gray-300 leading-relaxed">
-                        <span className="text-cyan font-semibold">How it works:</span> Each environmental factor (Sound, Temperature, Light, Humidity) receives a score from 0-100 based on how close your current reading is to your venue's <span className="text-purple-400">learned optimal range</span>. These optimal ranges are calculated from your venue's top-performing hours — when guests stayed longest and engagement was highest. The factor scores are then weighted and combined to create your final Pulse Score.
+                        <span className="text-cyan font-semibold">How it works:</span> Your Pulse Score is <span className="text-purple-400">100% based on dwell time</span>. We analyze your venue's historical data to find the exact environmental conditions (Sound, Temperature, Light, Humidity) that made guests stay the longest. These become your <span className="text-green-400">optimal ranges</span>. The closer your current conditions match those peak dwell-time conditions, the higher your score. <span className="text-yellow-400">Higher Pulse = Longer guest stays.</span>
                       </p>
                     </div>
 
                     {/* Live Formula Display */}
                     <div className="mb-4 p-3 rounded-lg bg-gradient-to-r from-cyan/10 to-purple-500/10 border border-cyan/20">
                       <p className="text-xs text-gray-400 mb-2">Live Formula (updates in real-time):</p>
-                      {pulseScoreResult.breakdown.factorScores ? (
+                      {factorScores ? (
                         <>
                           <div className="font-mono text-sm text-white text-center overflow-x-auto">
                             <div className="inline-block min-w-max">
                               <span className="text-gray-400">Pulse = (</span>
-                              <span className="text-cyan font-bold">{pulseScoreResult.breakdown.factorScores.sound}</span>
+                              <span className="text-cyan font-bold">{factorScores.sound}</span>
                               <span className="text-gray-400">×.30) + (</span>
-                              <span className="text-red-400 font-bold">{pulseScoreResult.breakdown.factorScores.temperature}</span>
+                              <span className="text-red-400 font-bold">{factorScores.temperature}</span>
                               <span className="text-gray-400">×.30) + (</span>
-                              <span className="text-yellow-400 font-bold">{pulseScoreResult.breakdown.factorScores.light}</span>
+                              <span className="text-yellow-400 font-bold">{factorScores.light}</span>
                               <span className="text-gray-400">×.20) + (</span>
-                              <span className="text-blue-400 font-bold">{pulseScoreResult.breakdown.factorScores.humidity}</span>
+                              <span className="text-blue-400 font-bold">{factorScores.humidity}</span>
                               <span className="text-gray-400">×.20)</span>
                             </div>
                           </div>
                           <div className="flex justify-center gap-4 mt-2 text-xs text-gray-500">
-                            <span><span className="text-cyan">{pulseScoreResult.breakdown.factorScores.sound}</span> Sound</span>
-                            <span><span className="text-red-400">{pulseScoreResult.breakdown.factorScores.temperature}</span> Temp</span>
-                            <span><span className="text-yellow-400">{pulseScoreResult.breakdown.factorScores.light}</span> Light</span>
-                            <span><span className="text-blue-400">{pulseScoreResult.breakdown.factorScores.humidity}</span> Humidity</span>
+                            <span><span className="text-cyan">{factorScores.sound}</span> Sound</span>
+                            <span><span className="text-red-400">{factorScores.temperature}</span> Temp</span>
+                            <span><span className="text-yellow-400">{factorScores.light}</span> Light</span>
+                            <span><span className="text-blue-400">{factorScores.humidity}</span> Humidity</span>
                           </div>
                         </>
                       ) : (
@@ -346,7 +382,7 @@ export function PulseScoreDropdown({
                     <div className="space-y-2 font-mono text-sm">
                       <p className="text-xs text-gray-500 mb-2">Step-by-step breakdown:</p>
                       
-                      {pulseScoreResult.breakdown.factorScores ? (
+                      {factorScores ? (
                         <>
                           <div className="grid grid-cols-2 gap-2">
                             <div className="p-2 rounded bg-white/5">
@@ -354,9 +390,9 @@ export function PulseScoreDropdown({
                                 <Volume2 className="w-3 h-3" /> Sound Score
                               </div>
                               <div className="text-white">
-                                <span className="text-cyan">{pulseScoreResult.breakdown.factorScores.sound}</span>
+                                <span className="text-cyan">{factorScores.sound}</span>
                                 <span className="text-gray-500"> × 0.30 = </span>
-                                <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.sound * 0.30).toFixed(1)}</span>
+                                <span className="text-white font-medium">{(factorScores.sound * 0.30).toFixed(1)}</span>
                               </div>
                             </div>
                             <div className="p-2 rounded bg-white/5">
@@ -364,9 +400,9 @@ export function PulseScoreDropdown({
                                 <Thermometer className="w-3 h-3" /> Temp Score
                               </div>
                               <div className="text-white">
-                                <span className="text-red-400">{pulseScoreResult.breakdown.factorScores.temperature}</span>
+                                <span className="text-red-400">{factorScores.temperature}</span>
                                 <span className="text-gray-500"> × 0.30 = </span>
-                                <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.temperature * 0.30).toFixed(1)}</span>
+                                <span className="text-white font-medium">{(factorScores.temperature * 0.30).toFixed(1)}</span>
                               </div>
                             </div>
                             <div className="p-2 rounded bg-white/5">
@@ -374,9 +410,9 @@ export function PulseScoreDropdown({
                                 <Sun className="w-3 h-3" /> Light Score
                               </div>
                               <div className="text-white">
-                                <span className="text-yellow-400">{pulseScoreResult.breakdown.factorScores.light}</span>
+                                <span className="text-yellow-400">{factorScores.light}</span>
                                 <span className="text-gray-500"> × 0.20 = </span>
-                                <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.light * 0.20).toFixed(1)}</span>
+                                <span className="text-white font-medium">{(factorScores.light * 0.20).toFixed(1)}</span>
                               </div>
                             </div>
                             <div className="p-2 rounded bg-white/5">
@@ -384,9 +420,9 @@ export function PulseScoreDropdown({
                                 <Droplets className="w-3 h-3" /> Humidity Score
                               </div>
                               <div className="text-white">
-                                <span className="text-blue-400">{pulseScoreResult.breakdown.factorScores.humidity}</span>
+                                <span className="text-blue-400">{factorScores.humidity}</span>
                                 <span className="text-gray-500"> × 0.20 = </span>
-                                <span className="text-white font-medium">{(pulseScoreResult.breakdown.factorScores.humidity * 0.20).toFixed(1)}</span>
+                                <span className="text-white font-medium">{(factorScores.humidity * 0.20).toFixed(1)}</span>
                               </div>
                             </div>
                           </div>
@@ -395,7 +431,7 @@ export function PulseScoreDropdown({
                           <div className="border-t border-white/10 pt-3 mt-3">
                             <div className="flex items-center justify-between">
                               <div className="text-gray-400 text-xs">
-                                {(pulseScoreResult.breakdown.factorScores.sound * 0.30).toFixed(1)} + {(pulseScoreResult.breakdown.factorScores.temperature * 0.30).toFixed(1)} + {(pulseScoreResult.breakdown.factorScores.light * 0.20).toFixed(1)} + {(pulseScoreResult.breakdown.factorScores.humidity * 0.20).toFixed(1)}
+                                {(factorScores.sound * 0.30).toFixed(1)} + {(factorScores.temperature * 0.30).toFixed(1)} + {(factorScores.light * 0.20).toFixed(1)} + {(factorScores.humidity * 0.20).toFixed(1)}
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-gray-400">=</span>
@@ -405,8 +441,8 @@ export function PulseScoreDropdown({
                           </div>
                         </>
                       ) : (
-                        <div className="text-center py-4 text-gray-400">
-                          <p>Factor scores will appear once venue data is available</p>
+                        <div className="text-center py-4 text-gray-500">
+                          <p className="text-sm">Awaiting sensor data...</p>
                         </div>
                       )}
                     </div>
