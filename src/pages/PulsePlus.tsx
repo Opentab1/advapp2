@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import sportsService from '../services/sports.service';
 import { GoogleReviewsWidget } from '../components/GoogleReviewsWidget';
+import { HolidayCalendarWidget } from '../components/HolidayCalendarWidget';
 import type { SportsGame } from '../types';
 
 // Big games that typically drive traffic
@@ -327,21 +328,10 @@ export function PulsePlus() {
           )}
         </motion.div>
 
-        {/* Google Reviews Section */}
+        {/* Google Reviews & Holiday Calendar Section */}
         <div className="grid gap-6 md:grid-cols-2 mt-6">
           <GoogleReviewsWidget />
-          
-          {/* Placeholder for future widgets */}
-          <motion.div
-            className="glass-card p-6 flex flex-col items-center justify-center text-center"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-          >
-            <Calendar className="w-10 h-10 text-purple-400/50 mb-3" />
-            <h4 className="text-lg font-medium text-gray-400 mb-1">Local Events</h4>
-            <p className="text-sm text-gray-500">Coming Soon</p>
-          </motion.div>
+          <HolidayCalendarWidget />
         </div>
 
         {/* Coming Soon Teaser */}
@@ -355,7 +345,7 @@ export function PulsePlus() {
             <div className="flex items-center gap-3">
               <Flame className="w-5 h-5 text-orange-400" />
               <span className="text-gray-300">
-                <strong className="text-white">Coming Soon:</strong> Local Events, Holiday Calendar, Trending Music
+                <strong className="text-white">Coming Soon:</strong> Local Events, Trending Music, Competitor Insights
               </span>
             </div>
             <ChevronRight className="w-5 h-5 text-gray-500" />
