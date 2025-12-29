@@ -279,48 +279,60 @@ The Google Reviews widget requires a Lambda proxy because SerpAPI blocks browser
 
 ### Create Lambda Function: `serpapi-proxy`
 
-**Runtime:** Node.js 18.x
+**Runtime:** Node.js 20.x (uses ES modules by default)
 
-**Code:**
+**Timeout:** 30 seconds (Configuration → General configuration → Edit → Timeout)
+
+**Code (ES Module - index.mjs):**
 ```javascript
-const https = require('https');
-
-exports.handler = async (event) => {
-  const { query } = event.queryStringParameters || {};
+export const handler = async (event) => {
+  const query = event.queryStringParameters?.query;
   const apiKey = process.env.SERPAPI_KEY;
+  
+  console.log('Received query:', query);
   
   if (!query) {
     return {
       statusCode: 400,
-      headers: { 'Access-Control-Allow-Origin': '*' },
+      headers: { 
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({ error: 'Missing query parameter' })
     };
   }
   
   const url = `https://serpapi.com/search.json?engine=google_maps&q=${encodeURIComponent(query)}&type=search&api_key=${apiKey}`;
   
-  return new Promise((resolve) => {
-    https.get(url, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        resolve({
-          statusCode: 200,
-          headers: { 
-            'Access-Control-Allow-Origin': '*',
-            'Content-Type': 'application/json'
-          },
-          body: data
-        });
-      });
-    }).on('error', (err) => {
-      resolve({
-        statusCode: 500,
-        headers: { 'Access-Control-Allow-Origin': '*' },
-        body: JSON.stringify({ error: err.message })
-      });
-    });
-  });
+  console.log('Fetching from SerpAPI...');
+  
+  try {
+    const response = await fetch(url);
+    const data = await response.text();
+    
+    console.log('SerpAPI response status:', response.status);
+    
+    return {
+      statusCode: response.status,
+      headers: { 
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Content-Type': 'application/json'
+      },
+      body: data
+    };
+  } catch (error) {
+    console.error('Error:', error);
+    return {
+      statusCode: 500,
+      headers: { 
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ error: error.message })
+    };
+  }
 };
 ```
 
@@ -330,29 +342,31 @@ exports.handler = async (event) => {
 ### Create API Gateway
 
 1. Create HTTP API (not REST API - simpler)
-2. Add route: `GET /serpapi`
-3. Integrate with Lambda function
-4. Deploy to stage `prod`
-5. Note the endpoint URL
+2. Add route: `GET /reviews`
+3. Integrate with Lambda function `serpapi-proxy`
+4. Deploy (auto-deployed for HTTP APIs)
+5. Note the endpoint URL (e.g., `https://xxxxx.execute-api.us-east-2.amazonaws.com`)
 
-### Update Frontend
+### Update Frontend (Amplify)
 
-Add to `.env`:
-```
-VITE_SERPAPI_PROXY_URL=https://xxxxx.execute-api.us-east-1.amazonaws.com/serpapi
-```
+In Amplify → App settings → Environment variables, add:
+- Key: `VITE_SERPAPI_PROXY_URL`
+- Value: `https://xxxxx.execute-api.us-east-2.amazonaws.com/reviews` (include the `/reviews` path!)
 
-Update `google-reviews.service.ts` to use proxy URL instead of direct SerpAPI call.
+**Important:** The full URL must include the route path (`/reviews`). The frontend will call:
+`https://xxxxx.execute-api.us-east-2.amazonaws.com/reviews?query=venue+name+address`
 
 ### Checklist
 
-- [ ] Create Lambda function `serpapi-proxy`
-- [ ] Add SERPAPI_KEY environment variable to Lambda
-- [ ] Create API Gateway HTTP API
-- [ ] Add GET /serpapi route
-- [ ] Deploy API Gateway
-- [ ] Add VITE_SERPAPI_PROXY_URL to Amplify environment
-- [ ] Update frontend service to use proxy
+- [x] Create Lambda function `serpapi-proxy`
+- [x] Add SERPAPI_KEY environment variable to Lambda
+- [x] Set Lambda timeout to 30 seconds
+- [x] Create API Gateway HTTP API
+- [x] Add GET /reviews route
+- [x] Deploy API Gateway
+- [x] Add VITE_SERPAPI_PROXY_URL to Amplify environment
+- [ ] **Verify URL includes /reviews path** (e.g., `https://xxx.execute-api.us-east-2.amazonaws.com/reviews`)
+- [x] Frontend service updated to use proxy
 
 ---
 

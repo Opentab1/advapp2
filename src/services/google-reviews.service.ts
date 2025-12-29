@@ -133,8 +133,20 @@ class GoogleReviewsService {
       
       if (this.useProxy()) {
         // Use Lambda proxy (recommended - no CORS issues)
-        url = `${SERPAPI_PROXY_URL}?query=${encodeURIComponent(query)}`;
-        console.log('🌐 Using Lambda proxy:', SERPAPI_PROXY_URL);
+        // The proxy URL should be the full path including route (e.g., https://xxx.execute-api.region.amazonaws.com/reviews)
+        // If only the base URL is provided, append a default route
+        let proxyBase = SERPAPI_PROXY_URL!.replace(/\/$/, ''); // Remove trailing slash
+        
+        // Check if URL already has a path segment (like /reviews or /serpapi)
+        const urlParts = proxyBase.split('.amazonaws.com');
+        if (urlParts.length === 2 && urlParts[1] === '') {
+          // No route path provided, add default
+          proxyBase += '/reviews';
+          console.log('⚠️ No route in proxy URL, assuming /reviews');
+        }
+        
+        url = `${proxyBase}?query=${encodeURIComponent(query)}`;
+        console.log('🌐 Using Lambda proxy:', proxyBase);
       } else {
         // Direct SerpAPI call (will fail due to CORS in browser)
         const apiKey = this.getApiKey();
@@ -148,13 +160,24 @@ class GoogleReviewsService {
         console.log('🌐 Using direct SerpAPI (may fail due to CORS)');
       }
       
+      console.log('🔗 Full request URL:', url);
+      
       const response = await fetch(url);
       
       console.log('📡 Response status:', response.status);
+      console.log('📡 Response headers:', Object.fromEntries(response.headers.entries()));
       
       if (!response.ok) {
         const errorText = await response.text();
         console.error('❌ SerpAPI error response:', errorText);
+        
+        // Provide helpful error messages
+        if (response.status === 404) {
+          throw new Error('API route not found. Check API Gateway configuration.');
+        } else if (response.status === 500) {
+          throw new Error('Lambda error. Check CloudWatch logs.');
+        }
+        
         throw new Error(`SerpAPI returned ${response.status}: ${errorText}`);
       }
 
