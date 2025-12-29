@@ -23,7 +23,9 @@ export interface GoogleReviewsData {
   }[];
 }
 
-const SERPAPI_BASE = 'https://serpapi.com/search.json';
+// Use Lambda proxy if configured, otherwise direct SerpAPI (will fail due to CORS)
+const SERPAPI_PROXY_URL = import.meta.env.VITE_SERPAPI_PROXY_URL;
+const SERPAPI_DIRECT = 'https://serpapi.com/search.json';
 const CACHE_KEY_PREFIX = 'pulse_google_reviews_';
 const CACHE_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -36,8 +38,19 @@ class GoogleReviewsService {
    * Check if service is configured
    */
   isConfigured(): boolean {
+    // Prefer proxy URL (Lambda), fallback to direct API key
+    if (SERPAPI_PROXY_URL && !SERPAPI_PROXY_URL.includes('xxxxx')) {
+      return true;
+    }
     const key = this.getApiKey();
     return !!(key && key.length > 10 && !key.includes('your-api-key'));
+  }
+
+  /**
+   * Check if using proxy
+   */
+  private useProxy(): boolean {
+    return !!(SERPAPI_PROXY_URL && !SERPAPI_PROXY_URL.includes('xxxxx'));
   }
 
   /**
@@ -111,22 +124,29 @@ class GoogleReviewsService {
     }
 
     try {
-      const apiKey = this.getApiKey();
       const query = venueAddress ? `${venueName} ${venueAddress}` : venueName;
       
-      console.log('🔍 Fetching Google Reviews via SerpAPI...');
+      console.log('🔍 Fetching Google Reviews...');
       console.log('📍 Search query:', query);
       
-      // Use SerpAPI Google Maps endpoint
-      const params = new URLSearchParams({
-        engine: 'google_maps',
-        q: query,
-        type: 'search',
-        api_key: apiKey!,
-      });
-
-      const url = `${SERPAPI_BASE}?${params}`;
-      console.log('🌐 Fetching from:', url.replace(apiKey!, 'API_KEY_HIDDEN'));
+      let url: string;
+      
+      if (this.useProxy()) {
+        // Use Lambda proxy (recommended - no CORS issues)
+        url = `${SERPAPI_PROXY_URL}?query=${encodeURIComponent(query)}`;
+        console.log('🌐 Using Lambda proxy:', SERPAPI_PROXY_URL);
+      } else {
+        // Direct SerpAPI call (will fail due to CORS in browser)
+        const apiKey = this.getApiKey();
+        const params = new URLSearchParams({
+          engine: 'google_maps',
+          q: query,
+          type: 'search',
+          api_key: apiKey!,
+        });
+        url = `${SERPAPI_DIRECT}?${params}`;
+        console.log('🌐 Using direct SerpAPI (may fail due to CORS)');
+      }
       
       const response = await fetch(url);
       
