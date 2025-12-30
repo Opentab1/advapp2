@@ -26,7 +26,7 @@ import { NowPlaying } from '../components/NowPlaying';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { ConnectionStatus } from '../components/ConnectionStatus';
-import { TermsModal } from '../components/TermsModal';
+import { TermsModal, hasAcceptedTerms } from '../components/TermsModal';
 import { DemoModeBanner } from '../components/DemoModeBanner';
 import { Settings } from './Settings';
 import { SongLog } from './SongLog';
@@ -74,9 +74,15 @@ export function Dashboard() {
   const [showTermsModal, setShowTermsModal] = useState(false);
   
   // Check if user has accepted terms on mount
+  // First check localStorage (device-level), then check server (account-level)
   useEffect(() => {
     const checkTermsAcceptance = async () => {
       if (user?.email) {
+        // Check localStorage first - if accepted on this device, skip
+        if (hasAcceptedTerms()) {
+          return;
+        }
+        // Then check server
         const hasAccepted = await userSettingsService.hasAcceptedTerms();
         if (!hasAccepted) {
           setShowTermsModal(true);

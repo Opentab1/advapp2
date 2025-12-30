@@ -1,10 +1,35 @@
-import React, { useState } from 'react';
-import { X, Shield, FileText } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Shield, FileText } from 'lucide-react';
+
+const TERMS_ACCEPTED_KEY = 'pulse_terms_accepted';
 
 interface TermsModalProps {
   onAccept: () => void;
   onSkip?: () => void;
   userEmail: string;
+}
+
+/**
+ * Check if terms have been accepted on this device
+ */
+export function hasAcceptedTerms(): boolean {
+  try {
+    const accepted = localStorage.getItem(TERMS_ACCEPTED_KEY);
+    return accepted === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Save terms acceptance to localStorage
+ */
+function saveTermsAcceptance(): void {
+  try {
+    localStorage.setItem(TERMS_ACCEPTED_KEY, 'true');
+  } catch (e) {
+    console.error('Failed to save terms acceptance:', e);
+  }
 }
 
 export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, onSkip, userEmail }) => {
@@ -13,34 +38,48 @@ export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, onSkip, userEm
 
   const canProceed = termsAccepted && privacyAccepted;
 
+  // Check if already accepted on mount
+  useEffect(() => {
+    if (hasAcceptedTerms()) {
+      onAccept();
+    }
+  }, [onAccept]);
+
+  const handleAccept = () => {
+    saveTermsAcceptance();
+    onAccept();
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-gray-900 border border-purple-500/30 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 bg-warm-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white border border-warm-200 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden shadow-xl">
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-600/20 to-blue-600/20 border-b border-purple-500/30 p-6">
+        <div className="bg-gradient-to-r from-primary-50 to-primary-100 border-b border-warm-200 p-6">
           <div className="flex items-center gap-3">
-            <Shield className="w-8 h-8 text-purple-400" />
+            <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center">
+              <Shield className="w-6 h-6 text-white" />
+            </div>
             <div>
-              <h2 className="text-2xl font-bold text-white">Welcome to Pulse</h2>
-              <p className="text-gray-400 text-sm mt-1">Please review and accept our terms to continue</p>
+              <h2 className="text-2xl font-bold text-warm-900">Welcome to Pulse</h2>
+              <p className="text-warm-500 text-sm mt-1">Please review and accept our terms to continue</p>
             </div>
           </div>
         </div>
 
         {/* Content */}
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-          <p className="text-gray-300 mb-6">
-            Welcome, <span className="text-purple-400 font-semibold">{userEmail}</span>! 
+          <p className="text-warm-600 mb-6">
+            Welcome, <span className="text-primary font-semibold">{userEmail}</span>! 
             Before accessing your dashboard, please review and accept our policies.
           </p>
 
           {/* Terms of Service Section */}
-          <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 mb-4">
+          <div className="bg-warm-50 border border-warm-200 rounded-xl p-4 mb-4">
             <div className="flex items-start gap-3 mb-3">
-              <FileText className="w-5 h-5 text-blue-400 mt-1 flex-shrink-0" />
+              <FileText className="w-5 h-5 text-primary mt-1 flex-shrink-0" />
               <div>
-                <h3 className="text-lg font-semibold text-white mb-2">Terms of Service</h3>
-                <div className="text-sm text-gray-400 space-y-2">
+                <h3 className="text-lg font-semibold text-warm-900 mb-2">Terms of Service</h3>
+                <div className="text-sm text-warm-600 space-y-2">
                   <p>By using Pulse, you agree to:</p>
                   <ul className="list-disc list-inside space-y-1 ml-2">
                     <li>Use the service for lawful business purposes only</li>
@@ -52,10 +91,9 @@ export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, onSkip, userEm
                   <p className="mt-3">
                     <a 
                       href="#" 
-                      className="text-purple-400 hover:text-purple-300 underline"
+                      className="text-primary hover:text-primary-dark underline font-medium"
                       onClick={(e) => {
                         e.preventDefault();
-                        // TODO: Link to full terms document when available
                         alert('Full Terms of Service document coming soon. Please contact support for details.');
                       }}
                     >
@@ -71,21 +109,21 @@ export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, onSkip, userEm
                 type="checkbox"
                 checked={termsAccepted}
                 onChange={(e) => setTermsAccepted(e.target.checked)}
-                className="w-5 h-5 rounded border-gray-600 bg-gray-700 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0 cursor-pointer"
+                className="w-5 h-5 rounded border-warm-300 bg-white text-primary focus:ring-2 focus:ring-primary focus:ring-offset-0 cursor-pointer"
               />
-              <span className="text-white group-hover:text-purple-300 transition-colors">
+              <span className="text-warm-800 group-hover:text-primary transition-colors font-medium">
                 I have read and agree to the Terms of Service
               </span>
             </label>
           </div>
 
           {/* Privacy Policy Section */}
-          <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+          <div className="bg-warm-50 border border-warm-200 rounded-xl p-4">
             <div className="flex items-start gap-3 mb-3">
-              <Shield className="w-5 h-5 text-green-400 mt-1 flex-shrink-0" />
+              <Shield className="w-5 h-5 text-success mt-1 flex-shrink-0" />
               <div>
-                <h3 className="text-lg font-semibold text-white mb-2">Privacy Policy</h3>
-                <div className="text-sm text-gray-400 space-y-2">
+                <h3 className="text-lg font-semibold text-warm-900 mb-2">Privacy Policy</h3>
+                <div className="text-sm text-warm-600 space-y-2">
                   <p>We respect your privacy and protect your data:</p>
                   <ul className="list-disc list-inside space-y-1 ml-2">
                     <li>Your sensor data is encrypted and isolated to your venue only</li>
@@ -97,10 +135,9 @@ export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, onSkip, userEm
                   <p className="mt-3">
                     <a 
                       href="#" 
-                      className="text-green-400 hover:text-green-300 underline"
+                      className="text-success hover:opacity-80 underline font-medium"
                       onClick={(e) => {
                         e.preventDefault();
-                        // TODO: Link to full privacy policy when available
                         alert('Full Privacy Policy document coming soon. Please contact support for details.');
                       }}
                     >
@@ -116,9 +153,9 @@ export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, onSkip, userEm
                 type="checkbox"
                 checked={privacyAccepted}
                 onChange={(e) => setPrivacyAccepted(e.target.checked)}
-                className="w-5 h-5 rounded border-gray-600 bg-gray-700 text-green-600 focus:ring-2 focus:ring-green-500 focus:ring-offset-0 cursor-pointer"
+                className="w-5 h-5 rounded border-warm-300 bg-white text-success focus:ring-2 focus:ring-success focus:ring-offset-0 cursor-pointer"
               />
-              <span className="text-white group-hover:text-green-300 transition-colors">
+              <span className="text-warm-800 group-hover:text-success transition-colors font-medium">
                 I have read and agree to the Privacy Policy
               </span>
             </label>
@@ -126,14 +163,14 @@ export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, onSkip, userEm
         </div>
 
         {/* Footer */}
-        <div className="border-t border-gray-700 p-6 bg-gray-800/30">
+        <div className="border-t border-warm-200 p-6 bg-warm-50">
           <button
-            onClick={onAccept}
+            onClick={handleAccept}
             disabled={!canProceed}
-            className={`w-full py-3 px-6 rounded-lg font-semibold transition-all ${
+            className={`w-full py-3 px-6 rounded-xl font-semibold transition-all ${
               canProceed
-                ? 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white shadow-lg'
-                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                ? 'bg-primary hover:bg-primary-dark text-white shadow-lg'
+                : 'bg-warm-200 text-warm-400 cursor-not-allowed'
             }`}
           >
             {canProceed ? 'Accept and Continue to Dashboard' : 'Please accept both policies to continue'}
@@ -143,7 +180,7 @@ export const TermsModal: React.FC<TermsModalProps> = ({ onAccept, onSkip, userEm
             <div className="mt-4 text-center">
               <button
                 onClick={onSkip}
-                className="text-xs text-gray-500 hover:text-gray-400 underline transition-colors"
+                className="text-xs text-warm-400 hover:text-warm-600 underline transition-colors"
               >
                 Skip for now (will show again next time)
               </button>
