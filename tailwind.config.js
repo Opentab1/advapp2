@@ -7,15 +7,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Toast-inspired warm color palette
+        // Ocean blue professional palette
         primary: {
-          DEFAULT: '#FF6B35',  // Warm orange (Toast-style)
-          light: '#FF8B5E',
-          dark: '#E55A2B',
-          50: '#FFF5F0',
-          100: '#FFE8DE',
-          500: '#FF6B35',
-          600: '#E55A2B',
+          DEFAULT: '#0077B6',  // Ocean blue
+          light: '#00A8E8',
+          dark: '#005A8C',
+          50: '#E6F4FA',
+          100: '#CCE9F5',
+          500: '#0077B6',
+          600: '#005A8C',
         },
         // Warm grays with slight warmth
         warm: {
@@ -36,9 +36,9 @@ export default {
         error: '#EF4444',
         // Legacy aliases for compatibility
         cyan: {
-          DEFAULT: '#FF6B35',
-          light: '#FF8B5E',
-          dark: '#E55A2B'
+          DEFAULT: '#0077B6',
+          light: '#00A8E8',
+          dark: '#005A8C'
         },
         navy: {
           DEFAULT: '#FAFAFA',
@@ -52,8 +52,8 @@ export default {
         'soft': '0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06)',
         'card': '0 4px 12px rgba(0, 0, 0, 0.08)',
         'card-hover': '0 8px 24px rgba(0, 0, 0, 0.12)',
-        'button': '0 2px 8px rgba(255, 107, 53, 0.25)',
-        'button-hover': '0 4px 16px rgba(255, 107, 53, 0.35)',
+        'button': '0 2px 8px rgba(0, 119, 182, 0.25)',
+        'button-hover': '0 4px 16px rgba(0, 119, 182, 0.35)',
       },
       borderRadius: {
         'xl': '12px',

@@ -14,8 +14,8 @@
     --text-secondary: #57534E;
     --text-muted: #78716C;
     --border-color: #E7E5E4;
-    --accent: #FF6B35;
-    --accent-light: #FFF5F0;
+    --accent: #0077B6;
+    --accent-light: #E6F4FA;
   }
 
   * {
@@ -71,15 +71,15 @@
     transform: translateY(-2px);
   }
 
-  /* Primary Button - Warm orange */
+  /* Primary Button - Ocean blue */
   .btn-primary {
     @apply px-6 py-3 bg-primary text-white font-semibold rounded-xl;
     @apply transition-all duration-200 hover:bg-primary-dark;
-    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.25);
+    box-shadow: 0 2px 8px rgba(0, 119, 182, 0.25);
   }
 
   .btn-primary:hover {
-    box-shadow: 0 4px 16px rgba(255, 107, 53, 0.35);
+    box-shadow: 0 4px 16px rgba(0, 119, 182, 0.35);
     transform: translateY(-1px);
   }
 
@@ -244,15 +244,15 @@
   }
 
   .border-cyan\/50 {
-    border-color: rgba(255, 107, 53, 0.5) !important;
+    border-color: rgba(0, 119, 182, 0.5) !important;
   }
 
   .bg-cyan\/10 {
-    background-color: rgba(255, 107, 53, 0.08) !important;
+    background-color: rgba(0, 119, 182, 0.08) !important;
   }
 
   .border-cyan\/30 {
-    border-color: rgba(255, 107, 53, 0.3) !important;
+    border-color: rgba(0, 119, 182, 0.3) !important;
   }
 
   /* Purple badges */
