@@ -34,8 +34,7 @@ import { Settings } from './Settings';
 import { SongLog } from './SongLog';
 import { Reports } from './Reports';
 import { Support } from './Support';
-import { PulseRecommendations } from './PulseRecommendations';
-import { PulsePlus } from './PulsePlus';
+import { Insights } from './Insights';
 // Insights tab removed
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
@@ -1097,10 +1096,8 @@ export function Dashboard() {
                 </>
               )}
             </>
-          ) : activeTab === 'pulse' ? (
-            <PulseRecommendations />
-          ) : activeTab === 'plus' ? (
-            <PulsePlus />
+          ) : activeTab === 'insights' || activeTab === 'pulse' || activeTab === 'plus' ? (
+            <Insights />
           ) : activeTab === 'songs' ? (
             <SongLog />
           ) : activeTab === 'reports' ? (

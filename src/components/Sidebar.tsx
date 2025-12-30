@@ -4,8 +4,7 @@ import {
   Music, 
   FileText, 
   Settings,
-  Target,
-  Zap,
+  TrendingUp,
   LucideIcon 
 } from 'lucide-react';
 
@@ -22,8 +21,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { id: 'live', label: 'Live', icon: Activity },
-  { id: 'pulse', label: 'Pulse', icon: Target },
-  { id: 'plus', label: 'Plus', icon: Zap },
+  { id: 'insights', label: 'Insights', icon: TrendingUp },
   { id: 'songs', label: 'Songs', icon: Music },
   { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'settings', label: 'Settings', icon: Settings },
