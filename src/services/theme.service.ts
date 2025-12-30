@@ -1,127 +1,61 @@
-export type Theme = 'dark' | 'light' | 'auto';
-
-const THEME_STORAGE_KEY = 'pulse_theme';
+// Light-only theme (Toast-style warm professional)
+// No dark mode toggle - clean light design only
 
 class ThemeService {
-  private currentTheme: Theme = 'dark';
-  private mediaQuery: MediaQueryList | null = null;
-  private listeners: Set<(theme: Theme, appliedTheme: 'dark' | 'light') => void> = new Set();
-
   constructor() {
-    // Initialize on first load
-    this.loadTheme();
-    this.setupSystemThemeListener();
+    // Always apply light theme
+    this.applyTheme();
   }
 
   /**
-   * Load theme from localStorage and apply it
+   * Load theme - always light
    */
   loadTheme(): void {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
-    this.currentTheme = stored || 'dark';
     this.applyTheme();
   }
 
   /**
-   * Get the current theme setting
+   * Get the current theme setting - always light
    */
-  getTheme(): Theme {
-    return this.currentTheme;
+  getTheme(): 'light' {
+    return 'light';
   }
 
   /**
-   * Get the actually applied theme (resolves 'auto' to dark/light)
+   * Get the applied theme - always light
    */
-  getAppliedTheme(): 'dark' | 'light' {
-    if (this.currentTheme === 'auto') {
-      return this.getSystemTheme();
-    }
-    return this.currentTheme;
+  getAppliedTheme(): 'light' {
+    return 'light';
   }
 
   /**
-   * Set and apply a new theme
+   * Set theme - no-op since we're light-only
    */
-  setTheme(theme: Theme): void {
-    this.currentTheme = theme;
-    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  setTheme(_theme: string): void {
+    // Light only - ignore theme changes
     this.applyTheme();
-    this.notifyListeners();
   }
 
   /**
-   * Subscribe to theme changes
+   * Subscribe to theme changes - no-op since theme never changes
    */
-  subscribe(callback: (theme: Theme, appliedTheme: 'dark' | 'light') => void): () => void {
-    this.listeners.add(callback);
-    return () => this.listeners.delete(callback);
+  subscribe(_callback: (theme: string, appliedTheme: 'light') => void): () => void {
+    return () => {}; // No cleanup needed
   }
 
   /**
-   * Get the system preference (dark or light)
-   */
-  private getSystemTheme(): 'dark' | 'light' {
-    if (typeof window !== 'undefined' && window.matchMedia) {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    }
-    return 'dark'; // Default to dark if can't detect
-  }
-
-  /**
-   * Setup listener for system theme changes (for 'auto' mode)
-   */
-  private setupSystemThemeListener(): void {
-    if (typeof window !== 'undefined' && window.matchMedia) {
-      this.mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      
-      const handleChange = () => {
-        if (this.currentTheme === 'auto') {
-          this.applyTheme();
-          this.notifyListeners();
-        }
-      };
-
-      // Modern browsers
-      if (this.mediaQuery.addEventListener) {
-        this.mediaQuery.addEventListener('change', handleChange);
-      } else {
-        // Legacy support
-        this.mediaQuery.addListener(handleChange);
-      }
-    }
-  }
-
-  /**
-   * Apply the current theme to the document
+   * Apply light theme to document
    */
   private applyTheme(): void {
-    const appliedTheme = this.getAppliedTheme();
     const root = document.documentElement;
-
-    if (appliedTheme === 'light') {
-      root.classList.remove('dark');
-      root.classList.add('light');
-    } else {
-      root.classList.remove('light');
-      root.classList.add('dark');
-    }
+    root.classList.remove('dark');
+    root.classList.add('light');
 
     // Update meta theme-color for mobile browsers
     const metaThemeColor = document.querySelector('meta[name="theme-color"]');
     if (metaThemeColor) {
-      metaThemeColor.setAttribute(
-        'content',
-        appliedTheme === 'light' ? '#f8fafc' : '#0a192f'
-      );
+      metaThemeColor.setAttribute('content', '#FAFAFA');
     }
-  }
-
-  /**
-   * Notify all listeners of theme change
-   */
-  private notifyListeners(): void {
-    const appliedTheme = this.getAppliedTheme();
-    this.listeners.forEach(callback => callback(this.currentTheme, appliedTheme));
   }
 }
 

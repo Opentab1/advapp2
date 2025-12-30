@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Save, Key, MapPin, DollarSign, Check, Building2, Trash2, AlertTriangle,
-  User, Bell, Settings as SettingsIcon, Info, Mail, Phone, Palette, Globe, CloudSun
+  User, Bell, Settings as SettingsIcon, Info, Mail, Phone, Globe, CloudSun
 } from 'lucide-react';
 import type { AppSettings } from '../types';
 import authService from '../services/auth.service';
@@ -11,13 +11,13 @@ import locationService from '../services/location.service';
 import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
 import userSettingsService from '../services/user-settings.service';
 import weatherService from '../services/weather.service';
-import themeService, { Theme } from '../services/theme.service';
+import themeService from '../services/theme.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { AddressSettings } from '../components/AddressSettings';
 
 const DEFAULT_SETTINGS: AppSettings = {
-  theme: 'dark',
+  theme: 'light',
   soundAlerts: true,
   refreshInterval: 5,
   notifications: true,
@@ -35,14 +35,7 @@ export function Settings() {
   const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'notifications' | 'preferences' | 'integrations' | 'about'>('account');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [savedAddress, setSavedAddress] = useState<VenueAddress | null>(null);
-  const [currentTheme, setCurrentTheme] = useState<Theme>(themeService.getTheme());
   const user = authService.getStoredUser();
-
-  // Handle theme changes
-  const handleThemeChange = (theme: Theme) => {
-    setCurrentTheme(theme);
-    themeService.setTheme(theme);
-  };
 
   useEffect(() => {
     loadSettings();
@@ -409,26 +402,6 @@ export function Settings() {
                     <option>America/Denver (Mountain)</option>
                     <option>America/Los_Angeles (Pacific)</option>
                   </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Theme
-                  </label>
-                  <select 
-                    value={currentTheme}
-                    onChange={(e) => handleThemeChange(e.target.value as Theme)}
-                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white dark:text-white light:text-slate-900 cursor-pointer"
-                  >
-                    <option value="dark">Dark</option>
-                    <option value="light">Light</option>
-                    <option value="auto">Auto (System)</option>
-                  </select>
-                  <p className="text-xs text-gray-400 mt-1">
-                    {currentTheme === 'auto' 
-                      ? `Using system preference (${themeService.getAppliedTheme()})` 
-                      : `Currently using ${currentTheme} theme`}
-                  </p>
                 </div>
 
                 <div>
