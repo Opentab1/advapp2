@@ -38,12 +38,23 @@ class GoogleReviewsService {
    * Check if service is configured
    */
   isConfigured(): boolean {
+    console.log('🔍 Google Reviews: Checking configuration...');
+    console.log('🔍 VITE_SERPAPI_PROXY_URL:', SERPAPI_PROXY_URL || 'NOT SET');
+    console.log('🔍 VITE_SERPAPI_KEY:', this.getApiKey() ? 'SET (hidden)' : 'NOT SET');
+    
     // Prefer proxy URL (Lambda), fallback to direct API key
-    if (SERPAPI_PROXY_URL && !SERPAPI_PROXY_URL.includes('xxxxx')) {
+    if (SERPAPI_PROXY_URL && SERPAPI_PROXY_URL.length > 10 && !SERPAPI_PROXY_URL.includes('xxxxx') && !SERPAPI_PROXY_URL.includes('your-')) {
+      console.log('✅ Google Reviews: Using Lambda proxy');
       return true;
     }
     const key = this.getApiKey();
-    return !!(key && key.length > 10 && !key.includes('your-api-key'));
+    if (key && key.length > 10 && !key.includes('your-api-key') && !key.includes('your-serpapi')) {
+      console.log('✅ Google Reviews: Using direct SerpAPI key');
+      return true;
+    }
+    
+    console.warn('⚠️ Google Reviews: NOT CONFIGURED - need VITE_SERPAPI_PROXY_URL in Amplify environment');
+    return false;
   }
 
   /**
