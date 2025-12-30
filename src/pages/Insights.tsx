@@ -11,12 +11,12 @@ import {
   Zap,
   AlertCircle,
   CheckCircle,
-  Volume2,
   Trophy,
   RefreshCw,
   ExternalLink,
   Lightbulb,
   Target,
+  X,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import apiService from '../services/api.service';
@@ -24,6 +24,7 @@ import googleReviewsService, { GoogleReviewsData } from '../services/google-revi
 import venueSettingsService from '../services/venue-settings.service';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
+import { calculateRecentDwellTime, formatDwellTime, getDwellTimeCategory } from '../utils/dwellTime';
 import type { SensorData, SportsGame } from '../types';
 
 // ============ TYPES ============
@@ -62,6 +63,7 @@ export function Insights() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<string | null>('weekly');
+  const [activeRing, setActiveRing] = useState<'dwell' | 'reputation' | 'occupancy' | null>(null);
   
   // Data
   const [thisWeek, setThisWeek] = useState<WeekData | null>(null);
@@ -70,10 +72,13 @@ export function Insights() {
   const [todayGames, setTodayGames] = useState<SportsGame[]>([]);
   const [patterns, setPatterns] = useState<PatternInsight[]>([]);
   const [headline, setHeadline] = useState<{ text: string; type: 'good' | 'warning' | 'neutral' } | null>(null);
+  const [dwellTime, setDwellTime] = useState<number | null>(null);
+  const [allSensorData, setAllSensorData] = useState<SensorData[]>([]);
 
   const user = authService.getStoredUser();
   const venueId = user?.venueId || '';
   const venueName = user?.venueName || '';
+  const venueCapacity = user?.venueCapacity || 100;
 
   const loadAllData = useCallback(async () => {
     if (!venueId) {
@@ -110,6 +115,8 @@ export function Insights() {
       const data = await apiService.getHistoricalData(venueId, '14d');
       if (!data?.data?.length) return;
 
+      setAllSensorData(data.data);
+
       const now = new Date();
       const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
@@ -125,6 +132,10 @@ export function Insights() {
       
       setThisWeek(tw);
       setLastWeek(lw);
+      
+      // Calculate dwell time from recent data
+      const recentDwell = calculateRecentDwellTime(data.data, 24);
+      setDwellTime(recentDwell);
       
       // Generate patterns and headline
       generatePatterns(tw, lw, data.data);
@@ -307,6 +318,17 @@ export function Insights() {
     ? Math.round(((thisWeek.totalEntries - lastWeek.totalEntries) / lastWeek.totalEntries) * 100)
     : null;
 
+  // Calculate ring scores (0-100)
+  // Dwell time: 120 min = 100, scale linearly
+  const dwellScore = dwellTime ? Math.min(100, Math.round((dwellTime / 120) * 100)) : 0;
+  const dwellCategory = getDwellTimeCategory(dwellTime, 'bar');
+  
+  // Reputation: 5.0 = 100, 1.0 = 0
+  const reputationScore = reviews ? Math.round(((reviews.rating - 1) / 4) * 100) : 0;
+  
+  // Occupancy: avg occupancy as % of capacity
+  const occupancyScore = thisWeek ? Math.min(100, Math.round((thisWeek.avgOccupancy / venueCapacity) * 100)) : 0;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -332,6 +354,47 @@ export function Insights() {
           <RefreshCw className={`w-5 h-5 text-gray-400 ${refreshing ? 'animate-spin' : ''}`} />
         </motion.button>
       </div>
+
+      {/* Three Score Rings */}
+      <div className="flex justify-center gap-4 mb-8">
+        <ScoreRing
+          score={dwellScore}
+          label="Dwell Time"
+          value={formatDwellTime(dwellTime)}
+          color="#00d4ff"
+          onClick={() => setActiveRing('dwell')}
+        />
+        <ScoreRing
+          score={reputationScore}
+          label="Reputation"
+          value={reviews ? `${reviews.rating.toFixed(1)}★` : '--'}
+          color="#fbbf24"
+          onClick={() => setActiveRing('reputation')}
+        />
+        <ScoreRing
+          score={occupancyScore}
+          label="Occupancy"
+          value={thisWeek ? `${thisWeek.avgOccupancy}` : '--'}
+          color="#22c55e"
+          onClick={() => setActiveRing('occupancy')}
+        />
+      </div>
+
+      {/* Ring Detail Modal */}
+      <AnimatePresence>
+        {activeRing && (
+          <RingDetailModal
+            type={activeRing}
+            onClose={() => setActiveRing(null)}
+            dwellTime={dwellTime}
+            dwellCategory={dwellCategory}
+            reviews={reviews}
+            venueName={venueName}
+            thisWeek={thisWeek}
+            venueCapacity={venueCapacity}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Headline Insight */}
       {headline && (
@@ -639,5 +702,237 @@ function PatternCard({ pattern }: { pattern: PatternInsight }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ============ SCORE RING COMPONENT ============
+
+function ScoreRing({ score, label, value, color, onClick }: {
+  score: number;
+  label: string;
+  value: string;
+  color: string;
+  onClick: () => void;
+}) {
+  const size = 100;
+  const strokeWidth = 8;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const offset = circumference - (score / 100) * circumference;
+
+  return (
+    <motion.button
+      onClick={onClick}
+      className="flex flex-col items-center gap-2 p-2 rounded-xl hover:bg-white/5 transition-colors"
+      whileHover={{ scale: 1.05 }}
+      whileTap={{ scale: 0.95 }}
+    >
+      <div className="relative" style={{ width: size, height: size }}>
+        {/* Background circle */}
+        <svg className="absolute inset-0 -rotate-90" width={size} height={size}>
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke="rgba(255,255,255,0.1)"
+            strokeWidth={strokeWidth}
+          />
+          {/* Animated progress circle */}
+          <motion.circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke={color}
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            initial={{ strokeDashoffset: circumference }}
+            animate={{ strokeDashoffset: offset }}
+            transition={{ duration: 1, ease: "easeOut" }}
+          />
+        </svg>
+        {/* Center content */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xl font-bold text-white">{value}</span>
+        </div>
+      </div>
+      <span className="text-xs text-gray-400 font-medium">{label}</span>
+    </motion.button>
+  );
+}
+
+// ============ RING DETAIL MODAL ============
+
+function RingDetailModal({ type, onClose, dwellTime, dwellCategory, reviews, venueName, thisWeek, venueCapacity }: {
+  type: 'dwell' | 'reputation' | 'occupancy';
+  onClose: () => void;
+  dwellTime: number | null;
+  dwellCategory: string;
+  reviews: GoogleReviewsData | null;
+  venueName: string;
+  thisWeek: WeekData | null;
+  venueCapacity: number;
+}) {
+  const titles = {
+    dwell: 'Average Dwell Time',
+    reputation: 'Reputation',
+    occupancy: 'Occupancy',
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="glass-card w-full max-w-sm p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-white">{titles[type]}</h3>
+          <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg">
+            <X className="w-5 h-5 text-gray-400" />
+          </button>
+        </div>
+
+        {type === 'dwell' && (
+          <div className="space-y-4">
+            <div className="text-center py-4">
+              <p className="text-4xl font-bold text-cyan">{formatDwellTime(dwellTime)}</p>
+              <p className="text-sm text-gray-400 mt-1">average time guests stay</p>
+            </div>
+            <div className={`p-3 rounded-lg ${
+              dwellCategory === 'excellent' ? 'bg-green-500/10 border border-green-500/30' :
+              dwellCategory === 'good' ? 'bg-cyan/10 border border-cyan/30' :
+              dwellCategory === 'fair' ? 'bg-yellow-500/10 border border-yellow-500/30' :
+              'bg-red-500/10 border border-red-500/30'
+            }`}>
+              <p className={`text-sm font-medium ${
+                dwellCategory === 'excellent' ? 'text-green-400' :
+                dwellCategory === 'good' ? 'text-cyan' :
+                dwellCategory === 'fair' ? 'text-yellow-400' :
+                'text-red-400'
+              }`}>
+                {dwellCategory === 'excellent' ? '🎯 Excellent!' :
+                 dwellCategory === 'good' ? '👍 Good' :
+                 dwellCategory === 'fair' ? '⚠️ Fair' :
+                 '📉 Needs work'}
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                {dwellCategory === 'excellent' ? 'Guests love staying. Keep doing what you\'re doing!' :
+                 dwellCategory === 'good' ? 'Solid dwell time. Room to optimize.' :
+                 dwellCategory === 'fair' ? 'Guests might be leaving early. Check atmosphere.' :
+                 'Low dwell time hurts revenue. Review your experience.'}
+              </p>
+            </div>
+            <div className="text-xs text-gray-500">
+              <p><strong>What is dwell time?</strong></p>
+              <p className="mt-1">How long guests stay on average. Longer = more drinks, more food, more revenue.</p>
+            </div>
+          </div>
+        )}
+
+        {type === 'reputation' && (
+          <div className="space-y-4">
+            {reviews ? (
+              <>
+                <div className="text-center py-4">
+                  <p className="text-4xl font-bold text-yellow-400">{reviews.rating.toFixed(1)}</p>
+                  <div className="flex justify-center text-yellow-400 mt-2">
+                    {[1, 2, 3, 4, 5].map(i => (
+                      <Star 
+                        key={i} 
+                        className={`w-5 h-5 ${i <= Math.round(reviews.rating) ? 'fill-current' : ''}`} 
+                      />
+                    ))}
+                  </div>
+                  <p className="text-sm text-gray-400 mt-2">{reviews.reviewCount.toLocaleString()} reviews on Google</p>
+                </div>
+                <div className={`p-3 rounded-lg ${
+                  reviews.rating >= 4.5 ? 'bg-green-500/10 border border-green-500/30' :
+                  reviews.rating >= 4.0 ? 'bg-cyan/10 border border-cyan/30' :
+                  reviews.rating >= 3.5 ? 'bg-yellow-500/10 border border-yellow-500/30' :
+                  'bg-red-500/10 border border-red-500/30'
+                }`}>
+                  <p className={`text-sm font-medium ${
+                    reviews.rating >= 4.5 ? 'text-green-400' :
+                    reviews.rating >= 4.0 ? 'text-cyan' :
+                    reviews.rating >= 3.5 ? 'text-yellow-400' :
+                    'text-red-400'
+                  }`}>
+                    {reviews.rating >= 4.5 ? '🌟 Outstanding!' :
+                     reviews.rating >= 4.0 ? '✅ Strong reputation' :
+                     reviews.rating >= 3.5 ? '⚠️ Room to improve' :
+                     '🚨 Needs attention'}
+                  </p>
+                </div>
+                <a
+                  href={`https://www.google.com/maps/search/${encodeURIComponent(venueName)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm text-cyan"
+                >
+                  View on Google <ExternalLink className="w-4 h-4" />
+                </a>
+              </>
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <Star className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p>Google Reviews not configured</p>
+                <p className="text-xs mt-1">Set up your venue address in Settings</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {type === 'occupancy' && (
+          <div className="space-y-4">
+            <div className="text-center py-4">
+              <p className="text-4xl font-bold text-green-400">
+                {thisWeek ? thisWeek.avgOccupancy : '--'}
+              </p>
+              <p className="text-sm text-gray-400 mt-1">avg guests this week</p>
+            </div>
+            {thisWeek && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-white/5">
+                    <p className="text-xs text-gray-500 uppercase">Peak</p>
+                    <p className="text-lg font-bold text-white">{thisWeek.peakDayEntries}</p>
+                    <p className="text-xs text-gray-400">on {thisWeek.peakDay}</p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-white/5">
+                    <p className="text-xs text-gray-500 uppercase">Total</p>
+                    <p className="text-lg font-bold text-white">{thisWeek.totalEntries}</p>
+                    <p className="text-xs text-gray-400">visitors this week</p>
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-white/5">
+                  <p className="text-xs text-gray-500 mb-2">Capacity utilization</p>
+                  <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                    <motion.div 
+                      className="h-full bg-green-500 rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${Math.min(100, (thisWeek.avgOccupancy / venueCapacity) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {Math.round((thisWeek.avgOccupancy / venueCapacity) * 100)}% of {venueCapacity} capacity
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
   );
 }
