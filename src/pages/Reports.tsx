@@ -245,10 +245,18 @@ export function Reports() {
           peakOccupancy: maxOccupancy,
           totalEntries: occupancyStats.totalEntries,
           daysInPeriod,
-          dataPoints: historicalData.data?.length || 0
+          dataPoints: historicalData.data?.length || 0,
+          reportType: selectedReportType
         });
 
-        const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
+        // Generate specialized report based on type
+        const report = await aiReportService.generateReport(
+          selectedReportType,
+          weekStart,
+          weekEnd,
+          metrics,
+          historicalData.data
+        );
         await aiReportService.saveReport(report);
         await loadReports();
         setSelectedReport(report);
@@ -278,7 +286,12 @@ export function Reports() {
           daysWithData: 0
         };
 
-        const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
+        const report = await aiReportService.generateReport(
+          selectedReportType,
+          weekStart,
+          weekEnd,
+          metrics
+        );
         await aiReportService.saveReport(report);
         await loadReports();
         setSelectedReport(report);
@@ -483,7 +496,13 @@ export function Reports() {
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       <span className="px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/50 text-purple-300 text-xs font-medium">
-                        {reportTypes.find(t => t.id === selectedReportType)?.label || 'Weekly Summary'}
+                        {/* Derive report type from report ID for accuracy */}
+                        {selectedReport.id.includes('music') ? 'Music Analytics' :
+                         selectedReport.id.includes('atmosphere') ? 'Atmosphere Optimization' :
+                         selectedReport.id.includes('occupancy') ? 'Occupancy Trends' :
+                         selectedReport.id.includes('monthly') ? 'Monthly Performance' :
+                         selectedReport.id.includes('custom') ? 'Custom Report' :
+                         'Weekly Summary'}
                       </span>
                     </div>
                     <h3 className="text-2xl font-bold text-white">
