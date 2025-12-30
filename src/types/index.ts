@@ -170,6 +170,11 @@ export interface SportsGame {
   status: 'scheduled' | 'live' | 'final';
   startTime: string;
   network?: string;
+  // Enhanced data from ESPN
+  homeRecord?: string;
+  awayRecord?: string;
+  venue?: string;
+  headline?: string;
 }
 
 // Song Log
