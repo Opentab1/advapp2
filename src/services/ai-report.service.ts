@@ -2,13 +2,24 @@ import type { WeeklyReport, WeeklyMetrics, ReportInsight, SensorData } from '../
 import { isDemoAccount, generateDemoWeeklyReport, generateDemoReportHistory } from '../utils/demoData';
 import authService from './auth.service';
 import songLogService from './song-log.service';
-import type { GenreStats, PerformingSong } from './song-log.service';
+import type { GenreStats, PerformingSong, AnalyticsTimeRange } from './song-log.service';
 
 export type ReportType = 'weekly' | 'monthly' | 'music' | 'atmosphere' | 'occupancy' | 'custom';
 
 class AIReportService {
   // In-memory cache for reports
   private reportsCache: WeeklyReport[] = [];
+
+  /**
+   * Convert days string to AnalyticsTimeRange
+   */
+  private getAnalyticsTimeRange(weekStart: Date, weekEnd: Date): AnalyticsTimeRange {
+    const days = Math.ceil((weekEnd.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24));
+    if (days <= 7) return '7d';
+    if (days <= 14) return '14d';
+    if (days <= 30) return '30d';
+    return '90d';
+  }
 
   /**
    * Generate a report based on type
@@ -18,7 +29,8 @@ class AIReportService {
     weekStart: Date,
     weekEnd: Date,
     metrics: WeeklyMetrics,
-    sensorData?: SensorData[]
+    sensorData?: SensorData[],
+    timeRangeDays?: string
   ): Promise<WeeklyReport> {
     // Demo mode
     const user = authService.getStoredUser();
@@ -27,9 +39,12 @@ class AIReportService {
       return generateDemoWeeklyReport(weekStart, weekEnd);
     }
 
+    // Calculate analytics time range from dates
+    const analyticsRange = this.getAnalyticsTimeRange(weekStart, weekEnd);
+
     switch (type) {
       case 'music':
-        return this.generateMusicReport(weekStart, weekEnd, metrics);
+        return this.generateMusicReport(weekStart, weekEnd, metrics, analyticsRange);
       case 'atmosphere':
         return this.generateAtmosphereReport(weekStart, weekEnd, metrics, sensorData);
       case 'occupancy':
@@ -73,15 +88,18 @@ class AIReportService {
   async generateMusicReport(
     weekStart: Date,
     weekEnd: Date,
-    metrics: WeeklyMetrics
+    metrics: WeeklyMetrics,
+    timeRange: AnalyticsTimeRange = '30d'
   ): Promise<WeeklyReport> {
-    // Fetch music-specific data
+    // Fetch music-specific data for the selected time range
     let topSongs: PerformingSong[] = [];
     let genreStats: GenreStats[] = [];
     
+    console.log(`🎵 Generating music report for time range: ${timeRange}`);
+    
     try {
-      topSongs = await songLogService.getHighestPerformingSongs(10, '30d');
-      genreStats = await songLogService.getGenreStats(10, '30d');
+      topSongs = await songLogService.getHighestPerformingSongs(10, timeRange);
+      genreStats = await songLogService.getGenreStats(10, timeRange);
     } catch (e) {
       console.error('Error fetching music data:', e);
     }
