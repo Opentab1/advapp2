@@ -343,37 +343,38 @@ export function Insights() {
 
     console.log('📊 Processing', data.length, 'sensor readings for traffic');
 
-    // Group by day
+    // Group by day - use MAX entries/exits per day (they're cumulative daily totals)
     const byDay = new Map<string, { date: Date; entries: number; exits: number; peak: number; readings: number }>();
-    const byHour = new Map<number, { entries: number; count: number }>();
+    const byHour = new Map<number, { maxEntries: number; peakOccupancy: number }>();
     
     data.forEach(item => {
       const date = new Date(item.timestamp);
       const dayKey = date.toDateString();
       const hour = date.getHours();
       
-      // Daily aggregation
+      // Daily aggregation - take MAX values (entries/exits are cumulative for the day)
       if (!byDay.has(dayKey)) {
         byDay.set(dayKey, { date, entries: 0, exits: 0, peak: 0, readings: 0 });
       }
       const dayData = byDay.get(dayKey)!;
       
       if (item.occupancy) {
-        dayData.entries += item.occupancy.entries || 0;
-        dayData.exits += item.occupancy.exits || 0;
+        // Take the highest value seen for entries/exits (cumulative daily count)
+        dayData.entries = Math.max(dayData.entries, item.occupancy.entries || 0);
+        dayData.exits = Math.max(dayData.exits, item.occupancy.exits || 0);
         dayData.peak = Math.max(dayData.peak, item.occupancy.current || 0);
       }
       dayData.readings++;
       
-      // Hourly aggregation
+      // Hourly aggregation - track peak occupancy per hour
       if (!byHour.has(hour)) {
-        byHour.set(hour, { entries: 0, count: 0 });
+        byHour.set(hour, { maxEntries: 0, peakOccupancy: 0 });
       }
       const hourData = byHour.get(hour)!;
       if (item.occupancy) {
-        hourData.entries += item.occupancy.entries || 0;
+        hourData.maxEntries = Math.max(hourData.maxEntries, item.occupancy.entries || 0);
+        hourData.peakOccupancy = Math.max(hourData.peakOccupancy, item.occupancy.current || 0);
       }
-      hourData.count++;
     });
 
     // Convert to arrays
@@ -411,14 +412,14 @@ export function Insights() {
       });
     }
 
-    // Calculate hourly data
+    // Calculate hourly data - use peak occupancy as indicator of busy hours
     const hourlyData: HourlyData[] = [];
     for (let h = 0; h < 24; h++) {
       const hourInfo = byHour.get(h);
       hourlyData.push({
         hour: h,
         label: h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`,
-        entries: hourInfo ? Math.round(hourInfo.entries / Math.max(hourInfo.count, 1)) : 0,
+        entries: hourInfo?.peakOccupancy || 0,
       });
     }
 
