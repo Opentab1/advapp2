@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X,
@@ -102,8 +102,22 @@ export function Insights() {
   const [insights, setInsights] = useState<InsightData[]>([]);
   const [nextHoliday, setNextHoliday] = useState<{ name: string; daysUntil: number; tip: string } | null>(null);
   
-  // Raw data for calculations
-  const [historicalData, setHistoricalData] = useState<SensorData[]>([]);
+  // Keep refs for data that needs to be accessed synchronously
+  const dataRef = useRef<{
+    reviews: GoogleReviewsData | null;
+    traffic: TrafficMetrics | null;
+    engagement: EngagementMetrics | null;
+    occupancy: OccupancyMetrics | null;
+    games: SportsGame[];
+    holiday: { name: string; daysUntil: number; tip: string } | null;
+  }>({
+    reviews: null,
+    traffic: null,
+    engagement: null,
+    occupancy: null,
+    games: [],
+    holiday: null,
+  });
 
   const user = authService.getStoredUser();
   const venueName = user?.venueName || 'Your Venue';
@@ -118,7 +132,7 @@ export function Insights() {
     }
   }, [venueId]);
 
-  // Animate score
+  // Animate score when it changes
   useEffect(() => {
     if (venueScore === 0) return;
     
@@ -142,40 +156,33 @@ export function Insights() {
 
   const loadAllData = async () => {
     setLoading(true);
+    console.log('📊 Insights: Loading all data...');
     
     try {
-      // Load all data in parallel
-      const [reviewsResult, historicalResult, occupancyResult, gamesResult, genreResult] = await Promise.allSettled([
+      // Load all data in parallel - don't fail if some services error
+      const results = await Promise.allSettled([
         loadReviewsData(),
         loadHistoricalData(),
         loadOccupancyMetrics(),
         loadSportsData(),
         loadGenreData(),
       ]);
-      
+
       // Load holiday data (sync)
       loadHolidayData();
-      
-      // Process results
-      if (reviewsResult.status === 'fulfilled') {
-        // Already set in loadReviewsData
-      }
-      
-      if (historicalResult.status === 'fulfilled' && historicalResult.value) {
-        processTrafficData(historicalResult.value);
-      }
-      
-      if (occupancyResult.status === 'fulfilled' && occupancyResult.value) {
-        setOccupancyMetrics(occupancyResult.value);
-        processEngagementData(occupancyResult.value, genreResult.status === 'fulfilled' ? genreResult.value : []);
-      }
-      
-      if (gamesResult.status === 'fulfilled') {
-        // Already set in loadSportsData
-      }
-      
+
+      // Log results
+      console.log('📊 Insights: Data loading results:', results.map((r, i) => ({
+        index: i,
+        status: r.status,
+        value: r.status === 'fulfilled' ? (r.value ? 'has data' : 'no data') : 'failed'
+      })));
+
+      // Calculate final scores after all data is loaded
+      calculateFinalScores();
+
     } catch (error) {
-      console.error('Error loading insights data:', error);
+      console.error('📊 Insights: Error in loadAllData:', error);
     } finally {
       setLoading(false);
     }
@@ -191,38 +198,50 @@ export function Insights() {
   const loadReviewsData = async (): Promise<GoogleReviewsData | null> => {
     try {
       const address = venueSettingsService.getFormattedAddress(venueId) || '';
+      console.log('📊 Loading reviews for:', venueName, address);
       const reviews = await googleReviewsService.getReviews(venueName, address, venueId);
       if (reviews) {
+        console.log('📊 Reviews loaded:', reviews.rating, 'stars');
         setReviewsData(reviews);
+        dataRef.current.reviews = reviews;
         return reviews;
       }
     } catch (e) {
-      console.error('Error loading reviews:', e);
+      console.error('📊 Error loading reviews:', e);
     }
     return null;
   };
 
-  // Load historical sensor data
-  const loadHistoricalData = async (): Promise<SensorData[]> => {
+  // Load historical sensor data and process it
+  const loadHistoricalData = async (): Promise<TrafficMetrics | null> => {
     try {
+      console.log('📊 Loading historical data for venue:', venueId);
       const data = await apiService.getHistoricalData(venueId, '7d');
+      
       if (data?.data && data.data.length > 0) {
-        setHistoricalData(data.data);
-        return data.data;
+        console.log('📊 Historical data loaded:', data.data.length, 'readings');
+        const traffic = processTrafficData(data.data);
+        return traffic;
+      } else {
+        console.log('📊 No historical data found');
       }
     } catch (e) {
-      console.error('Error loading historical data:', e);
+      console.error('📊 Error loading historical data:', e);
     }
-    return [];
+    return null;
   };
 
-  // Load occupancy metrics
+  // Load occupancy metrics and process engagement
   const loadOccupancyMetrics = async (): Promise<OccupancyMetrics | null> => {
     try {
+      console.log('📊 Loading occupancy metrics for venue:', venueId);
       const metrics = await apiService.getOccupancyMetrics(venueId);
+      console.log('📊 Occupancy metrics loaded:', metrics);
+      setOccupancyMetrics(metrics);
+      dataRef.current.occupancy = metrics;
       return metrics;
     } catch (e) {
-      console.error('Error loading occupancy metrics:', e);
+      console.error('📊 Error loading occupancy metrics:', e);
     }
     return null;
   };
@@ -232,24 +251,65 @@ export function Insights() {
     try {
       const games = await sportsService.getGames();
       const upcoming = games.filter(g => g.status === 'scheduled' || g.status === 'live');
+      console.log('📊 Sports games loaded:', upcoming.length, 'upcoming');
       setUpcomingGames(upcoming.slice(0, 5));
+      dataRef.current.games = upcoming.slice(0, 5);
       return upcoming;
     } catch (e) {
-      console.error('Error loading sports data:', e);
+      console.error('📊 Error loading sports data:', e);
     }
     return [];
   };
 
-  // Load genre data
+  // Load genre data and calculate engagement
   const loadGenreData = async (): Promise<GenreStats[]> => {
     try {
+      console.log('📊 Loading genre data...');
       // First ensure songs are loaded from DynamoDB
       await songLogService.fetchSongsFromDynamoDB(30);
       // Then get genre stats
       const genres = await songLogService.getGenreStats(10, '30d');
+      console.log('📊 Genre stats loaded:', genres.length, 'genres');
+      
+      // Get total songs
+      const songs = songLogService.getSongs();
+      
+      // Create engagement metrics
+      const engagement: EngagementMetrics = {
+        score: 50, // Base score
+        trend: 0,
+        trendDirection: 'flat',
+        avgDwellTime: dataRef.current.occupancy?.avgDwellTimeMinutes || 0,
+        topGenres: genres.slice(0, 5),
+        totalSongsPlayed: songs.length,
+      };
+      
+      // Calculate engagement score
+      let score = 40;
+      
+      // Dwell time contribution (0-30 points)
+      if (engagement.avgDwellTime > 0) {
+        score += Math.min(30, (engagement.avgDwellTime / 60) * 30);
+      }
+      
+      // Genre diversity (0-15 points)
+      if (genres.length >= 5) score += 15;
+      else if (genres.length >= 3) score += 10;
+      else if (genres.length >= 1) score += 5;
+      
+      // Songs played bonus (0-15 points)
+      if (songs.length >= 100) score += 15;
+      else if (songs.length >= 50) score += 10;
+      else if (songs.length >= 10) score += 5;
+      
+      engagement.score = Math.round(Math.min(100, score));
+      
+      setEngagementMetrics(engagement);
+      dataRef.current.engagement = engagement;
+      
       return genres;
     } catch (e) {
-      console.error('Error loading genre data:', e);
+      console.error('📊 Error loading genre data:', e);
     }
     return [];
   };
@@ -260,23 +320,28 @@ export function Insights() {
       const holidays = holidayService.getUpcomingHolidays(60);
       if (holidays.length > 0) {
         const daysUntil = holidayService.getDaysUntil(holidays[0]);
-        setNextHoliday({ 
+        const holiday = { 
           name: holidays[0].name, 
           daysUntil,
           tip: holidays[0].tips || '',
-        });
+        };
+        setNextHoliday(holiday);
+        dataRef.current.holiday = holiday;
+        console.log('📊 Next holiday:', holiday.name, 'in', daysUntil, 'days');
       }
     } catch (e) {
-      console.error('Error loading holiday data:', e);
+      console.error('📊 Error loading holiday data:', e);
     }
   };
 
   // Process historical data into traffic metrics
-  const processTrafficData = (data: SensorData[]) => {
+  const processTrafficData = (data: SensorData[]): TrafficMetrics | null => {
     if (!data || data.length === 0) {
-      setTrafficMetrics(null);
-      return;
+      console.log('📊 No data to process for traffic');
+      return null;
     }
+
+    console.log('📊 Processing', data.length, 'sensor readings for traffic');
 
     // Group by day
     const byDay = new Map<string, { date: Date; entries: number; exits: number; peak: number; readings: number }>();
@@ -372,80 +437,111 @@ export function Insights() {
     const trend = previous > 0 ? Math.round(((recent - previous) / previous) * 100) : 0;
     
     // Calculate score (normalized 0-100)
-    const maxDailyCapacity = 200; // Adjust based on venue
-    const score = Math.min(100, Math.round((avgDaily / maxDailyCapacity) * 100));
+    const hasRealData = totalEntries > 0;
+    let score = 50; // Base score
+    if (hasRealData) {
+      const maxDailyCapacity = 200;
+      score = Math.min(100, Math.round((avgDaily / maxDailyCapacity) * 100));
+    }
     
     // Current occupancy from most recent data point
     const currentOccupancy = data[data.length - 1]?.occupancy?.current || 0;
 
-    setTrafficMetrics({
+    const traffic: TrafficMetrics = {
       score,
       trend,
       trendDirection: trend > 5 ? 'up' : trend < -5 ? 'down' : 'flat',
-      peakDay: peakDayData.day,
-      peakHour: peakHourData.label,
+      peakDay: peakDayData?.day || 'Sat',
+      peakHour: peakHourData?.label || '9p',
       weeklyData,
       hourlyData,
       totalEntries,
       totalExits,
       avgDaily,
       currentOccupancy,
-    });
+    };
 
-    // Generate insights based on traffic data
-    generateInsights(weeklyData, peakDayData, avgDaily);
+    setTrafficMetrics(traffic);
+    dataRef.current.traffic = traffic;
+    
+    console.log('📊 Traffic metrics calculated:', traffic);
+    return traffic;
   };
 
-  // Process engagement data
-  const processEngagementData = (occupancy: OccupancyMetrics, genres: GenreStats[]) => {
-    const avgDwellTime = occupancy.avgDwellTimeMinutes || 0;
-    
-    // Calculate engagement score
-    let score = 50;
-    
-    // Dwell time contribution (0-30 points)
-    // Industry average is ~38 min, excellent is 60+ min
-    if (avgDwellTime > 0) {
-      score += Math.min(30, (avgDwellTime / 60) * 30);
-    }
-    
-    // Genre diversity contribution (0-10 points)
-    if (genres.length >= 3) {
-      score += 10;
-    } else if (genres.length >= 1) {
-      score += 5;
-    }
-    
-    // Return rate contribution (0-10 points) based on 7-day average
-    if (occupancy.sevenDayAvg > occupancy.thirtyDayAvg) {
-      score += 10;
-    } else if (occupancy.sevenDayAvg > occupancy.thirtyDayAvg * 0.8) {
-      score += 5;
-    }
-
-    // Get total songs played
-    const songs = songLogService.getSongs();
-    
-    setEngagementMetrics({
-      score: Math.round(Math.min(100, score)),
-      trend: 8, // TODO: Calculate from historical comparison
-      trendDirection: 'up',
-      avgDwellTime: Math.round(avgDwellTime),
-      topGenres: genres.slice(0, 5),
-      totalSongsPlayed: songs.length,
+  // Calculate final scores after all data is loaded
+  const calculateFinalScores = useCallback(() => {
+    console.log('📊 Calculating final scores with data:', {
+      reviews: dataRef.current.reviews ? 'yes' : 'no',
+      traffic: dataRef.current.traffic ? 'yes' : 'no',
+      engagement: dataRef.current.engagement ? 'yes' : 'no',
+      occupancy: dataRef.current.occupancy ? 'yes' : 'no',
     });
 
-    // Calculate overall venue score
-    calculateVenueScore(occupancy, genres);
-  };
+    let score = 50; // Base score - everyone starts at 50
+    let trendSum = 0;
+    let trendCount = 0;
+
+    // Reviews contribution (0-25 points)
+    if (dataRef.current.reviews && dataRef.current.reviews.rating > 0) {
+      const reviewBonus = (dataRef.current.reviews.rating / 5) * 25;
+      score += reviewBonus;
+      console.log('📊 Review bonus:', reviewBonus);
+    }
+
+    // Traffic contribution (0-15 points)
+    if (dataRef.current.traffic) {
+      const trafficBonus = (dataRef.current.traffic.score / 100) * 15;
+      score += trafficBonus;
+      console.log('📊 Traffic bonus:', trafficBonus);
+      if (dataRef.current.traffic.trend !== 0) {
+        trendSum += dataRef.current.traffic.trend;
+        trendCount++;
+      }
+    }
+
+    // Engagement contribution (0-10 points)
+    if (dataRef.current.engagement) {
+      const engagementBonus = (dataRef.current.engagement.score / 100) * 10;
+      score += engagementBonus;
+      console.log('📊 Engagement bonus:', engagementBonus);
+    }
+
+    // Occupancy health contribution - using averages
+    if (dataRef.current.occupancy) {
+      const occ = dataRef.current.occupancy;
+      // If 7-day avg > 30-day avg, venue is growing
+      if (occ.sevenDayAvg > 0 && occ.thirtyDayAvg > 0) {
+        const occupancyTrend = (occ.sevenDayAvg / occ.thirtyDayAvg) - 1;
+        if (occupancyTrend > 0) {
+          score += Math.min(5, occupancyTrend * 50);
+        }
+        trendSum += occupancyTrend * 100;
+        trendCount++;
+      }
+    }
+
+    const finalScore = Math.round(Math.min(100, Math.max(0, score)));
+    const avgTrend = trendCount > 0 ? Math.round(trendSum / trendCount) : 0;
+
+    console.log('📊 Final venue score:', finalScore, 'trend:', avgTrend);
+
+    setVenueScore(finalScore);
+    setScoreTrend(avgTrend);
+
+    // Generate insights
+    generateInsights();
+  }, []);
 
   // Generate dynamic insights
-  const generateInsights = (weeklyData: WeeklyData[], peakDay: WeeklyData, avgDaily: number) => {
+  const generateInsights = () => {
     const newInsights: InsightData[] = [];
+    const traffic = dataRef.current.traffic;
+    const games = dataRef.current.games;
+    const holiday = dataRef.current.holiday;
 
     // Opportunity: Upcoming games
-    if (upcomingGames.length > 0) {
-      const nextGame = upcomingGames[0];
+    if (games.length > 0) {
+      const nextGame = games[0];
       const gameTime = new Date(nextGame.startTime);
       const timeStr = gameTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
       const dayStr = gameTime.toLocaleDateString('en-US', { weekday: 'short' });
@@ -459,96 +555,48 @@ export function Insights() {
     }
 
     // Opportunity: Upcoming holiday
-    if (nextHoliday && nextHoliday.daysUntil <= 14 && nextHoliday.daysUntil > 0) {
+    if (holiday && holiday.daysUntil <= 14 && holiday.daysUntil > 0) {
       newInsights.push({
         type: 'opportunity',
-        title: `${nextHoliday.name} in ${nextHoliday.daysUntil} days`,
-        subtitle: nextHoliday.tip || 'Plan staffing and promotions',
+        title: `${holiday.name} in ${holiday.daysUntil} days`,
+        subtitle: holiday.tip || 'Plan staffing and promotions',
       });
     }
 
     // Winning: Best performing day
-    if (peakDay && peakDay.entries > 0) {
-      const topGenre = engagementMetrics?.topGenres[0]?.genre || 'your music mix';
-      newInsights.push({
-        type: 'winning',
-        title: `${peakDay.day} is your strongest day`,
-        subtitle: `${peakDay.entries} visitors · Peak at ${trafficMetrics?.peakHour || 'evening'}`,
-      });
+    if (traffic && traffic.weeklyData.some(d => d.entries > 0)) {
+      const peakDay = traffic.weeklyData.reduce((max, d) => 
+        d.entries > max.entries ? d : max, 
+        traffic.weeklyData[0]
+      );
+      if (peakDay.entries > 0) {
+        newInsights.push({
+          type: 'winning',
+          title: `${peakDay.day} is your strongest day`,
+          subtitle: `${peakDay.entries} visitors · Peak at ${traffic.peakHour}`,
+        });
+      }
     }
 
     // Watch: Underperforming days
-    if (weeklyData.length > 0) {
-      const worstDay = weeklyData.reduce((min, d) => 
-        d.entries < min.entries && d.entries >= 0 ? d : min, 
-        { ...weeklyData[0], entries: Infinity }
-      );
+    if (traffic && traffic.avgDaily > 0) {
+      const worstDay = traffic.weeklyData
+        .filter(d => d.entries >= 0)
+        .reduce((min, d) => d.entries < min.entries ? d : min, 
+          { ...traffic.weeklyData[0], entries: Infinity }
+        );
       
-      if (worstDay.entries < avgDaily * 0.5 && worstDay.entries !== Infinity) {
+      if (worstDay.entries !== Infinity && worstDay.entries < traffic.avgDaily * 0.5) {
         newInsights.push({
           type: 'watch',
           title: `${worstDay.day} is underperforming`,
-          subtitle: `${worstDay.entries} visitors vs ${avgDaily} avg · Try a weekly special`,
+          subtitle: `${worstDay.entries} visitors vs ${traffic.avgDaily} avg · Try a weekly special`,
         });
       }
     }
 
     setInsights(newInsights);
   };
-
-  // Calculate overall venue score
-  const calculateVenueScore = (occupancy: OccupancyMetrics | null, genres: GenreStats[]) => {
-    let score = 40; // Base
-    let trendSum = 0;
-    let trendCount = 0;
-    
-    // Reviews contribution (0-25 points)
-    if (reviewsData && reviewsData.rating > 0) {
-      score += (reviewsData.rating / 5) * 25;
-    }
-    
-    // Traffic contribution (0-20 points)
-    if (trafficMetrics) {
-      score += (trafficMetrics.score / 100) * 20;
-      if (trafficMetrics.trend !== 0) {
-        trendSum += trafficMetrics.trend;
-        trendCount++;
-      }
-    }
-    
-    // Occupancy health (0-15 points)
-    if (occupancy) {
-      // Compare 7-day avg to 30-day avg
-      if (occupancy.sevenDayAvg > 0 && occupancy.thirtyDayAvg > 0) {
-        const occupancyTrend = (occupancy.sevenDayAvg / occupancy.thirtyDayAvg) - 1;
-        score += Math.min(15, Math.max(0, (1 + occupancyTrend) * 7.5));
-        trendSum += occupancyTrend * 100;
-        trendCount++;
-      }
-    }
-    
-    // Engagement bonus (0-10 points)
-    if (genres.length > 0) {
-      score += Math.min(10, genres.length * 2);
-    }
-    
-    const avgTrend = trendCount > 0 ? Math.round(trendSum / trendCount) : 0;
-    
-    setVenueScore(Math.round(Math.min(100, Math.max(0, score))));
-    setScoreTrend(avgTrend);
-  };
-
-  // Recalculate when data changes
-  useEffect(() => {
-    if (trafficMetrics && occupancyMetrics) {
-      const genres = engagementMetrics?.topGenres || [];
-      calculateVenueScore(occupancyMetrics, genres);
-      if (trafficMetrics.weeklyData.length > 0) {
-        const peakDay = trafficMetrics.weeklyData.reduce((max, d) => d.entries > max.entries ? d : max, trafficMetrics.weeklyData[0]);
-        generateInsights(trafficMetrics.weeklyData, peakDay, trafficMetrics.avgDaily);
-      }
-    }
-  }, [trafficMetrics, occupancyMetrics, engagementMetrics, upcomingGames, nextHoliday, reviewsData]);
 
   // UI Helpers
   const getScoreColor = (score: number) => {
@@ -671,28 +719,28 @@ export function Insights() {
           <div className="grid grid-cols-3 gap-3">
             <MetricCard
               label="TRAFFIC"
-              value={trafficMetrics ? trafficMetrics.score.toString() : '--'}
+              value={trafficMetrics?.score?.toString() || '50'}
               subtext={trafficMetrics ? (
                 trafficMetrics.trendDirection === 'up' ? `↑ ${trafficMetrics.trend}%` :
                 trafficMetrics.trendDirection === 'down' ? `↓ ${Math.abs(trafficMetrics.trend)}%` : '―'
-              ) : '--'}
-              subLabel={trafficMetrics ? `${trafficMetrics.avgDaily}/day` : 'No data'}
+              ) : '―'}
+              subLabel={trafficMetrics?.avgDaily ? `${trafficMetrics.avgDaily}/day` : 'Collecting data...'}
               color={COLORS.traffic}
               onClick={() => setExpandedMetric('traffic')}
             />
             <MetricCard
               label="REPUTATION"
-              value={reviewsData ? reviewsData.rating.toFixed(1) : '--'}
-              subtext={reviewsData ? '★'.repeat(Math.round(reviewsData.rating)) : '--'}
-              subLabel={reviewsData ? `${reviewsData.reviewCount} reviews` : 'Configure in Settings'}
+              value={reviewsData?.rating ? reviewsData.rating.toFixed(1) : '―'}
+              subtext={reviewsData?.rating ? '★'.repeat(Math.round(reviewsData.rating)) : ''}
+              subLabel={reviewsData?.reviewCount ? `${reviewsData.reviewCount} reviews` : 'Set address in Settings'}
               color={COLORS.reputation}
               onClick={() => setExpandedMetric('reputation')}
             />
             <MetricCard
               label="ENGAGEMENT"
-              value={engagementMetrics ? engagementMetrics.score.toString() : '--'}
-              subtext={engagementMetrics && engagementMetrics.avgDwellTime > 0 ? `${engagementMetrics.avgDwellTime}m avg` : '--'}
-              subLabel={engagementMetrics?.topGenres[0]?.genre || 'No genre data'}
+              value={engagementMetrics?.score?.toString() || '50'}
+              subtext={engagementMetrics?.avgDwellTime ? `${engagementMetrics.avgDwellTime}m avg` : '―'}
+              subLabel={engagementMetrics?.topGenres?.[0]?.genre || 'Analyzing music...'}
               color={COLORS.engagement}
               onClick={() => setExpandedMetric('engagement')}
             />
@@ -700,7 +748,7 @@ export function Insights() {
         </div>
 
         {/* Weekly Timeline */}
-        {trafficMetrics && trafficMetrics.weeklyData.some(d => d.entries > 0) && (
+        {trafficMetrics && (
           <div className="px-4 mb-8">
             <div className="p-4 rounded-2xl" style={{ background: COLORS.cardBg }}>
               <div className="flex items-center justify-between mb-4">
@@ -708,7 +756,9 @@ export function Insights() {
                   THIS WEEK
                 </h3>
                 <span className="text-xs" style={{ color: COLORS.neutral }}>
-                  {trafficMetrics.totalEntries.toLocaleString()} total visitors
+                  {trafficMetrics.totalEntries > 0 
+                    ? `${trafficMetrics.totalEntries.toLocaleString()} total visitors`
+                    : 'Collecting traffic data...'}
                 </span>
               </div>
               <div className="flex justify-between items-end h-24">
@@ -759,9 +809,7 @@ export function Insights() {
           ) : (
             <div className="p-4 rounded-2xl text-center" style={{ background: COLORS.cardBg }}>
               <p className="text-sm" style={{ color: COLORS.neutral }}>
-                {historicalData.length === 0 
-                  ? 'Collecting data to generate personalized insights...'
-                  : 'All systems running smoothly'}
+                Collecting data to generate personalized insights...
               </p>
             </div>
           )}
@@ -809,19 +857,19 @@ export function Insights() {
           <div className="grid grid-cols-4 gap-2">
             <QuickStat 
               label="Top Genre" 
-              value={engagementMetrics?.topGenres[0]?.genre?.substring(0, 8) || '--'} 
+              value={engagementMetrics?.topGenres?.[0]?.genre?.substring(0, 8) || '―'} 
             />
             <QuickStat 
               label="Peak Day" 
-              value={trafficMetrics?.peakDay || '--'} 
+              value={trafficMetrics?.peakDay || '―'} 
             />
             <QuickStat 
               label="Dwell" 
-              value={engagementMetrics?.avgDwellTime ? `${engagementMetrics.avgDwellTime}m` : '--'} 
+              value={engagementMetrics?.avgDwellTime ? `${engagementMetrics.avgDwellTime}m` : '―'} 
             />
             <QuickStat 
               label="Rating" 
-              value={reviewsData ? `${reviewsData.rating.toFixed(1)}★` : '--'} 
+              value={reviewsData?.rating ? `${reviewsData.rating.toFixed(1)}★` : '―'} 
             />
           </div>
         </div>
@@ -975,35 +1023,39 @@ function MetricModal({ type, onClose, reviewsData, trafficMetrics, engagementMet
 
         <div className="p-6 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 60px)' }}>
           {/* TRAFFIC */}
-          {type === 'traffic' && trafficMetrics && (
+          {type === 'traffic' && (
             <>
               <div className="text-center mb-8">
-                <span className="text-6xl font-bold" style={{ color }}>{trafficMetrics.score}</span>
-                <p className="text-sm mt-2" style={{ color: COLORS.neutral }}>{trafficMetrics.avgDaily} avg daily visitors</p>
+                <span className="text-6xl font-bold" style={{ color }}>{trafficMetrics?.score || 50}</span>
+                <p className="text-sm mt-2" style={{ color: COLORS.neutral }}>
+                  {trafficMetrics?.avgDaily ? `${trafficMetrics.avgDaily} avg daily visitors` : 'Collecting traffic data...'}
+                </p>
               </div>
               
-              <div className="mb-6">
-                <h4 className="text-xs font-semibold mb-4" style={{ color: COLORS.neutral }}>WEEKLY BREAKDOWN</h4>
-                <div className="flex justify-between items-end h-32">
-                  {trafficMetrics.weeklyData.map((day, i) => (
-                    <div key={i} className="flex flex-col items-center gap-2 flex-1">
-                      <span className="text-xs font-bold" style={{ color: COLORS.white }}>{day.entries || ''}</span>
-                      <div 
-                        className="w-8 rounded-t-md"
-                        style={{ height: `${Math.max(8, day.value * 0.8)}px`, background: day.value >= 80 ? color : `${color}60` }}
-                      />
-                      <span className="text-xs" style={{ color: COLORS.neutral }}>{day.day}</span>
-                    </div>
-                  ))}
+              {trafficMetrics && trafficMetrics.totalEntries > 0 && (
+                <div className="mb-6">
+                  <h4 className="text-xs font-semibold mb-4" style={{ color: COLORS.neutral }}>WEEKLY BREAKDOWN</h4>
+                  <div className="flex justify-between items-end h-32">
+                    {trafficMetrics.weeklyData.map((day, i) => (
+                      <div key={i} className="flex flex-col items-center gap-2 flex-1">
+                        <span className="text-xs font-bold" style={{ color: COLORS.white }}>{day.entries || ''}</span>
+                        <div 
+                          className="w-8 rounded-t-md"
+                          style={{ height: `${Math.max(8, day.value * 0.8)}px`, background: day.value >= 80 ? color : `${color}60` }}
+                        />
+                        <span className="text-xs" style={{ color: COLORS.neutral }}>{day.day}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3 mb-6">
-                <StatBox label="Total Visitors" value={trafficMetrics.totalEntries.toLocaleString()} color={color} />
-                <StatBox label="Peak Day" value={trafficMetrics.peakDay} color={color} />
-                <StatBox label="Peak Hour" value={trafficMetrics.peakHour} color={color} />
-                <StatBox label="Trend" value={`${trafficMetrics.trend > 0 ? '+' : ''}${trafficMetrics.trend}%`} 
-                  color={trafficMetrics.trend >= 0 ? COLORS.reputation : COLORS.warning} />
+                <StatBox label="Total Visitors" value={trafficMetrics?.totalEntries?.toLocaleString() || '―'} color={color} />
+                <StatBox label="Peak Day" value={trafficMetrics?.peakDay || '―'} color={color} />
+                <StatBox label="Peak Hour" value={trafficMetrics?.peakHour || '―'} color={color} />
+                <StatBox label="Trend" value={trafficMetrics ? `${trafficMetrics.trend > 0 ? '+' : ''}${trafficMetrics.trend}%` : '―'} 
+                  color={trafficMetrics && trafficMetrics.trend >= 0 ? COLORS.reputation : COLORS.warning} />
               </div>
 
               {occupancyMetrics && (
@@ -1011,15 +1063,15 @@ function MetricModal({ type, onClose, reviewsData, trafficMetrics, engagementMet
                   <h5 className="text-xs font-semibold mb-2" style={{ color: COLORS.neutral }}>AVERAGES</h5>
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>
-                      <p className="text-lg font-bold" style={{ color }}>{occupancyMetrics.sevenDayAvg}</p>
+                      <p className="text-lg font-bold" style={{ color }}>{occupancyMetrics.sevenDayAvg || '―'}</p>
                       <p className="text-[10px]" style={{ color: COLORS.neutral }}>7-day</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold" style={{ color }}>{occupancyMetrics.fourteenDayAvg}</p>
+                      <p className="text-lg font-bold" style={{ color }}>{occupancyMetrics.fourteenDayAvg || '―'}</p>
                       <p className="text-[10px]" style={{ color: COLORS.neutral }}>14-day</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold" style={{ color }}>{occupancyMetrics.thirtyDayAvg}</p>
+                      <p className="text-lg font-bold" style={{ color }}>{occupancyMetrics.thirtyDayAvg || '―'}</p>
                       <p className="text-[10px]" style={{ color: COLORS.neutral }}>30-day</p>
                     </div>
                   </div>
@@ -1068,32 +1120,32 @@ function MetricModal({ type, onClose, reviewsData, trafficMetrics, engagementMet
               <div className="text-center py-12">
                 <Star className="w-12 h-12 mx-auto mb-4" style={{ color: COLORS.neutral }} />
                 <p style={{ color: COLORS.white }}>Google Reviews not configured</p>
-                <p className="text-sm mt-2" style={{ color: COLORS.neutral }}>Add your venue address in Settings</p>
+                <p className="text-sm mt-2" style={{ color: COLORS.neutral }}>Add your venue address in Settings to see your reputation score</p>
               </div>
             )
           )}
 
           {/* ENGAGEMENT */}
-          {type === 'engagement' && engagementMetrics && (
+          {type === 'engagement' && (
             <>
               <div className="text-center mb-8">
-                <span className="text-6xl font-bold" style={{ color }}>{engagementMetrics.score}</span>
+                <span className="text-6xl font-bold" style={{ color }}>{engagementMetrics?.score || 50}</span>
                 <p className="text-sm mt-2" style={{ color: COLORS.neutral }}>Engagement score</p>
               </div>
 
               <div className="mb-6 p-4 rounded-xl text-center" style={{ background: COLORS.cardBg }}>
                 <h4 className="text-xs font-semibold mb-2" style={{ color: COLORS.neutral }}>AVG DWELL TIME</h4>
                 <span className="text-4xl font-bold" style={{ color: COLORS.white }}>
-                  {engagementMetrics.avgDwellTime > 0 ? `${engagementMetrics.avgDwellTime} min` : '--'}
+                  {engagementMetrics?.avgDwellTime ? `${engagementMetrics.avgDwellTime} min` : '―'}
                 </span>
-                {engagementMetrics.avgDwellTime > 0 && (
+                {engagementMetrics?.avgDwellTime && engagementMetrics.avgDwellTime > 0 && (
                   <p className="text-xs mt-2" style={{ color: COLORS.neutral }}>
                     {engagementMetrics.avgDwellTime >= 45 ? 'Above industry average (38 min)' : 'Industry average: 38 min'}
                   </p>
                 )}
               </div>
 
-              {engagementMetrics.topGenres.length > 0 && (
+              {engagementMetrics?.topGenres && engagementMetrics.topGenres.length > 0 && (
                 <div className="mb-6">
                   <h4 className="text-xs font-semibold mb-4" style={{ color: COLORS.neutral }}>TOP GENRES</h4>
                   <div className="space-y-2">
@@ -1113,8 +1165,8 @@ function MetricModal({ type, onClose, reviewsData, trafficMetrics, engagementMet
               )}
 
               <div className="grid grid-cols-2 gap-3">
-                <StatBox label="Songs Played" value={engagementMetrics.totalSongsPlayed.toString()} color={color} />
-                <StatBox label="Top Genre" value={engagementMetrics.topGenres[0]?.genre || '--'} color={color} />
+                <StatBox label="Songs Played" value={engagementMetrics?.totalSongsPlayed?.toString() || '―'} color={color} />
+                <StatBox label="Top Genre" value={engagementMetrics?.topGenres?.[0]?.genre || '―'} color={color} />
               </div>
             </>
           )}
