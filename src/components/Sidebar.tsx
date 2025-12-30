@@ -1,15 +1,11 @@
 import { motion } from 'framer-motion';
 import { 
   Activity, 
-  History, 
   Music, 
   FileText, 
   Settings,
-  Sparkles,
-  HelpCircle,
   Target,
   Zap,
-  BarChart3,
   LucideIcon 
 } from 'lucide-react';
 
@@ -26,15 +22,11 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { id: 'live', label: 'Live', icon: Activity },
-  { id: 'history', label: 'History', icon: History },
   { id: 'pulse', label: 'Pulse', icon: Target },
-  { id: 'insights', label: 'Insights', icon: BarChart3 },
   { id: 'plus', label: 'Plus', icon: Zap },
   { id: 'songs', label: 'Songs', icon: Music },
   { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'settings', label: 'Settings', icon: Settings },
-  // { id: 'ai', label: 'AI', icon: Sparkles }, // Hidden until AI features are complete
-  // { id: 'support', label: 'Support', icon: HelpCircle }, // Hidden for now
 ];
 
 export function Sidebar({ activeTab, onTabChange }: SidebarProps) {

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Thermometer, Droplets, Volume2, Sun, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { Droplets, Volume2, Sun, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import type { ComfortBreakdown } from '../types';
 
 interface ComfortBreakdownProps {
@@ -8,13 +8,6 @@ interface ComfortBreakdownProps {
 
 export function ComfortBreakdownCard({ breakdown }: ComfortBreakdownProps) {
   const categories = [
-    {
-      key: 'temperature',
-      icon: Thermometer,
-      label: 'Temperature',
-      data: breakdown.temperature,
-      color: '#ff6b6b'
-    },
     {
       key: 'humidity',
       icon: Droplets,

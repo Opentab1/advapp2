@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  Thermometer, 
   Sun, 
   Volume2, 
   Droplets, 
@@ -37,7 +36,7 @@ import { Reports } from './Reports';
 import { Support } from './Support';
 import { PulseRecommendations } from './PulseRecommendations';
 import { PulsePlus } from './PulsePlus';
-import { Insights } from './Insights';
+// Insights tab removed
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -281,14 +280,8 @@ export function Dashboard() {
     }
   }, [timeRange]);
 
-  // Auto-switch time range based on active tab
-  useEffect(() => {
-    if (activeTab === 'history' && timeRange === 'live') {
-      setTimeRange('24h');
-    } else if (activeTab === 'live' && timeRange !== 'live') {
-      setTimeRange('live');
-    }
-  }, [activeTab]);
+  // Time range is now controlled by the toggle on the Live tab
+  // No need to auto-switch based on tab anymore
 
   // Load occupancy metrics
   useEffect(() => {
@@ -388,9 +381,9 @@ export function Dashboard() {
     }
   }, [currentLocation?.address, venueId]);
 
-  // Refresh weather when switching tabs (in case address was updated in settings)
+  // Refresh weather when switching to live tab (in case address was updated in settings)
   useEffect(() => {
-    if (activeTab === 'live' || activeTab === 'history') {
+    if (activeTab === 'live') {
       // Check if we have a new address that might need weather data
       const settingsAddress = venueId ? venueSettingsService.getFormattedAddress(venueId) : null;
       if (settingsAddress && !weatherData) {
@@ -507,10 +500,10 @@ export function Dashboard() {
     window.location.reload();
   };
 
-  // Keyboard shortcuts - Export only available in History tab
+  // Keyboard shortcuts - Export only available when viewing historical data
   useKeyboardShortcuts({
     onRefresh: refetch,
-    onExport: activeTab === 'history' ? handleExport : undefined
+    onExport: timeRange !== 'live' ? handleExport : undefined
   });
 
   // Get current data based on view
@@ -670,7 +663,7 @@ export function Dashboard() {
 
         {/* Main Content */}
         <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto pb-24 lg:pb-8">
-          {activeTab === 'live' || activeTab === 'history' ? (
+          {activeTab === 'live' ? (
             <>
               {/* Time Range Selector */}
               <motion.div
@@ -683,8 +676,8 @@ export function Dashboard() {
                     <h2 className="text-2xl font-bold gradient-text">
                       {timeRange === 'live' ? 'Live Monitoring' : 'Historical Data'}
                     </h2>
-                    {/* Only show connection status in Live tab, not History tab */}
-                    {currentLocation && activeTab === 'live' && (
+                    {/* Show connection status when viewing live data */}
+                    {currentLocation && timeRange === 'live' && (
                       <ConnectionStatus 
                         isConnected={!!liveData}
                         usingIoT={usingIoT}
@@ -695,7 +688,7 @@ export function Dashboard() {
                   
                   <div className="flex gap-2">
                     <motion.button
-                      onClick={refetch}
+                      onClick={timeRange === 'live' ? refetch : loadHistoricalData}
                       className="btn-secondary px-4 py-2 flex items-center gap-2"
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
@@ -705,8 +698,8 @@ export function Dashboard() {
                       <span className="hidden sm:inline">Refresh</span>
                     </motion.button>
                     
-                    {/* Export button only shows in History tab */}
-                    {activeTab === 'history' && (
+                    {/* Export button shows when viewing historical data */}
+                    {timeRange !== 'live' && (
                       <motion.button
                         onClick={handleExport}
                         className="btn-primary px-4 py-2 flex items-center gap-2"
@@ -722,13 +715,11 @@ export function Dashboard() {
                   </div>
                 </div>
 
-                {activeTab === 'history' && (
-                  <TimeRangeToggle 
-                    selected={timeRange} 
-                    onChange={setTimeRange} 
-                    excludeLive={true}
-                  />
-                )}
+                {/* Time range toggle - always visible */}
+                <TimeRangeToggle 
+                  selected={timeRange} 
+                  onChange={setTimeRange} 
+                />
               </motion.div>
 
               {/* Warning Message for Limited Historical Data */}
@@ -753,7 +744,7 @@ export function Dashboard() {
 
               {/* Error Message - Only show for critical setup errors, not routine device offline */}
               {(error || liveError) && 
-               (activeTab === 'history' && (!historicalData || historicalData.data.length === 0)) && 
+               (timeRange !== 'live' && (!historicalData || historicalData.data.length === 0)) && 
                !error?.includes('No sensor data found') && 
                !liveError?.includes('No sensor data found') && (
                 <motion.div
@@ -933,15 +924,6 @@ export function Dashboard() {
                     />
                     
                     <MetricCard
-                      title="Indoor Temp"
-                      value={formatValueNoZero(currentData?.indoorTemp)}
-                      unit="°F"
-                      icon={Thermometer}
-                      color="#ff6b6b"
-                      delay={0.2}
-                    />
-                    
-                    <MetricCard
                       title="Outdoor"
                       value={weatherData ? weatherData.temperature.toString() : '--'}
                       unit={weatherData ? `${weatherData.icon}` : '°F'}
@@ -1030,8 +1012,8 @@ export function Dashboard() {
                     </div>
                   )}
 
-                  {/* Comfort Breakdown & Sports - History Tab Only */}
-                  {activeTab === 'history' && (
+                  {/* Comfort Breakdown & Sports - Historical view only */}
+                  {timeRange !== 'live' && (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
                       {comfortBreakdown && (
                         <ComfortBreakdownCard breakdown={comfortBreakdown} />
@@ -1040,8 +1022,8 @@ export function Dashboard() {
                     </div>
                   )}
 
-                  {/* Charts - History Tab Only */}
-                  {activeTab === 'history' && chartData.length > 0 && (
+                  {/* Charts - Historical view only */}
+                  {timeRange !== 'live' && chartData.length > 0 && (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                       <DataChart
                         data={chartData}
@@ -1062,13 +1044,6 @@ export function Dashboard() {
                         metric="light"
                         title="Light Level Over Time"
                         color="#ffd700"
-                      />
-                      
-                      <DataChart
-                        data={chartData}
-                        metric="indoorTemp"
-                        title="Indoor Temperature"
-                        color="#ff6b6b"
                       />
                       
                       {/* Outdoor Weather */}
@@ -1129,8 +1104,6 @@ export function Dashboard() {
             </>
           ) : activeTab === 'pulse' ? (
             <PulseRecommendations />
-          ) : activeTab === 'insights' ? (
-            <Insights />
           ) : activeTab === 'plus' ? (
             <PulsePlus />
           ) : activeTab === 'songs' ? (
