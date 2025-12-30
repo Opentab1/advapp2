@@ -72,119 +72,130 @@ class AIReportService {
   }
 
   private generateSummary(metrics: WeeklyMetrics): string {
-    if (metrics.avgComfort === 0 && metrics.avgTemperature === 0 && !metrics.totalEntries) {
-      return 'Insufficient historical data available to generate a comprehensive weekly summary. Continue collecting sensor data to enable detailed AI insights and recommendations.';
+    // Check if we have any meaningful data
+    const hasData = (metrics.totalEntries && metrics.totalEntries > 0) || 
+                   metrics.avgDecibels > 0 || 
+                   (metrics.avgLight && metrics.avgLight > 0);
+    
+    if (!hasData) {
+      return 'Insufficient historical data available to generate a comprehensive summary. Continue collecting sensor data to enable detailed AI insights and recommendations.';
     }
 
-    const comfortStatus = metrics.avgComfort >= 80 ? 'excellent' : 
-                         metrics.avgComfort >= 65 ? 'good' : 'needs improvement';
+    const parts: string[] = [];
     
     // Occupancy summary (using bar day calculation)
-    const occupancyText = metrics.totalEntries && metrics.totalEntries > 0
-      ? `Recorded ${metrics.totalEntries.toLocaleString()} customer entries (${metrics.avgDailyEntries?.toLocaleString() || 0} daily average, calculated using 3am-3am bar days)`
-      : 'Customer entry data not yet available';
+    if (metrics.totalEntries && metrics.totalEntries > 0) {
+      parts.push(`Recorded ${metrics.totalEntries.toLocaleString()} customer entries (${metrics.avgDailyEntries?.toLocaleString() || 0} daily average)`);
+    }
     
-    const revenueText = metrics.totalRevenue > 0 
-      ? `. Total revenue reached $${metrics.totalRevenue.toLocaleString()}`
-      : '';
+    // Sound environment
+    if (metrics.avgDecibels > 0) {
+      const soundVibe = metrics.avgDecibels >= 75 && metrics.avgDecibels <= 85 
+        ? 'an energetic' 
+        : metrics.avgDecibels < 70 ? 'a relaxed' : 'a lively';
+      parts.push(`${soundVibe} atmosphere with ${metrics.avgDecibels.toFixed(0)} dB average sound level`);
+    }
     
-    const peakText = metrics.peakHours.length > 0
-      ? `, with peak activity during ${metrics.peakHours.join(', ')}`
-      : '';
+    // Peak hours
+    if (metrics.peakHours.length > 0) {
+      parts.push(`peak activity during ${metrics.peakHours.slice(0, 2).join(' and ')}`);
+    }
+    
+    // Peak occupancy
+    if (metrics.peakOccupancy && metrics.peakOccupancy > 0) {
+      parts.push(`peak occupancy of ${metrics.peakOccupancy} people`);
+    }
 
-    const envText = metrics.avgTemperature > 0 
-      ? `This period showed ${comfortStatus} environmental conditions with an average temperature of ${metrics.avgTemperature.toFixed(1)}°F. `
-      : '';
-
-    return `${envText}${occupancyText}${revenueText}${peakText}.`;
+    return parts.length > 0 ? parts.join('. ') + '.' : 'Report generated successfully.';
   }
 
   private generateInsights(metrics: WeeklyMetrics): ReportInsight[] {
     const insights: ReportInsight[] = [];
 
-    // Comfort Insight
-    insights.push({
-      category: 'Comfort',
-      title: 'Overall Comfort Level',
-      description: metrics.avgComfort > 0 
-        ? `Average comfort score of ${metrics.avgComfort.toFixed(1)} indicates ${
-            metrics.avgComfort >= 80 ? 'optimal' : metrics.avgComfort >= 65 ? 'good' : 'suboptimal'
-          } environmental conditions.`
-        : 'No comfort data available for this period.',
-      trend: metrics.avgComfort > 0 ? (metrics.avgComfort >= 75 ? 'up' : metrics.avgComfort >= 60 ? 'stable' : 'down') : 'stable',
-      value: metrics.avgComfort > 0 ? `${metrics.avgComfort.toFixed(1)}` : 'N/A'
-    });
-
-    // Temperature Insight
-    insights.push({
-      category: 'Temperature',
-      title: 'Temperature Management',
-      description: metrics.avgTemperature > 0
-        ? `Average temperature of ${metrics.avgTemperature.toFixed(1)}°F maintained throughout the week.`
-        : 'No temperature data available for this period.',
-      trend: metrics.avgTemperature > 0 ? (metrics.avgTemperature >= 68 && metrics.avgTemperature <= 74 ? 'stable' : 'down') : 'stable',
-      value: metrics.avgTemperature > 0 ? `${metrics.avgTemperature.toFixed(1)}°F` : 'N/A'
-    });
-
-    // Sound Level Insight
-    insights.push({
-      category: 'Atmosphere',
-      title: 'Sound Environment',
-      description: metrics.avgDecibels > 0
-        ? `Average sound level of ${metrics.avgDecibels.toFixed(1)} dB creates ${
-            metrics.avgDecibels >= 70 && metrics.avgDecibels <= 85 ? 'an energetic' : 
-            metrics.avgDecibels < 70 ? 'a relaxed' : 'a very lively'
-          } atmosphere.`
-        : 'No sound level data available for this period.',
-      trend: 'stable',
-      value: metrics.avgDecibels > 0 ? `${metrics.avgDecibels.toFixed(1)} dB` : 'N/A'
-    });
-
-    // Revenue Insight
-    insights.push({
-      category: 'Revenue',
-      title: 'Sales Performance',
-      description: metrics.totalRevenue > 0
-        ? `Generated $${metrics.totalRevenue.toLocaleString()} in revenue with an average of $${(metrics.totalRevenue / metrics.totalCustomers).toFixed(2)} per customer.`
-        : 'Revenue tracking not yet available. Requires POS integration.',
-      trend: metrics.totalRevenue > 0 ? 'up' : 'stable',
-      value: metrics.totalRevenue > 0 ? `$${metrics.totalRevenue.toLocaleString()}` : 'N/A'
-    });
-
-    // Music Insight
-    if (metrics.topSongs.length > 0) {
-      insights.push({
-        category: 'Entertainment',
-        title: 'Popular Music',
-        description: `"${metrics.topSongs[0].song}" was the most played track with ${metrics.topSongs[0].plays} plays.`,
-        trend: 'up',
-        value: `${metrics.topSongs[0].plays} plays`
-      });
-    } else {
-      insights.push({
-        category: 'Entertainment',
-        title: 'Popular Music',
-        description: 'Music analytics not yet available. Requires song detection history.',
-        trend: 'stable',
-        value: 'N/A'
-      });
-    }
-
-    // Occupancy Insight (using bar day 3am-3am calculation)
+    // Occupancy Insight (most important for a bar)
     if (metrics.totalEntries && metrics.totalEntries > 0) {
       const avgDaily = metrics.avgDailyEntries || 0;
       insights.push({
-        category: 'Occupancy',
-        title: 'Customer Traffic',
-        description: `Total of ${metrics.totalEntries.toLocaleString()} entries recorded (bar days: 3am-3am). Average of ${avgDaily.toLocaleString()} customers per day.`,
-        trend: 'up',
-        value: `${metrics.totalEntries.toLocaleString()} entries`
+        category: 'Traffic',
+        title: 'Customer Entries',
+        description: `Total of ${metrics.totalEntries.toLocaleString()} entries recorded. Average of ${avgDaily.toLocaleString()} customers per day.`,
+        trend: avgDaily > 100 ? 'up' : avgDaily > 50 ? 'stable' : 'down',
+        value: `${metrics.totalEntries.toLocaleString()}`
       });
-    } else {
+    }
+
+    // Peak Occupancy
+    if (metrics.peakOccupancy && metrics.peakOccupancy > 0) {
       insights.push({
-        category: 'Occupancy',
-        title: 'Customer Traffic',
-        description: 'Occupancy tracking data not yet available. Ensure sensors are reporting entries/exits.',
+        category: 'Capacity',
+        title: 'Peak Occupancy',
+        description: `Maximum of ${metrics.peakOccupancy} people at once during this period.`,
+        trend: 'up',
+        value: `${metrics.peakOccupancy} max`
+      });
+    }
+
+    // Sound Level Insight
+    if (metrics.avgDecibels > 0) {
+      const soundQuality = metrics.avgDecibels >= 70 && metrics.avgDecibels <= 85 ? 'optimal' : 
+                          metrics.avgDecibels < 70 ? 'quiet' : 'loud';
+      insights.push({
+        category: 'Atmosphere',
+        title: 'Sound Environment',
+        description: `Average sound level of ${metrics.avgDecibels.toFixed(1)} dB creates ${
+            metrics.avgDecibels >= 70 && metrics.avgDecibels <= 85 ? 'an energetic' : 
+            metrics.avgDecibels < 70 ? 'a relaxed' : 'a very lively'
+          } atmosphere.`,
+        trend: soundQuality === 'optimal' ? 'up' : 'stable',
+        value: `${metrics.avgDecibels.toFixed(0)} dB`
+      });
+    }
+
+    // Light Level Insight
+    if (metrics.avgLight && metrics.avgLight > 0) {
+      const lightQuality = metrics.avgLight >= 50 && metrics.avgLight <= 300 ? 'optimal' : 
+                          metrics.avgLight < 50 ? 'dim' : 'bright';
+      insights.push({
+        category: 'Ambiance',
+        title: 'Lighting',
+        description: `Average light level of ${metrics.avgLight.toFixed(0)} lux. ${
+          lightQuality === 'optimal' ? 'Good bar ambiance.' : 
+          lightQuality === 'dim' ? 'Very dim - may be too dark.' : 
+          'Quite bright for a bar setting.'
+        }`,
+        trend: lightQuality === 'optimal' ? 'up' : 'down',
+        value: `${metrics.avgLight.toFixed(0)} lux`
+      });
+    }
+
+    // Peak Hours Insight
+    if (metrics.peakHours.length > 0) {
+      insights.push({
+        category: 'Operations',
+        title: 'Peak Hours',
+        description: `Busiest times: ${metrics.peakHours.join(', ')}. Staff up during these hours for best service.`,
+        trend: 'up',
+        value: metrics.peakHours[0]
+      });
+    }
+
+    // Average Occupancy
+    if (metrics.avgOccupancy && metrics.avgOccupancy > 0) {
+      insights.push({
+        category: 'Utilization',
+        title: 'Average Crowd',
+        description: `Average of ${metrics.avgOccupancy} people in venue at any given time during operating hours.`,
+        trend: 'stable',
+        value: `${metrics.avgOccupancy} avg`
+      });
+    }
+
+    // If no insights generated, add a placeholder
+    if (insights.length === 0) {
+      insights.push({
+        category: 'Data',
+        title: 'Collecting Data',
+        description: 'Not enough sensor data for this period. Insights will appear as more data is collected.',
         trend: 'stable',
         value: 'N/A'
       });
@@ -196,85 +207,69 @@ class AIReportService {
   private generateRecommendations(metrics: WeeklyMetrics): string[] {
     const recommendations: string[] = [];
 
-    // If no data available, provide setup recommendations
-    if (metrics.avgComfort === 0 && metrics.avgTemperature === 0 && metrics.avgDecibels === 0) {
-      recommendations.push('Continue collecting sensor data for at least 7 days to enable AI-powered insights and recommendations.');
+    // Check if we have any data
+    const hasData = metrics.avgDecibels > 0 || 
+                   (metrics.totalEntries && metrics.totalEntries > 0) ||
+                   (metrics.avgLight && metrics.avgLight > 0);
+
+    if (!hasData) {
+      recommendations.push('Continue collecting sensor data to enable AI-powered insights and recommendations.');
       recommendations.push('Ensure your Pulse devices are properly connected and publishing data regularly.');
-      recommendations.push('Once sufficient data is collected, you will receive personalized recommendations for comfort, atmosphere, and revenue optimization.');
       return recommendations;
     }
 
-    // Comfort recommendations (only if data available)
-    if (metrics.avgComfort > 0 && metrics.avgComfort < 70) {
-      recommendations.push('Consider adjusting HVAC settings during peak hours to improve customer comfort levels.');
-    } else if (metrics.avgComfort >= 80) {
-      recommendations.push('Excellent comfort levels maintained! Continue current environmental management practices.');
+    // Sound recommendations
+    if (metrics.avgDecibels > 0) {
+      if (metrics.avgDecibels > 85) {
+        recommendations.push(`Sound levels averaging ${metrics.avgDecibels.toFixed(0)} dB are quite loud. Consider reducing music volume slightly to allow conversation.`);
+      } else if (metrics.avgDecibels < 65) {
+        recommendations.push(`Sound levels averaging ${metrics.avgDecibels.toFixed(0)} dB are on the quiet side. Increasing music energy could create a more vibrant atmosphere.`);
+      } else {
+        recommendations.push(`Sound levels at ${metrics.avgDecibels.toFixed(0)} dB are in the optimal range for a bar environment. Keep it up!`);
+      }
     }
 
-    // Temperature recommendations (only if data available)
-    if (metrics.avgTemperature > 75) {
-      recommendations.push('Lower temperature setpoint by 2-3°F during busy periods to enhance comfort.');
-    } else if (metrics.avgTemperature > 0 && metrics.avgTemperature < 68) {
-      recommendations.push('Increase temperature slightly to create a warmer, more inviting atmosphere.');
-    } else if (metrics.avgTemperature >= 68 && metrics.avgTemperature <= 75) {
-      recommendations.push('Temperature levels are optimal. Maintain current HVAC settings.');
-    }
-
-    // Sound recommendations (only if data available)
-    if (metrics.avgDecibels > 85) {
-      recommendations.push('High sound levels detected. Consider reducing music volume slightly during peak hours.');
-    } else if (metrics.avgDecibels > 0 && metrics.avgDecibels < 65) {
-      recommendations.push('Sound levels are low. Increasing music energy could create a more vibrant atmosphere.');
-    } else if (metrics.avgDecibels >= 70 && metrics.avgDecibels <= 85) {
-      recommendations.push('Sound levels create an energetic atmosphere. Current audio settings are effective.');
+    // Light recommendations
+    if (metrics.avgLight && metrics.avgLight > 0) {
+      if (metrics.avgLight > 400) {
+        recommendations.push(`Light levels averaging ${metrics.avgLight.toFixed(0)} lux are quite bright. Dimming lights could create better bar ambiance.`);
+      } else if (metrics.avgLight < 30) {
+        recommendations.push(`Very dim lighting at ${metrics.avgLight.toFixed(0)} lux. While moody, ensure it's not too dark for customers to navigate safely.`);
+      } else {
+        recommendations.push(`Lighting at ${metrics.avgLight.toFixed(0)} lux creates good bar ambiance.`);
+      }
     }
 
     // Peak hours recommendations
     if (metrics.peakHours.length > 0) {
-      recommendations.push(`Optimize staffing for peak hours: ${metrics.peakHours.join(', ')}. Consider special promotions during slower periods.`);
+      recommendations.push(`Peak hours are ${metrics.peakHours.slice(0, 2).join(' and ')}. Ensure adequate staffing and consider promotions during slower periods.`);
     }
 
-    // Revenue optimization (only if data available)
-    if (metrics.totalRevenue > 0 && metrics.totalCustomers > 0) {
-      const avgPerCustomer = metrics.totalRevenue / metrics.totalCustomers;
-      if (avgPerCustomer < 40) {
-        recommendations.push('Average spend per customer is below target. Promote higher-margin items and upsell opportunities.');
-      } else if (avgPerCustomer >= 60) {
-        recommendations.push('Strong per-customer spend! Continue promoting high-value items and excellent service.');
-      }
-    }
-
-    // Music recommendations (only if data available)
-    if (metrics.topSongs.length >= 3) {
-      recommendations.push(`Top songs (${metrics.topSongs.slice(0, 3).map(s => s.song).join(', ')}) resonate well. Create similar playlists for consistent atmosphere.`);
-    }
-
-    // Occupancy recommendations (using bar day data)
-    if (metrics.totalEntries && metrics.avgDailyEntries) {
+    // Occupancy recommendations
+    if (metrics.avgDailyEntries && metrics.avgDailyEntries > 0) {
       if (metrics.avgDailyEntries > 200) {
-        recommendations.push(`Strong customer traffic with ${metrics.avgDailyEntries} average daily entries. Consider expanding capacity during peak hours.`);
+        recommendations.push(`Strong traffic with ${metrics.avgDailyEntries} avg daily entries. Consider expanding capacity or adding events on slower days.`);
       } else if (metrics.avgDailyEntries > 100) {
-        recommendations.push(`Healthy customer flow with ${metrics.avgDailyEntries} average daily entries. Focus on retention and repeat visits.`);
-      } else if (metrics.avgDailyEntries > 0) {
-        recommendations.push(`Customer traffic averaging ${metrics.avgDailyEntries} daily entries. Consider promotions or events to boost foot traffic.`);
-      }
-      
-      // Entry/exit ratio insight
-      if (metrics.totalExits && metrics.totalEntries > 0) {
-        const ratio = metrics.totalExits / metrics.totalEntries;
-        if (ratio < 0.9) {
-          recommendations.push('Entry/exit ratio suggests some customers may be staying overnight or exits not fully captured. Verify sensor accuracy.');
-        }
+        recommendations.push(`Healthy traffic at ${metrics.avgDailyEntries} daily entries. Focus on retention and encouraging repeat visits.`);
+      } else {
+        recommendations.push(`Traffic at ${metrics.avgDailyEntries} daily entries has room to grow. Consider promotions, events, or social media to boost foot traffic.`);
       }
     }
 
-    // If we have some recommendations, return them
-    if (recommendations.length > 0) {
-      return recommendations;
+    // Peak vs average
+    if (metrics.peakOccupancy && metrics.avgOccupancy && metrics.peakOccupancy > 0) {
+      const ratio = metrics.peakOccupancy / Math.max(1, metrics.avgOccupancy);
+      if (ratio > 3) {
+        recommendations.push(`Peak occupancy (${metrics.peakOccupancy}) is much higher than average (${metrics.avgOccupancy}). Traffic is spiky - consider ways to spread it out.`);
+      }
     }
 
-    // Fallback if data is partial
-    return ['Continue collecting data for more detailed recommendations.'];
+    // Data quality note
+    if (metrics.dataPointsAnalyzed && metrics.dataPointsAnalyzed < 100) {
+      recommendations.push('Limited data points in this period. Recommendations will become more accurate with more data.');
+    }
+
+    return recommendations.length > 0 ? recommendations : ['Data collected successfully. Continue monitoring for trend analysis.'];
   }
 }
 

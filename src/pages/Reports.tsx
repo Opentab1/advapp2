@@ -13,6 +13,45 @@ import type { WeeklyReport, WeeklyMetrics } from '../types';
 
 type ReportType = 'weekly' | 'monthly' | 'music' | 'atmosphere' | 'occupancy' | 'custom';
 
+// Helper function to calculate peak hours from sensor data
+function calculatePeakHours(data: any[]): string[] {
+  if (!data || data.length === 0) return [];
+  
+  // Group by hour and count occupancy
+  const hourlyOccupancy: { [hour: number]: { total: number; count: number } } = {};
+  
+  data.forEach(point => {
+    if (point.occupancy?.current) {
+      const hour = new Date(point.timestamp).getHours();
+      if (!hourlyOccupancy[hour]) {
+        hourlyOccupancy[hour] = { total: 0, count: 0 };
+      }
+      hourlyOccupancy[hour].total += point.occupancy.current;
+      hourlyOccupancy[hour].count++;
+    }
+  });
+  
+  // Calculate averages and sort
+  const hourlyAvg = Object.entries(hourlyOccupancy)
+    .map(([hour, data]) => ({
+      hour: parseInt(hour),
+      avg: data.total / data.count
+    }))
+    .sort((a, b) => b.avg - a.avg);
+  
+  // Return top 3 peak hours
+  return hourlyAvg.slice(0, 3).map(h => {
+    const hourNum = h.hour;
+    const nextHour = (hourNum + 1) % 24;
+    const formatHour = (h: number) => {
+      if (h === 0) return '12 AM';
+      if (h === 12) return '12 PM';
+      return h > 12 ? `${h - 12} PM` : `${h} AM`;
+    };
+    return `${formatHour(hourNum)}-${formatHour(nextHour)}`;
+  });
+}
+
 export function Reports() {
   const [reports, setReports] = useState<WeeklyReport[]>([]);
   const [selectedReport, setSelectedReport] = useState<WeeklyReport | null>(null);
@@ -117,22 +156,41 @@ export function Reports() {
         const historicalData = await apiService.getHistoricalData(venueId, daysToFetch as any);
         
         // Calculate metrics from real data
-        let totalComfort = 0;
-        let totalTemp = 0;
         let totalDecibels = 0;
-        let totalHumidity = 0;
-        let dataPoints = 0;
+        let totalLight = 0;
+        let decibelPoints = 0;
+        let lightPoints = 0;
         let maxOccupancy = 0;
+        let totalOccupancy = 0;
+        let occupancyPoints = 0;
 
         if (historicalData.data && historicalData.data.length > 0) {
+          // Log data range for debugging
+          const sortedData = [...historicalData.data].sort((a, b) => 
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          );
+          console.log(`📊 Data range: ${sortedData[0]?.timestamp} to ${sortedData[sortedData.length - 1]?.timestamp}`);
+          console.log(`📊 Total data points: ${historicalData.data.length}`);
+          
           historicalData.data.forEach((point) => {
-            if (point.indoorTemp) totalTemp += point.indoorTemp;
-            if (point.decibels) totalDecibels += point.decibels;
-            if (point.humidity) totalHumidity += point.humidity;
-            if (point.occupancy?.current && point.occupancy.current > maxOccupancy) {
-              maxOccupancy = point.occupancy.current;
+            // Sound level
+            if (point.decibels && point.decibels > 0) {
+              totalDecibels += point.decibels;
+              decibelPoints++;
             }
-            dataPoints++;
+            // Light level
+            if (point.light !== undefined && point.light >= 0) {
+              totalLight += point.light;
+              lightPoints++;
+            }
+            // Occupancy
+            if (point.occupancy?.current !== undefined) {
+              totalOccupancy += point.occupancy.current;
+              occupancyPoints++;
+              if (point.occupancy.current > maxOccupancy) {
+                maxOccupancy = point.occupancy.current;
+              }
+            }
           });
         }
 
@@ -148,27 +206,47 @@ export function Reports() {
           timezone
         );
         
-        const daysInPeriod = occupancyStats.dailyBreakdown.length || 1;
+        const daysInPeriod = Math.max(1, occupancyStats.dailyBreakdown.length);
+        
+        // Calculate averages (only if we have data)
+        const avgDecibels = decibelPoints > 0 ? totalDecibels / decibelPoints : 0;
+        const avgLight = lightPoints > 0 ? totalLight / lightPoints : 0;
+        const avgOccupancy = occupancyPoints > 0 ? totalOccupancy / occupancyPoints : 0;
+        
+        // Calculate peak hours from data
+        const peakHours = calculatePeakHours(historicalData.data || []);
 
         const metrics: WeeklyMetrics = {
-          avgComfort: dataPoints > 0 ? totalComfort / dataPoints : 0,
-          avgTemperature: dataPoints > 0 ? totalTemp / dataPoints : 0,
-          avgDecibels: dataPoints > 0 ? totalDecibels / dataPoints : 0,
-          avgHumidity: dataPoints > 0 ? totalHumidity / dataPoints : 0,
-          peakHours: dataPoints > 0 ? ['6-7 PM', '8-9 PM', '9-10 PM'] : [],
-          totalCustomers: occupancyStats.totalEntries, // Use bar day entries as customer count
-          totalRevenue: 0, // Not available yet - future POS integration
-          topSongs: [], // Not available yet - future song analytics
+          avgComfort: 0, // Deprecated - not used
+          avgTemperature: 0, // We don't have indoor temp sensor
+          avgDecibels: avgDecibels,
+          avgHumidity: 0, // Removed from UI
+          avgLight: avgLight, // Added light tracking
+          avgOccupancy: Math.round(avgOccupancy),
+          peakHours: peakHours.length > 0 ? peakHours : [],
+          totalCustomers: occupancyStats.totalEntries,
+          totalRevenue: 0, // Future POS integration
+          topSongs: [], // Future song analytics
           // Bar day occupancy metrics
           totalEntries: occupancyStats.totalEntries,
           totalExits: occupancyStats.totalExits,
           avgDailyEntries: Math.round(occupancyStats.totalEntries / daysInPeriod),
           avgDailyExits: Math.round(occupancyStats.totalExits / daysInPeriod),
           peakOccupancy: maxOccupancy,
-          dailyOccupancy: occupancyStats.dailyBreakdown
+          dailyOccupancy: occupancyStats.dailyBreakdown,
+          dataPointsAnalyzed: historicalData.data?.length || 0,
+          daysWithData: daysInPeriod
         };
         
-        console.log('📊 Report metrics with bar day occupancy:', metrics);
+        console.log('📊 Report metrics calculated:', {
+          avgDecibels: avgDecibels.toFixed(1),
+          avgLight: avgLight.toFixed(1),
+          avgOccupancy: avgOccupancy.toFixed(1),
+          peakOccupancy: maxOccupancy,
+          totalEntries: occupancyStats.totalEntries,
+          daysInPeriod,
+          dataPoints: historicalData.data?.length || 0
+        });
 
         const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
         await aiReportService.saveReport(report);
@@ -184,6 +262,8 @@ export function Reports() {
           avgTemperature: 0,
           avgDecibels: 0,
           avgHumidity: 0,
+          avgLight: 0,
+          avgOccupancy: 0,
           peakHours: [],
           totalCustomers: 0,
           totalRevenue: 0,
@@ -193,7 +273,9 @@ export function Reports() {
           avgDailyEntries: 0,
           avgDailyExits: 0,
           peakOccupancy: 0,
-          dailyOccupancy: []
+          dailyOccupancy: [],
+          dataPointsAnalyzed: 0,
+          daysWithData: 0
         };
 
         const report = await aiReportService.generateWeeklyReport(weekStart, weekEnd, metrics);
@@ -201,7 +283,7 @@ export function Reports() {
         await loadReports();
         setSelectedReport(report);
         
-        console.log('✅ Report generated with N/A data (no historical data available)');
+        console.log('⚠️ Report generated with N/A data (no historical data available)');
       }
       
     } catch (error) {
@@ -462,38 +544,58 @@ export function Reports() {
               {/* Environmental Metrics */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="glass-card p-4">
-                  <div className="text-sm text-gray-400 mb-1">Avg Temp</div>
-                  <div className="text-2xl font-bold text-orange-400">
-                    {formatValueNoZero(selectedReport.metrics.avgTemperature, 1) === '--' 
-                      ? '--' 
-                      : `${selectedReport.metrics.avgTemperature.toFixed(1)}°F`}
-                  </div>
-                </div>
-                <div className="glass-card p-4">
                   <div className="text-sm text-gray-400 mb-1">Avg Sound</div>
                   <div className="text-2xl font-bold text-purple-400">
-                    {formatValueNoZero(selectedReport.metrics.avgDecibels, 1) === '--' 
-                      ? '--' 
-                      : `${selectedReport.metrics.avgDecibels.toFixed(1)} dB`}
-                  </div>
-                </div>
-                <div className="glass-card p-4">
-                  <div className="text-sm text-gray-400 mb-1">Avg Humidity</div>
-                  <div className="text-2xl font-bold text-blue-400">
-                    {formatValueNoZero(selectedReport.metrics.avgHumidity, 1) === '--' 
-                      ? '--' 
-                      : `${selectedReport.metrics.avgHumidity.toFixed(1)}%`}
-                  </div>
-                </div>
-                <div className="glass-card p-4">
-                  <div className="text-sm text-gray-400 mb-1">Revenue</div>
-                  <div className="text-2xl font-bold text-green-400">
-                    {selectedReport.metrics.totalRevenue > 0 
-                      ? `$${selectedReport.metrics.totalRevenue.toLocaleString()}` 
+                    {selectedReport.metrics.avgDecibels > 0 
+                      ? `${selectedReport.metrics.avgDecibels.toFixed(1)} dB`
                       : '--'}
                   </div>
                 </div>
+                <div className="glass-card p-4">
+                  <div className="text-sm text-gray-400 mb-1">Avg Light</div>
+                  <div className="text-2xl font-bold text-yellow-400">
+                    {(selectedReport.metrics.avgLight ?? 0) > 0 
+                      ? `${(selectedReport.metrics.avgLight ?? 0).toFixed(0)} lux`
+                      : '--'}
+                  </div>
+                </div>
+                <div className="glass-card p-4">
+                  <div className="text-sm text-gray-400 mb-1">Avg Occupancy</div>
+                  <div className="text-2xl font-bold text-blue-400">
+                    {(selectedReport.metrics.avgOccupancy ?? 0) > 0 
+                      ? `${selectedReport.metrics.avgOccupancy} people`
+                      : '--'}
+                  </div>
+                </div>
+                <div className="glass-card p-4">
+                  <div className="text-sm text-gray-400 mb-1">Peak Hours</div>
+                  <div className="text-lg font-bold text-cyan">
+                    {selectedReport.metrics.peakHours.length > 0 
+                      ? selectedReport.metrics.peakHours[0]
+                      : '--'}
+                  </div>
+                  {selectedReport.metrics.peakHours.length > 1 && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      +{selectedReport.metrics.peakHours.length - 1} more
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {/* Data Quality Indicator */}
+              {selectedReport.metrics.dataPointsAnalyzed !== undefined && (
+                <div className="glass-card p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-400">Data Quality</div>
+                    <div className="text-sm text-gray-300">
+                      <span className="text-cyan font-medium">{selectedReport.metrics.dataPointsAnalyzed?.toLocaleString()}</span> data points 
+                      {selectedReport.metrics.daysWithData && selectedReport.metrics.daysWithData > 0 && (
+                        <span> across <span className="text-cyan font-medium">{selectedReport.metrics.daysWithData}</span> days</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Insights */}
               <div className="glass-card p-6">

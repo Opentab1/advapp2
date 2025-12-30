@@ -214,6 +214,8 @@ export interface WeeklyMetrics {
   avgTemperature: number;
   avgDecibels: number;
   avgHumidity: number;
+  avgLight?: number;
+  avgOccupancy?: number;
   peakHours: string[];
   totalCustomers: number;
   totalRevenue: number;
@@ -225,6 +227,9 @@ export interface WeeklyMetrics {
   avgDailyExits?: number;
   peakOccupancy?: number;
   dailyOccupancy?: Array<{ date: string; entries: number; exits: number }>;
+  // Data quality metrics
+  dataPointsAnalyzed?: number;
+  daysWithData?: number;
 }
 
 // Progressive Learning Pulse Score System
