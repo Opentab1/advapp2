@@ -20,7 +20,7 @@ import { AnimatedBackground } from '../components/AnimatedBackground';
 import { MetricCard } from '../components/MetricCard';
 // ComfortGauge removed
 // ComfortBreakdownCard removed
-import { PulseScoreDropdown } from '../components/PulseScoreDropdown';
+import { PulseScoreLive } from '../components/PulseScoreLive';
 import { SportsWidget } from '../components/SportsWidget';
 import { DataChart } from '../components/DataChart';
 import { TimeRangeToggle } from '../components/TimeRangeToggle';
@@ -39,7 +39,7 @@ import { Insights } from './Insights';
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { calculateComfortLevel, calculateComfortBreakdown, calculatePulseScore } from '../utils/comfort';
+import { calculateComfortLevel, calculateComfortBreakdown } from '../utils/comfort';
 import { formatTemperature, formatDecibels as formatDecibelsLegacy, formatLight as formatLightLegacy, formatHumidity as formatHumidityLegacy } from '../utils/format';
 import { formatDwellTime, calculateRecentDwellTime } from '../utils/dwellTime';
 import { formatValueNoZero, formatValueAllowZero, formatOccupancy } from '../utils/dataDisplay';
@@ -52,7 +52,7 @@ import weatherService, { WeatherData } from '../services/weather.service';
 import venueSettingsService from '../services/venue-settings.service';
 import userSettingsService from '../services/user-settings.service';
 import { isDemoAccount } from '../utils/demoData';
-import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location, PulseScoreResult } from '../types';
+import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location } from '../types';
 
 export function Dashboard() {
   const [user, setUser] = useState(authService.getStoredUser());
@@ -64,7 +64,6 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [soundAlerts, setSoundAlerts] = useState(true);
   const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
-  const [pulseScoreResult, setPulseScoreResult] = useState<PulseScoreResult | null>(null);
   const [barDayOccupancy, setBarDayOccupancy] = useState<{ entries: number; exits: number; current: number } | null>(null);
   const [periodOccupancy, setPeriodOccupancy] = useState<{ entries: number; exits: number; current: number } | null>(null);
   const [calculatedDwellTime, setCalculatedDwellTime] = useState<number | null>(null);
@@ -520,25 +519,6 @@ export function Dashboard() {
   const comfortLevel = currentData ? calculateComfortLevel(currentData) : null;
   const comfortBreakdown = currentData ? calculateComfortBreakdown(currentData) : null;
 
-  // Calculate pulse score with progressive learning
-  useEffect(() => {
-    const updatePulseScore = async () => {
-      if (currentData && user?.venueId) {
-        try {
-          const result = await calculatePulseScore(user.venueId, currentData);
-          setPulseScoreResult(result);
-        } catch (error) {
-          console.error('Error calculating pulse score:', error);
-          // Fallback to null if calculation fails
-          setPulseScoreResult(null);
-        }
-      } else {
-        setPulseScoreResult(null);
-      }
-    };
-
-    updatePulseScore();
-  }, [currentData, user?.venueId]);
 
   // Show loading state
   if (timeRange === 'live' && liveLoading && !liveData) {
@@ -795,13 +775,9 @@ export function Dashboard() {
               {/* Dashboard Content - Always show cards, use dashes when no data */}
               {!loading && (
                 <>
-                  {/* Pulse Score - Collapsible with full breakdown */}
+                  {/* Pulse Score - Real-time calculation */}
                   <div className="mb-6">
-                    <PulseScoreDropdown
-                      score={currentData && comfortLevel ? comfortLevel.score : null}
-                      pulseScoreResult={pulseScoreResult}
-                      sensorData={currentData}
-                    />
+                    <PulseScoreLive sensorData={currentData} />
                   </div>
 
                   {/* Occupancy Metrics Section */}
