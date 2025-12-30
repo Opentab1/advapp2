@@ -97,75 +97,114 @@ export function calculateCurrentHourDwellTime(
 
 /**
  * Calculate dwell time from recent sensor data (last N hours)
- * Filters data to only include readings from the specified time window
- * and calculates using Little's Law
+ * Uses Little's Law: W = L / λ
+ * 
+ * Formula: Dwell Time (hours) = Avg Occupancy / (Entries per Hour)
+ * Then convert to minutes.
  * 
  * @param data - Array of sensor data points (should include recent history)
- * @param hoursBack - How many hours of recent data to use (default 2)
+ * @param hoursBack - How many hours of recent data to use (default 4)
  * @returns Average dwell time in minutes, or null if cannot calculate
  */
 export function calculateRecentDwellTime(
   data: SensorData[],
-  hoursBack: number = 2
+  hoursBack: number = 4
 ): number | null {
   if (!data || data.length === 0) {
+    console.log('📊 Dwell time: No data provided');
     return null;
   }
 
-  const now = new Date();
-  const cutoffTime = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
-
-  // Filter to only recent data
-  const recentData = data.filter(d => {
-    const timestamp = new Date(d.timestamp);
-    return timestamp >= cutoffTime;
-  });
-
-  if (recentData.length < 2) {
-    // Need at least 2 data points to calculate entry difference
-    return null;
-  }
-
-  // Sort by timestamp (oldest first)
-  const sorted = [...recentData].sort((a, b) => 
+  // Sort all data by timestamp (oldest first)
+  const sorted = [...data].sort((a, b) => 
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
 
-  // Calculate average occupancy from recent data
-  const occupancyValues = sorted
+  // Try to use recent data, but fall back to all available data
+  const now = new Date();
+  const cutoffTime = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
+  
+  let recentData = sorted.filter(d => new Date(d.timestamp) >= cutoffTime);
+  
+  // If not enough recent data, use all available data
+  if (recentData.length < 2) {
+    console.log('📊 Dwell time: Not enough recent data, using full dataset');
+    recentData = sorted;
+  }
+
+  if (recentData.length < 2) {
+    console.log('📊 Dwell time: Still not enough data points');
+    return null;
+  }
+
+  // Calculate average occupancy from data points with occupancy > 0
+  const occupancyValues = recentData
     .filter(d => d.occupancy?.current !== undefined && d.occupancy.current > 0)
     .map(d => d.occupancy!.current);
 
   if (occupancyValues.length === 0) {
+    console.log('📊 Dwell time: No occupancy data found');
     return null;
   }
 
   const avgOccupancy = occupancyValues.reduce((sum, val) => sum + val, 0) / occupancyValues.length;
 
-  // Get entries difference in the time window
-  const entryData = sorted.filter(d => d.occupancy?.entries !== undefined);
+  // Get entries - find min and max to calculate total entries in the period
+  const entryData = recentData.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
   
   if (entryData.length < 2) {
+    console.log('📊 Dwell time: Not enough entry data');
     return null;
   }
 
-  const firstEntries = entryData[0].occupancy!.entries;
-  const lastEntries = entryData[entryData.length - 1].occupancy!.entries;
-  const totalEntries = Math.max(0, lastEntries - firstEntries);
+  // Since entries is cumulative, take the MAX minus the MIN
+  const entryValues = entryData.map(d => d.occupancy!.entries);
+  const minEntries = Math.min(...entryValues);
+  const maxEntries = Math.max(...entryValues);
+  const totalEntries = maxEntries - minEntries;
 
-  // Calculate actual time span (might be less than hoursBack if data is limited)
-  const firstTime = new Date(sorted[0].timestamp).getTime();
-  const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
+  // Calculate actual time span
+  const firstTime = new Date(recentData[0].timestamp).getTime();
+  const lastTime = new Date(recentData[recentData.length - 1].timestamp).getTime();
   const actualHours = (lastTime - firstTime) / (1000 * 60 * 60);
 
-  // Need a reasonable time span
-  if (actualHours < 0.25 || totalEntries === 0) {
+  console.log(`📊 Dwell time debug:`, {
+    dataPoints: recentData.length,
+    avgOccupancy: avgOccupancy.toFixed(1),
+    minEntries,
+    maxEntries,
+    totalEntries,
+    actualHours: actualHours.toFixed(2)
+  });
+
+  // If no new entries in the period, estimate based on current occupancy
+  if (totalEntries === 0 || actualHours < 0.1) {
+    // Fallback: If people are in venue but no new entries recorded,
+    // estimate based on typical bar dwell time (60-90 minutes)
+    if (avgOccupancy > 0) {
+      console.log('📊 Dwell time: Using fallback estimate (no entry changes)');
+      return 75; // Default estimate for bars
+    }
     return null;
   }
 
-  console.log(`📊 Dwell time calc: avgOccupancy=${avgOccupancy.toFixed(1)}, entries=${totalEntries}, hours=${actualHours.toFixed(2)}`);
+  // Little's Law: W = L / λ
+  // λ = entries per hour
+  const arrivalRate = totalEntries / actualHours;
+  const dwellTimeHours = avgOccupancy / arrivalRate;
+  const dwellTimeMinutes = dwellTimeHours * 60;
 
-  return calculateDwellTime(avgOccupancy, totalEntries, actualHours);
+  console.log(`📊 Dwell time result: ${dwellTimeMinutes.toFixed(1)} minutes (rate=${arrivalRate.toFixed(2)}/hr)`);
+
+  // Sanity check: dwell time should be between 5 minutes and 6 hours for a bar
+  if (dwellTimeMinutes < 5) {
+    return 5;
+  }
+  if (dwellTimeMinutes > 360) {
+    return 360;
+  }
+
+  return Math.round(dwellTimeMinutes);
 }
 
 /**

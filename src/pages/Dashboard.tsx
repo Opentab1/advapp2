@@ -18,8 +18,8 @@ import { TopBar } from '../components/TopBar';
 import { Sidebar } from '../components/Sidebar';
 import { AnimatedBackground } from '../components/AnimatedBackground';
 import { MetricCard } from '../components/MetricCard';
-import { ComfortGauge } from '../components/ComfortGauge';
-import { ComfortBreakdownCard } from '../components/ComfortBreakdown';
+// ComfortGauge removed
+// ComfortBreakdownCard removed
 import { PulseScoreDropdown } from '../components/PulseScoreDropdown';
 import { SportsWidget } from '../components/SportsWidget';
 import { DataChart } from '../components/DataChart';
@@ -269,14 +269,14 @@ export function Dashboard() {
     if (timeRange === 'live') {
       refetch();
     } else {
-      loadHistoricalData();
+      loadHistoricalData(timeRange);
     }
   };
 
   // Load historical data when time range changes
   useEffect(() => {
     if (timeRange !== 'live') {
-      loadHistoricalData();
+      loadHistoricalData(timeRange);
     }
   }, [timeRange]);
 
@@ -392,13 +392,16 @@ export function Dashboard() {
     }
   }, [activeTab]);
 
-  const loadHistoricalData = async () => {
+  const loadHistoricalData = async (range?: TimeRange) => {
+    const effectiveRange = range || timeRange;
     setLoading(true);
     setError(null);
     
+    console.log(`📊 Loading historical data for range: ${effectiveRange}`);
+    
     try {
       // Use venueId for data isolation, not locationId
-      const data = await apiService.getHistoricalData(venueId, timeRange);
+      const data = await apiService.getHistoricalData(venueId, effectiveRange);
       setHistoricalData(data);
       // Clear any previous errors since we successfully got data (even if empty/old)
       setError(null);
@@ -409,8 +412,8 @@ export function Dashboard() {
         const now = new Date();
         let periodStart: Date;
         
-        // Calculate period start based on timeRange
-        switch (timeRange) {
+        // Calculate period start based on effectiveRange
+        switch (effectiveRange) {
           case '6h':
             periodStart = new Date(now.getTime() - 6 * 60 * 60 * 1000);
             break;
@@ -437,7 +440,7 @@ export function Dashboard() {
         const oldestData = sortedData[0];
         const newestData = sortedData[sortedData.length - 1];
         
-        console.log(`📊 Historical data received for ${timeRange}:`, {
+        console.log(`📊 Historical data received for ${effectiveRange}:`, {
           requestedRange: `${periodStart.toISOString()} to ${now.toISOString()}`,
           actualRange: `${oldestData?.timestamp} to ${newestData?.timestamp}`,
           totalRecords: data.data.length,
@@ -460,7 +463,7 @@ export function Dashboard() {
           current: peakCurrent
         });
         
-        console.log(`📊 Period occupancy calculated for ${timeRange}:`, {
+        console.log(`📊 Period occupancy calculated for ${effectiveRange}:`, {
           entries: periodStats.totalEntries,
           exits: periodStats.totalExits,
           peakCurrent,
@@ -468,7 +471,7 @@ export function Dashboard() {
           dailyBreakdown: periodStats.dailyBreakdown
         });
       } else {
-        console.log(`⚠️ No historical data for ${timeRange}`);
+        console.log(`⚠️ No historical data for ${effectiveRange}`);
         setPeriodOccupancy(null);
       }
     } catch (err: any) {
@@ -688,7 +691,7 @@ export function Dashboard() {
                   
                   <div className="flex gap-2">
                     <motion.button
-                      onClick={timeRange === 'live' ? refetch : loadHistoricalData}
+                      onClick={timeRange === 'live' ? refetch : () => loadHistoricalData(timeRange)}
                       className="btn-secondary px-4 py-2 flex items-center gap-2"
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
@@ -777,7 +780,7 @@ export function Dashboard() {
                         </p>
                       </div>
                       <button
-                        onClick={timeRange === 'live' ? refetch : loadHistoricalData}
+                        onClick={timeRange === 'live' ? refetch : () => loadHistoricalData(timeRange)}
                         className="btn-primary px-4 py-2"
                       >
                         Retry
@@ -1004,20 +1007,12 @@ export function Dashboard() {
                         )}
                       </div>
                       
-                      {comfortLevel && (
-                        <div className="flex justify-center lg:justify-end">
-                          <ComfortGauge comfortLevel={comfortLevel} />
-                        </div>
-                      )}
                     </div>
                   )}
 
-                  {/* Comfort Breakdown & Sports - Historical view only */}
+                  {/* Sports Widget - Historical view only */}
                   {timeRange !== 'live' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                      {comfortBreakdown && (
-                        <ComfortBreakdownCard breakdown={comfortBreakdown} />
-                      )}
+                    <div className="mb-6">
                       <SportsWidget />
                     </div>
                   )}
