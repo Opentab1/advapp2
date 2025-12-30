@@ -3,10 +3,8 @@ import { motion } from 'framer-motion';
 import { 
   Sun, 
   Volume2, 
-  Droplets, 
   Download,
   RefreshCw,
-  Cloud,
   CloudSun,
   Users,
   UserPlus,
@@ -41,7 +39,7 @@ import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { calculateComfortLevel, calculateComfortBreakdown } from '../utils/comfort';
 import { formatTemperature, formatDecibels as formatDecibelsLegacy, formatLight as formatLightLegacy, formatHumidity as formatHumidityLegacy } from '../utils/format';
-import { formatDwellTime, calculateRecentDwellTime } from '../utils/dwellTime';
+import { formatDwellTime, calculateRecentDwellTime, calculateDwellTimeFromHistory } from '../utils/dwellTime';
 import { formatValueNoZero, formatValueAllowZero, formatOccupancy } from '../utils/dataDisplay';
 import { calculateBarDayOccupancy, formatBarDayRange, aggregateOccupancyByBarDay } from '../utils/barDay';
 import apiService from '../services/api.service';
@@ -468,9 +466,24 @@ export function Dashboard() {
           daysProcessed: periodStats.dailyBreakdown.length,
           dailyBreakdown: periodStats.dailyBreakdown
         });
+        
+        // Calculate dwell time for this time range
+        const rangeHours = {
+          '6h': 6,
+          '24h': 24,
+          '7d': 7 * 24,
+          '30d': 30 * 24,
+          '90d': 90 * 24,
+          'live': 2 // fallback
+        }[effectiveRange] || 24;
+        
+        const periodDwellTime = calculateDwellTimeFromHistory(data.data, rangeHours);
+        setCalculatedDwellTime(periodDwellTime);
+        console.log(`📊 Dwell time for ${effectiveRange}: ${periodDwellTime ? `${periodDwellTime} min` : 'N/A'}`);
       } else {
         console.log(`⚠️ No historical data for ${effectiveRange}`);
         setPeriodOccupancy(null);
+        setCalculatedDwellTime(null);
       }
     } catch (err: any) {
       // Only set error if we truly failed to connect to DynamoDB
@@ -839,20 +852,6 @@ export function Dashboard() {
                         />
                       </div>
 
-                      {/* Dwell Time Metric */}
-                      <div className="mb-6">
-                        <MetricCard
-                          title="Avg Dwell Time"
-                          value={calculatedDwellTime !== null 
-                            ? formatDwellTime(calculatedDwellTime).replace(' ', '\n')
-                            : '--'}
-                          unit="per visit"
-                          icon={Clock}
-                          color="#a78bfa"
-                          delay={0.2}
-                        />
-                      </div>
-
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div className="glass-card p-4">
                           <div className="text-sm text-gray-400 mb-1">7-Day Average</div>
@@ -913,15 +912,6 @@ export function Dashboard() {
                     />
                     
                     <MetricCard
-                      title="Humidity"
-                      value={formatValueNoZero(currentData?.humidity)}
-                      unit="%"
-                      icon={Droplets}
-                      color="#4ecdc4"
-                      delay={0.25}
-                    />
-                    
-                    <MetricCard
                       title={timeRange === 'live' ? "Entries Today" : `Entries (${timeRange})`}
                       value={formatOccupancy(timeRange === 'live'
                         ? (barDayOccupancy?.entries ?? occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries)
@@ -958,14 +948,14 @@ export function Dashboard() {
                     />
 
                     <MetricCard
-                      title="Avg Dwell Time"
+                      title={timeRange === 'live' ? "Avg Dwell Time" : `Avg Dwell (${timeRange})`}
                       value={calculatedDwellTime !== null
                         ? formatDwellTime(calculatedDwellTime)
                         : '--'}
-                      unit="per visit"
+                      unit={timeRange === 'live' ? "per visit" : "avg"}
                       icon={Clock}
                       color="#ec4899"
-                      delay={0.45}
+                      delay={0.4}
                     />
                   </div>
 
