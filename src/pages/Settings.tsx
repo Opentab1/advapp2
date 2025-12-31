@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { 
   Save, Key, MapPin, DollarSign, Check, Building2, Trash2, AlertTriangle,
   User, Bell, Settings as SettingsIcon, Info, Mail, Phone, Globe, CloudSun,
-  Users, Clock, TrendingUp
+  Users, Clock, TrendingUp, BarChart2
 } from 'lucide-react';
 import type { AppSettings } from '../types';
 import authService from '../services/auth.service';
@@ -16,6 +16,8 @@ import themeService from '../services/theme.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { AddressSettings } from '../components/AddressSettings';
+import { ROIDashboard } from '../components/ROIDashboard';
+import useROITracking from '../hooks/useROITracking';
 
 // Revenue settings for Reports calculations
 interface RevenueSettings {
@@ -48,7 +50,8 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
   const [cacheCleared, setCacheCleared] = useState(false);
   const [toastRestaurantGuid, setToastRestaurantGuid] = useState('');
-  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'revenue' | 'notifications' | 'preferences' | 'integrations' | 'about'>('account');
+  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'revenue' | 'roi' | 'notifications' | 'preferences' | 'integrations' | 'about'>('account');
+  const roiData = useROITracking();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [savedAddress, setSavedAddress] = useState<VenueAddress | null>(null);
   const [revenueSettings, setRevenueSettings] = useState<RevenueSettings>(DEFAULT_REVENUE_SETTINGS);
@@ -159,6 +162,7 @@ export function Settings() {
             { id: 'account' as const, label: 'Account', icon: User },
             { id: 'venue' as const, label: 'Venue', icon: MapPin },
             { id: 'revenue' as const, label: 'Revenue', icon: TrendingUp },
+            { id: 'roi' as const, label: 'Your ROI', icon: BarChart2 },
             { id: 'notifications' as const, label: 'Notifications', icon: Bell },
             { id: 'preferences' as const, label: 'Preferences', icon: SettingsIcon },
             { id: 'integrations' as const, label: 'Integrations', icon: DollarSign },
@@ -463,6 +467,16 @@ export function Settings() {
                   )}
                 </motion.button>
               </div>
+            </motion.div>
+          )}
+
+          {/* ROI Dashboard Tab */}
+          {activeTab === 'roi' && (
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <ROIDashboard data={roiData} />
             </motion.div>
           )}
 
