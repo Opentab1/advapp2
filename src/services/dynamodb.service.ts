@@ -260,31 +260,15 @@ class DynamoDBService {
       // Calculate appropriate limit based on time range
       // For occupancy aggregation, we need enough data points to capture each bar day
       // Minimum: at least 1 reading per hour for accurate calculations
-      const getLimitForRange = (r: TimeRange | string): number => {
-        switch (r) {
-          case 'live': return 100;
-          case '6h': return 500;
-          case '24h': return 2000;
-          case '7d': return 10000;
-          case '14d': return 20000; // Explicitly handle 14d for LiveContext comparisons
-          case '30d': return 30000;
-          case '90d': return 50000;
-          default: 
-            // Custom day ranges
-            if (typeof r === 'string' && r.endsWith('d')) {
-              const days = parseInt(r.replace('d', ''));
-              return Math.min(days * 1500, 50000); // Increased multiplier for more data
-            }
-            return 5000;
-        }
-      };
-      
-      const queryLimit = getLimitForRange(range);
+      // NO ARBITRARY LIMITS - fetch ALL data within the time range
+      // The time range (startTime, endTime) already limits the query
+      // Pagination continues until nextToken is null (no more data)
       const pageSize = 1000; // DynamoDB/AppSync max per request
-      const maxPages = Math.ceil(queryLimit / pageSize); // Limit pages to prevent infinite loops
-      console.log(`📊 [${range}] Starting fetch: targetLimit=${queryLimit}, maxPages=${maxPages}`);
+      const maxPages = 500; // Safety cap: 500 pages = 500,000 items max (prevents infinite loops)
+      
+      console.log(`📊 [${range}] Starting fetch: time range ${startTime} to ${endTime}, no item limit`);
 
-      // Paginate through all results
+      // Paginate through ALL results in the time range
       let allItems: any[] = [];
       let nextToken: string | null = null;
       let pageCount = 0;
@@ -317,22 +301,26 @@ class DynamoDBService {
         allItems = allItems.concat(pageItems);
         nextToken = response?.data?.listSensorData?.nextToken || null;
         
-        console.log(`📊 [${range}] Page ${pageCount}/${maxPages}: fetched ${pageItems.length} items (total: ${allItems.length}), hasMore: ${!!nextToken}`);
+        // Log every 5 pages to reduce noise, or on last page
+        if (pageCount % 5 === 0 || !nextToken) {
+          console.log(`📊 [${range}] Page ${pageCount}: fetched ${allItems.length} total items, hasMore: ${!!nextToken}`);
+        }
         
-        // Stop if we've reached our target limit or no more pages
-        if (allItems.length >= queryLimit || !nextToken || pageCount >= maxPages) {
+        // Safety check - prevent truly infinite loops
+        if (pageCount >= maxPages) {
+          console.warn(`⚠️ [${range}] Hit max pages safety limit (${maxPages}). Stopping pagination.`);
           break;
         }
       } while (nextToken);
 
-      const items = allItems.slice(0, queryLimit); // Trim to target limit
+      const items = allItems;
       console.log(`📊 [${range}] Pagination complete: ${pageCount} pages, ${items.length} total items`);
       
       // Log date range of fetched data
       if (items.length > 0) {
         const oldestItem = items[items.length - 1];
         const newestItem = items[0];
-        console.log(`📊 [${range}] Data range: ${oldestItem?.timestamp} to ${newestItem?.timestamp}`);
+        console.log(`📊 [${range}] Data spans: ${oldestItem?.timestamp} to ${newestItem?.timestamp}`);
       }
       
       // If no data in requested range, try to find ANY historical data
