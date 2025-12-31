@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Save, Key, MapPin, DollarSign, Check, Building2, Trash2, AlertTriangle,
-  User, Bell, Settings as SettingsIcon, Info, Mail, Phone, Globe, CloudSun,
+  User, Bell, Settings as SettingsIcon, Info, Mail, Phone, CloudSun,
   Users, Clock, TrendingUp, BarChart2
 } from 'lucide-react';
 import type { AppSettings } from '../types';
@@ -12,7 +12,6 @@ import locationService from '../services/location.service';
 import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
 import userSettingsService from '../services/user-settings.service';
 import weatherService from '../services/weather.service';
-import themeService from '../services/theme.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { AddressSettings } from '../components/AddressSettings';

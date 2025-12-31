@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { SensorData } from '../types';
 import apiService from '../services/api.service';
-import iotService from '../services/iot.service';
 
 interface UseRealTimeDataOptions {
   venueId: string;

@@ -46,7 +46,8 @@ import { useSessionMemory, calculateSessionDelta } from '../hooks/useSessionMemo
 import { useTimeContext, useMetricAttribution } from '../hooks/useTimeContext';
 import { TimeContextBadge, PeriodIndicator } from '../components/TimeContext';
 import { WhatChanged } from '../components/Attribution';
-import { HistoricalComparison, DayComparisonBanner, generateMockHistoricalData } from '../components/HistoricalComparison';
+import { HistoricalComparison, DayComparisonBanner } from '../components/HistoricalComparison';
+import { useHistoricalComparison } from '../hooks/useHistoricalComparison';
 import { useShiftTracking } from '../hooks/useShiftTracking';
 import { ActiveShiftBanner, ShiftSummaryModal } from '../components/ShiftSummary';
 import { PulsePlusSkeleton } from '../components/Skeletons';
@@ -207,7 +208,7 @@ export function PulsePlus() {
   }, [loading, pulseScore, currentDecibels, currentLight, currentOccupancy, saveCurrentSession]);
 
   // Time context for expectations (addresses "Is 72 good or bad RIGHT NOW?")
-  const { dayOfWeek, dayName, scoreContext, expectation } = useTimeContext(pulseScore);
+  const { dayName, scoreContext, expectation } = useTimeContext(pulseScore);
 
   // Metric attribution for anomaly detection (addresses "What caused this?")
   const { anomalies, recordMetrics, clearAnomalies } = useMetricAttribution();
@@ -257,10 +258,8 @@ export function PulsePlus() {
     }
   };
 
-  // Historical comparison (mock data for now - would come from API)
-  const historicalData = useMemo(() => {
-    return generateMockHistoricalData(dayOfWeek);
-  }, [dayOfWeek]);
+  // Historical comparison (real data from DynamoDB)
+  const { data: historicalData } = useHistoricalComparison();
 
   // Load external data (sports, holidays)
   useEffect(() => {

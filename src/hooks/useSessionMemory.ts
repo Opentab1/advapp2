@@ -108,7 +108,6 @@ export function useSessionMemory(options: UseSessionMemoryOptions = {}): UseSess
 
   const storageKey = getStorageKey(venueId);
   const initialLoadRef = useRef(false);
-  const sessionStartRef = useRef(Date.now());
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -191,8 +190,8 @@ export function useSessionMemory(options: UseSessionMemoryOptions = {}): UseSess
     setWelcomeDismissed(true);
   }, []);
 
-  // Calculate delta between last session and now
-  const calculateDelta = useCallback((current: SessionSnapshot | null): SessionDelta | null => {
+  // Calculate delta between last session and now (reserved for future use)
+  const _calculateDelta = useCallback((current: SessionSnapshot | null): SessionDelta | null => {
     if (!lastSession || !current) return null;
 
     const timeSinceLastVisit = (Date.now() - lastSession.timestamp) / 60000; // minutes
