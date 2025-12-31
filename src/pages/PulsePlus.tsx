@@ -27,10 +27,18 @@ import {
   Users,
   Clock,
   Music,
-  X
+  X,
+  HelpCircle
 } from 'lucide-react';
 import { PulseRing } from '../components/PulseRing';
 import { usePulseScore } from '../hooks/usePulseScore';
+import { PulseExplainer } from '../components/PulseExplainer';
+import { 
+  ActionCelebration, 
+  ActionHistory, 
+  useActionTracking,
+  type CompletedAction 
+} from '../components/ActionFeedback';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
 import type { SportsGame, OccupancyMetrics } from '../types';
@@ -73,8 +81,22 @@ const OCCUPANCY_THRESHOLDS = {
 
 export function PulsePlus() {
   const [todayGames, setTodayGames] = useState<SportsGame[]>([]);
-  const [completedActions, setCompletedActions] = useState<Set<string>>(new Set());
+  const [completedActionIds, setCompletedActionIds] = useState<Set<string>>(new Set());
   const [activeDetail, setActiveDetail] = useState<'pulse' | 'dwell' | 'reputation' | 'occupancy' | null>(null);
+  
+  // Trust/Explainer modal state
+  const [showExplainer, setShowExplainer] = useState(false);
+  
+  // Feedback loop: action tracking with before/after snapshots
+  const { 
+    completedActions: actionHistory, 
+    createSnapshot, 
+    completeAction 
+  } = useActionTracking();
+  
+  // Celebration modal state
+  const [celebrationAction, setCelebrationAction] = useState<CompletedAction | null>(null);
+  const [showCelebration, setShowCelebration] = useState(false);
 
   // Use centralized pulse score hook
   const pulseData = usePulseScore({ enabled: true, pollingInterval: 30000 });
@@ -135,18 +157,51 @@ export function PulsePlus() {
     });
   }, [pulseData.hasData, currentDecibels, currentLight, occupancy, todayGames]);
 
+  // Create snapshots for new actions (feedback loop: track "before" values)
+  useEffect(() => {
+    actions.forEach(action => {
+      if (!completedActionIds.has(action.id)) {
+        createSnapshot(action.id, action.title, action.category, {
+          decibels: currentDecibels,
+          light: currentLight,
+          pulseScore: pulseScore,
+          occupancy: currentOccupancy,
+        });
+      }
+    });
+  }, [actions, completedActionIds, currentDecibels, currentLight, pulseScore, currentOccupancy, createSnapshot]);
+
   const handleRefresh = async () => {
     await refresh();
   };
 
+  // Feedback loop: complete action with before/after tracking
   const handleCompleteAction = (actionId: string) => {
-    setCompletedActions(prev => new Set([...prev, actionId]));
+    // Get current metrics for "after" comparison
+    const currentMetrics = {
+      decibels: currentDecibels,
+      light: currentLight,
+      pulseScore: pulseScore,
+      occupancy: currentOccupancy,
+    };
+    
+    // Complete and get the result with improvement data
+    const completed = completeAction(actionId, currentMetrics);
+    
+    // Mark as completed
+    setCompletedActionIds(prev => new Set([...prev, actionId]));
+    
+    // Show celebration with before/after comparison
+    if (completed) {
+      setCelebrationAction(completed);
+      setShowCelebration(true);
+    }
   };
 
   // Filter actions
-  const heroAction = actions.find(a => !completedActions.has(a.id));
-  const remainingActions = actions.filter(a => !completedActions.has(a.id) && a.id !== heroAction?.id);
-  const completedCount = completedActions.size;
+  const heroAction = actions.find(a => !completedActionIds.has(a.id));
+  const remainingActions = actions.filter(a => !completedActionIds.has(a.id) && a.id !== heroAction?.id);
+  const completedCount = completedActionIds.size;
 
   // External factors
   const upcomingHolidays = holidayService.getUpcomingHolidays(7);
@@ -192,7 +247,7 @@ export function PulsePlus() {
         animate={{ opacity: 1, y: 0 }}
       >
         {/* Main Pulse Score Ring */}
-        <div className="flex justify-center mb-4">
+        <div className="flex justify-center mb-4 relative">
           <PulseRing
             score={pulseScore}
             label="Pulse Score"
@@ -202,6 +257,17 @@ export function PulsePlus() {
             onClick={() => setActiveDetail('pulse')}
             showHint
           />
+          {/* Trust: "How is this calculated?" button */}
+          <motion.button
+            onClick={() => setShowExplainer(true)}
+            className="absolute top-0 right-4 sm:right-8 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-warm-100 hover:bg-warm-200 transition-colors text-warm-600 text-xs font-medium"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            title="Learn how Pulse Score works"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">How it works</span>
+          </motion.button>
         </div>
 
         {/* Three Supporting Rings */}
@@ -273,6 +339,11 @@ export function PulsePlus() {
             ))}
           </div>
         </motion.div>
+      )}
+
+      {/* ============ ACTION HISTORY (Feedback Loop) ============ */}
+      {actionHistory.length > 0 && (
+        <ActionHistory completedActions={actionHistory} />
       )}
 
       {/* ============ TONIGHT'S FACTORS ============ */}
@@ -375,6 +446,27 @@ export function PulsePlus() {
           />
         )}
       </AnimatePresence>
+
+      {/* ============ ACTION CELEBRATION (Feedback Loop) ============ */}
+      <ActionCelebration
+        isOpen={showCelebration}
+        onClose={() => {
+          setShowCelebration(false);
+          setCelebrationAction(null);
+        }}
+        action={celebrationAction}
+      />
+
+      {/* ============ PULSE EXPLAINER (Trust) ============ */}
+      <PulseExplainer
+        isOpen={showExplainer}
+        onClose={() => setShowExplainer(false)}
+        currentScore={pulseScore}
+        soundScore={soundScore}
+        lightScore={lightScore}
+        currentDecibels={currentDecibels}
+        currentLight={currentLight}
+      />
     </div>
   );
 }
