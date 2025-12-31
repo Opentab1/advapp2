@@ -26,7 +26,11 @@ import {
   Trophy,
   Calendar,
   Star,
-  RefreshCw
+  RefreshCw,
+  Users,
+  Clock,
+  Music,
+  Thermometer
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import apiService from '../services/api.service';
@@ -34,7 +38,7 @@ import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
 import venueSettingsService from '../services/venue-settings.service';
 import googleReviewsService, { GoogleReviewsData } from '../services/google-reviews.service';
-import type { SensorData, SportsGame } from '../types';
+import type { SensorData, SportsGame, OccupancyMetrics } from '../types';
 
 // ============ TYPES ============
 
