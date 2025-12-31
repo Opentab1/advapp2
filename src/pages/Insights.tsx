@@ -82,7 +82,7 @@ export function Insights({ hideRings = false }: InsightsProps) {
   const user = authService.getStoredUser();
   const venueId = user?.venueId || '';
   const venueName = user?.venueName || '';
-  const venueCapacity = user?.venueCapacity || 100;
+  const venueCapacity = 100; // Default capacity - could be fetched from venue settings
 
   const loadAllData = useCallback(async () => {
     if (!venueId) {

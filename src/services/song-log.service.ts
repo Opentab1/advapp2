@@ -405,7 +405,7 @@ class SongLogService {
       
       // Cache the results
       this.dynamoDBSongs = songs;
-      this.lastDynamoDBFetch = now;
+      this.lastDynamoDBFetch = Date.now();
       
       return songs;
     } catch (error) {

@@ -540,7 +540,7 @@ class DynamoDBService {
           return {
             data: [],
             venueId,
-            range,
+            range: range as TimeRange,
             message: 'No sensor data has been collected yet. Please ensure your IoT device is configured and publishing data.'
           };
         }
@@ -555,7 +555,7 @@ class DynamoDBService {
         return {
           data: transformedData,
           venueId,
-          range,
+          range: range as TimeRange,
           message: `No recent data available. Showing ${expandedItems.length} historical data points. Device may be offline.`
         };
       }
@@ -575,7 +575,7 @@ class DynamoDBService {
       const result: HistoricalData = {
         data: transformedData,
         venueId,
-        range
+        range: range as TimeRange
       };
       
       // ============================================

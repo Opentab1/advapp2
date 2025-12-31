@@ -233,7 +233,7 @@ class ApiService {
       });
 
       console.log('✅ Venue created successfully:', result);
-      return result.data.createVenue;
+      return (result as { data: { createVenue: any } }).data.createVenue;
     } catch (error: any) {
       console.error('❌ Create venue failed:', error);
       console.error('❌ Error type:', typeof error);

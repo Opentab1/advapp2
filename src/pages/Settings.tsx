@@ -88,9 +88,11 @@ export function Settings() {
       }
       
       // Set settings from DynamoDB (with user's venue info)
+      // Filter 'auto' theme to 'light' since AppSettings only supports 'light' | 'dark'
+      const theme = userSettings.theme === 'auto' ? 'light' : userSettings.theme;
       setSettings({
         ...DEFAULT_SETTINGS,
-        theme: userSettings.theme,
+        theme,
         soundAlerts: userSettings.soundAlerts,
         refreshInterval: userSettings.refreshInterval,
         notifications: userSettings.notifications,
@@ -771,6 +773,8 @@ export function Settings() {
               </motion.button>
             </div>
           </motion.div>
+            </>
+          )}
 
           {/* About Tab */}
           {activeTab === 'about' && (
@@ -810,9 +814,6 @@ export function Settings() {
                 </div>
               </div>
             </motion.div>
-          )}
-
-            </>
           )}
 
           {/* Save Button for Integrations */}

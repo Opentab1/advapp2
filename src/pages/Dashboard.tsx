@@ -33,6 +33,7 @@ import { Reports } from './Reports';
 import { Support } from './Support';
 import { Insights } from './Insights';
 import { PulsePlus } from './PulsePlus';
+import { AdminPortal } from './admin/AdminPortal';
 import { ScoreRings } from '../components/ScoreRings';
 import { LiveContext } from '../components/LiveContext';
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
@@ -565,7 +566,7 @@ export function Dashboard() {
   }
 
   // If admin user, show admin portal instead
-  if (isAdmin) {
+  if (isAdmin && user) {
     return (
       <>
         {/* Terms of Service Modal - admins can skip */}
@@ -573,7 +574,7 @@ export function Dashboard() {
           <TermsModal 
             onAccept={handleAcceptTerms}
             onSkip={handleSkipTerms}
-            userEmail={user?.email || 'User'}
+            userEmail={(user as { email?: string }).email || 'User'}
           />
         )}
         <AdminPortal />
@@ -807,7 +808,7 @@ export function Dashboard() {
                         </p>
                       </div>
                       <button
-                        onClick={timeRange === 'live' ? refetch : () => loadHistoricalData(timeRange)}
+                        onClick={() => loadHistoricalData(timeRange)}
                         className="btn-primary px-4 py-2"
                       >
                         Retry
