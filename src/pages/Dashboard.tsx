@@ -16,8 +16,6 @@ import { TopBar } from '../components/TopBar';
 import { Sidebar } from '../components/Sidebar';
 import { AnimatedBackground } from '../components/AnimatedBackground';
 import { MetricCard } from '../components/MetricCard';
-// ComfortGauge removed
-// ComfortBreakdownCard removed
 import { PulseScoreLive } from '../components/PulseScoreLive';
 import { SportsWidget } from '../components/SportsWidget';
 import { DataChart } from '../components/DataChart';
@@ -28,6 +26,7 @@ import { ErrorMessage } from '../components/ErrorMessage';
 import { ConnectionStatus } from '../components/ConnectionStatus';
 import { TermsModal, hasAcceptedTerms } from '../components/TermsModal';
 import { DemoModeBanner } from '../components/DemoModeBanner';
+import { LiveView } from '../components/LiveView';
 import { Settings } from './Settings';
 import { SongLog } from './SongLog';
 import { Reports } from './Reports';
@@ -35,7 +34,6 @@ import { Support } from './Support';
 import { Insights } from './Insights';
 import { ScoreRings } from '../components/ScoreRings';
 import { LiveContext } from '../components/LiveContext';
-// Insights tab removed
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -54,6 +52,9 @@ import userSettingsService from '../services/user-settings.service';
 import { isDemoAccount } from '../utils/demoData';
 import { preloadHistoricalData } from '../services/dynamodb.service';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location } from '../types';
+
+// Feature flag: Use new staged loading for Live view
+const USE_STAGED_LOADING = true;
 
 export function Dashboard() {
   const [user, setUser] = useState(authService.getStoredUser());
@@ -495,6 +496,7 @@ export function Dashboard() {
           '6h': 6,
           '24h': 24,
           '7d': 7 * 24,
+          '14d': 14 * 24,
           '30d': 30 * 24,
           '90d': 90 * 24,
           'live': 2 // fallback
@@ -682,8 +684,17 @@ export function Dashboard() {
         {/* Main Content */}
         <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto pb-24 lg:pb-8">
           {activeTab === 'live' ? (
+            USE_STAGED_LOADING ? (
+              /* NEW: Staged loading LiveView - loads hero first, then everything else */
+              <LiveView
+                venueId={venueId}
+                venueName={venueName}
+                currentLocation={currentLocation}
+                onExport={(data) => apiService.exportToCSV(data, true, venueName)}
+              />
+            ) : (
             <>
-              {/* Time Range Selector */}
+              {/* LEGACY: Time Range Selector */}
               <motion.div
                 className="mb-6"
                 initial={{ opacity: 0, y: -20 }}
@@ -1233,6 +1244,7 @@ export function Dashboard() {
                 </>
               )}
             </>
+            )
           ) : activeTab === 'songs' ? (
             <SongLog />
           ) : activeTab === 'reports' ? (
