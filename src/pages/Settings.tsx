@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Save, Key, MapPin, DollarSign, Check, Building2, Trash2, AlertTriangle,
-  User, Bell, Settings as SettingsIcon, Info, Mail, Phone, Globe, CloudSun
+  User, Bell, Settings as SettingsIcon, Info, Mail, Phone, Globe, CloudSun,
+  Users, Clock, TrendingUp
 } from 'lucide-react';
 import type { AppSettings } from '../types';
 import authService from '../services/auth.service';
@@ -15,6 +16,21 @@ import themeService from '../services/theme.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { AddressSettings } from '../components/AddressSettings';
+
+// Revenue settings for Reports calculations
+interface RevenueSettings {
+  avgSpendPerCustomer: number;
+  venueCapacity: number;
+  operatingHoursStart: number;
+  operatingHoursEnd: number;
+}
+
+const DEFAULT_REVENUE_SETTINGS: RevenueSettings = {
+  avgSpendPerCustomer: 25,
+  venueCapacity: 150,
+  operatingHoursStart: 17,
+  operatingHoursEnd: 2,
+};
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'light',
@@ -32,9 +48,11 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
   const [cacheCleared, setCacheCleared] = useState(false);
   const [toastRestaurantGuid, setToastRestaurantGuid] = useState('');
-  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'notifications' | 'preferences' | 'integrations' | 'about'>('account');
+  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'revenue' | 'notifications' | 'preferences' | 'integrations' | 'about'>('account');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [savedAddress, setSavedAddress] = useState<VenueAddress | null>(null);
+  const [revenueSettings, setRevenueSettings] = useState<RevenueSettings>(DEFAULT_REVENUE_SETTINGS);
+  const [revenueSaved, setRevenueSaved] = useState(false);
   const user = authService.getStoredUser();
 
   useEffect(() => {
@@ -43,6 +61,15 @@ export function Settings() {
     if (user?.venueId) {
       const address = venueSettingsService.getAddress(user.venueId);
       setSavedAddress(address);
+    }
+    // Load revenue settings
+    try {
+      const savedRevenue = localStorage.getItem('pulse_revenue_settings');
+      if (savedRevenue) {
+        setRevenueSettings({ ...DEFAULT_REVENUE_SETTINGS, ...JSON.parse(savedRevenue) });
+      }
+    } catch (e) {
+      console.error('Error loading revenue settings:', e);
     }
   }, []);
 
@@ -129,6 +156,7 @@ export function Settings() {
           {[
             { id: 'account' as const, label: 'Account', icon: User },
             { id: 'venue' as const, label: 'Venue', icon: MapPin },
+            { id: 'revenue' as const, label: 'Revenue', icon: TrendingUp },
             { id: 'notifications' as const, label: 'Notifications', icon: Bell },
             { id: 'preferences' as const, label: 'Preferences', icon: SettingsIcon },
             { id: 'integrations' as const, label: 'Integrations', icon: DollarSign },
@@ -288,6 +316,150 @@ export function Settings() {
                     Venue information is managed by your system administrator. Contact support to make changes.
                   </p>
                 </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Revenue Tab */}
+          {activeTab === 'revenue' && (
+            <motion.div
+              className="glass-card p-6"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <TrendingUp className="w-5 h-5 text-cyan" />
+                <h3 className="text-xl font-semibold text-white">Revenue Settings</h3>
+              </div>
+              <p className="text-sm text-gray-400 mb-6">
+                Configure these settings to enable accurate revenue estimates in your Reports dashboard.
+                All calculations are done locally - this data stays on your device.
+              </p>
+
+              <div className="space-y-6">
+                {/* Average Spend Per Customer */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    <DollarSign className="w-4 h-4 inline mr-2" />
+                    Average Spend Per Customer ($)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="500"
+                    value={revenueSettings.avgSpendPerCustomer}
+                    onChange={(e) => setRevenueSettings({ 
+                      ...revenueSettings, 
+                      avgSpendPerCustomer: parseInt(e.target.value) || 25 
+                    })}
+                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 transition-all text-white"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Average amount a customer spends per visit (food, drinks, etc.)
+                  </p>
+                </div>
+
+                {/* Venue Capacity */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    <Users className="w-4 h-4 inline mr-2" />
+                    Venue Capacity
+                  </label>
+                  <input
+                    type="number"
+                    min="10"
+                    max="5000"
+                    value={revenueSettings.venueCapacity}
+                    onChange={(e) => setRevenueSettings({ 
+                      ...revenueSettings, 
+                      venueCapacity: parseInt(e.target.value) || 150 
+                    })}
+                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 transition-all text-white"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Maximum number of people your venue can hold
+                  </p>
+                </div>
+
+                {/* Operating Hours */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      <Clock className="w-4 h-4 inline mr-2" />
+                      Opening Hour
+                    </label>
+                    <select
+                      value={revenueSettings.operatingHoursStart}
+                      onChange={(e) => setRevenueSettings({ 
+                        ...revenueSettings, 
+                        operatingHoursStart: parseInt(e.target.value) 
+                      })}
+                      className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                    >
+                      {Array.from({ length: 24 }, (_, i) => (
+                        <option key={i} value={i}>
+                          {i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      <Clock className="w-4 h-4 inline mr-2" />
+                      Closing Hour
+                    </label>
+                    <select
+                      value={revenueSettings.operatingHoursEnd}
+                      onChange={(e) => setRevenueSettings({ 
+                        ...revenueSettings, 
+                        operatingHoursEnd: parseInt(e.target.value) 
+                      })}
+                      className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                    >
+                      {Array.from({ length: 24 }, (_, i) => (
+                        <option key={i} value={i}>
+                          {i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Example Calculation */}
+                <div className="p-4 bg-cyan/5 border border-cyan/20 rounded-lg">
+                  <p className="text-sm text-cyan-300">
+                    <strong>Example:</strong> With ${revenueSettings.avgSpendPerCustomer} avg spend and {revenueSettings.venueCapacity} capacity, 
+                    a full house = ${(revenueSettings.avgSpendPerCustomer * revenueSettings.venueCapacity).toLocaleString()} potential revenue
+                  </p>
+                </div>
+
+                {/* Save Button */}
+                <motion.button
+                  onClick={() => {
+                    try {
+                      localStorage.setItem('pulse_revenue_settings', JSON.stringify(revenueSettings));
+                      setRevenueSaved(true);
+                      setTimeout(() => setRevenueSaved(false), 3000);
+                    } catch (e) {
+                      console.error('Error saving revenue settings:', e);
+                    }
+                  }}
+                  className="w-full btn-primary flex items-center justify-center gap-2"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  {revenueSaved ? (
+                    <>
+                      <Check className="w-5 h-5" />
+                      Saved!
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-5 h-5" />
+                      Save Revenue Settings
+                    </>
+                  )}
+                </motion.button>
               </div>
             </motion.div>
           )}
