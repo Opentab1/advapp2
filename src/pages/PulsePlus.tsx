@@ -45,7 +45,7 @@ import type { SensorData, SportsGame, OccupancyMetrics } from '../types';
 interface PulseAction {
   id: string;
   priority: 'critical' | 'high' | 'medium' | 'low';
-  category: 'sound' | 'light' | 'occupancy' | 'general';
+  category: 'sound' | 'light' | 'occupancy' | 'timing' | 'general';
   title: string;
   description: string;
   impact: string;
@@ -54,10 +54,38 @@ interface PulseAction {
   icon: typeof Volume2;
 }
 
+interface ActionContext {
+  sensorData: SensorData;
+  occupancy?: OccupancyMetrics;
+  currentHour: number;
+  dayOfWeek: number; // 0 = Sunday
+  hasUpcomingGames: boolean;
+  isHolidayWeek: boolean;
+}
+
 // Optimal ranges (same as ScoreRings)
 const OPTIMAL_RANGES = {
   sound: { min: 70, max: 82, unit: 'dB' },
   light: { min: 50, max: 350, unit: 'lux' },
+  temperature: { min: 68, max: 74, unit: '°F' },
+};
+
+// Time periods for bars
+const TIME_PERIODS = {
+  prePeak: { start: 16, end: 19 },    // 4pm - 7pm
+  peak: { start: 19, end: 23 },        // 7pm - 11pm
+  latePeak: { start: 23, end: 2 },     // 11pm - 2am
+  closing: { start: 2, end: 4 },       // 2am - 4am
+  daytime: { start: 11, end: 16 },     // 11am - 4pm
+};
+
+// Occupancy thresholds (as % of capacity)
+const OCCUPANCY_THRESHOLDS = {
+  empty: 10,
+  slow: 30,
+  moderate: 50,
+  busy: 75,
+  packed: 90,
 };
 
 // ============ MAIN COMPONENT ============
@@ -66,6 +94,7 @@ export function PulsePlus() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sensorData, setSensorData] = useState<SensorData | null>(null);
+  const [occupancy, setOccupancy] = useState<OccupancyMetrics | null>(null);
   const [actions, setActions] = useState<PulseAction[]>([]);
   const [todayGames, setTodayGames] = useState<SportsGame[]>([]);
   const [reviews, setReviews] = useState<GoogleReviewsData | null>(null);
@@ -83,8 +112,9 @@ export function PulsePlus() {
     }
 
     try {
-      const [liveData, games, reviewsData] = await Promise.allSettled([
+      const [liveData, occupancyData, games, reviewsData] = await Promise.allSettled([
         apiService.getLiveData(venueId),
+        apiService.getOccupancyMetrics(venueId),
         sportsService.getGames(),
         googleReviewsService.getReviews(
           venueName, 
@@ -93,16 +123,44 @@ export function PulsePlus() {
         ),
       ]);
 
-      if (liveData.status === 'fulfilled') {
-        setSensorData(liveData.value);
-        setActions(generateActions(liveData.value));
-      }
-
+      const now = new Date();
+      const upcomingHolidays = holidayService.getUpcomingHolidays(7);
+      
+      // Get games for today
+      let todaysGames: SportsGame[] = [];
       if (games.status === 'fulfilled') {
         const today = new Date().toDateString();
-        setTodayGames(games.value.filter(g => 
+        todaysGames = games.value.filter(g => 
           new Date(g.startTime).toDateString() === today
-        ));
+        );
+        setTodayGames(todaysGames);
+      }
+
+      // Get occupancy
+      let currentOccupancy: OccupancyMetrics | undefined;
+      if (occupancyData.status === 'fulfilled') {
+        currentOccupancy = occupancyData.value;
+        setOccupancy(occupancyData.value);
+      }
+
+      if (liveData.status === 'fulfilled') {
+        setSensorData(liveData.value);
+        
+        // Build full context for action generation
+        const context: ActionContext = {
+          sensorData: liveData.value,
+          occupancy: currentOccupancy,
+          currentHour: now.getHours(),
+          dayOfWeek: now.getDay(),
+          hasUpcomingGames: todaysGames.some(g => {
+            const gameTime = new Date(g.startTime);
+            const hoursUntil = (gameTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+            return hoursUntil > 0 && hoursUntil < 4; // Game within 4 hours
+          }),
+          isHolidayWeek: upcomingHolidays.length > 0,
+        };
+        
+        setActions(generateActions(context));
       }
 
       if (reviewsData.status === 'fulfilled' && reviewsData.value) {
@@ -187,26 +245,7 @@ export function PulsePlus() {
           />
         </motion.div>
       ) : (
-        <motion.div
-          className="mb-6 p-8 rounded-2xl bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200"
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-        >
-          <div className="flex flex-col items-center text-center">
-            <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-4">
-              <CheckCircle className="w-8 h-8 text-green-600" />
-            </div>
-            <h3 className="text-xl font-bold text-green-800 mb-2">You're All Set! 🎉</h3>
-            <p className="text-green-700">
-              Your venue is perfectly optimized. No actions needed right now.
-            </p>
-            {completedCount > 0 && (
-              <p className="text-sm text-green-600 mt-2">
-                You completed {completedCount} action{completedCount > 1 ? 's' : ''} this session
-              </p>
-            )}
-          </div>
-        </motion.div>
+        <AllSetCelebration completedCount={completedCount} currentHour={new Date().getHours()} />
       )}
 
       {/* ============ ACTION QUEUE ============ */}
@@ -261,6 +300,25 @@ export function PulsePlus() {
               optimal={`${OPTIMAL_RANGES.light.min}-${OPTIMAL_RANGES.light.max}`}
             />
           </div>
+          {/* Occupancy row */}
+          {occupancy && (
+            <div className="mt-3 p-4 rounded-xl bg-warm-50 border border-warm-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-warm-600" />
+                  <span className="text-sm text-warm-600">Current Crowd</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-lg font-bold text-warm-800">{occupancy.current}</span>
+                  <span className="text-sm text-warm-500 ml-1">people</span>
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-2 text-xs text-warm-500">
+                <span>Today: {occupancy.todayTotal} entries</span>
+                <span>7d avg: {occupancy.sevenDayAvg?.toFixed(0) || '--'}/day</span>
+              </div>
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -565,85 +623,353 @@ function FactorCard({ icon: Icon, iconColor, iconBg, title, subtitle, impact }: 
   );
 }
 
+// ============ ALL SET CELEBRATION COMPONENT ============
+
+function AllSetCelebration({ completedCount, currentHour }: { completedCount: number; currentHour: number }) {
+  // Different messages based on time of day
+  const getMessage = () => {
+    if (completedCount >= 3) {
+      return {
+        title: "You're Crushing It! 💪",
+        subtitle: `${completedCount} actions completed — your venue is dialed in perfectly.`,
+        emoji: "🏆",
+      };
+    }
+    if (currentHour >= 19 && currentHour < 23) {
+      return {
+        title: "Peak Performance! 🔥",
+        subtitle: "Everything's optimized for tonight's rush. You got this.",
+        emoji: "⚡",
+      };
+    }
+    if (currentHour >= 16 && currentHour < 19) {
+      return {
+        title: "Ready for Tonight! ✨",
+        subtitle: "You're set up for success. Enjoy the calm before the storm.",
+        emoji: "🌅",
+      };
+    }
+    if (currentHour >= 23 || currentHour < 2) {
+      return {
+        title: "Smooth Sailing! 🌙",
+        subtitle: "Late night vibes are perfect. Keep the energy flowing.",
+        emoji: "✨",
+      };
+    }
+    return {
+      title: "All Dialed In! 🎯",
+      subtitle: "Your venue is perfectly optimized. No actions needed right now.",
+      emoji: "👌",
+    };
+  };
+
+  const { title, subtitle, emoji } = getMessage();
+
+  return (
+    <motion.div
+      className="mb-6 relative overflow-hidden rounded-2xl"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+    >
+      {/* Animated gradient background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-green-400 via-emerald-500 to-teal-500 opacity-90" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.2),transparent_50%)]" />
+      
+      {/* Content */}
+      <div className="relative p-8">
+        <div className="flex flex-col items-center text-center">
+          {/* Big emoji with glow effect */}
+          <motion.div 
+            className="text-6xl mb-4"
+            animate={{ 
+              scale: [1, 1.1, 1],
+              rotate: [0, 5, -5, 0],
+            }}
+            transition={{ 
+              duration: 2, 
+              repeat: Infinity, 
+              repeatType: "reverse" 
+            }}
+          >
+            {emoji}
+          </motion.div>
+          
+          <h3 className="text-2xl font-bold text-white mb-2 drop-shadow-lg">
+            {title}
+          </h3>
+          <p className="text-white/90 text-lg max-w-xs">
+            {subtitle}
+          </p>
+          
+          {/* Stats row */}
+          {completedCount > 0 && (
+            <motion.div 
+              className="mt-6 flex items-center gap-2 px-4 py-2 rounded-full bg-white/20 backdrop-blur-sm"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+            >
+              <CheckCircle className="w-4 h-4 text-white" />
+              <span className="text-white font-medium">
+                {completedCount} action{completedCount > 1 ? 's' : ''} completed
+              </span>
+            </motion.div>
+          )}
+          
+          {/* Motivational tag */}
+          <motion.p 
+            className="mt-4 text-sm text-white/70 italic"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+          >
+            "The best bars don't just react — they anticipate."
+          </motion.p>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 // ============ HELPER FUNCTIONS ============
 
-function generateActions(data: SensorData): PulseAction[] {
+function generateActions(context: ActionContext): PulseAction[] {
+  const { sensorData, occupancy, currentHour, dayOfWeek, hasUpcomingGames, isHolidayWeek } = context;
   const actions: PulseAction[] = [];
   
-  // Check sound
-  if (data.decibels !== undefined) {
-    if (data.decibels > OPTIMAL_RANGES.sound.max) {
-      const diff = data.decibels - OPTIMAL_RANGES.sound.max;
+  // Determine current time period
+  const isPeakHours = currentHour >= TIME_PERIODS.peak.start && currentHour < TIME_PERIODS.peak.end;
+  const isPrePeak = currentHour >= TIME_PERIODS.prePeak.start && currentHour < TIME_PERIODS.prePeak.end;
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
+  
+  // Calculate occupancy percentage (use peakOccupancy as rough capacity estimate, or default to 100)
+  const estimatedCapacity = occupancy?.peakOccupancy ? Math.max(occupancy.peakOccupancy * 1.2, 50) : 100;
+  const occupancyPercent = occupancy?.current !== undefined 
+    ? (occupancy.current / estimatedCapacity) * 100 
+    : null;
+  
+  // ============ SOUND ACTIONS ============
+  if (sensorData.decibels !== undefined) {
+    const db = sensorData.decibels;
+    
+    if (db > OPTIMAL_RANGES.sound.max) {
+      const diff = db - OPTIMAL_RANGES.sound.max;
+      
+      // Priority escalates based on: how far off + peak hours + packed venue
+      let priority: PulseAction['priority'] = 'medium';
+      if (diff > 12) priority = 'critical';
+      else if (diff > 8 || (diff > 5 && isPeakHours)) priority = 'high';
+      else if (diff > 5) priority = 'medium';
+      
+      // Extra escalation if it's been loud AND packed (hearing damage + guests leaving)
+      if (priority !== 'critical' && occupancyPercent && occupancyPercent > OCCUPANCY_THRESHOLDS.packed) {
+        priority = priority === 'high' ? 'critical' : 'high';
+      }
+      
       actions.push({
         id: 'sound-high',
-        priority: diff > 10 ? 'critical' : diff > 5 ? 'high' : 'medium',
+        priority,
         category: 'sound',
-        title: 'Turn Down the Music',
-        description: `Sound level is ${Math.round(diff)} dB above optimal. This makes conversation difficult.`,
-        impact: 'Guests stay longer when they can talk comfortably',
-        currentValue: `${data.decibels.toFixed(0)} dB`,
+        title: diff > 10 ? '🔊 Music is Too Loud' : 'Turn Down the Volume',
+        description: diff > 10 
+          ? `At ${Math.round(db)} dB, guests can't hear each other. This drives people away.`
+          : `Sound is ${Math.round(diff)} dB above the sweet spot. Dial it back a notch.`,
+        impact: diff > 10 
+          ? 'Reducing noise by 5-10 dB can add 15+ mins to average stay time'
+          : 'Comfortable conversation = more rounds ordered',
+        currentValue: `${db.toFixed(0)} dB`,
         targetValue: `${OPTIMAL_RANGES.sound.max} dB`,
         icon: Volume2,
       });
-    } else if (data.decibels < OPTIMAL_RANGES.sound.min) {
-      const diff = OPTIMAL_RANGES.sound.min - data.decibels;
+    } else if (db < OPTIMAL_RANGES.sound.min) {
+      const diff = OPTIMAL_RANGES.sound.min - db;
+      
+      // Low sound is less critical, but matters more during peak
+      let priority: PulseAction['priority'] = diff > 20 ? 'high' : 'medium';
+      if (isPeakHours && diff > 10) priority = 'high';
+      
       actions.push({
         id: 'sound-low',
-        priority: diff > 15 ? 'high' : 'medium',
+        priority,
         category: 'sound',
-        title: 'Turn Up the Energy',
-        description: `It's quieter than usual. A bit more volume creates better atmosphere.`,
-        impact: 'Optimal sound levels increase energy and engagement',
-        currentValue: `${data.decibels.toFixed(0)} dB`,
+        title: 'Pump Up the Energy',
+        description: isPeakHours 
+          ? `It's peak hours but the energy feels flat. Turn up the music to match the vibe.`
+          : `A bit quiet in here. Some background music helps fill the space.`,
+        impact: 'The right energy level makes guests feel like they are part of something',
+        currentValue: `${db.toFixed(0)} dB`,
         targetValue: `${OPTIMAL_RANGES.sound.min} dB`,
-        icon: Volume2,
+        icon: Music,
       });
     }
   }
   
-  // Check light
-  if (data.light !== undefined) {
-    if (data.light > OPTIMAL_RANGES.light.max) {
+  // ============ LIGHTING ACTIONS ============
+  if (sensorData.light !== undefined) {
+    const lux = sensorData.light;
+    
+    if (lux > OPTIMAL_RANGES.light.max) {
+      const diff = lux - OPTIMAL_RANGES.light.max;
+      // Bright lights are worse during evening/night
+      let priority: PulseAction['priority'] = 'medium';
+      if (currentHour >= 19 && diff > 100) priority = 'high';
+      
       actions.push({
         id: 'light-high',
-        priority: 'medium',
+        priority,
         category: 'light',
         title: 'Dim the Lights',
-        description: `Lighting is brighter than optimal for a bar atmosphere.`,
-        impact: 'Dimmer lighting creates intimacy and encourages longer stays',
-        currentValue: `${data.light.toFixed(0)} lux`,
+        description: currentHour >= 19
+          ? `Evening vibes need softer lighting. It's brighter than a coffee shop in here.`
+          : `Lighting is harsher than optimal. Softer light = more relaxed guests.`,
+        impact: 'Dimmer evening lighting increases average tab by 12%',
+        currentValue: `${lux.toFixed(0)} lux`,
         targetValue: `${OPTIMAL_RANGES.light.max} lux`,
         icon: Sun,
       });
-    } else if (data.light < OPTIMAL_RANGES.light.min) {
+    } else if (lux < OPTIMAL_RANGES.light.min) {
       actions.push({
         id: 'light-low',
         priority: 'medium',
         category: 'light',
-        title: 'Brighten Up',
-        description: `It's darker than optimal. Guests need to see menus and each other.`,
-        impact: 'Proper lighting improves comfort and order frequency',
-        currentValue: `${data.light.toFixed(0)} lux`,
+        title: 'Brighten Up a Bit',
+        description: `It's a little too dark — guests should be able to read menus and see each other.`,
+        impact: 'Proper visibility increases comfort and order frequency',
+        currentValue: `${lux.toFixed(0)} lux`,
         targetValue: `${OPTIMAL_RANGES.light.min} lux`,
         icon: Sun,
       });
     }
   }
   
-  // If everything is optimal, add a positive action
-  if (actions.length === 0) {
+  // ============ TEMPERATURE ACTIONS ============
+  if (sensorData.indoorTemp !== undefined) {
+    const temp = sensorData.indoorTemp;
+    
+    if (temp > OPTIMAL_RANGES.temperature.max) {
+      const diff = temp - OPTIMAL_RANGES.temperature.max;
+      let priority: PulseAction['priority'] = diff > 6 ? 'high' : 'medium';
+      // Escalate if packed
+      if (occupancyPercent && occupancyPercent > OCCUPANCY_THRESHOLDS.busy) {
+        priority = diff > 4 ? 'critical' : 'high';
+      }
+      
+      actions.push({
+        id: 'temp-high',
+        priority,
+        category: 'general',
+        title: '🌡️ Cool It Down',
+        description: occupancyPercent && occupancyPercent > OCCUPANCY_THRESHOLDS.busy
+          ? `It's ${Math.round(temp)}°F and packed. Body heat adds up fast — crank the AC.`
+          : `Getting warm at ${Math.round(temp)}°F. Uncomfortable guests leave sooner.`,
+        impact: 'Every degree above 74°F reduces average stay by 8 minutes',
+        currentValue: `${temp.toFixed(0)}°F`,
+        targetValue: `${OPTIMAL_RANGES.temperature.max}°F`,
+        icon: Thermometer,
+      });
+    } else if (temp < OPTIMAL_RANGES.temperature.min) {
+      actions.push({
+        id: 'temp-low',
+        priority: 'medium',
+        category: 'general',
+        title: 'Warm It Up',
+        description: `At ${Math.round(temp)}°F, guests might be reaching for their jackets.`,
+        impact: 'Comfortable temperature keeps guests relaxed and ordering',
+        currentValue: `${temp.toFixed(0)}°F`,
+        targetValue: `${OPTIMAL_RANGES.temperature.min}°F`,
+        icon: Thermometer,
+      });
+    }
+  }
+  
+  // ============ OCCUPANCY-BASED ACTIONS ============
+  if (occupancyPercent !== null) {
+    // Slow night during peak hours
+    if (isPeakHours && occupancyPercent < OCCUPANCY_THRESHOLDS.slow && isWeekend) {
+      actions.push({
+        id: 'occupancy-slow-weekend',
+        priority: 'medium',
+        category: 'occupancy',
+        title: 'Slow for a Weekend',
+        description: `Only ${Math.round(occupancyPercent)}% capacity on a ${dayOfWeek === 5 ? 'Friday' : dayOfWeek === 6 ? 'Saturday' : 'Sunday'}. Consider a social post or text to regulars.`,
+        impact: 'A quick promo can turn a slow night around in 30 minutes',
+        currentValue: `${Math.round(occupancyPercent)}%`,
+        targetValue: `${OCCUPANCY_THRESHOLDS.moderate}%+`,
+        icon: Users,
+      });
+    }
+    
+    // Getting packed - prep for rush
+    if (occupancyPercent >= OCCUPANCY_THRESHOLDS.busy && occupancyPercent < OCCUPANCY_THRESHOLDS.packed) {
+      actions.push({
+        id: 'occupancy-busy',
+        priority: 'low',
+        category: 'occupancy',
+        title: 'Getting Busy — Stay Sharp',
+        description: `${Math.round(occupancyPercent)}% capacity. Make sure bar is stocked, restrooms checked, and staff is heads-up.`,
+        impact: 'Prepared teams turn busy nights into record nights',
+        icon: Users,
+      });
+    }
+    
+    // Packed house
+    if (occupancyPercent >= OCCUPANCY_THRESHOLDS.packed) {
+      actions.push({
+        id: 'occupancy-packed',
+        priority: 'high',
+        category: 'occupancy',
+        title: '🔥 House is Packed!',
+        description: `${Math.round(occupancyPercent)}% capacity — great problem to have! Watch the door, keep service fast.`,
+        impact: 'Fast service during rushes = higher tips and return visits',
+        icon: Users,
+      });
+    }
+  }
+  
+  // ============ TIME-OF-DAY ACTIONS ============
+  
+  // Pre-peak prep (4-7pm)
+  if (isPrePeak && actions.length < 2) {
     actions.push({
-      id: 'all-optimal',
+      id: 'timing-prepeak',
       priority: 'low',
-      category: 'general',
-      title: 'Maintain Current Settings',
-      description: 'Your venue is perfectly dialed in. Keep it steady!',
-      impact: 'Consistency builds customer trust and comfort',
-      icon: CheckCircle,
+      category: 'timing',
+      title: '⏰ Pre-Peak Prep Time',
+      description: hasUpcomingGames 
+        ? 'Game coming up! Check TVs, stock the bar, brief the team.'
+        : 'Rush hour approaching. Good time to restock, check bathrooms, and get set.',
+      impact: 'Prepared venues handle rushes 40% smoother',
+      icon: Clock,
     });
   }
   
-  // Sort by priority
+  // Game day reminder
+  if (hasUpcomingGames && !actions.some(a => a.id.includes('game'))) {
+    actions.push({
+      id: 'timing-gameday',
+      priority: 'high',
+      category: 'timing',
+      title: '🏈 Game Starting Soon',
+      description: 'Expect a rush 30 minutes before kickoff. All TVs on? Sound ready? Staff prepped?',
+      impact: 'Game crowds order 2x faster — be ready or lose sales',
+      icon: Trophy,
+    });
+  }
+  
+  // Holiday week prep
+  if (isHolidayWeek && isPrePeak && !actions.some(a => a.id.includes('holiday'))) {
+    actions.push({
+      id: 'timing-holiday',
+      priority: 'low',
+      category: 'timing',
+      title: '🎉 Holiday Week',
+      description: 'Expect higher traffic than usual. Consider extending happy hour or adding staff.',
+      impact: 'Holiday weeks drive 25%+ more traffic',
+      icon: Calendar,
+    });
+  }
+  
+  // ============ SORT BY PRIORITY ============
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
   actions.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
   
