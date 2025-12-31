@@ -42,6 +42,10 @@ import {
 import { DataFreshnessIndicator, SensorHealthBanner } from '../components/DataFreshness';
 import { WelcomeBack } from '../components/WelcomeBack';
 import { useSessionMemory, calculateSessionDelta } from '../hooks/useSessionMemory';
+import { useTimeContext, useMetricAttribution } from '../hooks/useTimeContext';
+import { TimeContextBadge, PeriodIndicator } from '../components/TimeContext';
+import { WhatChanged, ScoreBreakdown } from '../components/Attribution';
+import { HistoricalComparison, DayComparisonBanner, generateMockHistoricalData } from '../components/HistoricalComparison';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
 import type { SportsGame, OccupancyMetrics } from '../types';
@@ -178,6 +182,28 @@ export function PulsePlus() {
       clearInterval(periodicSaveInterval);
     };
   }, [loading, pulseScore, currentDecibels, currentLight, currentOccupancy, saveCurrentSession]);
+
+  // Time context for expectations (addresses "Is 72 good or bad RIGHT NOW?")
+  const { dayOfWeek, dayName, scoreContext, expectation } = useTimeContext(pulseScore);
+
+  // Metric attribution for anomaly detection (addresses "What caused this?")
+  const { anomalies, primaryAnomaly, recordMetrics, clearAnomalies } = useMetricAttribution();
+
+  // Record metrics for attribution tracking
+  useEffect(() => {
+    if (loading || pulseScore === null) return;
+    recordMetrics({
+      decibels: currentDecibels,
+      light: currentLight,
+      pulseScore,
+      occupancy: currentOccupancy,
+    });
+  }, [loading, pulseScore, currentDecibels, currentLight, currentOccupancy, recordMetrics]);
+
+  // Historical comparison (mock data for now - would come from API)
+  const historicalData = useMemo(() => {
+    return generateMockHistoricalData(dayOfWeek);
+  }, [dayOfWeek]);
 
   // Load external data (sports, holidays)
   useEffect(() => {
@@ -319,6 +345,35 @@ export function PulsePlus() {
         />
       )}
 
+      {/* ============ TIME CONTEXT & HISTORICAL COMPARISON ============ */}
+      {!showWelcomeBack && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-4 space-y-2"
+        >
+          {/* Period indicator + Day comparison */}
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <PeriodIndicator
+              currentPeriod={scoreContext.currentPeriod}
+              intensity={expectation.intensity}
+              nextPeriodIn={scoreContext.nextPeriodIn}
+              nextPeriodName={scoreContext.nextPeriodName}
+            />
+            <DayComparisonBanner
+              dayName={dayName}
+              currentPulse={pulseScore}
+              lastWeekPulse={historicalData?.lastWeekPulseAvg ?? null}
+              currentVisitors={currentOccupancy}
+              lastWeekVisitors={historicalData?.lastWeekVisitors ?? null}
+            />
+          </div>
+          
+          {/* Time context badge showing target */}
+          <TimeContextBadge scoreContext={scoreContext} />
+        </motion.div>
+      )}
+
       {/* ============ PULSE RINGS HERO ============ */}
       <motion.div
         className="mb-6"
@@ -391,6 +446,22 @@ export function PulsePlus() {
         </div>
       </motion.div>
 
+      {/* ============ WHAT CHANGED? (Attribution) ============ */}
+      {(anomalies.length > 0 || scoreContext.belowMinimum) && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6"
+        >
+          <WhatChanged
+            anomalies={anomalies}
+            soundScore={soundScore}
+            lightScore={lightScore}
+            onDismiss={clearAnomalies}
+          />
+        </motion.div>
+      )}
+
       {/* ============ NEXT ACTION HERO ============ */}
       {heroAction ? (
         <motion.div
@@ -437,6 +508,21 @@ export function PulsePlus() {
       {actionHistory.length > 0 && (
         <ActionHistory completedActions={actionHistory} />
       )}
+
+      {/* ============ HISTORICAL COMPARISON ============ */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25 }}
+        className="mb-6"
+      >
+        <HistoricalComparison
+          currentPulseScore={pulseScore}
+          currentVisitors={currentOccupancy}
+          historicalData={historicalData}
+          dayName={dayName}
+        />
+      </motion.div>
 
       {/* ============ TONIGHT'S FACTORS ============ */}
       <motion.div
