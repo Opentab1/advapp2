@@ -46,6 +46,10 @@ import { useTimeContext, useMetricAttribution } from '../hooks/useTimeContext';
 import { TimeContextBadge, PeriodIndicator } from '../components/TimeContext';
 import { WhatChanged, ScoreBreakdown } from '../components/Attribution';
 import { HistoricalComparison, DayComparisonBanner, generateMockHistoricalData } from '../components/HistoricalComparison';
+import { useShiftTracking } from '../hooks/useShiftTracking';
+import { ActiveShiftBanner, ShiftSummaryModal } from '../components/ShiftSummary';
+import { PulsePlusSkeleton } from '../components/Skeletons';
+import { InlineError } from '../components/ErrorBoundary';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
 import type { SportsGame, OccupancyMetrics } from '../types';
@@ -104,6 +108,19 @@ export function PulsePlus() {
   // Celebration modal state
   const [celebrationAction, setCelebrationAction] = useState<CompletedAction | null>(null);
   const [showCelebration, setShowCelebration] = useState(false);
+
+  // Shift tracking for end-of-shift summary
+  const {
+    isShiftActive,
+    shiftStartTime,
+    currentStats: shiftStats,
+    startShift,
+    endShift,
+    recordSnapshot: recordShiftSnapshot,
+  } = useShiftTracking({ enabled: true, autoDetectShift: true });
+  
+  const [shiftSummary, setShiftSummary] = useState<ReturnType<typeof endShift>>(null);
+  const [showShiftSummary, setShowShiftSummary] = useState(false);
 
   // Use centralized pulse score hook
   const pulseData = usePulseScore({ enabled: true, pollingInterval: 30000 });
@@ -200,6 +217,40 @@ export function PulsePlus() {
     });
   }, [loading, pulseScore, currentDecibels, currentLight, currentOccupancy, recordMetrics]);
 
+  // Record shift snapshots (for end-of-shift summary)
+  useEffect(() => {
+    if (loading || pulseScore === null) return;
+    
+    // Record snapshot every minute
+    const recordInterval = setInterval(() => {
+      recordShiftSnapshot({
+        pulseScore,
+        decibels: currentDecibels,
+        light: currentLight,
+        occupancy: currentOccupancy,
+      });
+    }, 60000);
+
+    // Record immediately when data changes significantly
+    recordShiftSnapshot({
+      pulseScore,
+      decibels: currentDecibels,
+      light: currentLight,
+      occupancy: currentOccupancy,
+    });
+
+    return () => clearInterval(recordInterval);
+  }, [loading, pulseScore, currentDecibels, currentLight, currentOccupancy, recordShiftSnapshot]);
+
+  // Handle ending shift
+  const handleEndShift = () => {
+    const summary = endShift();
+    if (summary) {
+      setShiftSummary(summary);
+      setShowShiftSummary(true);
+    }
+  };
+
   // Historical comparison (mock data for now - would come from API)
   const historicalData = useMemo(() => {
     return generateMockHistoricalData(dayOfWeek);
@@ -292,13 +343,19 @@ export function PulsePlus() {
   const nextHoliday = upcomingHolidays[0];
   const daysUntilHoliday = nextHoliday ? holidayService.getDaysUntil(nextHoliday) : null;
 
+  // Show skeleton loader instead of spinner for better UX
   if (loading) {
+    return <PulsePlusSkeleton />;
+  }
+
+  // Show error state with retry
+  if (pulseData.error && !pulseData.hasData) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <div className="flex flex-col items-center gap-3">
-          <Zap className="w-12 h-12 text-primary animate-pulse" />
-          <p className="text-warm-500">Loading your command center...</p>
-        </div>
+      <div className="max-w-2xl mx-auto py-12">
+        <InlineError 
+          message={pulseData.error || "Failed to load data"} 
+          onRetry={handleRefresh}
+        />
       </div>
     );
   }
@@ -323,6 +380,15 @@ export function PulsePlus() {
           <RefreshCw className={`w-5 h-5 text-warm-600 ${loading ? 'animate-spin' : ''}`} />
         </motion.button>
       </div>
+
+      {/* ============ ACTIVE SHIFT BANNER ============ */}
+      {isShiftActive && (
+        <ActiveShiftBanner
+          shiftStartTime={shiftStartTime}
+          currentStats={shiftStats}
+          onEndShift={handleEndShift}
+        />
+      )}
 
       {/* ============ SENSOR HEALTH BANNER (if issues) ============ */}
       <SensorHealthBanner
@@ -644,6 +710,13 @@ export function PulsePlus() {
         lightScore={lightScore}
         currentDecibels={currentDecibels}
         currentLight={currentLight}
+      />
+
+      {/* ============ SHIFT SUMMARY MODAL ============ */}
+      <ShiftSummaryModal
+        isOpen={showShiftSummary}
+        onClose={() => setShowShiftSummary(false)}
+        summary={shiftSummary}
       />
     </div>
   );
