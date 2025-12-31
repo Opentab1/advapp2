@@ -39,12 +39,21 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
     if (!venueId) return;
 
     try {
+      console.log('📊 LiveContext - Starting 14d data fetch for venue:', venueId);
+      
       // Fetch last 14 days of data for comparison
       const historicalData = await apiService.getHistoricalData(venueId, '14d');
       
-      console.log('📊 LiveContext - Raw data received:', {
-        dataLength: historicalData?.data?.length || 0,
-        samplePoint: historicalData?.data?.[0],
+      // Log detailed info about the data received
+      const dataPoints = historicalData?.data || [];
+      const uniqueDates = [...new Set(dataPoints.map((p: any) => new Date(p.timestamp).toDateString()))];
+      
+      console.log('📊 LiveContext - 14d data received:', {
+        totalPoints: dataPoints.length,
+        uniqueDates: uniqueDates.length,
+        dates: uniqueDates,
+        oldestPoint: dataPoints[dataPoints.length - 1]?.timestamp,
+        newestPoint: dataPoints[0]?.timestamp,
       });
       
       if (!historicalData?.data || historicalData.data.length === 0) {

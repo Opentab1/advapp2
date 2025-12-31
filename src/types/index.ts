@@ -68,7 +68,7 @@ export interface HistoricalData {
   message?: string; // Optional message when data is limited or unavailable
 }
 
-export type TimeRange = 'live' | '6h' | '24h' | '7d' | '30d' | '90d';
+export type TimeRange = 'live' | '6h' | '24h' | '7d' | '14d' | '30d' | '90d';
 
 export interface ComfortLevel {
   score: number; // 0-100

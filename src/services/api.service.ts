@@ -26,7 +26,7 @@ class ApiService {
     return rangeMap[range];
   }
 
-  async getHistoricalData(venueId: string, range: TimeRange): Promise<HistoricalData> {
+  async getHistoricalData(venueId: string, range: TimeRange | string): Promise<HistoricalData> {
     console.log('🔍 Fetching historical data from DynamoDB for venue:', venueId, 'range:', range);
     
     try {

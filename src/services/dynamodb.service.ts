@@ -266,13 +266,14 @@ class DynamoDBService {
           case '6h': return 500;
           case '24h': return 2000;
           case '7d': return 10000;
+          case '14d': return 20000; // Explicitly handle 14d for LiveContext comparisons
           case '30d': return 30000;
           case '90d': return 50000;
           default: 
             // Custom day ranges
             if (typeof r === 'string' && r.endsWith('d')) {
               const days = parseInt(r.replace('d', ''));
-              return Math.min(days * 1000, 50000);
+              return Math.min(days * 1500, 50000); // Increased multiplier for more data
             }
             return 5000;
         }
@@ -280,13 +281,13 @@ class DynamoDBService {
       
       const queryLimit = getLimitForRange(range);
       const pageSize = 1000; // DynamoDB/AppSync max per request
-      console.log(`📊 Fetching historical data: range=${range}, targetLimit=${queryLimit}`);
+      const maxPages = Math.ceil(queryLimit / pageSize); // Limit pages to prevent infinite loops
+      console.log(`📊 [${range}] Starting fetch: targetLimit=${queryLimit}, maxPages=${maxPages}`);
 
       // Paginate through all results
       let allItems: any[] = [];
       let nextToken: string | null = null;
       let pageCount = 0;
-      const maxPages = Math.ceil(queryLimit / pageSize); // Limit pages to prevent infinite loops
 
       do {
         pageCount++;
@@ -316,7 +317,7 @@ class DynamoDBService {
         allItems = allItems.concat(pageItems);
         nextToken = response?.data?.listSensorData?.nextToken || null;
         
-        console.log(`📊 Page ${pageCount}: fetched ${pageItems.length} items (total: ${allItems.length}), hasMore: ${!!nextToken}`);
+        console.log(`📊 [${range}] Page ${pageCount}/${maxPages}: fetched ${pageItems.length} items (total: ${allItems.length}), hasMore: ${!!nextToken}`);
         
         // Stop if we've reached our target limit or no more pages
         if (allItems.length >= queryLimit || !nextToken || pageCount >= maxPages) {
@@ -325,7 +326,14 @@ class DynamoDBService {
       } while (nextToken);
 
       const items = allItems.slice(0, queryLimit); // Trim to target limit
-      console.log(`📊 Pagination complete: ${pageCount} pages, ${items.length} total items`);
+      console.log(`📊 [${range}] Pagination complete: ${pageCount} pages, ${items.length} total items`);
+      
+      // Log date range of fetched data
+      if (items.length > 0) {
+        const oldestItem = items[items.length - 1];
+        const newestItem = items[0];
+        console.log(`📊 [${range}] Data range: ${oldestItem?.timestamp} to ${newestItem?.timestamp}`);
+      }
       
       // If no data in requested range, try to find ANY historical data
       if (items.length === 0) {
