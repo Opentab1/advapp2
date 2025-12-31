@@ -42,7 +42,13 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
       // Fetch last 14 days of data for comparison
       const historicalData = await apiService.getHistoricalData(venueId, '14d');
       
+      console.log('📊 LiveContext - Raw data received:', {
+        dataLength: historicalData?.data?.length || 0,
+        samplePoint: historicalData?.data?.[0],
+      });
+      
       if (!historicalData?.data || historicalData.data.length === 0) {
+        console.log('📊 LiveContext - No data returned from API');
         setLoading(false);
         return;
       }
@@ -54,46 +60,98 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
       // Group data by date
       const dailyData: { [date: string]: SensorData[] } = {};
       historicalData.data.forEach(point => {
-        const date = new Date(point.timestamp).toDateString();
-        if (!dailyData[date]) dailyData[date] = [];
-        dailyData[date].push(point);
+        const pointDate = new Date(point.timestamp);
+        const dateKey = pointDate.toDateString();
+        if (!dailyData[dateKey]) dailyData[dateKey] = [];
+        dailyData[dateKey].push(point);
       });
+
+      // Log all available dates
+      const availableDates = Object.keys(dailyData);
+      console.log('📊 LiveContext - Available dates in data:', availableDates);
 
       // Find last week same day
       const lastWeekDate = new Date(now);
       lastWeekDate.setDate(lastWeekDate.getDate() - 7);
       const lastWeekKey = lastWeekDate.toDateString();
-      const lastWeekData = dailyData[lastWeekKey] || [];
+      
+      console.log('📊 LiveContext - Looking for date:', lastWeekKey);
+      console.log('📊 LiveContext - Today is:', now.toDateString());
+      
+      // Try exact match first, then try to find closest matching date
+      let lastWeekData = dailyData[lastWeekKey] || [];
+      
+      // If no exact match, look for data from around that date (±1 day)
+      if (lastWeekData.length === 0) {
+        console.log('📊 LiveContext - No exact match, trying nearby dates...');
+        const dayBefore = new Date(lastWeekDate);
+        dayBefore.setDate(dayBefore.getDate() - 1);
+        const dayAfter = new Date(lastWeekDate);
+        dayAfter.setDate(dayAfter.getDate() + 1);
+        
+        lastWeekData = dailyData[dayBefore.toDateString()] || 
+                       dailyData[dayAfter.toDateString()] || 
+                       [];
+        
+        if (lastWeekData.length > 0) {
+          console.log('📊 LiveContext - Found nearby data');
+        }
+      }
 
       // Get last week's occupancy at this time
       let lastWeekSameTime = 0;
       let lastWeekTotal = 0;
       
       if (lastWeekData.length > 0) {
-        // Find data point closest to current hour (expand search to ±2 hours)
+        console.log('📊 LiveContext - Last week data points:', lastWeekData.length);
+        console.log('📊 LiveContext - Sample point from last week:', lastWeekData[0]);
+        
+        // Find data point closest to current hour (expand search widely)
         let sameTimePoint = lastWeekData.find(p => {
           const pointHour = new Date(p.timestamp).getHours();
-          return Math.abs(pointHour - currentHour) <= 1;
+          return Math.abs(pointHour - currentHour) <= 2;
         });
         
-        // If no exact match, try wider window
+        // If no match, just use any point with occupancy data
         if (!sameTimePoint) {
-          sameTimePoint = lastWeekData.find(p => {
-            const pointHour = new Date(p.timestamp).getHours();
-            return Math.abs(pointHour - currentHour) <= 3;
-          });
+          sameTimePoint = lastWeekData.find(p => p.occupancy?.current && p.occupancy.current > 0);
+        }
+        
+        // If still no match, use the last point of the day
+        if (!sameTimePoint && lastWeekData.length > 0) {
+          sameTimePoint = lastWeekData[lastWeekData.length - 1];
         }
         
         lastWeekSameTime = sameTimePoint?.occupancy?.current || 0;
         
-        // Get total entries for last week same day
+        // Get total entries for last week same day - try multiple ways
         const entriesValues = lastWeekData
           .map(p => p.occupancy?.entries || 0)
           .filter(e => e > 0);
-        lastWeekTotal = entriesValues.length > 0 ? Math.max(...entriesValues) : 0;
+        
+        if (entriesValues.length > 0) {
+          lastWeekTotal = Math.max(...entriesValues);
+        } else {
+          // Fallback: estimate from max current occupancy if no entries data
+          const currentValues = lastWeekData
+            .map(p => p.occupancy?.current || 0)
+            .filter(c => c > 0);
+          if (currentValues.length > 0) {
+            // Rough estimate: peak occupancy * 2 as daily total
+            lastWeekTotal = Math.max(...currentValues) * 2;
+          }
+        }
+        
+        console.log('📊 LiveContext - Extracted values:', { 
+          lastWeekSameTime, 
+          lastWeekTotal,
+          entriesValuesLength: entriesValues.length
+        });
+      } else {
+        console.log('📊 LiveContext - No data found for last week');
       }
       
-      console.log('📊 LiveContext - Last week data:', { 
+      console.log('📊 LiveContext - Last week final:', { 
         lastWeekKey, 
         dataPoints: lastWeekData.length, 
         lastWeekSameTime, 
@@ -269,8 +327,12 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
   }
   
   // Check if we have enough data for meaningful comparisons
+  // Be more lenient - if we have any non-zero value, consider it valid
   const hasLastWeekData = comparison.lastWeekTotal > 0 || comparison.lastWeekSameTime > 0;
   const hasAverageData = comparison.averageForThisTime > 0 || comparison.averageTotal > 0;
+  
+  // Log what we're displaying
+  console.log('📊 LiveContext - Display state:', { hasLastWeekData, hasAverageData, comparison });
 
   const getDayName = () => {
     return new Date().toLocaleDateString('en-US', { weekday: 'long' });
