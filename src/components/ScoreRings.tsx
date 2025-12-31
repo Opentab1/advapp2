@@ -4,6 +4,7 @@ import { X, Star, ExternalLink, Volume2, Sun, ChevronDown } from 'lucide-react';
 import authService from '../services/auth.service';
 import apiService from '../services/api.service';
 import googleReviewsService, { GoogleReviewsData } from '../services/google-reviews.service';
+import venueSettingsService from '../services/venue-settings.service';
 import { calculateRecentDwellTime, formatDwellTime, getDwellTimeCategory } from '../utils/dwellTime';
 import type { SensorData } from '../types';
 
@@ -56,9 +57,12 @@ export function ScoreRings({ sensorData }: ScoreRingsProps) {
     setLoading(true);
 
     try {
+      // Get venue address for Google Reviews
+      const venueAddress = venueSettingsService.getFormattedAddress(venueId) || '';
+      
       const [historicalResult, reviewsResult] = await Promise.allSettled([
         apiService.getHistoricalData(venueId, '7d'),
-        googleReviewsService.getReviews(venueName)
+        googleReviewsService.getReviews(venueName, venueAddress, venueId)
       ]);
 
       if (historicalResult.status === 'fulfilled' && historicalResult.value?.data) {
@@ -85,17 +89,26 @@ export function ScoreRings({ sensorData }: ScoreRingsProps) {
   }, [loadData]);
 
   function processWeekData(data: SensorData[]): WeekData {
+    // Only process data from the last 7 days
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    
     const dailyData: { [date: string]: { entries: number; occupancy: number[] } } = {};
     
     data.forEach(point => {
-      const date = new Date(point.timestamp).toDateString();
+      const pointDate = new Date(point.timestamp);
+      // Skip data older than 7 days
+      if (pointDate < sevenDaysAgo) return;
+      
+      const date = pointDate.toDateString();
       if (!dailyData[date]) {
         dailyData[date] = { entries: 0, occupancy: [] };
       }
-      if (point.occupancy?.entries) {
+      // Take the max entries value for each day (entries is cumulative within a day)
+      if (point.occupancy?.entries && point.occupancy.entries > 0) {
         dailyData[date].entries = Math.max(dailyData[date].entries, point.occupancy.entries);
       }
-      if (point.occupancy?.current) {
+      if (point.occupancy?.current && point.occupancy.current > 0) {
         dailyData[date].occupancy.push(point.occupancy.current);
       }
     });
@@ -107,16 +120,27 @@ export function ScoreRings({ sensorData }: ScoreRingsProps) {
     let totalOccupancy = 0;
     let occupancyCount = 0;
 
-    days.forEach(([date, data]) => {
-      totalEntries += data.entries;
-      if (data.entries > peakDayEntries) {
-        peakDayEntries = data.entries;
+    days.forEach(([date, dayData]) => {
+      // Cap daily entries to a reasonable number (max 2000 per day for a typical venue)
+      const cappedEntries = Math.min(dayData.entries, 2000);
+      totalEntries += cappedEntries;
+      
+      if (cappedEntries > peakDayEntries) {
+        peakDayEntries = cappedEntries;
         peakDay = new Date(date).toLocaleDateString('en-US', { weekday: 'short' });
       }
-      data.occupancy.forEach(o => {
+      dayData.occupancy.forEach(o => {
         totalOccupancy += o;
         occupancyCount++;
       });
+    });
+
+    console.log('📊 ScoreRings weekly data:', { 
+      daysProcessed: days.length, 
+      totalEntries, 
+      peakDayEntries, 
+      peakDay,
+      avgOccupancy: occupancyCount > 0 ? Math.round(totalOccupancy / occupancyCount) : 0
     });
 
     return {

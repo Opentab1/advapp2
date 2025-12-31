@@ -70,17 +70,35 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
       let lastWeekTotal = 0;
       
       if (lastWeekData.length > 0) {
-        // Find data point closest to current hour
-        const sameTimePoint = lastWeekData.find(p => {
+        // Find data point closest to current hour (expand search to ±2 hours)
+        let sameTimePoint = lastWeekData.find(p => {
           const pointHour = new Date(p.timestamp).getHours();
           return Math.abs(pointHour - currentHour) <= 1;
         });
+        
+        // If no exact match, try wider window
+        if (!sameTimePoint) {
+          sameTimePoint = lastWeekData.find(p => {
+            const pointHour = new Date(p.timestamp).getHours();
+            return Math.abs(pointHour - currentHour) <= 3;
+          });
+        }
+        
         lastWeekSameTime = sameTimePoint?.occupancy?.current || 0;
         
         // Get total entries for last week same day
-        const maxEntries = Math.max(...lastWeekData.map(p => p.occupancy?.entries || 0));
-        lastWeekTotal = maxEntries;
+        const entriesValues = lastWeekData
+          .map(p => p.occupancy?.entries || 0)
+          .filter(e => e > 0);
+        lastWeekTotal = entriesValues.length > 0 ? Math.max(...entriesValues) : 0;
       }
+      
+      console.log('📊 LiveContext - Last week data:', { 
+        lastWeekKey, 
+        dataPoints: lastWeekData.length, 
+        lastWeekSameTime, 
+        lastWeekTotal 
+      });
 
       // Calculate average for this day of week at this hour
       const sameDayData: number[] = [];
@@ -90,15 +108,28 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
         const date = new Date(dateStr);
         if (date.getDay() === currentDay && dateStr !== now.toDateString()) {
           // Same day of week, not today
-          const sameHourPoint = points.find(p => {
+          // Try to find a point within ±2 hours of current time
+          let sameHourPoint = points.find(p => {
             const pointHour = new Date(p.timestamp).getHours();
             return Math.abs(pointHour - currentHour) <= 1;
           });
-          if (sameHourPoint?.occupancy?.current) {
+          
+          // Expand search if needed
+          if (!sameHourPoint) {
+            sameHourPoint = points.find(p => {
+              const pointHour = new Date(p.timestamp).getHours();
+              return Math.abs(pointHour - currentHour) <= 3;
+            });
+          }
+          
+          if (sameHourPoint?.occupancy?.current && sameHourPoint.occupancy.current > 0) {
             sameDayData.push(sameHourPoint.occupancy.current);
           }
-          const maxEntries = Math.max(...points.map(p => p.occupancy?.entries || 0));
-          if (maxEntries > 0) sameDayTotals.push(maxEntries);
+          
+          const entriesValues = points.map(p => p.occupancy?.entries || 0).filter(e => e > 0);
+          if (entriesValues.length > 0) {
+            sameDayTotals.push(Math.max(...entriesValues));
+          }
         }
       });
 
@@ -109,6 +140,12 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
       const averageTotal = sameDayTotals.length > 0
         ? Math.round(sameDayTotals.reduce((a, b) => a + b, 0) / sameDayTotals.length)
         : 0;
+      
+      console.log('📊 LiveContext - Average data:', { 
+        sameDayDataPoints: sameDayData.length, 
+        averageForThisTime, 
+        averageTotal 
+      });
 
       // Calculate hourly trend (last hour vs current)
       const todayKey = now.toDateString();
@@ -220,9 +257,20 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
     );
   }
 
+  // Show nothing if no comparison data at all
   if (!comparison) {
-    return null;
+    return (
+      <div className="glass-card p-4 mb-6">
+        <p className="text-sm text-warm-500 text-center">
+          Building comparison data... Check back after more historical data is collected.
+        </p>
+      </div>
+    );
   }
+  
+  // Check if we have enough data for meaningful comparisons
+  const hasLastWeekData = comparison.lastWeekTotal > 0 || comparison.lastWeekSameTime > 0;
+  const hasAverageData = comparison.averageForThisTime > 0 || comparison.averageTotal > 0;
 
   const getDayName = () => {
     return new Date().toLocaleDateString('en-US', { weekday: 'long' });
@@ -326,24 +374,33 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
             <Clock className="w-4 h-4 text-warm-400" />
             <span className="text-xs text-warm-500">vs Last {getDayName()}</span>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className={`text-2xl font-bold ${
-              comparison.percentVsLastWeek > 0 ? 'text-green-600' : 
-              comparison.percentVsLastWeek < 0 ? 'text-red-600' : 'text-warm-800'
-            }`}>
-              {comparison.percentVsLastWeek > 0 ? '+' : ''}{comparison.percentVsLastWeek}%
-            </span>
-            {comparison.percentVsLastWeek !== 0 && (
-              comparison.percentVsLastWeek > 0 ? (
-                <TrendingUp className="w-4 h-4 text-green-600" />
-              ) : (
-                <TrendingDown className="w-4 h-4 text-red-600" />
-              )
-            )}
-          </div>
-          <p className="text-xs text-warm-500 mt-1">
-            {comparison.lastWeekSameTime} people last week
-          </p>
+          {hasLastWeekData && comparison.lastWeekSameTime > 0 ? (
+            <>
+              <div className="flex items-baseline gap-2">
+                <span className={`text-2xl font-bold ${
+                  comparison.percentVsLastWeek > 0 ? 'text-green-600' : 
+                  comparison.percentVsLastWeek < 0 ? 'text-red-600' : 'text-warm-800'
+                }`}>
+                  {comparison.percentVsLastWeek > 0 ? '+' : ''}{comparison.percentVsLastWeek}%
+                </span>
+                {comparison.percentVsLastWeek !== 0 && (
+                  comparison.percentVsLastWeek > 0 ? (
+                    <TrendingUp className="w-4 h-4 text-green-600" />
+                  ) : (
+                    <TrendingDown className="w-4 h-4 text-red-600" />
+                  )
+                )}
+              </div>
+              <p className="text-xs text-warm-500 mt-1">
+                {comparison.lastWeekSameTime} people last week
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-lg font-medium text-warm-400">No data</p>
+              <p className="text-xs text-warm-400 mt-1">No data from last {getDayName()}</p>
+            </>
+          )}
         </motion.div>
 
         {/* vs Average */}
@@ -357,17 +414,26 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
             <BarChart3 className="w-4 h-4 text-warm-400" />
             <span className="text-xs text-warm-500">vs Average</span>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className={`text-2xl font-bold ${
-              comparison.percentVsUsual > 0 ? 'text-green-600' : 
-              comparison.percentVsUsual < 0 ? 'text-red-600' : 'text-warm-800'
-            }`}>
-              {comparison.percentVsUsual > 0 ? '+' : ''}{comparison.percentVsUsual}%
-            </span>
-          </div>
-          <p className="text-xs text-warm-500 mt-1">
-            avg {comparison.averageForThisTime} at this time
-          </p>
+          {hasAverageData && comparison.averageForThisTime > 0 ? (
+            <>
+              <div className="flex items-baseline gap-2">
+                <span className={`text-2xl font-bold ${
+                  comparison.percentVsUsual > 0 ? 'text-green-600' : 
+                  comparison.percentVsUsual < 0 ? 'text-red-600' : 'text-warm-800'
+                }`}>
+                  {comparison.percentVsUsual > 0 ? '+' : ''}{comparison.percentVsUsual}%
+                </span>
+              </div>
+              <p className="text-xs text-warm-500 mt-1">
+                avg {comparison.averageForThisTime} at this time
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-lg font-medium text-warm-400">Building...</p>
+              <p className="text-xs text-warm-400 mt-1">Need more historical data</p>
+            </>
+          )}
         </motion.div>
 
         {/* Last Week Total */}
@@ -381,19 +447,30 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
             <Clock className="w-4 h-4 text-warm-400" />
             <span className="text-xs text-warm-500">Last {getDayName()} Total</span>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-warm-800">
-              {comparison.lastWeekTotal}
-            </span>
-            <span className="text-sm text-warm-500">visitors</span>
-          </div>
-          <p className="text-xs text-warm-500 mt-1">
-            {todayEntries ? `You have ${todayEntries} so far` : 'tracking...'}
-          </p>
+          {hasLastWeekData && comparison.lastWeekTotal > 0 ? (
+            <>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-warm-800">
+                  {comparison.lastWeekTotal}
+                </span>
+                <span className="text-sm text-warm-500">visitors</span>
+              </div>
+              <p className="text-xs text-warm-500 mt-1">
+                {todayEntries ? `You have ${todayEntries} so far` : 'tracking...'}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-lg font-medium text-warm-400">No data</p>
+              <p className="text-xs text-warm-400 mt-1">
+                {todayEntries ? `Today: ${todayEntries} so far` : 'Collecting data...'}
+              </p>
+            </>
+          )}
         </motion.div>
 
         {/* Projected Total */}
-        {comparison.predictedTotal && (
+        {comparison.predictedTotal && comparison.predictedTotal > 0 ? (
           <motion.div
             className="glass-card p-4"
             initial={{ opacity: 0, y: 10 }}
@@ -411,6 +488,20 @@ export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps
               <span className="text-sm text-warm-500">visitors</span>
             </div>
             <p className="text-xs text-warm-500 mt-1">at current pace</p>
+          </motion.div>
+        ) : (
+          <motion.div
+            className="glass-card p-4"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <Target className="w-4 h-4 text-warm-400" />
+              <span className="text-xs text-warm-500">Tonight's Projection</span>
+            </div>
+            <p className="text-lg font-medium text-warm-400">Calculating...</p>
+            <p className="text-xs text-warm-400 mt-1">Need more data</p>
           </motion.div>
         )}
       </div>
