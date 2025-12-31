@@ -1065,11 +1065,16 @@ export function Dashboard() {
                       </motion.div>
                     </div>
                   )}
+
+                  {/* Insights Section - Live view only */}
+                  {timeRange === 'live' && (
+                    <div className="mt-8">
+                      <Insights />
+                    </div>
+                  )}
                 </>
               )}
             </>
-          ) : activeTab === 'insights' || activeTab === 'pulse' || activeTab === 'plus' ? (
-            <Insights />
           ) : activeTab === 'songs' ? (
             <SongLog />
           ) : activeTab === 'reports' ? (
