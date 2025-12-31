@@ -23,15 +23,11 @@ import {
   Calendar,
   DollarSign,
   Download,
-  ChevronRight,
   Award,
-  Lightbulb,
-  Flag,
   ArrowUpRight,
   ArrowDownRight,
   BarChart2,
   X,
-  Share2
 } from 'lucide-react';
 import type { ROIData, ROIComparison, ROIInsight, PeriodMetrics } from '../hooks/useROITracking';
 
@@ -68,7 +64,6 @@ export function ROIDashboard({ data, onClose, isModal = false }: ROIDashboardPro
     currentMonth,
     previousWeek,
     previousMonth,
-    allTime,
     weekOverWeek,
     monthOverMonth,
     insights,
@@ -516,11 +511,9 @@ function MetricCard({
   change,
   changePercent,
   unit = '',
-  format = 'number',
   higherIsBetter = true,
 }: MetricCardProps) {
   const isPositive = change !== null && (higherIsBetter ? change > 0 : change < 0);
-  const isNegative = change !== null && (higherIsBetter ? change < 0 : change > 0);
   const isNeutral = change === null || change === 0;
 
   return (
@@ -567,10 +560,6 @@ function InsightCard({ insight, index }: { insight: ROIInsight; index: number })
       default: return 'bg-warm-100 text-warm-600';
     }
   };
-
-  const Icon = insight.type === 'win' ? Trophy : 
-               insight.type === 'opportunity' ? Lightbulb : 
-               Flag;
 
   return (
     <motion.div

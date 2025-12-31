@@ -15,7 +15,7 @@ interface TopBarProps {
 }
 
 export function TopBar({
-  venueName = 'Your Venue',
+  venueName: _venueName = 'Your Venue',
   onLogout, 
   soundAlerts, 
   onToggleSoundAlerts,

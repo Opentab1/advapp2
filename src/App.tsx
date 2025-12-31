@@ -10,7 +10,7 @@ import authService from './services/auth.service';
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => authService.isAuthenticated());
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [userRole, setUserRole] = useState<string | null>(null);
+  const [, setUserRole] = useState<string | null>(null);
 
   // Check if user is admin (has role but no venueId)
   const isAdmin = () => {

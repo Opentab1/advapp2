@@ -45,7 +45,7 @@ export function ScoreRings({ sensorData }: ScoreRingsProps) {
   const [dwellTime, setDwellTime] = useState<number | null>(null);
   const [reviews, setReviews] = useState<GoogleReviewsData | null>(null);
   const [thisWeek, setThisWeek] = useState<WeekData | null>(null);
-  const [allSensorData, setAllSensorData] = useState<SensorData[]>([]);
+  const [, setAllSensorData] = useState<SensorData[]>([]);
 
   const user = authService.getStoredUser();
   const venueId = user?.venueId || '';

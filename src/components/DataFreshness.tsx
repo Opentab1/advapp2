@@ -11,11 +11,8 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Wifi, 
   WifiOff, 
-  Clock, 
   AlertTriangle,
-  CheckCircle,
   RefreshCw,
   X,
   Radio
@@ -63,9 +60,7 @@ function formatDetailedTimeAgo(seconds: number): string {
 // ============ MAIN INDICATOR COMPONENT ============
 
 export function DataFreshnessIndicator({
-  lastUpdated,
   dataAgeSeconds,
-  sensorStatus,
   isStale,
   isDisconnected,
   onRefresh,
@@ -249,11 +244,10 @@ export function SensorHealthBanner({
 // ============ LIVE INDICATOR DOT (minimal) ============
 
 export function LiveIndicatorDot({ 
-  isLive, 
   isStale, 
   isDisconnected 
 }: { 
-  isLive: boolean; 
+  isLive?: boolean; 
   isStale: boolean; 
   isDisconnected: boolean;
 }) {

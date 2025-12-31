@@ -26,7 +26,6 @@ import {
   Check,
   Lightbulb,
   BarChart2,
-  ExternalLink
 } from 'lucide-react';
 
 // ============ TYPES ============
@@ -410,8 +409,8 @@ function FactorTab({ factor, currentValue, score, expandedSection, setExpandedSe
   );
 }
 
-function ExpandableSection({ id, title, content, isExpanded, onToggle, icon }: {
-  id: string;
+function ExpandableSection({ title, content, isExpanded, onToggle, icon }: {
+  id?: string;
   title: string;
   content: string;
   isExpanded: boolean;

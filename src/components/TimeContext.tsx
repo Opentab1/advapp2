@@ -13,10 +13,8 @@ import {
   Target, 
   TrendingUp, 
   TrendingDown, 
-  Clock,
   AlertTriangle,
   CheckCircle,
-  Zap,
   ArrowRight
 } from 'lucide-react';
 import type { ScoreContext, TimeExpectation } from '../hooks/useTimeContext';

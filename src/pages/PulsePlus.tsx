@@ -45,7 +45,7 @@ import { WelcomeBack } from '../components/WelcomeBack';
 import { useSessionMemory, calculateSessionDelta } from '../hooks/useSessionMemory';
 import { useTimeContext, useMetricAttribution } from '../hooks/useTimeContext';
 import { TimeContextBadge, PeriodIndicator } from '../components/TimeContext';
-import { WhatChanged, ScoreBreakdown } from '../components/Attribution';
+import { WhatChanged } from '../components/Attribution';
 import { HistoricalComparison, DayComparisonBanner, generateMockHistoricalData } from '../components/HistoricalComparison';
 import { useShiftTracking } from '../hooks/useShiftTracking';
 import { ActiveShiftBanner, ShiftSummaryModal } from '../components/ShiftSummary';
@@ -121,7 +121,6 @@ export function PulsePlus() {
     isShiftActive,
     shiftStartTime,
     currentStats: shiftStats,
-    startShift,
     endShift,
     recordSnapshot: recordShiftSnapshot,
   } = useShiftTracking({ enabled: true, autoDetectShift: true });
@@ -211,7 +210,7 @@ export function PulsePlus() {
   const { dayOfWeek, dayName, scoreContext, expectation } = useTimeContext(pulseScore);
 
   // Metric attribution for anomaly detection (addresses "What caused this?")
-  const { anomalies, primaryAnomaly, recordMetrics, clearAnomalies } = useMetricAttribution();
+  const { anomalies, recordMetrics, clearAnomalies } = useMetricAttribution();
 
   // Record metrics for attribution tracking
   useEffect(() => {

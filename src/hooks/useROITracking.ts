@@ -102,7 +102,7 @@ export interface UseROITrackingOptions {
 
 // ============ CONSTANTS ============
 
-const STORAGE_KEY = 'pulse_roi_history';
+// const STORAGE_KEY = 'pulse_roi_history'; // Reserved for future API integration
 const DEFAULT_SPEND_PER_MINUTE = 0.50; // $0.50 per minute of dwell
 const DEFAULT_SPEND_PER_VISITOR = 25; // $25 per visitor
 
@@ -160,7 +160,7 @@ export function useROITracking(options: UseROITrackingOptions = {}): ROIData & {
   } = options;
 
   const [historicalData, setHistoricalData] = useState<DailyRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
 
   // Load historical data
   const loadData = useCallback(() => {

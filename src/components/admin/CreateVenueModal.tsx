@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, Building2, MapPin, Mail, User, Wifi, CheckCircle } from 'lucide-react';
+import { X, Building2, CheckCircle } from 'lucide-react';
 
 interface CreateVenueModalProps {
   onClose: () => void;

@@ -22,10 +22,7 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronUp,
-  BarChart2,
-  Award,
   Target,
-  Calendar,
   Volume2,
   Sun
 } from 'lucide-react';
@@ -305,7 +302,7 @@ export function ActiveShiftBanner({ shiftStartTime, currentStats, onEndShift }: 
 
 // ============ SHIFT SUMMARY CARD (Compact) ============
 
-export function ShiftSummaryCard({ summary, onViewDetails, compact = false }: ShiftSummaryCardProps) {
+export function ShiftSummaryCard({ summary, onViewDetails }: ShiftSummaryCardProps) {
   const { stats, grade } = summary;
   
   const getGradeColor = () => {

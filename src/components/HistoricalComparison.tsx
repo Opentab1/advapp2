@@ -8,7 +8,6 @@
  * - Provides context for current performance
  */
 
-import { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Calendar,
@@ -17,10 +16,7 @@ import {
   Minus,
   Users,
   Zap,
-  Clock,
   Trophy,
-  BarChart2,
-  ChevronRight
 } from 'lucide-react';
 
 // ============ TYPES ============
@@ -76,16 +72,6 @@ export function HistoricalComparison({
   dayName,
 }: HistoricalComparisonProps) {
   if (!historicalData) return null;
-
-  const pulseVsLastWeek = useMemo(() => {
-    if (currentPulseScore === null || historicalData.lastWeekPulseAvg === null) return null;
-    return currentPulseScore - historicalData.lastWeekPulseAvg;
-  }, [currentPulseScore, historicalData.lastWeekPulseAvg]);
-
-  const visitorsVsLastWeek = useMemo(() => {
-    if (historicalData.lastWeekVisitors === null) return null;
-    return currentVisitors - historicalData.lastWeekVisitors;
-  }, [currentVisitors, historicalData.lastWeekVisitors]);
 
   const isNewBest = historicalData.bestPulseScore !== null && 
     currentPulseScore !== null && 
