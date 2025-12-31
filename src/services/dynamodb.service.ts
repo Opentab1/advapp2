@@ -394,21 +394,33 @@ class DynamoDBService {
       const { startTime, endTime } = this.getTimeRangeValues(range);
       const client = this.getClient();
 
-      // Calculate appropriate limit based on time range
-      // For occupancy aggregation, we need enough data points to capture each bar day
-      // Minimum: at least 1 reading per hour for accurate calculations
-      // NO ARBITRARY LIMITS - fetch ALL data within the time range
-      // The time range (startTime, endTime) already limits the query
-      // Pagination continues until nextToken is null (no more data)
-      const pageSize = 1000; // DynamoDB/AppSync max per request
-      const maxPages = 500; // Safety cap: 500 pages = 500,000 items max (prevents infinite loops)
+      // ============================================
+      // SMART PAGINATION WITH CLIENT-SIDE FILTERING
+      // ============================================
+      // The backend may not filter by time correctly, so we:
+      // 1. Set reasonable limits based on expected data volume
+      // 2. Filter results client-side by timestamp
+      // 3. Stop early once we have enough data for the time range
       
-      console.log(`📊 [${range}] Starting fetch: time range ${startTime} to ${endTime}, no item limit`);
+      const pageSize = 1000;
+      const startTimeMs = new Date(startTime).getTime();
+      const endTimeMs = new Date(endTime).getTime();
+      
+      // Calculate expected items based on ~1 reading per minute
+      // This is a reasonable expectation for sensor data
+      const rangeMinutes = (endTimeMs - startTimeMs) / (60 * 1000);
+      const expectedItems = Math.ceil(rangeMinutes * 1.5); // 1.5x buffer for safety
+      const maxItems = Math.min(expectedItems, 100000); // Hard cap at 100k items
+      const maxPages = Math.ceil(maxItems / pageSize);
+      
+      console.log(`📊 [${range}] Starting fetch: ${startTime} to ${endTime}`);
+      console.log(`📊 [${range}] Expected ~${Math.round(rangeMinutes)} readings, max ${maxItems} items, max ${maxPages} pages`);
 
-      // Paginate through ALL results in the time range
+      // Paginate and filter
       let allItems: any[] = [];
       let nextToken: string | null = null;
       let pageCount = 0;
+      let foundOldestInRange = false;
 
       do {
         pageCount++;
@@ -424,34 +436,70 @@ class DynamoDBService {
           authMode: 'userPool'
         }) as any;
 
-        // Check for GraphQL errors in response
+        // Check for GraphQL errors
         if (response?.errors && response.errors.length > 0) {
-          console.error('❌ GraphQL Response Errors:', {
-            errors: response.errors,
-            fullResponse: JSON.stringify(response, null, 2)
-          });
+          console.error('❌ GraphQL Response Errors:', response.errors);
           const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
           throw new Error(`GraphQL error: ${errorMessages}`);
         }
 
         const pageItems = response?.data?.listSensorData?.items || [];
-        allItems = allItems.concat(pageItems);
         nextToken = response?.data?.listSensorData?.nextToken || null;
         
-        // Log every 5 pages to reduce noise, or on last page
-        if (pageCount % 5 === 0 || !nextToken) {
-          console.log(`📊 [${range}] Page ${pageCount}: fetched ${allItems.length} total items, hasMore: ${!!nextToken}`);
+        // CLIENT-SIDE FILTERING: Only keep items within our time range
+        // This is necessary because the backend may not filter correctly
+        const filteredItems = pageItems.filter((item: any) => {
+          const itemTime = new Date(item.timestamp).getTime();
+          return itemTime >= startTimeMs && itemTime <= endTimeMs;
+        });
+        
+        // Track if we're finding items outside our range
+        const outsideRangeCount = pageItems.length - filteredItems.length;
+        
+        // Use push with spread for better performance with large arrays
+        for (const item of filteredItems) {
+          allItems.push(item);
         }
         
-        // Safety check - prevent truly infinite loops
-        if (pageCount >= maxPages) {
-          console.warn(`⚠️ [${range}] Hit max pages safety limit (${maxPages}). Stopping pagination.`);
+        // Log progress
+        if (pageCount % 5 === 0 || !nextToken || pageCount === 1) {
+          console.log(`📊 [${range}] Page ${pageCount}: ${filteredItems.length}/${pageItems.length} in range, total: ${allItems.length}`);
+        }
+        
+        // SMART EARLY TERMINATION:
+        // If most items on this page are outside our time range, we can stop
+        // This means the backend isn't filtering and we've scrolled past our range
+        if (outsideRangeCount > pageItems.length * 0.8 && allItems.length > 0) {
+          console.log(`📊 [${range}] Most items outside range, stopping early (have ${allItems.length} items)`);
           break;
         }
+        
+        // Check if oldest item in this page is before our start time
+        if (pageItems.length > 0) {
+          const oldestInPage = pageItems[pageItems.length - 1];
+          const oldestTime = new Date(oldestInPage?.timestamp).getTime();
+          if (oldestTime < startTimeMs) {
+            foundOldestInRange = true;
+            console.log(`📊 [${range}] Reached data before start time, stopping`);
+            break;
+          }
+        }
+        
+        // Safety limits
+        if (pageCount >= maxPages) {
+          console.warn(`⚠️ [${range}] Hit page limit (${maxPages}). Have ${allItems.length} items.`);
+          break;
+        }
+        
+        if (allItems.length >= maxItems) {
+          console.log(`📊 [${range}] Reached item limit (${maxItems}). Stopping.`);
+          break;
+        }
+        
       } while (nextToken);
 
       const items = allItems;
-      console.log(`📊 [${range}] Pagination complete: ${pageCount} pages, ${items.length} total items`);
+      console.log(`📊 [${range}] Complete: ${pageCount} pages, ${items.length} items in time range`);
       
       // Log date range of fetched data
       if (items.length > 0) {
@@ -514,7 +562,15 @@ class DynamoDBService {
 
       console.log(`✅ Retrieved ${items.length} historical data points from DynamoDB`);
       
-      const transformedData = items.map((item: any) => this.transformDynamoDBData(item));
+      // Transform data in chunks to avoid stack overflow with large arrays
+      const transformedData: SensorData[] = [];
+      const chunkSize = 5000;
+      for (let i = 0; i < items.length; i += chunkSize) {
+        const chunk = items.slice(i, i + chunkSize);
+        for (const item of chunk) {
+          transformedData.push(this.transformDynamoDBData(item));
+        }
+      }
       
       const result: HistoricalData = {
         data: transformedData,
