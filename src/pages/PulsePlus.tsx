@@ -1,17 +1,15 @@
 /**
- * Pulse+ Page - WHOOP-style Actionable Insights
- * 
- * The core philosophy: Tell the user ONE thing to do, then show why.
+ * Pulse+ Page - WHOOP-style Command Center
  * 
  * Structure:
- * 1. NEXT ACTION HERO - The single most impactful thing to do right now
- * 2. ACTION QUEUE - Prioritized list of improvements
- * 3. WHY IT MATTERS - Context on how each action affects the venue
- * 4. EXTERNAL FACTORS - Sports, holidays, weather that affect traffic
+ * 1. PULSE RINGS HERO - Main score + 3 supporting rings
+ * 2. NEXT ACTION - The single most impactful thing to do right now
+ * 3. ACTION QUEUE - Prioritized list of remaining improvements
+ * 4. EXTERNAL FACTORS - Sports, holidays that affect traffic
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Zap, 
   Volume2,
@@ -19,7 +17,6 @@ import {
   CheckCircle,
   ChevronRight,
   TrendingUp,
-  TrendingDown,
   Target,
   Sparkles,
   ThumbsUp,
@@ -30,15 +27,13 @@ import {
   Users,
   Clock,
   Music,
-  Thermometer
+  X
 } from 'lucide-react';
-import authService from '../services/auth.service';
-import apiService from '../services/api.service';
+import { PulseRing } from '../components/PulseRing';
+import { usePulseScore } from '../hooks/usePulseScore';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
-import venueSettingsService from '../services/venue-settings.service';
-import googleReviewsService, { GoogleReviewsData } from '../services/google-reviews.service';
-import type { SensorData, SportsGame, OccupancyMetrics } from '../types';
+import type { SportsGame, OccupancyMetrics } from '../types';
 
 // ============ TYPES ============
 
@@ -54,16 +49,7 @@ interface PulseAction {
   icon: typeof Volume2;
 }
 
-interface ActionContext {
-  sensorData: SensorData;
-  occupancy?: OccupancyMetrics;
-  currentHour: number;
-  dayOfWeek: number; // 0 = Sunday
-  hasUpcomingGames: boolean;
-  isHolidayWeek: boolean;
-}
-
-// Optimal ranges (same as ScoreRings)
+// Optimal ranges
 const OPTIMAL_RANGES = {
   sound: { min: 70, max: 82, unit: 'dB' },
   light: { min: 50, max: 350, unit: 'lux' },
@@ -72,18 +58,13 @@ const OPTIMAL_RANGES = {
 
 // Time periods for bars
 const TIME_PERIODS = {
-  prePeak: { start: 16, end: 19 },    // 4pm - 7pm
-  peak: { start: 19, end: 23 },        // 7pm - 11pm
-  latePeak: { start: 23, end: 2 },     // 11pm - 2am
-  closing: { start: 2, end: 4 },       // 2am - 4am
-  daytime: { start: 11, end: 16 },     // 11am - 4pm
+  prePeak: { start: 16, end: 19 },
+  peak: { start: 19, end: 23 },
 };
 
 // Occupancy thresholds (as % of capacity)
 const OCCUPANCY_THRESHOLDS = {
-  empty: 10,
   slow: 30,
-  moderate: 50,
   busy: 75,
   packed: 90,
 };
@@ -91,111 +72,83 @@ const OCCUPANCY_THRESHOLDS = {
 // ============ MAIN COMPONENT ============
 
 export function PulsePlus() {
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [sensorData, setSensorData] = useState<SensorData | null>(null);
-  const [occupancy, setOccupancy] = useState<OccupancyMetrics | null>(null);
-  const [actions, setActions] = useState<PulseAction[]>([]);
   const [todayGames, setTodayGames] = useState<SportsGame[]>([]);
-  const [reviews, setReviews] = useState<GoogleReviewsData | null>(null);
   const [completedActions, setCompletedActions] = useState<Set<string>>(new Set());
+  const [activeDetail, setActiveDetail] = useState<'pulse' | 'dwell' | 'reputation' | 'occupancy' | null>(null);
+
+  // Use centralized pulse score hook
+  const pulseData = usePulseScore({ enabled: true, pollingInterval: 30000 });
   
-  const user = authService.getStoredUser();
-  const venueId = user?.venueId || '';
-  const venueName = user?.venueName || '';
+  const {
+    loading,
+    pulseScore,
+    pulseStatus,
+    pulseColor,
+    soundScore,
+    lightScore,
+    currentDecibels,
+    currentLight,
+    dwellTimeFormatted,
+    dwellScore,
+    reviews,
+    reputationScore,
+    occupancy,
+    currentOccupancy,
+    occupancyScore,
+    weeklyAvgOccupancy,
+    refresh,
+  } = pulseData;
 
-  // Load all data
-  const loadData = useCallback(async () => {
-    if (!venueId) {
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const [liveData, occupancyData, games, reviewsData] = await Promise.allSettled([
-        apiService.getLiveData(venueId),
-        apiService.getOccupancyMetrics(venueId),
-        sportsService.getGames(),
-        googleReviewsService.getReviews(
-          venueName, 
-          venueSettingsService.getFormattedAddress(venueId) || '', 
-          venueId
-        ),
-      ]);
-
-      const now = new Date();
-      const upcomingHolidays = holidayService.getUpcomingHolidays(7);
-      
-      // Get games for today
-      let todaysGames: SportsGame[] = [];
-      if (games.status === 'fulfilled') {
-        const today = new Date().toDateString();
-        todaysGames = games.value.filter(g => 
-          new Date(g.startTime).toDateString() === today
-        );
-        setTodayGames(todaysGames);
-      }
-
-      // Get occupancy
-      let currentOccupancy: OccupancyMetrics | undefined;
-      if (occupancyData.status === 'fulfilled') {
-        currentOccupancy = occupancyData.value;
-        setOccupancy(occupancyData.value);
-      }
-
-      if (liveData.status === 'fulfilled') {
-        setSensorData(liveData.value);
-        
-        // Build full context for action generation
-        const context: ActionContext = {
-          sensorData: liveData.value,
-          occupancy: currentOccupancy,
-          currentHour: now.getHours(),
-          dayOfWeek: now.getDay(),
-          hasUpcomingGames: todaysGames.some(g => {
-            const gameTime = new Date(g.startTime);
-            const hoursUntil = (gameTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-            return hoursUntil > 0 && hoursUntil < 4; // Game within 4 hours
-          }),
-          isHolidayWeek: upcomingHolidays.length > 0,
-        };
-        
-        setActions(generateActions(context));
-      }
-
-      if (reviewsData.status === 'fulfilled' && reviewsData.value) {
-        setReviews(reviewsData.value);
-      }
-    } catch (error) {
-      console.error('Error loading Pulse+ data:', error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [venueId, venueName]);
-
+  // Load external data (sports, holidays)
   useEffect(() => {
-    loadData();
-    // Refresh every 30 seconds
-    const interval = setInterval(loadData, 30000);
-    return () => clearInterval(interval);
-  }, [loadData]);
+    async function loadExternalData() {
+      try {
+        const games = await sportsService.getGames();
+        const today = new Date().toDateString();
+        setTodayGames(games.filter(g => new Date(g.startTime).toDateString() === today));
+      } catch (e) {
+        console.error('Failed to load sports data:', e);
+      }
+    }
+    loadExternalData();
+  }, []);
 
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadData();
+  // Generate actions based on current data
+  const actions = useMemo(() => {
+    if (!pulseData.hasData) return [];
+    
+    const now = new Date();
+    
+    const hasUpcomingGames = todayGames.some(g => {
+      const gameTime = new Date(g.startTime);
+      const hoursUntil = (gameTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+      return hoursUntil > 0 && hoursUntil < 4;
+    });
+
+    return generateActions({
+      currentDecibels,
+      currentLight,
+      occupancy,
+      currentHour: now.getHours(),
+      dayOfWeek: now.getDay(),
+      hasUpcomingGames,
+    });
+  }, [pulseData.hasData, currentDecibels, currentLight, occupancy, todayGames]);
+
+  const handleRefresh = async () => {
+    await refresh();
   };
 
   const handleCompleteAction = (actionId: string) => {
     setCompletedActions(prev => new Set([...prev, actionId]));
   };
 
-  // Get the top priority action (the HERO)
+  // Filter actions
   const heroAction = actions.find(a => !completedActions.has(a.id));
   const remainingActions = actions.filter(a => !completedActions.has(a.id) && a.id !== heroAction?.id);
   const completedCount = completedActions.size;
 
-  // Get upcoming holiday
+  // External factors
   const upcomingHolidays = holidayService.getUpcomingHolidays(7);
   const nextHoliday = upcomingHolidays[0];
   const daysUntilHoliday = nextHoliday ? holidayService.getDaysUntil(nextHoliday) : null;
@@ -205,14 +158,14 @@ export function PulsePlus() {
       <div className="flex items-center justify-center h-96">
         <div className="flex flex-col items-center gap-3">
           <Zap className="w-12 h-12 text-primary animate-pulse" />
-          <p className="text-warm-500">Loading your actions...</p>
+          <p className="text-warm-500">Loading your command center...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
+    <div className="max-w-2xl mx-auto pb-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -220,24 +173,73 @@ export function PulsePlus() {
             <Zap className="w-6 h-6 text-primary" />
             <h2 className="text-2xl font-bold text-warm-800">Pulse+</h2>
           </div>
-          <p className="text-warm-500">Your personalized action plan</p>
+          <p className="text-warm-500">Your venue command center</p>
         </div>
         <motion.button
           onClick={handleRefresh}
-          disabled={refreshing}
+          disabled={loading}
           className="p-2 rounded-xl bg-warm-100 hover:bg-warm-200 transition-colors"
           whileTap={{ scale: 0.95 }}
         >
-          <RefreshCw className={`w-5 h-5 text-warm-600 ${refreshing ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-5 h-5 text-warm-600 ${loading ? 'animate-spin' : ''}`} />
         </motion.button>
       </div>
+
+      {/* ============ PULSE RINGS HERO ============ */}
+      <motion.div
+        className="mb-6"
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        {/* Main Pulse Score Ring */}
+        <div className="flex justify-center mb-4">
+          <PulseRing
+            score={pulseScore}
+            label="Pulse Score"
+            subtitle={pulseStatus}
+            color={pulseColor}
+            size="hero"
+            onClick={() => setActiveDetail('pulse')}
+            showHint
+          />
+        </div>
+
+        {/* Three Supporting Rings */}
+        <div className="flex justify-center gap-3 sm:gap-4">
+          <PulseRing
+            score={dwellScore}
+            label="Dwell Time"
+            value={dwellTimeFormatted}
+            color="#0077B6"
+            size="small"
+            onClick={() => setActiveDetail('dwell')}
+          />
+          <PulseRing
+            score={reputationScore}
+            label="Reputation"
+            value={reviews ? `${reviews.rating.toFixed(1)}★` : '--'}
+            color="#F59E0B"
+            size="small"
+            onClick={() => setActiveDetail('reputation')}
+          />
+          <PulseRing
+            score={occupancyScore}
+            label="Crowd"
+            value={String(currentOccupancy)}
+            color="#22C55E"
+            size="small"
+            onClick={() => setActiveDetail('occupancy')}
+          />
+        </div>
+      </motion.div>
 
       {/* ============ NEXT ACTION HERO ============ */}
       {heroAction ? (
         <motion.div
           className="mb-6"
-          initial={{ opacity: 0, y: -20 }}
+          initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
         >
           <NextActionHero 
             action={heroAction} 
@@ -254,7 +256,7 @@ export function PulsePlus() {
           className="mb-6"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
+          transition={{ delay: 0.2 }}
         >
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-lg font-semibold text-warm-800">Up Next</h3>
@@ -273,56 +275,7 @@ export function PulsePlus() {
         </motion.div>
       )}
 
-      {/* ============ CURRENT STATUS ============ */}
-      {sensorData && (
-        <motion.div
-          className="mb-6"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <h3 className="text-lg font-semibold text-warm-800 mb-3">Current Status</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <StatusCard
-              icon={Volume2}
-              label="Sound"
-              value={sensorData.decibels?.toFixed(0) || '--'}
-              unit="dB"
-              status={getFactorStatus(sensorData.decibels, OPTIMAL_RANGES.sound)}
-              optimal={`${OPTIMAL_RANGES.sound.min}-${OPTIMAL_RANGES.sound.max}`}
-            />
-            <StatusCard
-              icon={Sun}
-              label="Light"
-              value={sensorData.light?.toFixed(0) || '--'}
-              unit="lux"
-              status={getFactorStatus(sensorData.light, OPTIMAL_RANGES.light)}
-              optimal={`${OPTIMAL_RANGES.light.min}-${OPTIMAL_RANGES.light.max}`}
-            />
-          </div>
-          {/* Occupancy row */}
-          {occupancy && (
-            <div className="mt-3 p-4 rounded-xl bg-warm-50 border border-warm-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-warm-600" />
-                  <span className="text-sm text-warm-600">Current Crowd</span>
-                </div>
-                <div className="text-right">
-                  <span className="text-lg font-bold text-warm-800">{occupancy.current}</span>
-                  <span className="text-sm text-warm-500 ml-1">people</span>
-                </div>
-              </div>
-              <div className="flex items-center justify-between mt-2 text-xs text-warm-500">
-                <span>Today: {occupancy.todayTotal} entries</span>
-                <span>7d avg: {occupancy.sevenDayAvg?.toFixed(0) || '--'}/day</span>
-              </div>
-            </div>
-          )}
-        </motion.div>
-      )}
-
-      {/* ============ EXTERNAL FACTORS ============ */}
+      {/* ============ TONIGHT'S FACTORS ============ */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -330,7 +283,6 @@ export function PulsePlus() {
       >
         <h3 className="text-lg font-semibold text-warm-800 mb-3">Tonight's Factors</h3>
         <div className="space-y-3">
-          {/* Sports Games */}
           {todayGames.length > 0 && (
             <FactorCard
               icon={Trophy}
@@ -342,7 +294,6 @@ export function PulsePlus() {
             />
           )}
 
-          {/* Upcoming Holiday */}
           {nextHoliday && daysUntilHoliday !== null && daysUntilHoliday <= 7 && (
             <FactorCard
               icon={Calendar}
@@ -354,7 +305,6 @@ export function PulsePlus() {
             />
           )}
 
-          {/* Reviews */}
           {reviews && (
             <FactorCard
               icon={Star}
@@ -366,7 +316,6 @@ export function PulsePlus() {
             />
           )}
 
-          {/* No factors */}
           {todayGames.length === 0 && (!nextHoliday || daysUntilHoliday === null || daysUntilHoliday > 7) && !reviews && (
             <div className="p-4 rounded-xl bg-warm-50 border border-warm-200 text-center text-warm-500">
               No special factors tonight — typical traffic expected
@@ -375,7 +324,7 @@ export function PulsePlus() {
         </div>
       </motion.div>
 
-      {/* ============ QUICK TIP ============ */}
+      {/* ============ PRO TIP ============ */}
       <motion.div
         className="mt-6 p-4 rounded-xl bg-primary-50 border border-primary-100"
         initial={{ opacity: 0 }}
@@ -387,11 +336,45 @@ export function PulsePlus() {
           <div>
             <p className="text-sm font-medium text-primary">Pro Tip</p>
             <p className="text-sm text-warm-600 mt-1">
-              {getProTip(sensorData, todayGames)}
+              {getProTip(currentDecibels, todayGames)}
             </p>
           </div>
         </div>
       </motion.div>
+
+      {/* ============ DETAIL MODALS ============ */}
+      <AnimatePresence>
+        {activeDetail === 'pulse' && (
+          <PulseDetailModal
+            onClose={() => setActiveDetail(null)}
+            pulseScore={pulseScore ?? 0}
+            soundScore={soundScore}
+            lightScore={lightScore}
+            currentDecibels={currentDecibels}
+            currentLight={currentLight}
+          />
+        )}
+        {activeDetail === 'dwell' && (
+          <DwellDetailModal
+            onClose={() => setActiveDetail(null)}
+            dwellTimeFormatted={dwellTimeFormatted}
+          />
+        )}
+        {activeDetail === 'reputation' && reviews && (
+          <ReputationDetailModal
+            onClose={() => setActiveDetail(null)}
+            reviews={reviews}
+          />
+        )}
+        {activeDetail === 'occupancy' && (
+          <OccupancyDetailModal
+            onClose={() => setActiveDetail(null)}
+            current={currentOccupancy}
+            weeklyAvg={weeklyAvgOccupancy}
+            todayTotal={occupancy?.todayTotal ?? 0}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -415,28 +398,26 @@ function NextActionHero({ action, onComplete }: { action: PulseAction; onComplet
     low: 'bg-green-50 border-green-200',
   };
 
+  const priorityLabel = {
+    critical: '🚨 Do This Now',
+    high: '⚡ Priority Action',
+    medium: '💡 Recommended',
+    low: '✨ Nice to Have',
+  };
+
   return (
     <div className={`relative overflow-hidden rounded-2xl border-2 ${priorityBg[action.priority]}`}>
-      {/* Priority Banner */}
       <div className={`bg-gradient-to-r ${priorityColors[action.priority]} px-4 py-2`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Target className="w-4 h-4 text-white" />
             <span className="text-sm font-bold text-white uppercase tracking-wide">
-              {action.priority === 'critical' ? '🚨 Do This Now' : 
-               action.priority === 'high' ? '⚡ Priority Action' :
-               action.priority === 'medium' ? '💡 Recommended' : '✨ Nice to Have'}
+              {priorityLabel[action.priority]}
             </span>
           </div>
-          <span className="text-xs text-white/80">
-            {action.priority === 'critical' ? 'Critical' : 
-             action.priority === 'high' ? 'High Impact' : 
-             action.priority === 'medium' ? 'Medium Impact' : 'Low Impact'}
-          </span>
         </div>
       </div>
 
-      {/* Content */}
       <div className="p-6">
         <div className="flex items-start gap-4">
           <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${priorityColors[action.priority]} flex items-center justify-center flex-shrink-0`}>
@@ -447,7 +428,6 @@ function NextActionHero({ action, onComplete }: { action: PulseAction; onComplet
             <h3 className="text-xl font-bold text-warm-800 mb-1">{action.title}</h3>
             <p className="text-warm-600 mb-4">{action.description}</p>
             
-            {/* Current vs Target */}
             {action.currentValue && action.targetValue && (
               <div className="flex items-center gap-4 mb-4 p-3 rounded-lg bg-white/50">
                 <div>
@@ -462,7 +442,6 @@ function NextActionHero({ action, onComplete }: { action: PulseAction; onComplet
               </div>
             )}
             
-            {/* Impact */}
             <div className="flex items-center gap-2 text-sm text-warm-600">
               <TrendingUp className="w-4 h-4 text-green-500" />
               <span>{action.impact}</span>
@@ -470,7 +449,6 @@ function NextActionHero({ action, onComplete }: { action: PulseAction; onComplet
           </div>
         </div>
 
-        {/* Complete Button */}
         <motion.button
           onClick={onComplete}
           className="w-full mt-6 py-3 rounded-xl bg-warm-800 text-white font-semibold flex items-center justify-center gap-2 hover:bg-warm-900 transition-colors"
@@ -515,7 +493,7 @@ function ActionCard({ action, index, onComplete }: {
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.1 }}
     >
-      <div className={`w-10 h-10 rounded-lg bg-white flex items-center justify-center flex-shrink-0`}>
+      <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center flex-shrink-0">
         <Icon className="w-5 h-5 text-warm-600" />
       </div>
       
@@ -539,49 +517,45 @@ function ActionCard({ action, index, onComplete }: {
   );
 }
 
-// ============ STATUS CARD COMPONENT ============
+// ============ ALL SET CELEBRATION ============
 
-function StatusCard({ icon: Icon, label, value, unit, status, optimal }: {
-  icon: typeof Volume2;
-  label: string;
-  value: string;
-  unit: string;
-  status: 'optimal' | 'warning' | 'critical';
-  optimal: string;
-}) {
-  const statusColors = {
-    optimal: 'bg-green-50 border-green-200',
-    warning: 'bg-amber-50 border-amber-200',
-    critical: 'bg-red-50 border-red-200',
+function AllSetCelebration({ completedCount, currentHour }: { completedCount: number; currentHour: number }) {
+  const getMessage = () => {
+    if (completedCount >= 3) {
+      return { title: "You're Crushing It! 💪", subtitle: `${completedCount} actions completed`, emoji: "🏆" };
+    }
+    if (currentHour >= 19 && currentHour < 23) {
+      return { title: "Peak Performance! 🔥", subtitle: "Everything's optimized for tonight", emoji: "⚡" };
+    }
+    if (currentHour >= 16 && currentHour < 19) {
+      return { title: "Ready for Tonight! ✨", subtitle: "Set up for success", emoji: "🌅" };
+    }
+    return { title: "All Dialed In! 🎯", subtitle: "No actions needed right now", emoji: "👌" };
   };
 
-  const statusText = {
-    optimal: 'text-green-600',
-    warning: 'text-amber-600',
-    critical: 'text-red-600',
-  };
-
-  const statusLabel = {
-    optimal: '✓ Optimal',
-    warning: '⚠ Adjust',
-    critical: '✗ Fix Now',
-  };
+  const { title, subtitle, emoji } = getMessage();
 
   return (
-    <div className={`p-4 rounded-xl border ${statusColors[status]}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <Icon className={`w-4 h-4 ${statusText[status]}`} />
-        <span className="text-sm text-warm-600">{label}</span>
+    <motion.div
+      className="mb-6 relative overflow-hidden rounded-2xl"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+    >
+      <div className="absolute inset-0 bg-gradient-to-br from-green-400 via-emerald-500 to-teal-500 opacity-90" />
+      <div className="relative p-8">
+        <div className="flex flex-col items-center text-center">
+          <motion.div 
+            className="text-6xl mb-4"
+            animate={{ scale: [1, 1.1, 1] }}
+            transition={{ duration: 2, repeat: Infinity }}
+          >
+            {emoji}
+          </motion.div>
+          <h3 className="text-2xl font-bold text-white mb-2">{title}</h3>
+          <p className="text-white/90 text-lg">{subtitle}</p>
+        </div>
       </div>
-      <div className="flex items-baseline gap-1 mb-1">
-        <span className="text-2xl font-bold text-warm-800">{value}</span>
-        <span className="text-sm text-warm-500">{unit}</span>
-      </div>
-      <div className="flex items-center justify-between">
-        <span className={`text-xs font-medium ${statusText[status]}`}>{statusLabel[status]}</span>
-        <span className="text-xs text-warm-400">Target: {optimal}</span>
-      </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -610,401 +584,306 @@ function FactorCard({ icon: Icon, iconColor, iconBg, title, subtitle, impact }: 
           <span className="text-xs font-medium">+Traffic</span>
         </div>
       )}
-      {impact === 'lower' && (
-        <div className="flex items-center gap-1 text-red-600">
-          <TrendingDown className="w-4 h-4" />
-          <span className="text-xs font-medium">-Traffic</span>
-        </div>
-      )}
-      {impact === 'positive' && (
-        <ThumbsUp className="w-5 h-5 text-green-500" />
-      )}
+      {impact === 'positive' && <ThumbsUp className="w-5 h-5 text-green-500" />}
     </div>
   );
 }
 
-// ============ ALL SET CELEBRATION COMPONENT ============
+// ============ DETAIL MODALS ============
 
-function AllSetCelebration({ completedCount, currentHour }: { completedCount: number; currentHour: number }) {
-  // Different messages based on time of day
-  const getMessage = () => {
-    if (completedCount >= 3) {
-      return {
-        title: "You're Crushing It! 💪",
-        subtitle: `${completedCount} actions completed — your venue is dialed in perfectly.`,
-        emoji: "🏆",
-      };
-    }
-    if (currentHour >= 19 && currentHour < 23) {
-      return {
-        title: "Peak Performance! 🔥",
-        subtitle: "Everything's optimized for tonight's rush. You got this.",
-        emoji: "⚡",
-      };
-    }
-    if (currentHour >= 16 && currentHour < 19) {
-      return {
-        title: "Ready for Tonight! ✨",
-        subtitle: "You're set up for success. Enjoy the calm before the storm.",
-        emoji: "🌅",
-      };
-    }
-    if (currentHour >= 23 || currentHour < 2) {
-      return {
-        title: "Smooth Sailing! 🌙",
-        subtitle: "Late night vibes are perfect. Keep the energy flowing.",
-        emoji: "✨",
-      };
-    }
-    return {
-      title: "All Dialed In! 🎯",
-      subtitle: "Your venue is perfectly optimized. No actions needed right now.",
-      emoji: "👌",
-    };
-  };
-
-  const { title, subtitle, emoji } = getMessage();
-
+function ModalWrapper({ onClose, title, children }: { onClose: () => void; title: string; children: React.ReactNode }) {
   return (
     <motion.div
-      className="mb-6 relative overflow-hidden rounded-2xl"
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-warm-900/50 backdrop-blur-sm"
+      onClick={onClose}
     >
-      {/* Animated gradient background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-green-400 via-emerald-500 to-teal-500 opacity-90" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.2),transparent_50%)]" />
-      
-      {/* Content */}
-      <div className="relative p-8">
-        <div className="flex flex-col items-center text-center">
-          {/* Big emoji with glow effect */}
-          <motion.div 
-            className="text-6xl mb-4"
-            animate={{ 
-              scale: [1, 1.1, 1],
-              rotate: [0, 5, -5, 0],
-            }}
-            transition={{ 
-              duration: 2, 
-              repeat: Infinity, 
-              repeatType: "reverse" 
-            }}
-          >
-            {emoji}
-          </motion.div>
-          
-          <h3 className="text-2xl font-bold text-white mb-2 drop-shadow-lg">
-            {title}
-          </h3>
-          <p className="text-white/90 text-lg max-w-xs">
-            {subtitle}
-          </p>
-          
-          {/* Stats row */}
-          {completedCount > 0 && (
-            <motion.div 
-              className="mt-6 flex items-center gap-2 px-4 py-2 rounded-full bg-white/20 backdrop-blur-sm"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-            >
-              <CheckCircle className="w-4 h-4 text-white" />
-              <span className="text-white font-medium">
-                {completedCount} action{completedCount > 1 ? 's' : ''} completed
-              </span>
-            </motion.div>
-          )}
-          
-          {/* Motivational tag */}
-          <motion.p 
-            className="mt-4 text-sm text-white/70 italic"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5 }}
-          >
-            "The best bars don't just react — they anticipate."
-          </motion.p>
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 border border-warm-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-warm-800">{title}</h3>
+          <button onClick={onClose} className="p-1 hover:bg-warm-100 rounded-lg">
+            <X className="w-5 h-5 text-warm-400" />
+          </button>
         </div>
-      </div>
+        {children}
+      </motion.div>
     </motion.div>
   );
 }
 
-// ============ HELPER FUNCTIONS ============
+function PulseDetailModal({ onClose, pulseScore, soundScore, lightScore, currentDecibels, currentLight }: {
+  onClose: () => void;
+  pulseScore: number;
+  soundScore: number;
+  lightScore: number;
+  currentDecibels: number | null;
+  currentLight: number | null;
+}) {
+  return (
+    <ModalWrapper onClose={onClose} title="Pulse Score Breakdown">
+      <div className="text-center py-4">
+        <p className="text-5xl font-bold text-warm-800">{pulseScore}</p>
+        <p className={`inline-block mt-2 px-3 py-1 rounded-full text-sm font-medium ${
+          pulseScore >= 85 ? 'bg-green-50 text-green-600 border border-green-200' :
+          pulseScore >= 60 ? 'bg-amber-50 text-amber-600 border border-amber-200' :
+          'bg-red-50 text-red-600 border border-red-200'
+        }`}>
+          {pulseScore >= 85 ? 'Optimal' : pulseScore >= 60 ? 'Good' : 'Needs Adjustment'}
+        </p>
+      </div>
+      <div className="space-y-3">
+        <FactorRow icon={Volume2} label="Sound" weight="60%" score={soundScore} current={currentDecibels} unit="dB" optimal="70-82" />
+        <FactorRow icon={Sun} label="Light" weight="40%" score={lightScore} current={currentLight} unit="lux" optimal="50-350" />
+      </div>
+    </ModalWrapper>
+  );
+}
 
-function generateActions(context: ActionContext): PulseAction[] {
-  const { sensorData, occupancy, currentHour, dayOfWeek, hasUpcomingGames, isHolidayWeek } = context;
+function FactorRow({ icon: Icon, label, weight, score, current, unit, optimal }: {
+  icon: typeof Volume2;
+  label: string;
+  weight: string;
+  score: number;
+  current: number | null;
+  unit: string;
+  optimal: string;
+}) {
+  return (
+    <div className="p-3 rounded-xl bg-warm-50">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+            <Icon className="w-4 h-4 text-primary" />
+          </div>
+          <div>
+            <span className="text-sm font-medium text-warm-800">{label}</span>
+            <span className="text-xs text-warm-500 ml-1">({weight})</span>
+          </div>
+        </div>
+        <span className="text-lg font-bold text-warm-800">{score}</span>
+      </div>
+      <div className="flex justify-between text-xs text-warm-500">
+        <span>Current: {current?.toFixed(1) ?? '--'} {unit}</span>
+        <span>Optimal: {optimal} {unit}</span>
+      </div>
+      <div className="mt-2 h-1.5 bg-warm-200 rounded-full overflow-hidden">
+        <div 
+          className={`h-full rounded-full ${score >= 85 ? 'bg-green-500' : score >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+          style={{ width: `${score}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DwellDetailModal({ onClose, dwellTimeFormatted }: {
+  onClose: () => void;
+  dwellTimeFormatted: string;
+}) {
+  return (
+    <ModalWrapper onClose={onClose} title="Dwell Time Details">
+      <div className="text-center py-4">
+        <p className="text-4xl font-bold text-warm-800">{dwellTimeFormatted}</p>
+        <p className="text-warm-500 mt-2">Average time guests spend at your venue</p>
+      </div>
+      <div className="p-4 rounded-xl bg-warm-50 text-sm text-warm-600">
+        <p><strong>Why it matters:</strong> Longer dwell time = more orders, higher tabs, and better atmosphere.</p>
+      </div>
+    </ModalWrapper>
+  );
+}
+
+function ReputationDetailModal({ onClose, reviews }: {
+  onClose: () => void;
+  reviews: { rating: number; reviewCount: number };
+}) {
+  return (
+    <ModalWrapper onClose={onClose} title="Reputation Details">
+      <div className="text-center py-4">
+        <p className="text-4xl font-bold text-warm-800">{reviews.rating.toFixed(1)} ★</p>
+        <p className="text-warm-500 mt-2">{reviews.reviewCount.toLocaleString()} Google reviews</p>
+      </div>
+      <div className="p-4 rounded-xl bg-warm-50 text-sm text-warm-600">
+        <p><strong>Tip:</strong> Respond to reviews and encourage happy guests to leave feedback.</p>
+      </div>
+    </ModalWrapper>
+  );
+}
+
+function OccupancyDetailModal({ onClose, current, weeklyAvg, todayTotal }: {
+  onClose: () => void;
+  current: number;
+  weeklyAvg: number;
+  todayTotal: number;
+}) {
+  return (
+    <ModalWrapper onClose={onClose} title="Occupancy Details">
+      <div className="text-center py-4">
+        <p className="text-4xl font-bold text-warm-800">{current}</p>
+        <p className="text-warm-500 mt-2">Currently in venue</p>
+      </div>
+      <div className="grid grid-cols-2 gap-3 mt-4">
+        <div className="p-3 rounded-xl bg-warm-50 text-center">
+          <p className="text-lg font-bold text-warm-800">{todayTotal}</p>
+          <p className="text-xs text-warm-500">Today's entries</p>
+        </div>
+        <div className="p-3 rounded-xl bg-warm-50 text-center">
+          <p className="text-lg font-bold text-warm-800">{weeklyAvg.toFixed(0)}</p>
+          <p className="text-xs text-warm-500">7-day avg/day</p>
+        </div>
+      </div>
+    </ModalWrapper>
+  );
+}
+
+// ============ ACTION GENERATION ============
+
+interface ActionInput {
+  currentDecibels: number | null;
+  currentLight: number | null;
+  occupancy: OccupancyMetrics | null;
+  currentHour: number;
+  dayOfWeek: number;
+  hasUpcomingGames: boolean;
+}
+
+function generateActions(input: ActionInput): PulseAction[] {
+  const { currentDecibels, currentLight, occupancy, currentHour, dayOfWeek, hasUpcomingGames } = input;
   const actions: PulseAction[] = [];
   
-  // Determine current time period
   const isPeakHours = currentHour >= TIME_PERIODS.peak.start && currentHour < TIME_PERIODS.peak.end;
   const isPrePeak = currentHour >= TIME_PERIODS.prePeak.start && currentHour < TIME_PERIODS.prePeak.end;
   const isWeekend = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
   
-  // Calculate occupancy percentage (use peakOccupancy as rough capacity estimate, or default to 100)
   const estimatedCapacity = occupancy?.peakOccupancy ? Math.max(occupancy.peakOccupancy * 1.2, 50) : 100;
-  const occupancyPercent = occupancy?.current !== undefined 
-    ? (occupancy.current / estimatedCapacity) * 100 
-    : null;
-  
-  // ============ SOUND ACTIONS ============
-  if (sensorData.decibels !== undefined) {
-    const db = sensorData.decibels;
-    
-    if (db > OPTIMAL_RANGES.sound.max) {
-      const diff = db - OPTIMAL_RANGES.sound.max;
-      
-      // Priority escalates based on: how far off + peak hours + packed venue
-      let priority: PulseAction['priority'] = 'medium';
-      if (diff > 12) priority = 'critical';
-      else if (diff > 8 || (diff > 5 && isPeakHours)) priority = 'high';
-      else if (diff > 5) priority = 'medium';
-      
-      // Extra escalation if it's been loud AND packed (hearing damage + guests leaving)
+  const occupancyPercent = occupancy?.current !== undefined ? (occupancy.current / estimatedCapacity) * 100 : null;
+
+  // Sound actions
+  if (currentDecibels !== null) {
+    if (currentDecibels > OPTIMAL_RANGES.sound.max) {
+      const diff = currentDecibels - OPTIMAL_RANGES.sound.max;
+      let priority: PulseAction['priority'] = diff > 12 ? 'critical' : diff > 8 ? 'high' : 'medium';
       if (priority !== 'critical' && occupancyPercent && occupancyPercent > OCCUPANCY_THRESHOLDS.packed) {
         priority = priority === 'high' ? 'critical' : 'high';
       }
-      
       actions.push({
         id: 'sound-high',
         priority,
         category: 'sound',
         title: diff > 10 ? '🔊 Music is Too Loud' : 'Turn Down the Volume',
-        description: diff > 10 
-          ? `At ${Math.round(db)} dB, guests can't hear each other. This drives people away.`
-          : `Sound is ${Math.round(diff)} dB above the sweet spot. Dial it back a notch.`,
-        impact: diff > 10 
-          ? 'Reducing noise by 5-10 dB can add 15+ mins to average stay time'
-          : 'Comfortable conversation = more rounds ordered',
-        currentValue: `${db.toFixed(0)} dB`,
+        description: `Sound is ${Math.round(diff)} dB above optimal. Guests can not hear each other.`,
+        impact: 'Comfortable conversation = longer stays',
+        currentValue: `${currentDecibels.toFixed(0)} dB`,
         targetValue: `${OPTIMAL_RANGES.sound.max} dB`,
         icon: Volume2,
       });
-    } else if (db < OPTIMAL_RANGES.sound.min) {
-      const diff = OPTIMAL_RANGES.sound.min - db;
-      
-      // Low sound is less critical, but matters more during peak
-      let priority: PulseAction['priority'] = diff > 20 ? 'high' : 'medium';
-      if (isPeakHours && diff > 10) priority = 'high';
-      
+    } else if (currentDecibels < OPTIMAL_RANGES.sound.min) {
+      const diff = OPTIMAL_RANGES.sound.min - currentDecibels;
       actions.push({
         id: 'sound-low',
-        priority,
+        priority: diff > 20 ? 'high' : 'medium',
         category: 'sound',
         title: 'Pump Up the Energy',
-        description: isPeakHours 
-          ? `It's peak hours but the energy feels flat. Turn up the music to match the vibe.`
-          : `A bit quiet in here. Some background music helps fill the space.`,
-        impact: 'The right energy level makes guests feel like they are part of something',
-        currentValue: `${db.toFixed(0)} dB`,
+        description: isPeakHours ? 'Peak hours but energy feels flat. Turn up the music.' : 'A bit quiet. Background music helps fill the space.',
+        impact: 'The right energy level makes guests feel part of something',
+        currentValue: `${currentDecibels.toFixed(0)} dB`,
         targetValue: `${OPTIMAL_RANGES.sound.min} dB`,
         icon: Music,
       });
     }
   }
-  
-  // ============ LIGHTING ACTIONS ============
-  if (sensorData.light !== undefined) {
-    const lux = sensorData.light;
-    
-    if (lux > OPTIMAL_RANGES.light.max) {
-      const diff = lux - OPTIMAL_RANGES.light.max;
-      // Bright lights are worse during evening/night
-      let priority: PulseAction['priority'] = 'medium';
-      if (currentHour >= 19 && diff > 100) priority = 'high';
-      
+
+  // Light actions
+  if (currentLight !== null) {
+    if (currentLight > OPTIMAL_RANGES.light.max) {
       actions.push({
         id: 'light-high',
-        priority,
+        priority: currentHour >= 19 ? 'high' : 'medium',
         category: 'light',
         title: 'Dim the Lights',
-        description: currentHour >= 19
-          ? `Evening vibes need softer lighting. It's brighter than a coffee shop in here.`
-          : `Lighting is harsher than optimal. Softer light = more relaxed guests.`,
-        impact: 'Dimmer evening lighting increases average tab by 12%',
-        currentValue: `${lux.toFixed(0)} lux`,
+        description: currentHour >= 19 ? 'Evening vibes need softer lighting.' : 'Lighting is harsher than optimal.',
+        impact: 'Dimmer evening lighting increases average tab',
+        currentValue: `${currentLight.toFixed(0)} lux`,
         targetValue: `${OPTIMAL_RANGES.light.max} lux`,
         icon: Sun,
       });
-    } else if (lux < OPTIMAL_RANGES.light.min) {
-      actions.push({
-        id: 'light-low',
-        priority: 'medium',
-        category: 'light',
-        title: 'Brighten Up a Bit',
-        description: `It's a little too dark — guests should be able to read menus and see each other.`,
-        impact: 'Proper visibility increases comfort and order frequency',
-        currentValue: `${lux.toFixed(0)} lux`,
-        targetValue: `${OPTIMAL_RANGES.light.min} lux`,
-        icon: Sun,
-      });
     }
   }
-  
-  // ============ TEMPERATURE ACTIONS ============
-  if (sensorData.indoorTemp !== undefined) {
-    const temp = sensorData.indoorTemp;
-    
-    if (temp > OPTIMAL_RANGES.temperature.max) {
-      const diff = temp - OPTIMAL_RANGES.temperature.max;
-      let priority: PulseAction['priority'] = diff > 6 ? 'high' : 'medium';
-      // Escalate if packed
-      if (occupancyPercent && occupancyPercent > OCCUPANCY_THRESHOLDS.busy) {
-        priority = diff > 4 ? 'critical' : 'high';
-      }
-      
-      actions.push({
-        id: 'temp-high',
-        priority,
-        category: 'general',
-        title: '🌡️ Cool It Down',
-        description: occupancyPercent && occupancyPercent > OCCUPANCY_THRESHOLDS.busy
-          ? `It's ${Math.round(temp)}°F and packed. Body heat adds up fast — crank the AC.`
-          : `Getting warm at ${Math.round(temp)}°F. Uncomfortable guests leave sooner.`,
-        impact: 'Every degree above 74°F reduces average stay by 8 minutes',
-        currentValue: `${temp.toFixed(0)}°F`,
-        targetValue: `${OPTIMAL_RANGES.temperature.max}°F`,
-        icon: Thermometer,
-      });
-    } else if (temp < OPTIMAL_RANGES.temperature.min) {
-      actions.push({
-        id: 'temp-low',
-        priority: 'medium',
-        category: 'general',
-        title: 'Warm It Up',
-        description: `At ${Math.round(temp)}°F, guests might be reaching for their jackets.`,
-        impact: 'Comfortable temperature keeps guests relaxed and ordering',
-        currentValue: `${temp.toFixed(0)}°F`,
-        targetValue: `${OPTIMAL_RANGES.temperature.min}°F`,
-        icon: Thermometer,
-      });
-    }
-  }
-  
-  // ============ OCCUPANCY-BASED ACTIONS ============
+
+  // Occupancy actions
   if (occupancyPercent !== null) {
-    // Slow night during peak hours
     if (isPeakHours && occupancyPercent < OCCUPANCY_THRESHOLDS.slow && isWeekend) {
       actions.push({
-        id: 'occupancy-slow-weekend',
+        id: 'occupancy-slow',
         priority: 'medium',
         category: 'occupancy',
         title: 'Slow for a Weekend',
-        description: `Only ${Math.round(occupancyPercent)}% capacity on a ${dayOfWeek === 5 ? 'Friday' : dayOfWeek === 6 ? 'Saturday' : 'Sunday'}. Consider a social post or text to regulars.`,
-        impact: 'A quick promo can turn a slow night around in 30 minutes',
-        currentValue: `${Math.round(occupancyPercent)}%`,
-        targetValue: `${OCCUPANCY_THRESHOLDS.moderate}%+`,
+        description: `Only ${Math.round(occupancyPercent)}% capacity. Consider a social post.`,
+        impact: 'A quick promo can turn a slow night around',
         icon: Users,
       });
     }
-    
-    // Getting packed - prep for rush
-    if (occupancyPercent >= OCCUPANCY_THRESHOLDS.busy && occupancyPercent < OCCUPANCY_THRESHOLDS.packed) {
-      actions.push({
-        id: 'occupancy-busy',
-        priority: 'low',
-        category: 'occupancy',
-        title: 'Getting Busy — Stay Sharp',
-        description: `${Math.round(occupancyPercent)}% capacity. Make sure bar is stocked, restrooms checked, and staff is heads-up.`,
-        impact: 'Prepared teams turn busy nights into record nights',
-        icon: Users,
-      });
-    }
-    
-    // Packed house
     if (occupancyPercent >= OCCUPANCY_THRESHOLDS.packed) {
       actions.push({
         id: 'occupancy-packed',
         priority: 'high',
         category: 'occupancy',
         title: '🔥 House is Packed!',
-        description: `${Math.round(occupancyPercent)}% capacity — great problem to have! Watch the door, keep service fast.`,
-        impact: 'Fast service during rushes = higher tips and return visits',
+        description: `${Math.round(occupancyPercent)}% capacity. Keep service fast.`,
+        impact: 'Fast service = higher tips and return visits',
         icon: Users,
       });
     }
   }
-  
-  // ============ TIME-OF-DAY ACTIONS ============
-  
-  // Pre-peak prep (4-7pm)
+
+  // Time-based actions
   if (isPrePeak && actions.length < 2) {
     actions.push({
       id: 'timing-prepeak',
       priority: 'low',
       category: 'timing',
       title: '⏰ Pre-Peak Prep Time',
-      description: hasUpcomingGames 
-        ? 'Game coming up! Check TVs, stock the bar, brief the team.'
-        : 'Rush hour approaching. Good time to restock, check bathrooms, and get set.',
-      impact: 'Prepared venues handle rushes 40% smoother',
+      description: hasUpcomingGames ? 'Game coming up! Check TVs, stock the bar.' : 'Rush hour approaching. Time to prep.',
+      impact: 'Prepared venues handle rushes smoother',
       icon: Clock,
     });
   }
-  
-  // Game day reminder
+
   if (hasUpcomingGames && !actions.some(a => a.id.includes('game'))) {
     actions.push({
       id: 'timing-gameday',
       priority: 'high',
       category: 'timing',
       title: '🏈 Game Starting Soon',
-      description: 'Expect a rush 30 minutes before kickoff. All TVs on? Sound ready? Staff prepped?',
-      impact: 'Game crowds order 2x faster — be ready or lose sales',
+      description: 'Expect a rush 30 min before kickoff.',
+      impact: 'Game crowds order 2x faster — be ready',
       icon: Trophy,
     });
   }
-  
-  // Holiday week prep
-  if (isHolidayWeek && isPrePeak && !actions.some(a => a.id.includes('holiday'))) {
-    actions.push({
-      id: 'timing-holiday',
-      priority: 'low',
-      category: 'timing',
-      title: '🎉 Holiday Week',
-      description: 'Expect higher traffic than usual. Consider extending happy hour or adding staff.',
-      impact: 'Holiday weeks drive 25%+ more traffic',
-      icon: Calendar,
-    });
-  }
-  
-  // ============ SORT BY PRIORITY ============
+
+  // Sort by priority
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
   actions.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
-  
+
   return actions;
 }
 
-function getFactorStatus(value: number | undefined, range: { min: number; max: number }): 'optimal' | 'warning' | 'critical' {
-  if (value === undefined) return 'warning';
-  if (value >= range.min && value <= range.max) return 'optimal';
-  
-  const rangeSize = range.max - range.min;
-  const tolerance = rangeSize * 0.3;
-  
-  if (value < range.min - tolerance || value > range.max + tolerance) {
-    return 'critical';
-  }
-  return 'warning';
-}
-
-function getProTip(data: SensorData | null, games: SportsGame[]): string {
+function getProTip(currentDecibels: number | null, games: SportsGame[]): string {
+  if (games.length > 0) return "Game day! Staff up and prep for rushes 30 min before game time.";
+  if (currentDecibels && currentDecibels > 85) return "High sound levels tire guests faster. Consider a 5-minute volume dip.";
   const tips = [
     "Check in on your Pulse Score every hour during peak times.",
     "Small adjustments early prevent big problems later.",
-    "Your regulars notice when the vibe is off — trust the data.",
     "The best bars anticipate, not react.",
   ];
-
-  if (games.length > 0) {
-    return "Game day! Staff up and prep for rushes 30 min before game time.";
-  }
-
-  if (data?.decibels && data.decibels > 85) {
-    return "High sound levels tire guests faster. Consider a 5-minute volume dip.";
-  }
-
   return tips[Math.floor(Math.random() * tips.length)];
 }
 

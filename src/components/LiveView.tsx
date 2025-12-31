@@ -1,13 +1,13 @@
 /**
- * LiveView Component - Staged Loading Implementation
+ * LiveView Component - "At a Glance" Tab
  * 
- * This component implements the WHOOP-style "hero first" loading pattern:
- * 1. Pulse Score appears in <0.5 seconds (current sensor data)
- * 2. Today's stats fade in (occupancy, entries)
- * 3. Context loads in background (weather, comparisons)
- * 4. Historical charts load on-demand
+ * This is the data exploration view - raw metrics and charts.
+ * The Pulse Score rings are now on Pulse+ page.
  * 
- * Current data is NEVER cached - always fresh.
+ * Structure:
+ * 1. Live Metrics Panel (sound, light, temp, occupancy)
+ * 2. Context (weather, comparisons)
+ * 3. Historical Charts (on-demand)
  */
 
 import { useState, useEffect } from 'react';
@@ -15,17 +15,15 @@ import { motion } from 'framer-motion';
 import { 
   RefreshCw,
   Download,
+  Activity,
 } from 'lucide-react';
 import { useStagedLoading } from '../hooks/useStagedLoading';
-import { ScoreRings } from './ScoreRings';
 import { LiveContext } from './LiveContext';
 import { TimeRangeToggle } from './TimeRangeToggle';
 import { ConnectionStatus } from './ConnectionStatus';
 import { LiveMetricsPanel } from './LiveMetricsPanel';
 import { DataChart } from './DataChart';
 import { LoadingSpinner } from './LoadingSpinner';
-// Note: barDay utils available if needed for future calculations
-// import { calculateBarDayOccupancy, formatBarDayRange } from '../utils/barDay';
 import apiService from '../services/api.service';
 import type { TimeRange, SensorData, Location } from '../types';
 
@@ -61,21 +59,18 @@ export function LiveView({
   } = useStagedLoading({
     venueId,
     enabled: true,
-    pollingInterval: 15000, // 15 seconds
+    pollingInterval: 15000,
   });
   
-  // Track bar day occupancy (calculated from 24h data)
+  // Track bar day occupancy
   const [barDayOccupancy, setBarDayOccupancy] = useState<{
     entries: number;
     exits: number;
     current: number;
   } | null>(null);
   
-  // Load bar day occupancy when we have today's data
   useEffect(() => {
     if (todayOccupancy) {
-      // Use occupancy metrics directly for now
-      // The full bar day calculation will happen when historical data loads
       setBarDayOccupancy({
         entries: todayOccupancy.todayEntries || 0,
         exits: todayOccupancy.todayExits || 0,
@@ -84,7 +79,6 @@ export function LiveView({
     }
   }, [todayOccupancy]);
   
-  // Handle time range change
   const handleTimeRangeChange = (range: TimeRange) => {
     setTimeRange(range);
     if (range !== 'live') {
@@ -92,7 +86,6 @@ export function LiveView({
     }
   };
   
-  // Handle refresh
   const handleRefresh = () => {
     if (timeRange === 'live') {
       refreshHero();
@@ -101,7 +94,6 @@ export function LiveView({
     }
   };
   
-  // Handle export
   const handleExport = () => {
     const dataToExport = timeRange === 'live' 
       ? heroData ? [heroData] : []
@@ -114,7 +106,6 @@ export function LiveView({
     }
   };
   
-  // Get current data based on view
   const currentData = timeRange === 'live' 
     ? heroData 
     : historicalData?.data?.[historicalData.data.length - 1] || null;
@@ -125,18 +116,20 @@ export function LiveView({
   
   return (
     <>
-      {/* Time Range Selector */}
+      {/* Header */}
       <motion.div
         className="mb-6"
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-2">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
           <div className="flex flex-col gap-2">
-            <h2 className="text-2xl font-bold gradient-text">
-              {timeRange === 'live' ? 'Live Monitoring' : 'Historical Data'}
-            </h2>
-            {/* Connection status for live view */}
+            <div className="flex items-center gap-2">
+              <Activity className="w-6 h-6 text-primary" />
+              <h2 className="text-2xl font-bold text-warm-800">
+                {timeRange === 'live' ? 'Live Metrics' : 'Historical Data'}
+              </h2>
+            </div>
             {currentLocation && timeRange === 'live' && (
               <ConnectionStatus 
                 isConnected={hasHeroData}
@@ -152,21 +145,18 @@ export function LiveView({
               className="btn-secondary px-4 py-2 flex items-center gap-2"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              title="Refresh (R)"
               disabled={heroLoading || historicalLoading}
             >
               <RefreshCw className={`w-4 h-4 ${(heroLoading || historicalLoading) ? 'animate-spin' : ''}`} />
               <span className="hidden sm:inline">Refresh</span>
             </motion.button>
             
-            {/* Export button shows when viewing historical data */}
             {timeRange !== 'live' && (
               <motion.button
                 onClick={handleExport}
                 className="btn-primary px-4 py-2 flex items-center gap-2"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                title="Export CSV (E)"
                 disabled={!currentData || historicalLoading}
               >
                 <Download className="w-4 h-4" />
@@ -176,7 +166,6 @@ export function LiveView({
           </div>
         </div>
 
-        {/* Time range toggle */}
         <TimeRangeToggle 
           selected={timeRange} 
           onChange={handleTimeRangeChange} 
@@ -186,12 +175,11 @@ export function LiveView({
       {/* ============ LIVE VIEW ============ */}
       {timeRange === 'live' && (
         <>
-          {/* HERO: Pulse Score - Loads First */}
           {heroLoading && !hasHeroData ? (
             <div className="flex items-center justify-center py-12">
               <div className="flex flex-col items-center gap-3">
                 <div className="w-12 h-12 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
-                <p className="text-sm text-warm-500">Loading Pulse Score...</p>
+                <p className="text-sm text-warm-500">Loading live data...</p>
               </div>
             </div>
           ) : heroError && !hasHeroData ? (
@@ -211,17 +199,21 @@ export function LiveView({
             </motion.div>
           ) : (
             <>
-              {/* Score Rings - HERO COMPONENT */}
-              <motion.div 
+              {/* Live Metrics Panel - The main content */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
                 className="mb-6"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.3 }}
               >
-                <ScoreRings sensorData={currentData} />
+                <LiveMetricsPanel
+                  sensorData={heroData}
+                  occupancy={barDayOccupancy ?? todayOccupancy}
+                  weatherData={weatherData}
+                  loading={todayLoading}
+                />
               </motion.div>
-              
-              {/* Live Context + Comparisons - Loads after hero */}
+
+              {/* Context + Comparisons */}
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -234,29 +226,12 @@ export function LiveView({
               </motion.div>
             </>
           )}
-
-          {/* Live Metrics Panel - Loads with hero */}
-          {hasHeroData && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
-            >
-              <LiveMetricsPanel
-                sensorData={heroData}
-                occupancy={barDayOccupancy ?? todayOccupancy}
-                weatherData={weatherData}
-                loading={todayLoading}
-              />
-            </motion.div>
-          )}
         </>
       )}
 
       {/* ============ HISTORICAL VIEW ============ */}
       {timeRange !== 'live' && (
         <>
-          {/* Show cached data indicator */}
           {historicalFromCache && (
             <motion.div
               className="mb-4 p-3 rounded-lg bg-primary-50 border border-primary-100"
@@ -272,7 +247,6 @@ export function LiveView({
             </motion.div>
           )}
           
-          {/* Loading state for historical */}
           {historicalLoading && !historicalData ? (
             <div className="flex items-center justify-center py-12">
               <LoadingSpinner />
@@ -283,7 +257,6 @@ export function LiveView({
               animate={{ opacity: 1 }}
               className="space-y-6"
             >
-              {/* Charts */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <DataChart
                   data={chartData}
