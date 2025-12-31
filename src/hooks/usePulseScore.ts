@@ -120,6 +120,79 @@ function getPulseColor(score: number | null): string {
   return '#EF4444';
 }
 
+/**
+ * Calculate occupancy metrics from sensor data as fallback
+ * when the dedicated occupancy resolver doesn't return data
+ */
+function calculateOccupancyFromSensorData(sensorData: SensorData[]): OccupancyMetrics | null {
+  if (!sensorData || sensorData.length === 0) return null;
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  
+  // Filter today's data
+  const todayData = sensorData.filter(d => new Date(d.timestamp) >= todayStart);
+  
+  // Get current occupancy from most recent data point
+  const latestData = sensorData[0]; // Assuming sorted newest first
+  const current = latestData?.occupancy?.current ?? 0;
+  
+  // Calculate today's entries/exits from sensor data
+  // The sensor data includes cumulative entries/exits for the day
+  let todayEntries = 0;
+  let todayExits = 0;
+  let peakOccupancy = 0;
+  let peakTime = '';
+  
+  if (todayData.length > 0) {
+    // Find max entries/exits values (they're cumulative)
+    todayData.forEach(d => {
+      if (d.occupancy?.entries && d.occupancy.entries > todayEntries) {
+        todayEntries = d.occupancy.entries;
+      }
+      if (d.occupancy?.exits && d.occupancy.exits > todayExits) {
+        todayExits = d.occupancy.exits;
+      }
+      if (d.occupancy?.current && d.occupancy.current > peakOccupancy) {
+        peakOccupancy = d.occupancy.current;
+        peakTime = new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+    });
+  }
+  
+  // Calculate 7-day average from all data
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const weekData = sensorData.filter(d => new Date(d.timestamp) >= sevenDaysAgo);
+  
+  // Group by day and get max occupancy per day
+  const dailyMaxOccupancy: { [key: string]: number } = {};
+  weekData.forEach(d => {
+    const dateKey = new Date(d.timestamp).toDateString();
+    const occ = d.occupancy?.current ?? 0;
+    if (!dailyMaxOccupancy[dateKey] || occ > dailyMaxOccupancy[dateKey]) {
+      dailyMaxOccupancy[dateKey] = occ;
+    }
+  });
+  
+  const dailyValues = Object.values(dailyMaxOccupancy);
+  const sevenDayAvg = dailyValues.length > 0 
+    ? Math.round(dailyValues.reduce((a, b) => a + b, 0) / dailyValues.length)
+    : 0;
+
+  return {
+    current,
+    todayEntries,
+    todayExits,
+    todayTotal: todayEntries, // Use entries as total
+    sevenDayAvg,
+    fourteenDayAvg: sevenDayAvg, // Same as 7-day for now
+    thirtyDayAvg: sevenDayAvg, // Same as 7-day for now
+    peakOccupancy,
+    peakTime,
+    avgDwellTimeMinutes: null, // Will be calculated elsewhere
+  };
+}
+
 // ============ MAIN HOOK ============
 
 export function usePulseScore(options: UsePulseScoreOptions = {}): UsePulseScoreReturn {
@@ -179,9 +252,15 @@ export function usePulseScore(options: UsePulseScoreOptions = {}): UsePulseScore
         setHistoricalData(historicalResult.value.data);
       }
 
-      // Process occupancy
-      if (occupancyResult.status === 'fulfilled') {
+      // Process occupancy - use API result, or calculate from sensor data
+      if (occupancyResult.status === 'fulfilled' && occupancyResult.value) {
         setOccupancy(occupancyResult.value);
+      } else if (historicalResult.status === 'fulfilled' && historicalResult.value?.data) {
+        // Fallback: Calculate occupancy metrics from sensor data
+        const sensorOccupancy = calculateOccupancyFromSensorData(historicalResult.value.data);
+        if (sensorOccupancy) {
+          setOccupancy(sensorOccupancy);
+        }
       }
 
       // Process reviews
