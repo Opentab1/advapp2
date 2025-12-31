@@ -795,15 +795,17 @@ export function Dashboard() {
               {/* Dashboard Content - Always show cards, use dashes when no data */}
               {!loading && (
                 <>
-                  {/* Pulse Score - Real-time calculation */}
-                  <div className="mb-6">
-                    <PulseScoreLive sensorData={currentData} />
-                  </div>
-
-                  {/* Score Rings - Live view only */}
+                  {/* Pulse Score + Score Rings - Live view only */}
                   {timeRange === 'live' && (
                     <div className="mb-6">
-                      <ScoreRings />
+                      <ScoreRings sensorData={currentData} />
+                    </div>
+                  )}
+
+                  {/* Pulse Score - Historical view */}
+                  {timeRange !== 'live' && (
+                    <div className="mb-6">
+                      <PulseScoreLive sensorData={currentData} />
                     </div>
                   )}
 
