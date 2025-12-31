@@ -799,193 +799,323 @@ export function Dashboard() {
                     <PulseScoreLive sensorData={currentData} />
                   </div>
 
-                  {/* Occupancy Metrics Section */}
-                  {occupancyMetrics && (
-                    <motion.div
-                      className="mb-6"
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.1 }}
-                    >
-                      <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                        <Users className="w-5 h-5 text-cyan-400" />
-                        Occupancy Tracking
-                      </h3>
-                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                        <MetricCard
-                          title={timeRange === 'live' ? "Current Occupancy" : "Peak Occupancy"}
-                          value={formatOccupancy(timeRange === 'live' 
-                            ? (barDayOccupancy?.current ?? occupancyMetrics.current)
-                            : periodOccupancy?.current
+                  {/* LIVE VIEW: Two-column layout with metrics panel + insights */}
+                  {timeRange === 'live' && (
+                    <div className="flex flex-col lg:flex-row gap-6 mb-6">
+                      {/* Left Panel - Live Metrics */}
+                      <motion.div
+                        className="lg:w-80 flex-shrink-0"
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                      >
+                        <div className="glass-card p-4 space-y-3">
+                          <h3 className="text-lg font-semibold text-warm-800 mb-4">Live Metrics</h3>
+                          
+                          {/* Sound Level */}
+                          <div className="flex items-center justify-between p-3 bg-warm-50 rounded-xl">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                                <Volume2 className="w-5 h-5 text-primary" />
+                              </div>
+                              <span className="text-sm text-warm-600">Sound Level</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xl font-bold text-warm-800">{formatValueNoZero(currentData?.decibels)}</div>
+                              <div className="text-xs text-warm-500">dB</div>
+                            </div>
+                          </div>
+
+                          {/* Light Level */}
+                          <div className="flex items-center justify-between p-3 bg-warm-50 rounded-xl">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-yellow-500/10 flex items-center justify-center">
+                                <Sun className="w-5 h-5 text-yellow-500" />
+                              </div>
+                              <span className="text-sm text-warm-600">Light Level</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xl font-bold text-warm-800">{formatValueAllowZero(currentData?.light)}</div>
+                              <div className="text-xs text-warm-500">lux</div>
+                            </div>
+                          </div>
+
+                          {/* Outdoor Temp */}
+                          <div 
+                            className={`flex items-center justify-between p-3 bg-warm-50 rounded-xl ${!weatherData ? 'cursor-pointer hover:bg-warm-100' : ''}`}
+                            onClick={!weatherData ? () => setActiveTab('settings') : undefined}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-sky-500/10 flex items-center justify-center">
+                                <CloudSun className="w-5 h-5 text-sky-500" />
+                              </div>
+                              <span className="text-sm text-warm-600">Outdoor</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xl font-bold text-warm-800">
+                                {weatherData ? `${weatherData.temperature}°` : '--'}
+                              </div>
+                              <div className="text-xs text-warm-500">
+                                {weatherData ? weatherData.icon : 'Set address'}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Divider */}
+                          <div className="border-t border-warm-200 my-2"></div>
+
+                          {/* Entries Today */}
+                          <div className="flex items-center justify-between p-3 bg-warm-50 rounded-xl">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
+                                <UserPlus className="w-5 h-5 text-green-500" />
+                              </div>
+                              <span className="text-sm text-warm-600">Entries Today</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xl font-bold text-warm-800">
+                                {formatOccupancy(barDayOccupancy?.entries ?? occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries)}
+                              </div>
+                              <div className="text-xs text-warm-500">people</div>
+                            </div>
+                          </div>
+
+                          {/* Exits Today */}
+                          <div className="flex items-center justify-between p-3 bg-warm-50 rounded-xl">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center">
+                                <UserMinus className="w-5 h-5 text-red-500" />
+                              </div>
+                              <span className="text-sm text-warm-600">Exits Today</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xl font-bold text-warm-800">
+                                {formatOccupancy(barDayOccupancy?.exits ?? occupancyMetrics?.todayExits ?? liveData?.occupancy?.exits)}
+                              </div>
+                              <div className="text-xs text-warm-500">people</div>
+                            </div>
+                          </div>
+
+                          {/* Current Occupancy */}
+                          <div className="flex items-center justify-between p-3 bg-warm-50 rounded-xl">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                                <Users className="w-5 h-5 text-purple-500" />
+                              </div>
+                              <span className="text-sm text-warm-600">Current Occupancy</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xl font-bold text-warm-800">
+                                {formatOccupancy(barDayOccupancy?.current ?? occupancyMetrics?.current)}
+                              </div>
+                              <div className="text-xs text-warm-500">people</div>
+                            </div>
+                          </div>
+
+                          {/* Avg Dwell Time */}
+                          <div className="flex items-center justify-between p-3 bg-warm-50 rounded-xl">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-pink-500/10 flex items-center justify-center">
+                                <Clock className="w-5 h-5 text-pink-500" />
+                              </div>
+                              <span className="text-sm text-warm-600">Avg Dwell Time</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xl font-bold text-warm-800">
+                                {calculatedDwellTime !== null ? formatDwellTime(calculatedDwellTime) : '--'}
+                              </div>
+                              <div className="text-xs text-warm-500">per visit</div>
+                            </div>
+                          </div>
+
+                          {/* Now Playing - compact */}
+                          {currentData?.currentSong && (
+                            <>
+                              <div className="border-t border-warm-200 my-2"></div>
+                              <div className="p-3 bg-warm-50 rounded-xl">
+                                <div className="flex items-center gap-3">
+                                  {currentData.albumArt && (
+                                    <img 
+                                      src={currentData.albumArt} 
+                                      alt="Album art"
+                                      className="w-10 h-10 rounded-lg object-cover"
+                                    />
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-medium text-warm-800 truncate">
+                                      {currentData.currentSong}
+                                    </div>
+                                    <div className="text-xs text-warm-500 truncate">
+                                      {currentData.artist || 'Unknown Artist'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
                           )}
-                          unit="people"
-                          icon={Users}
+                        </div>
+                      </motion.div>
+
+                      {/* Right Panel - Insights */}
+                      <div className="flex-1 min-w-0">
+                        <Insights />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* HISTORICAL VIEW: Original layout */}
+                  {timeRange !== 'live' && (
+                    <>
+                      {/* Occupancy Metrics Section */}
+                      {occupancyMetrics && (
+                        <motion.div
+                          className="mb-6"
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.1 }}
+                        >
+                          <h3 className="text-xl font-bold text-warm-800 mb-4 flex items-center gap-2">
+                            <Users className="w-5 h-5 text-primary" />
+                            Occupancy Tracking
+                          </h3>
+                          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                            <MetricCard
+                              title="Peak Occupancy"
+                              value={formatOccupancy(periodOccupancy?.current)}
+                              unit="people"
+                              icon={Users}
+                              color="#00d4ff"
+                              delay={0}
+                            />
+                            
+                            <MetricCard
+                              title={`Entries (${timeRange})`}
+                              value={formatOccupancy(periodOccupancy?.entries)}
+                              unit="people"
+                              icon={UserPlus}
+                              color="#4ade80"
+                              delay={0.05}
+                            />
+                            
+                            <MetricCard
+                              title={`Exits (${timeRange})`}
+                              value={formatOccupancy(periodOccupancy?.exits)}
+                              unit="people"
+                              icon={UserMinus}
+                              color="#f87171"
+                              delay={0.1}
+                            />
+                            
+                            <MetricCard
+                              title="Peak Today"
+                              value={formatOccupancy(occupancyMetrics.peakOccupancy)}
+                              unit={occupancyMetrics.peakTime ? `@ ${occupancyMetrics.peakTime}` : 'people'}
+                              icon={TrendingUp}
+                              color="#fbbf24"
+                              delay={0.15}
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div className="glass-card p-4">
+                              <div className="text-sm text-warm-500 mb-1">7-Day Average</div>
+                              <div className="text-2xl font-bold text-primary">
+                                {formatOccupancy(occupancyMetrics.sevenDayAvg)}
+                                <span className="text-sm text-warm-500 ml-2">people/day</span>
+                              </div>
+                            </div>
+                            
+                            <div className="glass-card p-4">
+                              <div className="text-sm text-warm-500 mb-1">14-Day Average</div>
+                              <div className="text-2xl font-bold text-primary">
+                                {formatOccupancy(occupancyMetrics.fourteenDayAvg)}
+                                <span className="text-sm text-warm-500 ml-2">people/day</span>
+                              </div>
+                            </div>
+                            
+                            <div className="glass-card p-4">
+                              <div className="text-sm text-warm-500 mb-1">30-Day Average</div>
+                              <div className="text-2xl font-bold text-primary">
+                                {formatOccupancy(occupancyMetrics.thirtyDayAvg)}
+                                <span className="text-sm text-warm-500 ml-2">people/day</span>
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+
+                      {/* Hero Metrics Grid - Historical */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+                        <MetricCard
+                          title="Sound Level"
+                          value={formatValueNoZero(currentData?.decibels)}
+                          unit="dB"
+                          icon={Volume2}
                           color="#00d4ff"
                           delay={0}
                         />
                         
                         <MetricCard
-                          title={timeRange === 'live' ? "Entries Today" : `Entries (${timeRange})`}
-                          value={formatOccupancy(timeRange === 'live'
-                            ? (barDayOccupancy?.entries ?? occupancyMetrics.todayEntries ?? liveData?.occupancy?.entries)
-                            : periodOccupancy?.entries
-                          )}
-                          unit="people"
-                          icon={UserPlus}
-                          color="#4ade80"
-                          delay={0.05}
-                        />
-                        
-                        <MetricCard
-                          title={timeRange === 'live' ? "Exits Today" : `Exits (${timeRange})`}
-                          value={formatOccupancy(timeRange === 'live'
-                            ? (barDayOccupancy?.exits ?? occupancyMetrics.todayExits ?? liveData?.occupancy?.exits)
-                            : periodOccupancy?.exits
-                          )}
-                          unit="people"
-                          icon={UserMinus}
-                          color="#f87171"
+                          title="Light Level"
+                          value={formatValueAllowZero(currentData?.light)}
+                          unit="lux"
+                          icon={Sun}
+                          color="#ffd700"
                           delay={0.1}
                         />
                         
                         <MetricCard
-                          title="Peak Today"
-                          value={formatOccupancy(occupancyMetrics.peakOccupancy)}
-                          unit={occupancyMetrics.peakTime ? `@ ${occupancyMetrics.peakTime}` : 'people'}
-                          icon={TrendingUp}
-                          color="#fbbf24"
-                          delay={0.15}
+                          title="Outdoor"
+                          value={weatherData ? weatherData.temperature.toString() : '--'}
+                          unit={weatherData ? `${weatherData.icon}` : '°F'}
+                          icon={CloudSun}
+                          color="#87CEEB"
+                          delay={0.22}
+                          onClick={!weatherData ? () => setActiveTab('settings') : undefined}
+                          clickHint={!weatherData ? 'Click to set venue address' : undefined}
+                        />
+                        
+                        <MetricCard
+                          title={`Entries (${timeRange})`}
+                          value={formatOccupancy(periodOccupancy?.entries)}
+                          unit="people"
+                          icon={UserPlus}
+                          color="#4ade80"
+                          delay={0.3}
+                        />
+                        
+                        <MetricCard
+                          title={`Exits (${timeRange})`}
+                          value={formatOccupancy(periodOccupancy?.exits)}
+                          unit="people"
+                          icon={UserMinus}
+                          color="#f87171"
+                          delay={0.35}
+                        />
+                        
+                        <MetricCard
+                          title="Peak Occupancy"
+                          value={formatOccupancy(periodOccupancy?.current)}
+                          unit="people"
+                          icon={Users}
+                          color="#a78bfa"
+                          delay={0.4}
+                        />
+
+                        <MetricCard
+                          title={`Avg Dwell (${timeRange})`}
+                          value={calculatedDwellTime !== null ? formatDwellTime(calculatedDwellTime) : '--'}
+                          unit="avg"
+                          icon={Clock}
+                          color="#ec4899"
+                          delay={0.4}
                         />
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div className="glass-card p-4">
-                          <div className="text-sm text-gray-400 mb-1">7-Day Average</div>
-                          <div className="text-2xl font-bold text-cyan-400">
-                            {formatOccupancy(occupancyMetrics.sevenDayAvg)}
-                            <span className="text-sm text-gray-400 ml-2">people/day</span>
-                          </div>
-                        </div>
-                        
-                        <div className="glass-card p-4">
-                          <div className="text-sm text-gray-400 mb-1">14-Day Average</div>
-                          <div className="text-2xl font-bold text-cyan-400">
-                            {formatOccupancy(occupancyMetrics.fourteenDayAvg)}
-                            <span className="text-sm text-gray-400 ml-2">people/day</span>
-                          </div>
-                        </div>
-                        
-                        <div className="glass-card p-4">
-                          <div className="text-sm text-gray-400 mb-1">30-Day Average</div>
-                          <div className="text-2xl font-bold text-cyan-400">
-                            {formatOccupancy(occupancyMetrics.thirtyDayAvg)}
-                            <span className="text-sm text-gray-400 ml-2">people/day</span>
-                          </div>
-                        </div>
+                      {/* Sports Widget - Historical view */}
+                      <div className="mb-6">
+                        <SportsWidget />
                       </div>
-                    </motion.div>
-                  )}
-
-                  {/* Hero Metrics Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4 mb-6">
-                    <MetricCard
-                      title="Sound Level"
-                      value={formatValueNoZero(currentData?.decibels)}
-                      unit="dB"
-                      icon={Volume2}
-                      color="#00d4ff"
-                      delay={0}
-                    />
-                    
-                    <MetricCard
-                      title="Light Level"
-                      value={formatValueAllowZero(currentData?.light)}
-                      unit="lux"
-                      icon={Sun}
-                      color="#ffd700"
-                      delay={0.1}
-                    />
-                    
-                    <MetricCard
-                      title="Outdoor"
-                      value={weatherData ? weatherData.temperature.toString() : '--'}
-                      unit={weatherData ? `${weatherData.icon}` : '°F'}
-                      icon={CloudSun}
-                      color="#87CEEB"
-                      delay={0.22}
-                      onClick={!weatherData ? () => setActiveTab('settings') : undefined}
-                      clickHint={!weatherData ? 'Click to set venue address' : undefined}
-                    />
-                    
-                    <MetricCard
-                      title={timeRange === 'live' ? "Entries Today" : `Entries (${timeRange})`}
-                      value={formatOccupancy(timeRange === 'live'
-                        ? (barDayOccupancy?.entries ?? occupancyMetrics?.todayEntries ?? liveData?.occupancy?.entries)
-                        : periodOccupancy?.entries
-                      )}
-                      unit="people"
-                      icon={UserPlus}
-                      color="#4ade80"
-                      delay={0.3}
-                    />
-                    
-                    <MetricCard
-                      title={timeRange === 'live' ? "Exits Today" : `Exits (${timeRange})`}
-                      value={formatOccupancy(timeRange === 'live'
-                        ? (barDayOccupancy?.exits ?? occupancyMetrics?.todayExits ?? liveData?.occupancy?.exits)
-                        : periodOccupancy?.exits
-                      )}
-                      unit="people"
-                      icon={UserMinus}
-                      color="#f87171"
-                      delay={0.35}
-                    />
-                    
-                    <MetricCard
-                      title={timeRange === 'live' ? "Current Occupancy" : "Peak Occupancy"}
-                      value={formatOccupancy(timeRange === 'live' 
-                        ? (barDayOccupancy?.current ?? occupancyMetrics?.current)
-                        : periodOccupancy?.current
-                      )}
-                      unit="people"
-                      icon={Users}
-                      color="#a78bfa"
-                      delay={0.4}
-                    />
-
-                    <MetricCard
-                      title={timeRange === 'live' ? "Avg Dwell Time" : `Avg Dwell (${timeRange})`}
-                      value={calculatedDwellTime !== null
-                        ? formatDwellTime(calculatedDwellTime)
-                        : '--'}
-                      unit={timeRange === 'live' ? "per visit" : "avg"}
-                      icon={Clock}
-                      color="#ec4899"
-                      delay={0.4}
-                    />
-                  </div>
-
-                  {/* Now Playing & Comfort Level - Only show when data available */}
-                  {currentData && (
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                      <div className="lg:col-span-2">
-                        {currentData.currentSong && (
-                          <NowPlaying 
-                            song={currentData.currentSong}
-                            artist={currentData.artist}
-                            albumArt={currentData.albumArt}
-                          />
-                        )}
-                      </div>
-                      
-                    </div>
-                  )}
-
-                  {/* Sports Widget - Historical view only */}
-                  {timeRange !== 'live' && (
-                    <div className="mb-6">
-                      <SportsWidget />
-                    </div>
+                    </>
                   )}
 
                   {/* Charts - Historical view only */}
@@ -1066,12 +1196,6 @@ export function Dashboard() {
                     </div>
                   )}
 
-                  {/* Insights Section - Live view only */}
-                  {timeRange === 'live' && (
-                    <div className="mt-8">
-                      <Insights />
-                    </div>
-                  )}
                 </>
               )}
             </>
