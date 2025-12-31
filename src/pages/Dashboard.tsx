@@ -34,6 +34,7 @@ import { Reports } from './Reports';
 import { Support } from './Support';
 import { Insights } from './Insights';
 import { ScoreRings } from '../components/ScoreRings';
+import { LiveContext } from '../components/LiveContext';
 // Insights tab removed
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
@@ -797,9 +798,17 @@ export function Dashboard() {
                 <>
                   {/* Pulse Score + Score Rings - Live view only */}
                   {timeRange === 'live' && (
-                    <div className="mb-6">
-                      <ScoreRings sensorData={currentData} />
-                    </div>
+                    <>
+                      <div className="mb-6">
+                        <ScoreRings sensorData={currentData} />
+                      </div>
+                      
+                      {/* Right Now Context + Comparisons */}
+                      <LiveContext 
+                        currentOccupancy={barDayOccupancy?.current ?? occupancyMetrics?.current ?? null}
+                        todayEntries={barDayOccupancy?.entries ?? occupancyMetrics?.todayEntries ?? null}
+                      />
+                    </>
                   )}
 
                   {/* Pulse Score - Historical view */}
