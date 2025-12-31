@@ -32,6 +32,7 @@ import { SongLog } from './SongLog';
 import { Reports } from './Reports';
 import { Support } from './Support';
 import { Insights } from './Insights';
+import { PulsePlus } from './PulsePlus';
 import { ScoreRings } from '../components/ScoreRings';
 import { LiveContext } from '../components/LiveContext';
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
@@ -1245,6 +1246,8 @@ export function Dashboard() {
               )}
             </>
             )
+          ) : activeTab === 'pulse-plus' ? (
+            <PulsePlus />
           ) : activeTab === 'songs' ? (
             <SongLog />
           ) : activeTab === 'reports' ? (
