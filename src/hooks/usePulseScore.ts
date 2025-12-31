@@ -66,6 +66,13 @@ export interface UsePulseScoreReturn extends PulseScoreData {
   error: string | null;
   refresh: () => Promise<void>;
   hasData: boolean;
+  
+  // Data freshness tracking
+  lastUpdated: number | null; // timestamp of last successful data fetch
+  dataAgeSeconds: number; // how old the data is in seconds
+  isStale: boolean; // true if data is older than 2 minutes
+  isDisconnected: boolean; // true if data is older than 5 minutes
+  sensorStatus: 'connected' | 'delayed' | 'disconnected' | 'unknown';
 }
 
 // ============ CONSTANTS ============
@@ -133,6 +140,10 @@ export function usePulseScore(options: UsePulseScoreOptions = {}): UsePulseScore
   const [historicalData, setHistoricalData] = useState<SensorData[]>([]);
   const [occupancy, setOccupancy] = useState<OccupancyMetrics | null>(null);
   const [reviews, setReviews] = useState<GoogleReviewsData | null>(null);
+  
+  // Data freshness tracking
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [dataAgeSeconds, setDataAgeSeconds] = useState(0);
 
   // Refs to prevent duplicate fetches
   const fetchingRef = useRef(false);
@@ -160,6 +171,7 @@ export function usePulseScore(options: UsePulseScoreOptions = {}): UsePulseScore
       // Process live sensor data
       if (liveResult.status === 'fulfilled') {
         setSensorData(liveResult.value);
+        setLastUpdated(Date.now()); // Track when we got fresh data
       }
 
       // Process historical data (for dwell time calculation)
@@ -209,14 +221,32 @@ export function usePulseScore(options: UsePulseScoreOptions = {}): UsePulseScore
       apiService.getLiveData(venueId).then(data => {
         if (mountedRef.current) {
           setSensorData(data);
+          setLastUpdated(Date.now()); // Update freshness timestamp
         }
       }).catch(() => {
-        // Silent fail for polling
+        // Silent fail for polling - but DON'T update lastUpdated
+        // This means dataAge will keep increasing if fetches fail
       });
     }, pollingInterval);
 
     return () => clearInterval(interval);
   }, [enabled, venueId, pollingInterval]);
+
+  // Track data age (updates every second for smooth countdown)
+  useEffect(() => {
+    if (!lastUpdated) return;
+
+    const updateAge = () => {
+      if (mountedRef.current && lastUpdated) {
+        setDataAgeSeconds(Math.floor((Date.now() - lastUpdated) / 1000));
+      }
+    };
+
+    updateAge(); // Immediate update
+    const interval = setInterval(updateAge, 1000);
+
+    return () => clearInterval(interval);
+  }, [lastUpdated]);
 
   // ============ CALCULATE ALL SCORES ============
 
@@ -247,6 +277,17 @@ export function usePulseScore(options: UsePulseScoreOptions = {}): UsePulseScore
   // Score based on current vs estimated capacity
   const estimatedCapacity = peakOccupancy > 0 ? Math.max(peakOccupancy * 1.2, DEFAULT_CAPACITY) : DEFAULT_CAPACITY;
   const occupancyScore = Math.min(100, (currentOccupancy / estimatedCapacity) * 100);
+
+  // Data freshness derived values
+  const STALE_THRESHOLD = 120; // 2 minutes
+  const DISCONNECTED_THRESHOLD = 300; // 5 minutes
+  const isStale = dataAgeSeconds >= STALE_THRESHOLD;
+  const isDisconnected = dataAgeSeconds >= DISCONNECTED_THRESHOLD;
+  const sensorStatus: 'connected' | 'delayed' | 'disconnected' | 'unknown' = 
+    !lastUpdated ? 'unknown' :
+    isDisconnected ? 'disconnected' :
+    isStale ? 'delayed' :
+    'connected';
 
   return {
     // Loading state
@@ -280,6 +321,13 @@ export function usePulseScore(options: UsePulseScoreOptions = {}): UsePulseScore
     occupancyScore,
     weeklyAvgOccupancy,
     peakOccupancy,
+
+    // Data freshness
+    lastUpdated,
+    dataAgeSeconds,
+    isStale,
+    isDisconnected,
+    sensorStatus,
   };
 }
 

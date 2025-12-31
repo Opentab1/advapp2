@@ -39,6 +39,9 @@ import {
   useActionTracking,
   type CompletedAction 
 } from '../components/ActionFeedback';
+import { DataFreshnessIndicator, SensorHealthBanner } from '../components/DataFreshness';
+import { WelcomeBack } from '../components/WelcomeBack';
+import { useSessionMemory, calculateSessionDelta } from '../hooks/useSessionMemory';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
 import type { SportsGame, OccupancyMetrics } from '../types';
@@ -119,7 +122,62 @@ export function PulsePlus() {
     occupancyScore,
     weeklyAvgOccupancy,
     refresh,
+    // Data freshness
+    lastUpdated,
+    dataAgeSeconds,
+    isStale,
+    isDisconnected,
+    sensorStatus,
   } = pulseData;
+
+  // Session memory for "Since You Left" feature
+  const sessionMemory = useSessionMemory({ enabled: true });
+  const {
+    lastSession,
+    saveCurrentSession,
+    showWelcomeBack,
+    dismissWelcomeBack,
+    averagePulseScore,
+    bestPulseScore,
+    visitCount,
+  } = sessionMemory;
+
+  // Calculate delta between last session and current
+  const sessionDelta = useMemo(() => {
+    if (!lastSession || pulseScore === null) return null;
+    return calculateSessionDelta(lastSession, {
+      pulseScore,
+      decibels: currentDecibels,
+      light: currentLight,
+      occupancy: currentOccupancy,
+    });
+  }, [lastSession, pulseScore, currentDecibels, currentLight, currentOccupancy]);
+
+  // Save session periodically (every 5 minutes) and on significant changes
+  useEffect(() => {
+    if (loading || pulseScore === null) return;
+
+    // Save session snapshot
+    const saveSession = () => {
+      saveCurrentSession({
+        pulseScore,
+        decibels: currentDecibels,
+        light: currentLight,
+        occupancy: currentOccupancy,
+      });
+    };
+
+    // Save on first load after data arrives
+    const initialSaveTimer = setTimeout(saveSession, 2000);
+
+    // Save periodically every 5 minutes
+    const periodicSaveInterval = setInterval(saveSession, 5 * 60 * 1000);
+
+    return () => {
+      clearTimeout(initialSaveTimer);
+      clearInterval(periodicSaveInterval);
+    };
+  }, [loading, pulseScore, currentDecibels, currentLight, currentOccupancy, saveCurrentSession]);
 
   // Load external data (sports, holidays)
   useEffect(() => {
@@ -240,12 +298,46 @@ export function PulsePlus() {
         </motion.button>
       </div>
 
+      {/* ============ SENSOR HEALTH BANNER (if issues) ============ */}
+      <SensorHealthBanner
+        sensorStatus={sensorStatus}
+        dataAgeSeconds={dataAgeSeconds}
+        onRefresh={handleRefresh}
+        isRefreshing={loading}
+      />
+
+      {/* ============ WELCOME BACK (Session Memory) ============ */}
+      {showWelcomeBack && sessionDelta && (
+        <WelcomeBack
+          lastSession={lastSession}
+          delta={sessionDelta}
+          currentPulseScore={pulseScore}
+          averagePulseScore={averagePulseScore}
+          bestPulseScore={bestPulseScore}
+          visitCount={visitCount}
+          onDismiss={dismissWelcomeBack}
+        />
+      )}
+
       {/* ============ PULSE RINGS HERO ============ */}
       <motion.div
         className="mb-6"
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
       >
+        {/* Data Freshness Indicator */}
+        <div className="mb-3">
+          <DataFreshnessIndicator
+            lastUpdated={lastUpdated}
+            dataAgeSeconds={dataAgeSeconds}
+            sensorStatus={sensorStatus}
+            isStale={isStale}
+            isDisconnected={isDisconnected}
+            onRefresh={handleRefresh}
+            isRefreshing={loading}
+          />
+        </div>
+
         {/* Main Pulse Score Ring */}
         <div className="flex justify-center mb-4 relative">
           <PulseRing
