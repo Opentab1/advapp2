@@ -29,8 +29,8 @@ const getSensorData = /* GraphQL */ `
 `;
 
 const listSensorData = /* GraphQL */ `
-  query ListSensorData($venueId: ID!, $startTime: String!, $endTime: String!, $limit: Int) {
-    listSensorData(venueId: $venueId, startTime: $startTime, endTime: $endTime, limit: $limit) {
+  query ListSensorData($venueId: ID!, $startTime: String!, $endTime: String!, $limit: Int, $nextToken: String) {
+    listSensorData(venueId: $venueId, startTime: $startTime, endTime: $endTime, limit: $limit, nextToken: $nextToken) {
       items {
         venueId
         timestamp
@@ -279,30 +279,53 @@ class DynamoDBService {
       };
       
       const queryLimit = getLimitForRange(range);
-      console.log(`📊 Fetching historical data: range=${range}, limit=${queryLimit}`);
+      const pageSize = 1000; // DynamoDB/AppSync max per request
+      console.log(`📊 Fetching historical data: range=${range}, targetLimit=${queryLimit}`);
 
-      const response = await client.graphql({
-        query: listSensorData,
-        variables: { 
-          venueId, 
-          startTime,
-          endTime,
-          limit: queryLimit
-        },
-        authMode: 'userPool'
-      }) as any;
+      // Paginate through all results
+      let allItems: any[] = [];
+      let nextToken: string | null = null;
+      let pageCount = 0;
+      const maxPages = Math.ceil(queryLimit / pageSize); // Limit pages to prevent infinite loops
 
-      // Check for GraphQL errors in response
-      if (response?.errors && response.errors.length > 0) {
-        console.error('❌ GraphQL Response Errors:', {
-          errors: response.errors,
-          fullResponse: JSON.stringify(response, null, 2)
-        });
-        const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
-        throw new Error(`GraphQL error: ${errorMessages}`);
-      }
+      do {
+        pageCount++;
+        const response = await client.graphql({
+          query: listSensorData,
+          variables: { 
+            venueId, 
+            startTime,
+            endTime,
+            limit: pageSize,
+            nextToken: nextToken
+          },
+          authMode: 'userPool'
+        }) as any;
 
-      const items = response?.data?.listSensorData?.items || [];
+        // Check for GraphQL errors in response
+        if (response?.errors && response.errors.length > 0) {
+          console.error('❌ GraphQL Response Errors:', {
+            errors: response.errors,
+            fullResponse: JSON.stringify(response, null, 2)
+          });
+          const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
+          throw new Error(`GraphQL error: ${errorMessages}`);
+        }
+
+        const pageItems = response?.data?.listSensorData?.items || [];
+        allItems = allItems.concat(pageItems);
+        nextToken = response?.data?.listSensorData?.nextToken || null;
+        
+        console.log(`📊 Page ${pageCount}: fetched ${pageItems.length} items (total: ${allItems.length}), hasMore: ${!!nextToken}`);
+        
+        // Stop if we've reached our target limit or no more pages
+        if (allItems.length >= queryLimit || !nextToken || pageCount >= maxPages) {
+          break;
+        }
+      } while (nextToken);
+
+      const items = allItems.slice(0, queryLimit); // Trim to target limit
+      console.log(`📊 Pagination complete: ${pageCount} pages, ${items.length} total items`);
       
       // If no data in requested range, try to find ANY historical data
       if (items.length === 0) {
