@@ -59,7 +59,11 @@ interface PatternInsight {
 
 // ============ MAIN COMPONENT ============
 
-export function Insights() {
+interface InsightsProps {
+  hideRings?: boolean;
+}
+
+export function Insights({ hideRings = false }: InsightsProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<string | null>('weekly');
@@ -355,46 +359,50 @@ export function Insights() {
         </motion.button>
       </div>
 
-      {/* Three Score Rings */}
-      <div className="flex justify-center gap-4 mb-8">
-        <ScoreRing
-          score={dwellScore}
-          label="Dwell Time"
-          value={formatDwellTime(dwellTime)}
-          color="#00d4ff"
-          onClick={() => setActiveRing('dwell')}
-        />
-        <ScoreRing
-          score={reputationScore}
-          label="Reputation"
-          value={reviews ? `${reviews.rating.toFixed(1)}★` : '--'}
-          color="#fbbf24"
-          onClick={() => setActiveRing('reputation')}
-        />
-        <ScoreRing
-          score={occupancyScore}
-          label="Occupancy"
-          value={thisWeek ? `${thisWeek.avgOccupancy}` : '--'}
-          color="#22c55e"
-          onClick={() => setActiveRing('occupancy')}
-        />
-      </div>
+      {/* Three Score Rings - hidden when embedded in Dashboard */}
+      {!hideRings && (
+        <>
+          <div className="flex justify-center gap-4 mb-8">
+            <ScoreRing
+              score={dwellScore}
+              label="Dwell Time"
+              value={formatDwellTime(dwellTime)}
+              color="#00d4ff"
+              onClick={() => setActiveRing('dwell')}
+            />
+            <ScoreRing
+              score={reputationScore}
+              label="Reputation"
+              value={reviews ? `${reviews.rating.toFixed(1)}★` : '--'}
+              color="#fbbf24"
+              onClick={() => setActiveRing('reputation')}
+            />
+            <ScoreRing
+              score={occupancyScore}
+              label="Occupancy"
+              value={thisWeek ? `${thisWeek.avgOccupancy}` : '--'}
+              color="#22c55e"
+              onClick={() => setActiveRing('occupancy')}
+            />
+          </div>
 
-      {/* Ring Detail Modal */}
-      <AnimatePresence>
-        {activeRing && (
-          <RingDetailModal
-            type={activeRing}
-            onClose={() => setActiveRing(null)}
-            dwellTime={dwellTime}
-            dwellCategory={dwellCategory}
-            reviews={reviews}
-            venueName={venueName}
-            thisWeek={thisWeek}
-            venueCapacity={venueCapacity}
-          />
-        )}
-      </AnimatePresence>
+          {/* Ring Detail Modal */}
+          <AnimatePresence>
+            {activeRing && (
+              <RingDetailModal
+                type={activeRing}
+                onClose={() => setActiveRing(null)}
+                dwellTime={dwellTime}
+                dwellCategory={dwellCategory}
+                reviews={reviews}
+                venueName={venueName}
+                thisWeek={thisWeek}
+                venueCapacity={venueCapacity}
+              />
+            )}
+          </AnimatePresence>
+        </>
+      )}
 
       {/* Headline Insight */}
       {headline && (

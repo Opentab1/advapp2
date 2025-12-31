@@ -33,6 +33,7 @@ import { SongLog } from './SongLog';
 import { Reports } from './Reports';
 import { Support } from './Support';
 import { Insights } from './Insights';
+import { ScoreRings } from '../components/ScoreRings';
 // Insights tab removed
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
@@ -799,6 +800,13 @@ export function Dashboard() {
                     <PulseScoreLive sensorData={currentData} />
                   </div>
 
+                  {/* Score Rings - Live view only */}
+                  {timeRange === 'live' && (
+                    <div className="mb-6">
+                      <ScoreRings />
+                    </div>
+                  )}
+
                   {/* LIVE VIEW: Two-column layout with metrics panel + insights */}
                   {timeRange === 'live' && (
                     <div className="flex flex-col lg:flex-row gap-6 mb-6">
@@ -957,7 +965,7 @@ export function Dashboard() {
 
                       {/* Right Panel - Insights */}
                       <div className="flex-1 min-w-0">
-                        <Insights />
+                        <Insights hideRings />
                       </div>
                     </div>
                   )}
