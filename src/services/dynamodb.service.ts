@@ -4,6 +4,135 @@ import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '..
 import { isDemoAccount, generateDemoLiveData, generateDemoHistoricalData, generateDemoOccupancyMetrics } from '../utils/demoData';
 import { calculateCurrentHourDwellTime } from '../utils/dwellTime';
 
+// ============================================
+// CACHING LAYER - Option C: Aggressive Caching
+// ============================================
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+  fetchedAt: Date;
+}
+
+class HistoricalDataCache {
+  private cache = new Map<string, CacheEntry<HistoricalData>>();
+  
+  // Cache TTL by range - longer ranges can be cached longer
+  private getTTL(range: string): number {
+    switch (range) {
+      case 'live': return 30 * 1000;      // 30 seconds
+      case '6h': return 2 * 60 * 1000;    // 2 minutes
+      case '24h': return 5 * 60 * 1000;   // 5 minutes
+      case '7d': return 10 * 60 * 1000;   // 10 minutes
+      case '14d': return 10 * 60 * 1000;  // 10 minutes
+      case '30d': return 15 * 60 * 1000;  // 15 minutes
+      case '90d': return 30 * 60 * 1000;  // 30 minutes
+      default: return 5 * 60 * 1000;      // 5 minutes default
+    }
+  }
+  
+  private getCacheKey(venueId: string, range: string): string {
+    return `${venueId}:${range}`;
+  }
+  
+  get(venueId: string, range: string): HistoricalData | null {
+    const key = this.getCacheKey(venueId, range);
+    const entry = this.cache.get(key);
+    
+    if (!entry) return null;
+    
+    const ttl = this.getTTL(range);
+    const age = Date.now() - entry.timestamp;
+    
+    if (age > ttl) {
+      console.log(`📦 [${range}] Cache expired (age: ${Math.round(age/1000)}s, ttl: ${Math.round(ttl/1000)}s)`);
+      this.cache.delete(key);
+      return null;
+    }
+    
+    console.log(`📦 [${range}] Cache HIT - using cached data (${entry.data.data?.length || 0} items, age: ${Math.round(age/1000)}s)`);
+    return entry.data;
+  }
+  
+  set(venueId: string, range: string, data: HistoricalData): void {
+    const key = this.getCacheKey(venueId, range);
+    this.cache.set(key, {
+      data,
+      timestamp: Date.now(),
+      fetchedAt: new Date()
+    });
+    console.log(`📦 [${range}] Cache SET - stored ${data.data?.length || 0} items`);
+  }
+  
+  // Clear cache for a specific venue (useful after data updates)
+  clearVenue(venueId: string): void {
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(venueId + ':')) {
+        this.cache.delete(key);
+      }
+    }
+  }
+  
+  // Clear all cache
+  clearAll(): void {
+    this.cache.clear();
+  }
+}
+
+// Global cache instance
+const historicalCache = new HistoricalDataCache();
+
+// ============================================
+// BACKGROUND PRELOAD - Option B: Progressive Loading
+// ============================================
+// Track ongoing preloads to avoid duplicate requests
+const preloadPromises = new Map<string, Promise<void>>();
+
+async function preloadHistoricalData(venueId: string): Promise<void> {
+  const preloadKey = venueId;
+  
+  // Don't start if already preloading
+  if (preloadPromises.has(preloadKey)) {
+    console.log('📦 Preload already in progress for venue:', venueId);
+    return preloadPromises.get(preloadKey);
+  }
+  
+  console.log('📦 Starting background preload for venue:', venueId);
+  
+  const preloadPromise = (async () => {
+    const rangesToPreload = ['7d', '14d']; // Preload these ranges for comparisons
+    
+    for (const range of rangesToPreload) {
+      // Check if already cached
+      if (historicalCache.get(venueId, range)) {
+        console.log(`📦 [${range}] Already cached, skipping preload`);
+        continue;
+      }
+      
+      try {
+        console.log(`📦 [${range}] Preloading in background...`);
+        // Import dynamically to avoid circular dependency
+        const dynamoDBService = (await import('./dynamodb.service')).default;
+        await dynamoDBService.getHistoricalSensorData(venueId, range);
+        console.log(`📦 [${range}] Preload complete`);
+      } catch (error) {
+        console.warn(`📦 [${range}] Preload failed:`, error);
+        // Don't throw - preload failures shouldn't break the app
+      }
+      
+      // Small delay between preloads to not overwhelm the API
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    preloadPromises.delete(preloadKey);
+  })();
+  
+  preloadPromises.set(preloadKey, preloadPromise);
+  return preloadPromise;
+}
+
+// Export for use in Dashboard
+export { preloadHistoricalData, historicalCache };
+
 // GraphQL queries for DynamoDB
 const getSensorData = /* GraphQL */ `
   query GetSensorData($venueId: ID!, $timestamp: String!) {
@@ -244,6 +373,14 @@ class DynamoDBService {
       return generateDemoHistoricalData(venueId, range as TimeRange);
     }
     
+    // ============================================
+    // CACHE CHECK - Option C: Return cached data if available
+    // ============================================
+    const cachedData = historicalCache.get(venueId, range as string);
+    if (cachedData) {
+      return cachedData;
+    }
+    
     try {
       // Check if GraphQL endpoint is configured
       this.checkGraphQLEndpoint();
@@ -337,7 +474,7 @@ class DynamoDBService {
             venueId, 
             startTime: expandedStartTime,
             endTime: expandedEndTime,
-            limit: queryLimit
+            limit: 1000 // Just get a sample to confirm data exists
           },
           authMode: 'userPool'
         }) as any;
@@ -379,11 +516,18 @@ class DynamoDBService {
       
       const transformedData = items.map((item: any) => this.transformDynamoDBData(item));
       
-      return {
+      const result: HistoricalData = {
         data: transformedData,
         venueId,
         range
       };
+      
+      // ============================================
+      // CACHE STORE - Option C: Cache for future requests
+      // ============================================
+      historicalCache.set(venueId, range as string, result);
+      
+      return result;
     } catch (error: any) {
       console.error('❌ Failed to fetch historical sensor data from DynamoDB');
       console.error('🔍 Full Error Object:', {

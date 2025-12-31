@@ -52,6 +52,7 @@ import weatherService, { WeatherData } from '../services/weather.service';
 import venueSettingsService from '../services/venue-settings.service';
 import userSettingsService from '../services/user-settings.service';
 import { isDemoAccount } from '../utils/demoData';
+import { preloadHistoricalData } from '../services/dynamodb.service';
 import type { TimeRange, SensorData, HistoricalData, OccupancyMetrics, Location } from '../types';
 
 export function Dashboard() {
@@ -199,6 +200,20 @@ export function Dashboard() {
   const [locationsLoading, setLocationsLoading] = useState(false);
   
   // Fetch locations if not already loaded
+  // ============================================
+  // BACKGROUND PRELOAD - Option B: Start loading historical data in background
+  // This runs once when venueId is available, so comparison data is ready faster
+  // ============================================
+  useEffect(() => {
+    if (venueId && !isDemoMode) {
+      // Start background preload - this won't block the UI
+      preloadHistoricalData(venueId).catch(err => {
+        console.warn('Background preload failed:', err);
+        // Don't throw - preload failures shouldn't break the app
+      });
+    }
+  }, [venueId, isDemoMode]);
+
   useEffect(() => {
     const loadLocations = async () => {
       if (locations.length === 0 && !locationsLoading && venueId) {
