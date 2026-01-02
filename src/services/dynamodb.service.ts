@@ -423,11 +423,11 @@ class DynamoDBService {
       console.log(`📊 [${range}] Starting fetch: ${startTime} to ${endTime}`);
       console.log(`📊 [${range}] Expected ~${Math.round(rangeMinutes)} readings, max ${maxItems} items, max ${maxPages} pages`);
 
-      // Paginate and filter
+      // Paginate through ALL data - no early termination
+      // The backend SHOULD filter by startTime/endTime, but we'll verify client-side
       let allItems: any[] = [];
       let nextToken: string | null = null;
       let pageCount = 0;
-      let foundOldestInRange = false;
 
       do {
         pageCount++;
@@ -454,45 +454,21 @@ class DynamoDBService {
         nextToken = response?.data?.listSensorData?.nextToken || null;
         
         // CLIENT-SIDE FILTERING: Only keep items within our time range
-        // This is necessary because the backend may not filter correctly
+        // This is a safety net in case backend doesn't filter correctly
         const filteredItems = pageItems.filter((item: any) => {
           const itemTime = new Date(item.timestamp).getTime();
           return itemTime >= startTimeMs && itemTime <= endTimeMs;
         });
         
-        // Track if we're finding items outside our range
-        const outsideRangeCount = pageItems.length - filteredItems.length;
+        // Add all filtered items
+        allItems.push(...filteredItems);
         
-        // Use push with spread for better performance with large arrays
-        for (const item of filteredItems) {
-          allItems.push(item);
-        }
-        
-        // Log progress
+        // Log progress every 5 pages, first page, and last page
         if (pageCount % 5 === 0 || !nextToken || pageCount === 1) {
-          console.log(`📊 [${range}] Page ${pageCount}: ${filteredItems.length}/${pageItems.length} in range, total: ${allItems.length}`);
+          console.log(`📊 [${range}] Page ${pageCount}: ${filteredItems.length}/${pageItems.length} items in range, total: ${allItems.length}`);
         }
         
-        // SMART EARLY TERMINATION:
-        // If most items on this page are outside our time range, we can stop
-        // This means the backend isn't filtering and we've scrolled past our range
-        if (outsideRangeCount > pageItems.length * 0.8 && allItems.length > 0) {
-          console.log(`📊 [${range}] Most items outside range, stopping early (have ${allItems.length} items)`);
-          break;
-        }
-        
-        // Check if oldest item in this page is before our start time
-        if (pageItems.length > 0) {
-          const oldestInPage = pageItems[pageItems.length - 1];
-          const oldestTime = new Date(oldestInPage?.timestamp).getTime();
-          if (oldestTime < startTimeMs) {
-            foundOldestInRange = true;
-            console.log(`📊 [${range}] Reached data before start time, stopping`);
-            break;
-          }
-        }
-        
-        // Safety limits
+        // Safety limits to prevent infinite loops
         if (pageCount >= maxPages) {
           console.warn(`⚠️ [${range}] Hit page limit (${maxPages}). Have ${allItems.length} items.`);
           break;
@@ -506,12 +482,14 @@ class DynamoDBService {
       } while (nextToken);
 
       const items = allItems;
-      console.log(`📊 [${range}] Complete: ${pageCount} pages, ${items.length} items in time range`);
+      console.log(`📊 [${range}] Complete: ${pageCount} pages, ${items.length} items total`);
       
-      // Log date range of fetched data
+      // Sort items by timestamp (newest first) and log date range
+      items.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      
       if (items.length > 0) {
-        const oldestItem = items[items.length - 1];
         const newestItem = items[0];
+        const oldestItem = items[items.length - 1];
         console.log(`📊 [${range}] Data spans: ${oldestItem?.timestamp} to ${newestItem?.timestamp}`);
       }
       
