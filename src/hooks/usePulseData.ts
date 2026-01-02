@@ -121,73 +121,46 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     }
   }, [venueId]);
   
+  // State for 3am baseline
+  const [baseline, setBaseline] = useState<{entries: number; exits: number} | null>(null);
+  
   const fetchOccupancy = useCallback(async () => {
     if (!venueId) return;
     
     try {
-      // Get the 3am baseline from DynamoDB (just a 1-hour window, not 24h)
-      const BAR_DAY_HOUR = 3;
+      // Calculate 3am today (or yesterday if before 3am now)
       const now = new Date();
-      const currentHour = now.getHours();
-      
-      // Calculate when the current bar day started (3am today or yesterday)
       const barDayStart = new Date(now);
-      barDayStart.setHours(BAR_DAY_HOUR, 0, 0, 0);
-      if (currentHour < BAR_DAY_HOUR) {
+      barDayStart.setHours(3, 0, 0, 0);
+      if (now.getHours() < 3) {
         barDayStart.setDate(barDayStart.getDate() - 1);
       }
       
-      // Fetch just the first record after 3am (limit 1)
+      // Query window: 3am to 4am
       const barDayEnd = new Date(barDayStart);
-      barDayEnd.setMinutes(barDayStart.getMinutes() + 30); // 30 min window to find first reading
+      barDayEnd.setHours(4, 0, 0, 0);
       
-      console.log('🔢 Fetching 3am baseline (single record):', barDayStart.toISOString());
+      console.log('🔢 Querying 3am data:', barDayStart.toLocaleString());
       
-      // Use the dynamodb service directly for a targeted time range query
       const dynamoDBService = (await import('../services/dynamodb.service')).default;
-      const baselineData = await dynamoDBService.getSensorDataByDateRange(
-        venueId,
-        barDayStart,
-        barDayEnd,
-        1 // Just need 1 record
-      );
+      const data = await dynamoDBService.getSensorDataByDateRange(venueId, barDayStart, barDayEnd, 10);
       
-      console.log('🔢 Got baseline data:', baselineData?.length || 0, 'items');
+      // Find first record with occupancy
+      const withOccupancy = data?.filter(d => d.occupancy) || [];
       
-      if (baselineData && baselineData.length > 0) {
-        // Find the first reading with occupancy data
-        const baselineWithOccupancy = baselineData.filter(d => d.occupancy);
-        
-        if (baselineWithOccupancy.length > 0) {
-          // Sort by timestamp ascending (oldest first)
-          baselineWithOccupancy.sort((a, b) => 
-            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-          );
-          
-          const baseline = baselineWithOccupancy[0].occupancy!;
-          console.log('🔢 Found 3am baseline:', {
-            timestamp: baselineWithOccupancy[0].timestamp,
-            entries: baseline.entries,
-            exits: baseline.exits
-          });
-          
-          // Store in localStorage for the effectiveOccupancy calculation
-          const barDayKey = `occupancy_baseline_${venueId}_${barDayStart.toDateString()}`;
-          localStorage.setItem(barDayKey, JSON.stringify({
-            entries: baseline.entries,
-            exits: baseline.exits,
-            fetchedAt: new Date().toISOString()
-          }));
-          
-          console.log('✅ Saved 3am baseline to localStorage');
-        } else {
-          console.warn('⚠️ No occupancy data found in 3am-4am window');
-        }
+      if (withOccupancy.length > 0) {
+        const first = withOccupancy[0];
+        const baselineValue = {
+          entries: first.occupancy!.entries,
+          exits: first.occupancy!.exits
+        };
+        setBaseline(baselineValue);
+        console.log('✅ 3am baseline:', baselineValue);
       } else {
-        console.warn('⚠️ No sensor data found in 3am-4am window');
+        console.warn('⚠️ No 3am data found');
       }
     } catch (err: any) {
-      console.error('❌ Failed to fetch 3am baseline:', err?.message);
+      console.error('❌ Error fetching 3am data:', err?.message);
     }
   }, [venueId]);
   
