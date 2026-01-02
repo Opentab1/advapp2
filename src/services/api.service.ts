@@ -181,18 +181,39 @@ class ApiService {
       try {
         const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '24h');
         if (historicalData?.data && historicalData.data.length > 0) {
-          // Find the most recent entry with occupancy data
+          // Filter to data with occupancy
           const dataWithOccupancy = historicalData.data.filter(d => d.occupancy);
           
           if (dataWithOccupancy.length > 0) {
-            const latest = dataWithOccupancy[0]; // Most recent
-            const occupancy = latest.occupancy!;
+            // Sort by timestamp (newest first)
+            const sorted = [...dataWithOccupancy].sort((a, b) => 
+              new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+            );
             
-            // Find peak occupancy from today's data
+            const latest = sorted[0];
+            const oldest = sorted[sorted.length - 1];
+            
+            // Calculate TODAY's entries/exits as the difference between latest and oldest
+            // This accounts for cumulative counters in the sensor data
+            const latestEntries = latest.occupancy?.entries || 0;
+            const latestExits = latest.occupancy?.exits || 0;
+            const oldestEntries = oldest.occupancy?.entries || 0;
+            const oldestExits = oldest.occupancy?.exits || 0;
+            
+            // Today's entries = latest cumulative - oldest cumulative from today
+            const todayEntries = Math.max(0, latestEntries - oldestEntries);
+            const todayExits = Math.max(0, latestExits - oldestExits);
+            
+            // If the difference is 0 or negative, the counter might have reset
+            // In that case, just use the latest values (they might be actual daily values)
+            const effectiveTodayEntries = todayEntries > 0 ? todayEntries : latestEntries;
+            const effectiveTodayExits = todayExits > 0 ? todayExits : latestExits;
+            
+            // Find peak occupancy
             let peakOccupancy = 0;
             let peakTime: string | null = null;
             
-            dataWithOccupancy.forEach(d => {
+            sorted.forEach(d => {
               if (d.occupancy && d.occupancy.current > peakOccupancy) {
                 peakOccupancy = d.occupancy.current;
                 peakTime = new Date(d.timestamp).toLocaleTimeString('en-US', { 
@@ -203,10 +224,10 @@ class ApiService {
             });
             
             const calculatedMetrics: OccupancyMetrics = {
-              current: occupancy.current || 0,
-              todayEntries: occupancy.entries || 0,
-              todayExits: occupancy.exits || 0,
-              todayTotal: occupancy.entries || 0,
+              current: latest.occupancy?.current || 0,
+              todayEntries: effectiveTodayEntries,
+              todayExits: effectiveTodayExits,
+              todayTotal: effectiveTodayEntries,
               sevenDayAvg: 0,
               fourteenDayAvg: 0,
               thirtyDayAvg: 0,
@@ -215,7 +236,16 @@ class ApiService {
               avgDwellTimeMinutes: null
             };
             
-            console.log('✅ Occupancy calculated from sensor data:', calculatedMetrics);
+            console.log('✅ Occupancy calculated from sensor data:', {
+              ...calculatedMetrics,
+              _debug: {
+                latestTimestamp: latest.timestamp,
+                oldestTimestamp: oldest.timestamp,
+                latestEntries,
+                oldestEntries,
+                calculatedDiff: todayEntries
+              }
+            });
             return calculatedMetrics;
           }
         }

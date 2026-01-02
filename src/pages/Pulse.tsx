@@ -524,9 +524,7 @@ export function Pulse() {
         onClose={() => setActiveModal(null)}
         decibels={pulseData.currentDecibels}
         light={pulseData.currentLight}
-        indoorTemp={pulseData.sensorData?.indoorTemp ?? null}
         outdoorTemp={pulseData.weather?.temperature ?? null}
-        humidity={pulseData.sensorData?.humidity ?? null}
         currentOccupancy={pulseData.currentOccupancy}
         todayEntries={pulseData.todayEntries}
         todayExits={pulseData.todayExits}

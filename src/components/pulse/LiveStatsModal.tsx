@@ -15,8 +15,8 @@
 import { motion } from 'framer-motion';
 import { 
   Volume2, Sun, Users, UserPlus, UserMinus, 
-  Thermometer, Droplets, Music, Star, 
-  ExternalLink, TrendingUp, TrendingDown, Minus
+  Thermometer, Music, Star, 
+  ExternalLink, TrendingUp, TrendingDown
 } from 'lucide-react';
 import { BottomSheet } from '../common/BottomSheet';
 import { AnimatedNumber } from '../common/AnimatedNumber';
@@ -30,9 +30,7 @@ interface LiveStatsModalProps {
   // Sensor data
   decibels: number | null;
   light: number | null;
-  indoorTemp: number | null;
   outdoorTemp: number | null;
-  humidity: number | null;
   // Occupancy
   currentOccupancy: number;
   todayEntries: number;
@@ -53,9 +51,7 @@ export function LiveStatsModal({
   onClose,
   decibels,
   light,
-  indoorTemp,
   outdoorTemp,
-  humidity,
   currentOccupancy,
   todayEntries,
   todayExits,
@@ -114,34 +110,14 @@ export function LiveStatsModal({
               optimal={`${OPTIMAL_RANGES.light.min}-${OPTIMAL_RANGES.light.max} lux`}
             />
             
-            {/* Indoor Temp */}
-            <StatCard
-              icon={Thermometer}
-              label="Indoor Temp"
-              value={indoorTemp}
-              unit="°F"
-              status={getStatus(indoorTemp, OPTIMAL_RANGES.temperature)}
-              optimal={`${OPTIMAL_RANGES.temperature.min}-${OPTIMAL_RANGES.temperature.max}°F`}
-            />
-            
             {/* Outdoor Temp */}
-            <StatCard
-              icon={Thermometer}
-              label="Outdoor Temp"
-              value={outdoorTemp}
-              unit="°F"
-              status="neutral"
-            />
-            
-            {/* Humidity */}
-            {humidity !== null && (
+            {outdoorTemp !== null && (
               <StatCard
-                icon={Droplets}
-                label="Humidity"
-                value={humidity}
-                unit="%"
-                status={getStatus(humidity, OPTIMAL_RANGES.humidity)}
-                optimal={`${OPTIMAL_RANGES.humidity.min}-${OPTIMAL_RANGES.humidity.max}%`}
+                icon={Thermometer}
+                label="Outside"
+                value={outdoorTemp}
+                unit="°F"
+                status="neutral"
               />
             )}
           </div>
