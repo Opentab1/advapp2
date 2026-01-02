@@ -413,15 +413,12 @@ class DynamoDBService {
       const startTimeMs = new Date(startTime).getTime();
       const endTimeMs = new Date(endTime).getTime();
       
-      // Calculate expected items based on ~1 reading per minute
-      // This is a reasonable expectation for sensor data
-      const rangeMinutes = (endTimeMs - startTimeMs) / (60 * 1000);
-      const expectedItems = Math.ceil(rangeMinutes * 1.5); // 1.5x buffer for safety
-      const maxItems = Math.min(expectedItems, 100000); // Hard cap at 100k items
-      const maxPages = Math.ceil(maxItems / pageSize);
+      // Set generous limits - we want ALL data for the time range
+      // Don't limit based on "expected" items - just get everything
+      const maxItems = 500000; // 500k items max
+      const maxPages = 500; // 500 pages max (500k items)
       
       console.log(`📊 [${range}] Starting fetch: ${startTime} to ${endTime}`);
-      console.log(`📊 [${range}] Expected ~${Math.round(rangeMinutes)} readings, max ${maxItems} items, max ${maxPages} pages`);
 
       // Paginate through ALL data - no early termination
       // The backend SHOULD filter by startTime/endTime, but we'll verify client-side
@@ -468,14 +465,14 @@ class DynamoDBService {
           console.log(`📊 [${range}] Page ${pageCount}: ${filteredItems.length}/${pageItems.length} items in range, total: ${allItems.length}`);
         }
         
-        // Safety limits to prevent infinite loops
+        // Safety limits to prevent infinite loops (very generous)
         if (pageCount >= maxPages) {
-          console.warn(`⚠️ [${range}] Hit page limit (${maxPages}). Have ${allItems.length} items.`);
+          console.warn(`⚠️ [${range}] Hit page limit (${maxPages}). Have ${allItems.length} items. This should never happen.`);
           break;
         }
         
         if (allItems.length >= maxItems) {
-          console.log(`📊 [${range}] Reached item limit (${maxItems}). Stopping.`);
+          console.warn(`⚠️ [${range}] Reached item limit (${maxItems}). This should never happen.`);
           break;
         }
         
