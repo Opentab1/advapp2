@@ -49,6 +49,7 @@ import type { SportsGame } from '../types';
 
 // New components
 import { PullToRefresh } from '../components/common/PullToRefresh';
+import { NoDataState, OfflineState, ErrorState } from '../components/common/LoadingState';
 import { haptic } from '../utils/haptics';
 
 // ============ MODAL TYPES ============
@@ -268,6 +269,28 @@ export function Pulse() {
     return <PulsePageSkeleton />;
   }
   
+  // ============ ERROR STATE ============
+  
+  if (pulseData.error && !pulseData.sensorData) {
+    return (
+      <div className="space-y-6">
+        <motion.div
+          className="flex items-center gap-2"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <Zap className="w-6 h-6 text-primary" />
+          <h1 className="text-xl font-bold text-warm-800 dark:text-warm-100">Pulse</h1>
+        </motion.div>
+        <ErrorState 
+          title="Couldn't load venue data"
+          message={pulseData.error}
+          onRetry={() => pulseData.refresh()}
+        />
+      </div>
+    );
+  }
+  
   // ============ RENDER ============
   
   return (
@@ -302,6 +325,11 @@ export function Pulse() {
             </motion.button>
           </div>
         </motion.div>
+      
+      {/* Offline Warning */}
+      {!pulseData.isConnected && pulseData.sensorData && (
+        <OfflineState lastUpdated={pulseData.lastUpdated} />
+      )}
       
       {/* Live Stats - Eagle's Eye View */}
       <motion.div

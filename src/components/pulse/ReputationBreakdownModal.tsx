@@ -1,9 +1,17 @@
 /**
- * ReputationBreakdownModal - Google Reviews details
+ * ReputationBreakdownModal - Deep dive into Google Reviews
+ * 
+ * Shows:
+ * - Current rating and review count
+ * - What the rating means
+ * - Trend over time
+ * - How to improve
  */
 
+import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Star, ExternalLink } from 'lucide-react';
+import { Star, ExternalLink, TrendingUp, TrendingDown, MessageSquare, ThumbsUp, AlertTriangle } from 'lucide-react';
+import { AnimatedNumber } from '../common/AnimatedNumber';
 import type { GoogleReviewsData } from '../../services/google-reviews.service';
 
 interface ReputationBreakdownModalProps {
@@ -19,92 +27,178 @@ export function ReputationBreakdownModal({
   reviews,
   venueName,
 }: ReputationBreakdownModalProps) {
+  // No reviews state
   if (!reviews) {
     return (
       <Modal isOpen={isOpen} onClose={onClose} title="Reputation">
-        <div className="text-center py-8">
-          <Star className="w-12 h-12 text-warm-300 mx-auto mb-3" />
-          <p className="text-warm-600 font-medium">Google Reviews not configured</p>
-          <p className="text-sm text-warm-500 mt-1">
-            Set up your venue address in Settings to see your rating.
+        <div className="text-center py-10">
+          <div className="w-16 h-16 rounded-full bg-warm-100 dark:bg-warm-700 flex items-center justify-center mx-auto mb-4">
+            <Star className="w-8 h-8 text-warm-400 dark:text-warm-500" />
+          </div>
+          <h3 className="text-lg font-semibold text-warm-700 dark:text-warm-200 mb-2">
+            No Review Data
+          </h3>
+          <p className="text-sm text-warm-500 dark:text-warm-400 max-w-xs mx-auto mb-4">
+            Set up your venue address in Settings to pull your Google Reviews automatically.
           </p>
+          <button 
+            onClick={onClose}
+            className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90 transition-colors"
+          >
+            Got It
+          </button>
         </div>
       </Modal>
     );
   }
   
-  const ratingStyle = reviews.rating >= 4.5 
-    ? { bg: 'bg-green-50 border-green-200', text: 'text-green-700', message: 'Outstanding! Keep it up.' }
-    : reviews.rating >= 4.0 
-      ? { bg: 'bg-primary-50 border-primary-100', text: 'text-primary-700', message: 'Strong reputation.' }
-      : reviews.rating >= 3.5 
-        ? { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-700', message: 'Room to improve.' }
-        : { bg: 'bg-red-50 border-red-200', text: 'text-red-700', message: 'Needs attention.' };
+  // Rating tier configuration
+  const getTierConfig = (rating: number) => {
+    if (rating >= 4.5) return {
+      tier: 'Outstanding',
+      emoji: '🌟',
+      color: 'text-green-600 dark:text-green-400',
+      bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',
+      message: 'You\'re in the top tier. This rating attracts new customers.',
+      impact: '+15-20% more foot traffic compared to 4.0 venues'
+    };
+    if (rating >= 4.0) return {
+      tier: 'Strong',
+      emoji: '✅',
+      color: 'text-primary',
+      bg: 'bg-primary/10 dark:bg-primary/20 border-primary/20',
+      message: 'Solid reputation. Push for 4.5+ to stand out.',
+      impact: 'Most customers consider 4.0+ acceptable'
+    };
+    if (rating >= 3.5) return {
+      tier: 'Average',
+      emoji: '⚠️',
+      color: 'text-amber-600 dark:text-amber-400',
+      bg: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800',
+      message: 'Some customers may hesitate. Work on recent reviews.',
+      impact: 'Below 4.0 can reduce foot traffic by 10-15%'
+    };
+    return {
+      tier: 'Needs Work',
+      emoji: '🚨',
+      color: 'text-red-600 dark:text-red-400',
+      bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+      message: 'Low rating is hurting business. Prioritize improvement.',
+      impact: 'Many customers skip venues below 3.5 stars'
+    };
+  };
+  
+  const tier = getTierConfig(reviews.rating);
+  const score = Math.round(((reviews.rating - 1) / 4) * 100);
   
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Reputation">
-      <div className="space-y-5">
-        {/* Rating display */}
-        <div className="text-center py-4">
-          <p className="text-4xl font-bold text-warm-800">{reviews.rating.toFixed(1)}</p>
-          <div className="flex justify-center gap-1 mt-2">
+      <div className="space-y-6">
+        {/* Hero Rating */}
+        <div className="text-center py-6 bg-warm-50 dark:bg-warm-700/50 rounded-2xl -mx-2">
+          <div className="flex items-center justify-center gap-2 mb-3">
+            <AnimatedNumber
+              value={reviews.rating}
+              className="text-5xl font-bold text-warm-800 dark:text-warm-100"
+              formatFn={(v) => v.toFixed(1)}
+            />
+            <Star className="w-10 h-10 text-amber-500 fill-amber-500" />
+          </div>
+          
+          {/* Stars */}
+          <div className="flex justify-center gap-1 mb-2">
             {[1, 2, 3, 4, 5].map((i) => (
               <Star
                 key={i}
-                className={`w-5 h-5 ${
+                className={`w-6 h-6 ${
                   i <= Math.round(reviews.rating) 
-                    ? 'text-amber-400 fill-current' 
-                    : 'text-warm-300'
+                    ? 'text-amber-500 fill-amber-500' 
+                    : 'text-warm-300 dark:text-warm-600'
                 }`}
               />
             ))}
           </div>
-          <p className="text-sm text-warm-500 mt-2">
+          
+          <p className="text-sm text-warm-500 dark:text-warm-400">
             {reviews.reviewCount.toLocaleString()} reviews on Google
           </p>
+          
+          {/* Trend */}
+          {reviews.trend !== undefined && reviews.trend !== 0 && (
+            <div className={`inline-flex items-center gap-1 mt-2 px-3 py-1 rounded-full text-sm ${
+              reviews.trend > 0 
+                ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' 
+                : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+            }`}>
+              {reviews.trend > 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+              <span>{reviews.trend > 0 ? '+' : ''}{reviews.trend.toFixed(1)} this month</span>
+            </div>
+          )}
         </div>
         
-        {/* Status */}
-        <div className={`p-3 rounded-xl border ${ratingStyle.bg}`}>
-          <p className={`text-sm font-medium ${ratingStyle.text}`}>
-            {reviews.rating >= 4.5 ? '🌟' : reviews.rating >= 4.0 ? '✅' : reviews.rating >= 3.5 ? '⚠️' : '🚨'}{' '}
-            {ratingStyle.message}
-          </p>
+        {/* Tier Badge */}
+        <div className={`p-4 rounded-xl border ${tier.bg}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-lg">{tier.emoji}</span>
+            <span className={`font-semibold ${tier.color}`}>{tier.tier}</span>
+          </div>
+          <p className="text-sm text-warm-700 dark:text-warm-200 mb-2">{tier.message}</p>
+          <p className="text-xs text-warm-500 dark:text-warm-400 italic">{tier.impact}</p>
         </div>
         
-        {/* Tips */}
-        <div className="p-3 rounded-xl bg-warm-50">
-          <p className="text-xs text-warm-500 uppercase tracking-wide mb-2 font-medium">
-            How to improve
-          </p>
-          <ul className="space-y-2 text-sm text-warm-600">
-            <li className="flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-warm-400 mt-1.5" />
-              Respond to all reviews (positive and negative)
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-warm-400 mt-1.5" />
-              Ask happy guests to leave a review
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-warm-400 mt-1.5" />
-              Address common complaints in recent reviews
-            </li>
-          </ul>
+        {/* How to Improve */}
+        <div>
+          <h4 className="text-xs font-semibold text-warm-500 dark:text-warm-400 uppercase tracking-wide mb-3">
+            How to Improve Your Rating
+          </h4>
+          <div className="space-y-2">
+            <TipCard
+              icon={MessageSquare}
+              title="Respond to every review"
+              desc="Shows you care. Even negative reviews deserve a thoughtful response."
+            />
+            <TipCard
+              icon={ThumbsUp}
+              title="Ask happy guests to review"
+              desc="Satisfied customers often forget. A simple ask can boost your count."
+            />
+            <TipCard
+              icon={AlertTriangle}
+              title="Address common complaints"
+              desc="Look for patterns in negative reviews and fix root causes."
+            />
+          </div>
         </div>
         
-        {/* Google link */}
-        <a
-          href={`https://www.google.com/maps/search/${encodeURIComponent(venueName)}`}
+        {/* View on Google */}
+        <motion.a
+          href={reviews.url || `https://www.google.com/maps/search/${encodeURIComponent(venueName)}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-warm-100 hover:bg-warm-200 text-sm text-primary font-medium transition-colors"
+          className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors"
+          whileTap={{ scale: 0.98 }}
         >
           View on Google
           <ExternalLink className="w-4 h-4" />
-        </a>
+        </motion.a>
       </div>
     </Modal>
+  );
+}
+
+// ============ TIP CARD ============
+
+function TipCard({ icon: Icon, title, desc }: { icon: typeof MessageSquare; title: string; desc: string }) {
+  return (
+    <div className="flex items-start gap-3 p-3 rounded-lg bg-warm-50 dark:bg-warm-700/50">
+      <div className="w-8 h-8 rounded-lg bg-primary/10 dark:bg-primary/20 flex items-center justify-center flex-shrink-0">
+        <Icon className="w-4 h-4 text-primary" />
+      </div>
+      <div>
+        <p className="text-sm font-medium text-warm-800 dark:text-warm-100">{title}</p>
+        <p className="text-xs text-warm-500 dark:text-warm-400 mt-0.5">{desc}</p>
+      </div>
+    </div>
   );
 }
 
