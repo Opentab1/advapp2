@@ -141,29 +141,6 @@ async function preloadHistoricalData(venueId: string): Promise<void> {
 export { preloadHistoricalData, historicalCache };
 
 // GraphQL queries for DynamoDB
-const getSensorData = /* GraphQL */ `
-  query GetSensorData($venueId: ID!, $timestamp: String!) {
-    getSensorData(venueId: $venueId, timestamp: $timestamp) {
-      venueId
-      timestamp
-      decibels
-      light
-      indoorTemp
-      outdoorTemp
-      humidity
-      currentSong
-      albumArt
-      artist
-      occupancy {
-        current
-        entries
-        exits
-        capacity
-      }
-    }
-  }
-`;
-
 const listSensorData = /* GraphQL */ `
   query ListSensorData($venueId: ID!, $startTime: String!, $endTime: String!, $limit: Int, $nextToken: String) {
     listSensorData(venueId: $venueId, startTime: $startTime, endTime: $endTime, limit: $limit, nextToken: $nextToken) {

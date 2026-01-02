@@ -29,8 +29,7 @@ class AIReportService {
     weekStart: Date,
     weekEnd: Date,
     metrics: WeeklyMetrics,
-    sensorData?: SensorData[],
-    timeRangeDays?: string
+    sensorData?: SensorData[]
   ): Promise<WeeklyReport> {
     // Demo mode
     const user = authService.getStoredUser();

@@ -154,7 +154,7 @@ class PulseRecommendationsService {
       hour: number;
     }> = [];
 
-    timeWindows.forEach((readings, key) => {
+    timeWindows.forEach((readings, _key) => {
       if (readings.length < 3) return;
 
       const sorted = readings.sort((a, b) => 
@@ -383,7 +383,7 @@ class PulseRecommendationsService {
   }
 
   private generateMusicRecommendations(
-    data: SensorData[],
+    _data: SensorData[],
     analysis: ReturnType<typeof this.analyzeHistoricalData>
   ): PulseRecommendationsData['musicRecommendations'] {
     const recommendations: PulseRecommendationsData['musicRecommendations'] = [];

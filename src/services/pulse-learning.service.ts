@@ -236,7 +236,7 @@ class PulseLearningService {
    */
   private calculateFactorWeights(
     topHours: VenuePerformanceHistory[],
-    allHours: VenuePerformanceHistory[]
+    _allHours: VenuePerformanceHistory[]
   ): { temperature: number; light: number; sound: number; humidity: number } {
     // Calculate variance for each factor in top hours
     const calcVariance = (values: number[]) => {
@@ -350,7 +350,7 @@ class PulseLearningService {
    * @param venueId - Venue identifier
    * @returns Array of performance history records
    */
-  private async getPerformanceHistory(venueId: string): Promise<VenuePerformanceHistory[]> {
+  private async getPerformanceHistory(_venueId: string): Promise<VenuePerformanceHistory[]> {
     // TODO: Implement actual DynamoDB query to VenuePerformanceHistory table
     // Query last 90 days of hourly aggregated data
     

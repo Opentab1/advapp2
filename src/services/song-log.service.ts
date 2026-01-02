@@ -516,8 +516,6 @@ class SongLogService {
   clearCache(): void {
     this.dynamoDBSongs = [];
     this.lastDynamoDBFetch = 0;
-    this.performingSongsCache = [];
-    this.lastPerformanceCalc = 0;
     this.analyticsCache.clear();
   }
   
@@ -538,21 +536,6 @@ class SongLogService {
     return 'Other';
   }
   
-  /**
-   * Get days for time range
-   */
-  private getDaysForRange(range: AnalyticsTimeRange): number {
-    switch (range) {
-      case '7d': return 7;
-      case '14d': return 14;
-      case '30d': return 30;
-      case '90d': return 90;
-      default: return 30;
-    }
-  }
-  
-  private performingSongsCache: PerformingSong[] = [];
-  private lastPerformanceCalc: number = 0;
   private readonly PERFORMANCE_CACHE_TTL = 300000; // 5 minute cache
   
   /**
@@ -694,12 +677,7 @@ class SongLogService {
           ? perf.occupancyChanges.reduce((a, b) => a + b, 0) / perf.occupancyChanges.length
           : 0;
         
-        const avgPlayDuration = perf.playDurations.length > 0
-          ? perf.playDurations.reduce((a, b) => a + b, 0) / perf.playDurations.length
-          : 3.5; // Default avg song ~3.5 min
-        
         // Estimate dwell extension: positive occupancy change during song = people staying
-        // Formula: avgChange * avgPlayDuration (capped at reasonable bounds)
         const dwellExtension = Math.max(-5, Math.min(10, avgChange * 0.5));
         
         // Performance score formula (0-100):
@@ -738,10 +716,6 @@ class SongLogService {
         genreStats,
         timestamp: now
       });
-      
-      // Also update the legacy cache for backwards compatibility
-      this.performingSongsCache = results;
-      this.lastPerformanceCalc = now;
       
       console.log(`🎵 Calculated performance scores for ${results.length} songs (${timeRange})`);
       

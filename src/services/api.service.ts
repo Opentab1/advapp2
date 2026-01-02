@@ -1,32 +1,8 @@
 import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '../types';
-import authService from './auth.service';
 import dynamoDBService from './dynamodb.service';
 import { generateClient } from 'aws-amplify/api';
 
 class ApiService {
-  private getHeaders(): HeadersInit {
-    const token = authService.getStoredToken();
-    const user = authService.getStoredUser();
-    return {
-      'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` }),
-      ...(user?.venueId && { 'X-Venue-ID': user.venueId })
-    };
-  }
-
-  private getRangeDays(range: TimeRange): number {
-    const rangeMap: Record<TimeRange, number> = {
-      'live': 0,
-      '6h': 0.25,
-      '24h': 1,
-      '7d': 7,
-      '14d': 14,
-      '30d': 30,
-      '90d': 90
-    };
-    return rangeMap[range];
-  }
-
   async getHistoricalData(venueId: string, range: TimeRange | string): Promise<HistoricalData> {
     console.log('🔍 Fetching historical data from DynamoDB for venue:', venueId, 'range:', range);
     
@@ -45,24 +21,6 @@ class ApiService {
       }
       throw new Error(`Failed to fetch historical data from DynamoDB: ${errorMessage}`);
     }
-  }
-
-  private transformApiData(apiData: any): SensorData[] {
-    // Transform API response to SensorData array
-    if (Array.isArray(apiData)) {
-      return apiData.map((item: any) => ({
-        timestamp: item.timestamp || new Date().toISOString(),
-        decibels: item.decibels || item.sound_level || 0,
-        light: item.light || item.light_level || 0,
-        indoorTemp: item.indoorTemp || item.indoor_temperature || 0,
-        outdoorTemp: item.outdoorTemp || item.outdoor_temperature || 0,
-        humidity: item.humidity || 0,
-        currentSong: item.currentSong || item.current_song,
-        albumArt: item.albumArt || item.album_art
-      }));
-    }
-    
-    return [];
   }
 
   async getLiveData(venueId: string): Promise<SensorData> {

@@ -9,7 +9,6 @@ import {
   Users,
   Wifi,
   Edit,
-  Trash2,
   FileDown,
   Eye
 } from 'lucide-react';
@@ -34,9 +33,9 @@ export function VenuesManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showConfigGenerator, setShowConfigGenerator] = useState<Venue | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
+  const [, setIsCreating] = useState(false);
   const [venues, setVenues] = useState<Venue[]>([]);
-  const [loadingVenues, setLoadingVenues] = useState(true);
+  const [, setLoadingVenues] = useState(true);
 
   const handleCreateVenue = async (venueData: VenueFormData) => {
     setIsCreating(true);
