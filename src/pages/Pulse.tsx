@@ -42,7 +42,12 @@ import holidayService from '../services/holiday.service';
 import authService from '../services/auth.service';
 import achievementsService, { Streak, WeeklyGoal, Insight } from '../services/achievements.service';
 import staffService from '../services/staff.service';
+import { pulseStore } from '../stores/pulseStore';
 import type { SportsGame } from '../types';
+
+// New components
+import { PullToRefresh } from '../components/common/PullToRefresh';
+import { haptic } from '../utils/haptics';
 
 // ============ MODAL TYPES ============
 
@@ -120,6 +125,11 @@ export function Pulse() {
     const generatedInsights = achievementsService.generateInsights();
     setInsights(generatedInsights);
   }, []);
+  
+  // Share pulse score with header via store
+  useEffect(() => {
+    pulseStore.setScore(pulseData.pulseScore);
+  }, [pulseData.pulseScore]);
   
   // Track achievements when pulse score changes
   const checkAchievements = useCallback(() => {
@@ -233,12 +243,19 @@ export function Pulse() {
   // ============ HANDLERS ============
   
   const handleActionComplete = (actionId?: string) => {
+    haptic('success');
     if (actionId) {
       completeAction(actionId);
     } else if (heroAction) {
       completeAction(heroAction.id);
     }
     setActiveModal(null);
+  };
+  
+  // Pull to refresh handler
+  const handleRefresh = async () => {
+    haptic('medium');
+    await pulseData.refresh();
   };
   
   // ============ LOADING STATE ============
@@ -250,26 +267,27 @@ export function Pulse() {
   // ============ RENDER ============
   
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <motion.div
-        className="flex items-center justify-between"
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <div className="flex items-center gap-2">
-          <Zap className="w-6 h-6 text-primary" />
-          <h1 className="text-xl font-bold text-warm-800">Pulse</h1>
-        </div>
-        <motion.button
-          onClick={pulseData.refresh}
-          disabled={pulseData.loading}
-          className="p-2 rounded-xl bg-warm-100 hover:bg-warm-200 transition-colors"
-          whileTap={{ scale: 0.95 }}
+    <PullToRefresh onRefresh={handleRefresh} disabled={pulseData.loading}>
+      <div className="space-y-6">
+        {/* Header */}
+        <motion.div
+          className="flex items-center justify-between"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
         >
-          <RefreshCw className={`w-5 h-5 text-warm-600 ${pulseData.loading ? 'animate-spin' : ''}`} />
-        </motion.button>
-      </motion.div>
+          <div className="flex items-center gap-2">
+            <Zap className="w-6 h-6 text-primary" />
+            <h1 className="text-xl font-bold text-warm-800 dark:text-warm-100">Pulse</h1>
+          </div>
+          <motion.button
+            onClick={() => { haptic('light'); pulseData.refresh(); }}
+            disabled={pulseData.loading}
+            className="p-2 rounded-xl bg-warm-100 dark:bg-warm-800 hover:bg-warm-200 dark:hover:bg-warm-700 transition-colors"
+            whileTap={{ scale: 0.95 }}
+          >
+            <RefreshCw className={`w-5 h-5 text-warm-600 dark:text-warm-400 ${pulseData.loading ? 'animate-spin' : ''}`} />
+          </motion.button>
+        </motion.div>
       
       {/* Live Stats - Eagle's Eye View */}
       <motion.div
@@ -457,7 +475,8 @@ export function Pulse() {
         previousValue={celebration.previousValue}
         detail={celebration.detail}
       />
-    </div>
+      </div>
+    </PullToRefresh>
   );
 }
 

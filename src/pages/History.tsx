@@ -84,7 +84,7 @@ export function History() {
       >
         <div className="flex items-center gap-2">
           <BarChart2 className="w-6 h-6 text-primary" />
-          <h1 className="text-xl font-bold text-warm-800">History</h1>
+          <h1 className="text-xl font-bold text-warm-800 dark:text-warm-100">History</h1>
         </div>
         <div className="flex items-center gap-2">
           <motion.button
@@ -99,10 +99,10 @@ export function History() {
           <motion.button
             onClick={fetchData}
             disabled={loading}
-            className="p-2 rounded-xl bg-warm-100 hover:bg-warm-200 transition-colors"
+            className="p-2 rounded-xl bg-warm-100 dark:bg-warm-800 hover:bg-warm-200 dark:hover:bg-warm-700 transition-colors"
             whileTap={{ scale: 0.95 }}
           >
-            <RefreshCw className={`w-5 h-5 text-warm-600 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-5 h-5 text-warm-600 dark:text-warm-400 ${loading ? 'animate-spin' : ''}`} />
           </motion.button>
         </div>
       </motion.div>
@@ -122,7 +122,7 @@ export function History() {
               px-4 py-2 rounded-xl text-sm font-medium transition-colors
               ${timeRange === range.value
                 ? 'bg-primary text-white'
-                : 'bg-warm-100 text-warm-600 hover:bg-warm-200'
+                : 'bg-warm-100 dark:bg-warm-800 text-warm-600 dark:text-warm-300 hover:bg-warm-200 dark:hover:bg-warm-700'
               }
             `}
           >
@@ -148,7 +148,7 @@ export function History() {
       
       {/* Error State */}
       {error && (
-        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700">
+        <div className="p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400">
           <p className="font-medium">Error loading data</p>
           <p className="text-sm mt-1">{error}</p>
         </div>
@@ -171,8 +171,8 @@ export function History() {
           transition={{ delay: 0.2 }}
         >
           {/* Occupancy Chart */}
-          <div className="bg-white rounded-2xl border border-warm-200 p-4">
-            <h3 className="text-base font-semibold text-warm-800 mb-4">Occupancy</h3>
+          <div className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors">
+            <h3 className="text-base font-semibold text-warm-800 dark:text-warm-100 mb-4">Occupancy</h3>
             <DataChart
               data={data.data}
               metric="occupancy"
@@ -182,8 +182,8 @@ export function History() {
           </div>
           
           {/* Sound Chart */}
-          <div className="bg-white rounded-2xl border border-warm-200 p-4">
-            <h3 className="text-base font-semibold text-warm-800 mb-4">Sound Level</h3>
+          <div className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors">
+            <h3 className="text-base font-semibold text-warm-800 dark:text-warm-100 mb-4">Sound Level</h3>
             <DataChart
               data={data.data}
               metric="decibels"
@@ -193,8 +193,8 @@ export function History() {
           </div>
           
           {/* Light Chart */}
-          <div className="bg-white rounded-2xl border border-warm-200 p-4">
-            <h3 className="text-base font-semibold text-warm-800 mb-4">Light Level</h3>
+          <div className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors">
+            <h3 className="text-base font-semibold text-warm-800 dark:text-warm-100 mb-4">Light Level</h3>
             <DataChart
               data={data.data}
               metric="light"
@@ -208,12 +208,12 @@ export function History() {
       {/* Summary Stats */}
       {summary && (
         <motion.div
-          className="bg-white rounded-2xl border border-warm-200 p-4"
+          className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3 }}
         >
-          <h3 className="text-base font-semibold text-warm-800 mb-4">
+          <h3 className="text-base font-semibold text-warm-800 dark:text-warm-100 mb-4">
             {timeRange === '24h' ? 'Today' : timeRange === '7d' ? 'This Week' : 'Period'} Summary
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -228,9 +228,9 @@ export function History() {
       {/* No Data State */}
       {!loading && (!data?.data || data.data.length === 0) && !error && (
         <div className="text-center py-12">
-          <BarChart2 className="w-12 h-12 text-warm-300 mx-auto mb-3" />
-          <p className="text-warm-600 font-medium">No data for this period</p>
-          <p className="text-sm text-warm-500 mt-1">
+          <BarChart2 className="w-12 h-12 text-warm-300 dark:text-warm-600 mx-auto mb-3" />
+          <p className="text-warm-600 dark:text-warm-300 font-medium">No data for this period</p>
+          <p className="text-sm text-warm-500 dark:text-warm-400 mt-1">
             Try selecting a different time range.
           </p>
         </div>
@@ -295,9 +295,9 @@ function calculateSummary(data: SensorData[]): Summary {
 
 function SummaryCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="p-3 rounded-xl bg-warm-50">
-      <p className="text-xs text-warm-500 mb-1">{label}</p>
-      <p className="text-lg font-bold text-warm-800">{value}</p>
+    <div className="p-3 rounded-xl bg-warm-50 dark:bg-warm-700/50 transition-colors">
+      <p className="text-xs text-warm-500 dark:text-warm-400 mb-1">{label}</p>
+      <p className="text-lg font-bold text-warm-800 dark:text-warm-100">{value}</p>
     </div>
   );
 }

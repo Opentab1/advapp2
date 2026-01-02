@@ -4,6 +4,7 @@
  * Handles:
  * - Authentication state
  * - Online/offline status
+ * - Dark mode
  * - Routing between Login, Dashboard, and Admin
  * - Tab-based navigation within Dashboard
  */
@@ -26,8 +27,10 @@ import { SongLog } from './pages/SongLog';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import type { TabId } from './components/common/TabNav';
 
-// Services
+// Services & Hooks
 import authService from './services/auth.service';
+import { useDarkMode } from './hooks/useDarkMode';
+import { usePulseScore } from './stores/pulseStore';
 
 // ============ PROTECTED DASHBOARD ============
 
@@ -36,6 +39,12 @@ function ProtectedDashboard() {
   
   const user = authService.getStoredUser();
   const venueName = user?.venueName || 'Your Venue';
+  
+  // Dark mode
+  const { isDark, toggle: toggleDark } = useDarkMode();
+  
+  // Get shared pulse score for header mini display
+  const pulseScore = usePulseScore();
   
   // Simple connection check (could be enhanced)
   const [isConnected, setIsConnected] = useState(true);
@@ -80,6 +89,9 @@ function ProtectedDashboard() {
     <DashboardLayout
       venueName={venueName}
       isConnected={isConnected}
+      pulseScore={pulseScore}
+      isDark={isDark}
+      onToggleDark={toggleDark}
       activeTab={activeTab}
       onTabChange={setActiveTab}
       onLogout={handleLogout}

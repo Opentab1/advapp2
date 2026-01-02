@@ -78,7 +78,7 @@ export function Team() {
       >
         <div className="flex items-center gap-2">
           <Users className="w-6 h-6 text-primary" />
-          <h1 className="text-xl font-bold text-warm-800">Team</h1>
+          <h1 className="text-xl font-bold text-warm-800 dark:text-warm-100">Team</h1>
         </div>
         <motion.button
           onClick={() => setShowAddModal(true)}
@@ -92,17 +92,17 @@ export function Team() {
       
       {/* Tonight Section */}
       <motion.div
-        className="bg-white rounded-2xl border border-warm-200 overflow-hidden"
+        className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 overflow-hidden transition-colors"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
       >
-        <div className="px-4 py-3 bg-primary/5 border-b border-warm-200">
-          <h2 className="font-semibold text-warm-800 flex items-center gap-2">
+        <div className="px-4 py-3 bg-primary/5 dark:bg-primary/10 border-b border-warm-200 dark:border-warm-700">
+          <h2 className="font-semibold text-warm-800 dark:text-warm-100 flex items-center gap-2">
             <Clock className="w-4 h-4 text-primary" />
             Tonight
           </h2>
-          <p className="text-xs text-warm-500 mt-0.5">
+          <p className="text-xs text-warm-500 dark:text-warm-400 mt-0.5">
             Tap to toggle who's working
           </p>
         </div>
@@ -110,9 +110,9 @@ export function Team() {
         <div className="p-4">
           {roster.length === 0 ? (
             <div className="text-center py-6">
-              <Users className="w-10 h-10 text-warm-300 mx-auto mb-2" />
-              <p className="text-warm-500 font-medium">No staff members yet</p>
-              <p className="text-sm text-warm-400 mt-1">
+              <Users className="w-10 h-10 text-warm-300 dark:text-warm-600 mx-auto mb-2" />
+              <p className="text-warm-500 dark:text-warm-400 font-medium">No staff members yet</p>
+              <p className="text-sm text-warm-400 dark:text-warm-500 mt-1">
                 Tap "Add" to add your first team member
               </p>
             </div>
@@ -132,8 +132,8 @@ export function Team() {
                     className={`
                       w-full p-3 rounded-xl border-2 flex items-center gap-3 transition-all
                       ${isActive 
-                        ? 'border-green-500 bg-green-50' 
-                        : 'border-warm-200 bg-warm-50 hover:border-warm-300'
+                        ? 'border-green-500 bg-green-50 dark:bg-green-900/20' 
+                        : 'border-warm-200 dark:border-warm-600 bg-warm-50 dark:bg-warm-700/50 hover:border-warm-300 dark:hover:border-warm-500'
                       }
                     `}
                     whileTap={{ scale: 0.98 }}
@@ -141,15 +141,15 @@ export function Team() {
                     {/* Avatar */}
                     <div className={`
                       w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold
-                      ${isActive ? 'bg-green-500 text-white' : 'bg-warm-300 text-warm-600'}
+                      ${isActive ? 'bg-green-500 text-white' : 'bg-warm-300 dark:bg-warm-600 text-warm-600 dark:text-warm-200'}
                     `}>
                       {member.name.charAt(0).toUpperCase()}
                     </div>
                     
                     {/* Info */}
                     <div className="flex-1 text-left">
-                      <p className="font-medium text-warm-800">{member.name}</p>
-                      <p className="text-xs text-warm-500 capitalize">{member.role}</p>
+                      <p className="font-medium text-warm-800 dark:text-warm-100">{member.name}</p>
+                      <p className="text-xs text-warm-500 dark:text-warm-400 capitalize">{member.role}</p>
                     </div>
                     
                     {/* Status */}
@@ -176,17 +176,17 @@ export function Team() {
       
       {/* Leaderboard Section */}
       <motion.div
-        className="bg-white rounded-2xl border border-warm-200 overflow-hidden"
+        className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 overflow-hidden transition-colors"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
       >
-        <div className="px-4 py-3 bg-amber-50 border-b border-warm-200">
-          <h2 className="font-semibold text-warm-800 flex items-center gap-2">
+        <div className="px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border-b border-warm-200 dark:border-warm-700">
+          <h2 className="font-semibold text-warm-800 dark:text-warm-100 flex items-center gap-2">
             <Trophy className="w-4 h-4 text-amber-500" />
             Leaderboard
           </h2>
-          <p className="text-xs text-warm-500 mt-0.5">
+          <p className="text-xs text-warm-500 dark:text-warm-400 mt-0.5">
             Last 30 days • Tap for details
           </p>
         </div>
@@ -194,9 +194,9 @@ export function Team() {
         <div className="p-4">
           {leaderboard.length === 0 ? (
             <div className="text-center py-6">
-              <Trophy className="w-10 h-10 text-warm-300 mx-auto mb-2" />
-              <p className="text-warm-500 font-medium">No performance data yet</p>
-              <p className="text-sm text-warm-400 mt-1">
+              <Trophy className="w-10 h-10 text-warm-300 dark:text-warm-600 mx-auto mb-2" />
+              <p className="text-warm-500 dark:text-warm-400 font-medium">No performance data yet</p>
+              <p className="text-sm text-warm-400 dark:text-warm-500 mt-1">
                 Toggle staff "On" to start tracking
               </p>
             </div>
@@ -210,7 +210,7 @@ export function Team() {
                   <motion.button
                     key={perf.staffId}
                     onClick={() => setSelectedStaffId(perf.staffId)}
-                    className="w-full p-3 rounded-xl bg-warm-50 hover:bg-warm-100 flex items-center gap-3 transition-colors"
+                    className="w-full p-3 rounded-xl bg-warm-50 dark:bg-warm-700/50 hover:bg-warm-100 dark:hover:bg-warm-700 flex items-center gap-3 transition-colors"
                     whileTap={{ scale: 0.98 }}
                   >
                     {/* Rank */}
@@ -224,15 +224,15 @@ export function Team() {
                     
                     {/* Info */}
                     <div className="flex-1 text-left">
-                      <p className="font-medium text-warm-800">{perf.staffName}</p>
-                      <p className="text-xs text-warm-500">{perf.totalShifts} shifts</p>
+                      <p className="font-medium text-warm-800 dark:text-warm-100">{perf.staffName}</p>
+                      <p className="text-xs text-warm-500 dark:text-warm-400">{perf.totalShifts} shifts</p>
                     </div>
                     
                     {/* Score */}
                     <div className="text-right">
-                      <p className="text-lg font-bold text-warm-800">{perf.avgPulseScore}</p>
+                      <p className="text-lg font-bold text-warm-800 dark:text-warm-100">{perf.avgPulseScore}</p>
                       {vsTeam !== 0 && (
-                        <p className={`text-xs ${vsTeam > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <p className={`text-xs ${vsTeam > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                           {vsTeam > 0 ? '+' : ''}{vsTeam} vs avg
                         </p>
                       )}
@@ -247,9 +247,9 @@ export function Team() {
           
           {/* Team Average */}
           {leaderboard.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-warm-200 flex items-center justify-between">
-              <span className="text-sm text-warm-500">Team Average</span>
-              <span className="text-lg font-bold text-warm-800">{teamAvg}</span>
+            <div className="mt-4 pt-4 border-t border-warm-200 dark:border-warm-700 flex items-center justify-between">
+              <span className="text-sm text-warm-500 dark:text-warm-400">Team Average</span>
+              <span className="text-lg font-bold text-warm-800 dark:text-warm-100">{teamAvg}</span>
             </div>
           )}
         </div>

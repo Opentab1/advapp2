@@ -1,11 +1,14 @@
 /**
- * Ring - Animated circular progress ring
+ * Ring - Animated circular progress ring with glow effects
  * 
  * Core visual component for Pulse Score and supporting metrics.
- * Reused across all ring displays.
+ * Features WHOOP-style glow based on score status.
  */
 
 import { motion } from 'framer-motion';
+import { SCORE_THRESHOLDS } from '../../utils/constants';
+import { AnimatedNumber } from './AnimatedNumber';
+import { haptic } from '../../utils/haptics';
 
 export type RingSize = 'hero' | 'large' | 'medium' | 'small';
 
@@ -26,6 +29,8 @@ interface RingProps {
   onClick?: () => void;
   /** Show "tap for details" hint */
   showHint?: boolean;
+  /** Enable glow effect */
+  glow?: boolean;
 }
 
 const SIZE_CONFIG: Record<RingSize, {
@@ -70,6 +75,14 @@ const SIZE_CONFIG: Record<RingSize, {
   },
 };
 
+// Get glow color based on score
+function getGlowColor(score: number | null): { color: string; opacity: number } {
+  if (score === null) return { color: 'transparent', opacity: 0 };
+  if (score >= SCORE_THRESHOLDS.optimal) return { color: 'rgba(34, 197, 94, 0.4)', opacity: 1 };
+  if (score >= SCORE_THRESHOLDS.good) return { color: 'rgba(245, 158, 11, 0.35)', opacity: 0.8 };
+  return { color: 'rgba(239, 68, 68, 0.3)', opacity: 0.7 };
+}
+
 export function Ring({
   score,
   label,
@@ -79,6 +92,7 @@ export function Ring({
   size = 'medium',
   onClick,
   showHint = false,
+  glow = true,
 }: RingProps) {
   const config = SIZE_CONFIG[size];
   const { ringSize, strokeWidth, scoreClass, subtitleClass, labelClass, padding } = config;
@@ -91,17 +105,47 @@ export function Ring({
 
   // Display value: use provided value, or score, or '--'
   const displayValue = value ?? (score !== null ? String(score) : '--');
+  const isNumeric = !value && score !== null;
+  
+  const glowConfig = getGlowColor(score);
+  const isOptimal = score !== null && score >= SCORE_THRESHOLDS.optimal;
+  
+  const handleClick = () => {
+    if (onClick) {
+      haptic('light');
+      onClick();
+    }
+  };
 
   const content = (
     <div
       className={`
         flex flex-col items-center gap-2 ${padding} rounded-2xl 
-        bg-white border border-warm-200 shadow-card
+        bg-white dark:bg-warm-800 border border-warm-200 dark:border-warm-700 shadow-card
         ${onClick ? 'hover:shadow-card-hover cursor-pointer' : ''} 
-        transition-shadow
+        transition-all duration-200
       `}
     >
       <div className="relative" style={{ width: ringSize, height: ringSize }}>
+        {/* Glow effect */}
+        {glow && score !== null && (
+          <motion.div
+            className="absolute inset-0 rounded-full"
+            style={{
+              boxShadow: `0 0 ${isOptimal ? 25 : 15}px ${glowConfig.color}, 0 0 ${isOptimal ? 50 : 30}px ${glowConfig.color}`,
+            }}
+            animate={{
+              opacity: [glowConfig.opacity * 0.5, glowConfig.opacity, glowConfig.opacity * 0.5],
+              scale: [1, 1.02, 1],
+            }}
+            transition={{
+              duration: 2.5,
+              repeat: Infinity,
+              ease: 'easeInOut',
+            }}
+          />
+        )}
+        
         {/* Background ring */}
         <svg className="absolute inset-0 -rotate-90" width={ringSize} height={ringSize}>
           <circle
@@ -111,6 +155,7 @@ export function Ring({
             fill="none"
             stroke="#E7E5E4"
             strokeWidth={strokeWidth}
+            className="dark:stroke-warm-700"
           />
           {/* Animated progress ring */}
           {score !== null && (
@@ -126,22 +171,32 @@ export function Ring({
               initial={{ strokeDashoffset: circumference }}
               animate={{ strokeDashoffset: offset }}
               transition={{ duration: 1, ease: 'easeOut' }}
+              style={{
+                filter: glow ? `drop-shadow(0 0 4px ${glowConfig.color})` : undefined,
+              }}
             />
           )}
         </svg>
 
         {/* Center content */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className={`${scoreClass} text-warm-800`}>{displayValue}</span>
+          {isNumeric ? (
+            <AnimatedNumber 
+              value={score} 
+              className={`${scoreClass} text-warm-800 dark:text-warm-100`}
+            />
+          ) : (
+            <span className={`${scoreClass} text-warm-800 dark:text-warm-100`}>{displayValue}</span>
+          )}
           {subtitle && (
-            <span className={`${subtitleClass} text-warm-500`}>{subtitle}</span>
+            <span className={`${subtitleClass} text-warm-500 dark:text-warm-400`}>{subtitle}</span>
           )}
         </div>
       </div>
 
       {/* Label */}
       <div className="text-center">
-        <span className={`${labelClass} text-warm-700`}>{label}</span>
+        <span className={`${labelClass} text-warm-700 dark:text-warm-300`}>{label}</span>
         {showHint && (
           <p className="text-[10px] text-primary mt-0.5">tap for details</p>
         )}
@@ -152,7 +207,7 @@ export function Ring({
   if (onClick) {
     return (
       <motion.button
-        onClick={onClick}
+        onClick={handleClick}
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
       >
