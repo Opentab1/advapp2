@@ -390,12 +390,18 @@ class DynamoDBService {
       const startTimeMs = new Date(startTime).getTime();
       const endTimeMs = new Date(endTime).getTime();
       
-      // Set generous limits - we want ALL data for the time range
-      // Don't limit based on "expected" items - just get everything
-      const maxItems = 500000; // 500k items max
-      const maxPages = 500; // 500 pages max (500k items)
+      // PERFORMANCE FIX: Limit data based on time range
+      // Charts only need ~500-2000 points for smooth visualization
+      const rangeConfig: Record<string, { maxItems: number; maxPages: number }> = {
+        '24h': { maxItems: 3000, maxPages: 5 },   // ~3k points for 24h detail
+        '7d':  { maxItems: 2000, maxPages: 3 },   // ~2k points for 7 days
+        '30d': { maxItems: 1500, maxPages: 2 },   // ~1.5k points for 30 days
+        '90d': { maxItems: 1000, maxPages: 2 },   // ~1k points for 90 days
+      };
+      const config = rangeConfig[range as string] || { maxItems: 2000, maxPages: 3 };
+      const { maxItems, maxPages } = config;
       
-      console.log(`📊 [${range}] Starting fetch: ${startTime} to ${endTime}`);
+      console.log(`📊 [${range}] Starting fetch: ${startTime} to ${endTime} (max ${maxItems} items, ${maxPages} pages)`);
 
       // Paginate through ALL data - no early termination
       // The backend SHOULD filter by startTime/endTime, but we'll verify client-side
@@ -442,14 +448,14 @@ class DynamoDBService {
           console.log(`📊 [${range}] Page ${pageCount}: ${filteredItems.length}/${pageItems.length} items in range, total: ${allItems.length}`);
         }
         
-        // Safety limits to prevent infinite loops (very generous)
+        // Stop early when we have enough data for chart display
         if (pageCount >= maxPages) {
-          console.warn(`⚠️ [${range}] Hit page limit (${maxPages}). Have ${allItems.length} items. This should never happen.`);
+          console.log(`📊 [${range}] Reached page limit (${maxPages}). Have ${allItems.length} items - sufficient for charts.`);
           break;
         }
         
         if (allItems.length >= maxItems) {
-          console.warn(`⚠️ [${range}] Reached item limit (${maxItems}). This should never happen.`);
+          console.log(`📊 [${range}] Reached item limit (${maxItems}) - sufficient for charts.`);
           break;
         }
         
@@ -521,14 +527,19 @@ class DynamoDBService {
 
       console.log(`✅ Retrieved ${items.length} historical data points from DynamoDB`);
       
-      // Transform data in chunks to avoid stack overflow with large arrays
-      const transformedData: SensorData[] = [];
-      const chunkSize = 5000;
-      for (let i = 0; i < items.length; i += chunkSize) {
-        const chunk = items.slice(i, i + chunkSize);
-        for (const item of chunk) {
-          transformedData.push(this.transformDynamoDBData(item));
+      // Transform data
+      let transformedData: SensorData[] = items.map((item: any) => this.transformDynamoDBData(item));
+      
+      // DOWNSAMPLE for chart performance: Keep max ~800 points for smooth rendering
+      const maxChartPoints = 800;
+      if (transformedData.length > maxChartPoints) {
+        const step = Math.ceil(transformedData.length / maxChartPoints);
+        const sampled: SensorData[] = [];
+        for (let i = 0; i < transformedData.length; i += step) {
+          sampled.push(transformedData[i]);
         }
+        console.log(`📊 [${range}] Downsampled: ${transformedData.length} → ${sampled.length} points for chart`);
+        transformedData = sampled;
       }
       
       const result: HistoricalData = {
