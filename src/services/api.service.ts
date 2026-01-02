@@ -177,73 +177,37 @@ class ApiService {
     } catch (error: any) {
       console.warn('⚠️ Dedicated occupancy metrics resolver failed, trying to calculate from sensor data...');
       
-      // Fallback: Calculate occupancy from recent sensor data
+      // Fallback: Calculate occupancy using bar day logic (3am-3am)
       try {
         const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '24h');
         if (historicalData?.data && historicalData.data.length > 0) {
-          // Filter to data with occupancy
-          const dataWithOccupancy = historicalData.data.filter(d => d.occupancy);
+          // Use the proper bar day calculation utility
+          const { calculateBarDayOccupancy } = await import('../utils/barDay');
+          const barDayOccupancy = calculateBarDayOccupancy(historicalData.data);
           
-          if (dataWithOccupancy.length > 0) {
-            // Sort by timestamp (newest first)
-            const sorted = [...dataWithOccupancy].sort((a, b) => 
-              new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-            );
-            
-            const latest = sorted[0];
-            const oldest = sorted[sorted.length - 1];
-            
-            // Calculate TODAY's entries/exits as the difference between latest and oldest
-            // This accounts for cumulative counters in the sensor data
-            const latestEntries = latest.occupancy?.entries || 0;
-            const latestExits = latest.occupancy?.exits || 0;
-            const oldestEntries = oldest.occupancy?.entries || 0;
-            const oldestExits = oldest.occupancy?.exits || 0;
-            
-            // Today's entries = latest cumulative - oldest cumulative from today
-            // This correctly calculates traffic within the 24h window
-            const todayEntries = Math.max(0, latestEntries - oldestEntries);
-            const todayExits = Math.max(0, latestExits - oldestExits);
-            
-            // Find peak occupancy
-            let peakOccupancy = 0;
-            let peakTime: string | null = null;
-            
-            sorted.forEach(d => {
-              if (d.occupancy && d.occupancy.current > peakOccupancy) {
-                peakOccupancy = d.occupancy.current;
-                peakTime = new Date(d.timestamp).toLocaleTimeString('en-US', { 
-                  hour: 'numeric', 
-                  minute: '2-digit' 
-                });
-              }
-            });
-            
-            const calculatedMetrics: OccupancyMetrics = {
-              current: latest.occupancy?.current || 0,
-              todayEntries: todayEntries,
-              todayExits: todayExits,
-              todayTotal: todayEntries,
-              sevenDayAvg: 0,
-              fourteenDayAvg: 0,
-              thirtyDayAvg: 0,
-              peakOccupancy,
-              peakTime,
-              avgDwellTimeMinutes: null
-            };
-            
-            console.log('✅ Occupancy calculated from sensor data:', {
-              ...calculatedMetrics,
-              _debug: {
-                latestTimestamp: latest.timestamp,
-                oldestTimestamp: oldest.timestamp,
-                latestEntries,
-                oldestEntries,
-                calculatedDiff: todayEntries
-              }
-            });
-            return calculatedMetrics;
-          }
+          // Find peak - track the highest calculated current occupancy
+          // NOT the raw sensor "current" which might be cumulative
+          let peakOccupancy = barDayOccupancy.current;
+          let peakTime: string | null = new Date().toLocaleTimeString('en-US', { 
+            hour: 'numeric', 
+            minute: '2-digit' 
+          });
+          
+          const calculatedMetrics: OccupancyMetrics = {
+            current: barDayOccupancy.current,
+            todayEntries: barDayOccupancy.entries,
+            todayExits: barDayOccupancy.exits,
+            todayTotal: barDayOccupancy.entries,
+            sevenDayAvg: 0,
+            fourteenDayAvg: 0,
+            thirtyDayAvg: 0,
+            peakOccupancy,
+            peakTime,
+            avgDwellTimeMinutes: null
+          };
+          
+          console.log('✅ Occupancy calculated using bar day logic:', calculatedMetrics);
+          return calculatedMetrics;
         }
       } catch (fallbackError) {
         console.error('❌ Fallback occupancy calculation also failed:', fallbackError);
