@@ -99,7 +99,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   // Data states
   const [sensorData, setSensorData] = useState<SensorData | null>(null);
-  const [occupancyMetrics, _setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
+  const [baseline, setBaseline] = useState<{entries: number; exits: number} | null>(null);
   const [reviews, setReviews] = useState<GoogleReviewsData | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   
@@ -120,9 +120,6 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       setError(err.message || 'Failed to fetch sensor data');
     }
   }, [venueId]);
-  
-  // State for 3am baseline
-  const [baseline, setBaseline] = useState<{entries: number; exits: number} | null>(null);
   
   const fetchOccupancy = useCallback(async () => {
     if (!venueId) return;
@@ -253,7 +250,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     return calculatePulseScore(sensorData?.decibels, sensorData?.light);
   }, [sensorData?.decibels, sensorData?.light]);
   
-  const dwellTimeMinutes = occupancyMetrics?.avgDwellTimeMinutes ?? null;
+  const dwellTimeMinutes = null; // TODO: Calculate from baseline data
   const dwellScore = getDwellTimeScore(dwellTimeMinutes);
   const dwellTimeFormatted = formatDwellTime(dwellTimeMinutes);
   
@@ -268,101 +265,37 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   const isConnected = dataAgeSeconds < DATA_FRESHNESS.disconnected;
   
   // ============ OCCUPANCY CALCULATION ============
-  // Calculate occupancy from sensor data using localStorage baseline for bar day
+  // Current = entries - exits (people inside right now)
+  // Today's entries = current entries - entries at 3am
+  // Today's exits = current exits - exits at 3am
   const effectiveOccupancy = useMemo(() => {
-    // If we have calculated bar day metrics from historical data, use those
-    if (occupancyMetrics && occupancyMetrics.todayEntries > 0) {
-      console.log('📊 Using calculated occupancy metrics:', occupancyMetrics);
-      return {
-        current: occupancyMetrics.current ?? 0,
-        todayEntries: occupancyMetrics.todayEntries ?? 0,
-        todayExits: occupancyMetrics.todayExits ?? 0,
-        peakOccupancy: occupancyMetrics.peakOccupancy ?? 0,
-        peakTime: occupancyMetrics.peakTime ?? null,
-      };
+    if (!sensorData?.occupancy) {
+      return { current: 0, todayEntries: 0, todayExits: 0, peakOccupancy: 0, peakTime: null };
     }
     
-    // Calculate from live sensor data using localStorage baseline
-    if (sensorData?.occupancy) {
-      const entries = sensorData.occupancy.entries ?? 0;
-      const exits = sensorData.occupancy.exits ?? 0;
-      const current = Math.max(0, entries - exits);
-      
-      // Bar day logic: A bar "day" runs from 3am to 3am
-      // We store the baseline (entries/exits at 3am) in localStorage
-      const BAR_DAY_HOUR = 3;
-      const now = new Date();
-      const currentHour = now.getHours();
-      
-      // Calculate when the current bar day started
-      const barDayStart = new Date(now);
-      barDayStart.setHours(BAR_DAY_HOUR, 0, 0, 0);
-      if (currentHour < BAR_DAY_HOUR) {
-        // It's before 3am, so bar day started yesterday at 3am
-        barDayStart.setDate(barDayStart.getDate() - 1);
-      }
-      
-      const barDayKey = `occupancy_baseline_${venueId}_${barDayStart.toDateString()}`;
-      let baseline = { entries: 0, exits: 0 };
-      
-      try {
-        const stored = localStorage.getItem(barDayKey);
-        if (stored) {
-          baseline = JSON.parse(stored);
-          console.log('📊 Using stored baseline:', baseline, 'from', barDayStart.toDateString());
-        } else {
-          // No baseline for today - this is the first reading since 3am
-          // Save current values as the baseline
-          baseline = { entries, exits };
-          localStorage.setItem(barDayKey, JSON.stringify(baseline));
-          console.log('📊 NEW baseline saved:', baseline, 'for', barDayStart.toDateString());
-          
-          // Clean up old baselines (keep only last 7 days)
-          for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key?.startsWith('occupancy_baseline_') && key !== barDayKey) {
-              const keyDate = key.split('_').slice(-3).join('_'); // Extract date part
-              const keyDateObj = new Date(keyDate);
-              const daysDiff = (now.getTime() - keyDateObj.getTime()) / (1000 * 60 * 60 * 24);
-              if (daysDiff > 7) {
-                localStorage.removeItem(key);
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to read/write occupancy baseline:', e);
-      }
-      
-      // Calculate today's entries/exits as difference from baseline
-      const todayEntries = Math.max(0, entries - baseline.entries);
-      const todayExits = Math.max(0, exits - baseline.exits);
-      
-      console.log('📊 Bar day occupancy:', {
-        baseline,
-        currentCumulative: { entries, exits },
-        today: { entries: todayEntries, exits: todayExits },
-        current
-      });
-      
-      return {
-        current,
-        todayEntries,
-        todayExits,
-        peakOccupancy: current,
-        peakTime: null,
-      };
+    const entries = sensorData.occupancy.entries ?? 0;
+    const exits = sensorData.occupancy.exits ?? 0;
+    const current = Math.max(0, entries - exits);
+    
+    // If we have the 3am baseline, calculate today's values
+    let todayEntries = 0;
+    let todayExits = 0;
+    
+    if (baseline) {
+      todayEntries = Math.max(0, entries - baseline.entries);
+      todayExits = Math.max(0, exits - baseline.exits);
     }
     
-    // No occupancy data available
+    console.log('📊 Occupancy:', { current, todayEntries, todayExits, baseline });
+    
     return {
-      current: 0,
-      todayEntries: 0,
-      todayExits: 0,
-      peakOccupancy: 0,
+      current,
+      todayEntries,
+      todayExits,
+      peakOccupancy: current,
       peakTime: null,
     };
-  }, [occupancyMetrics, sensorData?.occupancy, venueId]);
+  }, [sensorData?.occupancy, baseline]);
   
   // ============ RETURN ============
   
@@ -411,7 +344,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     // Raw data
     sensorData,
-    occupancyMetrics,
+    occupancyMetrics: null, // Calculated via effectiveOccupancy now
     
     // Actions
     refresh,
