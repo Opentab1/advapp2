@@ -121,66 +121,103 @@ class ApiService {
   }
 
   async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
-    console.log('🔍 Fetching occupancy metrics from DynamoDB for venue:', venueId);
+    console.log('🔍 Fetching occupancy metrics for venue:', venueId);
+    
+    // Helper to calculate bar day entries/exits from historical sensor data
+    const calculateBarDayEntriesExits = async (): Promise<{entries: number; exits: number; current: number}> => {
+      try {
+        const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '24h');
+        if (historicalData?.data && historicalData.data.length > 0) {
+          const { calculateBarDayOccupancy } = await import('../utils/barDay');
+          const result = calculateBarDayOccupancy(historicalData.data);
+          console.log('📊 Bar day calculation result:', result);
+          return result;
+        }
+      } catch (err) {
+        console.warn('⚠️ Bar day calculation failed:', err);
+      }
+      return { entries: 0, exits: 0, current: 0 };
+    };
     
     try {
       // Try the dedicated occupancy metrics resolver
       const metrics = await dynamoDBService.getOccupancyMetrics(venueId);
-      console.log('📊 Occupancy metrics from backend:', {
+      console.log('📊 Backend occupancy metrics:', {
         current: metrics.current,
         todayEntries: metrics.todayEntries,
-        todayExits: metrics.todayExits
+        todayExits: metrics.todayExits,
+        peakOccupancy: metrics.peakOccupancy
       });
       
-      // Return backend values as-is - trust the backend resolver
-      // The backend should be properly calculating these values
+      // Check if entries/exits look like cumulative values (very high numbers)
+      // The backend might be returning raw sensor cumulative values
+      const CUMULATIVE_THRESHOLD = 5000; // If >5000 entries in a day, probably cumulative
+      
+      if (metrics.todayEntries > CUMULATIVE_THRESHOLD || metrics.todayExits > CUMULATIVE_THRESHOLD) {
+        console.warn('⚠️ Backend entries/exits appear cumulative, using bar day calculation');
+        const barDay = await calculateBarDayEntriesExits();
+        
+        return {
+          ...metrics,
+          // Use bar day calculated values for entries/exits
+          todayEntries: barDay.entries,
+          todayExits: barDay.exits,
+          todayTotal: barDay.entries,
+          // Use backend's current if reasonable, otherwise use calculated
+          current: metrics.current <= 1000 ? metrics.current : barDay.current
+        };
+      }
+      
+      // Backend values look reasonable, use them
       return metrics;
     } catch (error: any) {
       console.warn('⚠️ Dedicated occupancy resolver failed:', error.message);
       
-      // Fallback: Try to get occupancy from live sensor data
+      // Fallback: Get current from live sensor data, entries/exits from bar day calc
       try {
-        const liveData = await dynamoDBService.getLiveSensorData(venueId);
-        console.log('📊 Fallback: Using live sensor data, occupancy:', liveData?.occupancy);
+        const [liveData, barDay] = await Promise.all([
+          dynamoDBService.getLiveSensorData(venueId).catch(() => null),
+          calculateBarDayEntriesExits()
+        ]);
         
-        if (liveData?.occupancy) {
-          // For entries/exits, try to calculate from historical data
-          let todayEntries = 0;
-          let todayExits = 0;
-          
-          try {
-            const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '24h');
-            if (historicalData?.data && historicalData.data.length > 0) {
-              const { calculateBarDayOccupancy } = await import('../utils/barDay');
-              const barDayResult = calculateBarDayOccupancy(historicalData.data);
-              todayEntries = barDayResult.entries;
-              todayExits = barDayResult.exits;
-              console.log('📊 Bar day calculated entries/exits:', { todayEntries, todayExits });
-            }
-          } catch (calcError) {
-            console.warn('⚠️ Bar day calculation failed, using 0 for entries/exits');
-          }
-          
-          return {
-            current: liveData.occupancy.current || 0,
-            todayEntries,
-            todayExits,
-            todayTotal: todayEntries,
-            sevenDayAvg: 0,
-            fourteenDayAvg: 0,
-            thirtyDayAvg: 0,
-            peakOccupancy: liveData.occupancy.current || 0,
-            peakTime: undefined,
-            avgDwellTimeMinutes: null
-          };
-        }
+        const current = liveData?.occupancy?.current || barDay.current;
+        
+        console.log('📊 Fallback occupancy:', { 
+          current, 
+          entries: barDay.entries, 
+          exits: barDay.exits,
+          source: liveData?.occupancy ? 'live + barDay' : 'barDay only'
+        });
+        
+        return {
+          current,
+          todayEntries: barDay.entries,
+          todayExits: barDay.exits,
+          todayTotal: barDay.entries,
+          sevenDayAvg: 0,
+          fourteenDayAvg: 0,
+          thirtyDayAvg: 0,
+          peakOccupancy: current,
+          peakTime: undefined,
+          avgDwellTimeMinutes: null
+        };
       } catch (fallbackError) {
-        console.error('❌ Live sensor fallback also failed:', fallbackError);
+        console.error('❌ All occupancy methods failed:', fallbackError);
       }
       
-      // If all else fails, throw the original error
-      const errorMessage = error?.message || error?.toString() || 'Unknown error';
-      throw new Error(`Failed to fetch occupancy metrics: ${errorMessage}`);
+      // Return zeros if everything fails (better than throwing)
+      return {
+        current: 0,
+        todayEntries: 0,
+        todayExits: 0,
+        todayTotal: 0,
+        sevenDayAvg: 0,
+        fourteenDayAvg: 0,
+        thirtyDayAvg: 0,
+        peakOccupancy: 0,
+        peakTime: undefined,
+        avgDwellTimeMinutes: null
+      };
     }
   }
 
