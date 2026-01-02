@@ -3,11 +3,13 @@
  * 
  * Shows additional actions after the hero action.
  * Compact cards that can be completed individually.
+ * Dark mode supported.
  */
 
 import { motion } from 'framer-motion';
 import { CheckCircle } from 'lucide-react';
 import type { PulseAction } from '../../hooks/useActions';
+import { haptic } from '../../utils/haptics';
 
 interface ActionQueueProps {
   actions: PulseAction[];
@@ -23,10 +25,10 @@ const PRIORITY_DOT_COLORS = {
 };
 
 const PRIORITY_BG_COLORS = {
-  critical: 'border-red-200 bg-red-50',
-  high: 'border-amber-200 bg-amber-50',
-  medium: 'border-warm-200 bg-warm-50',
-  low: 'border-green-200 bg-green-50',
+  critical: 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20',
+  high: 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20',
+  medium: 'border-warm-200 dark:border-warm-700 bg-warm-50 dark:bg-warm-800',
+  low: 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20',
 };
 
 export function ActionQueue({ actions, onComplete, maxVisible = 3 }: ActionQueueProps) {
@@ -38,8 +40,8 @@ export function ActionQueue({ actions, onComplete, maxVisible = 3 }: ActionQueue
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-base font-semibold text-warm-800">Up Next</h3>
-        <span className="text-sm text-warm-500">{actions.length} more</span>
+        <h3 className="text-base font-semibold text-warm-800 dark:text-warm-100">Up Next</h3>
+        <span className="text-sm text-warm-500 dark:text-warm-400">{actions.length} more</span>
       </div>
       
       <div className="space-y-2">
@@ -48,12 +50,15 @@ export function ActionQueue({ actions, onComplete, maxVisible = 3 }: ActionQueue
             key={action.id}
             action={action}
             index={index}
-            onComplete={() => onComplete(action.id)}
+            onComplete={() => {
+              haptic('success');
+              onComplete(action.id);
+            }}
           />
         ))}
         
         {hiddenCount > 0 && (
-          <p className="text-xs text-warm-400 text-center pt-1">
+          <p className="text-xs text-warm-400 dark:text-warm-500 text-center pt-1">
             +{hiddenCount} more action{hiddenCount > 1 ? 's' : ''}
           </p>
         )}
@@ -73,34 +78,34 @@ function ActionQueueItem({ action, index, onComplete }: ActionQueueItemProps) {
   
   return (
     <motion.div
-      className={`p-3 rounded-xl border ${PRIORITY_BG_COLORS[action.priority]} flex items-center gap-3`}
+      className={`p-3 rounded-xl border ${PRIORITY_BG_COLORS[action.priority]} flex items-center gap-3 transition-colors`}
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.1 }}
     >
       {/* Icon */}
-      <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center flex-shrink-0">
-        <Icon className="w-4 h-4 text-warm-600" />
+      <div className="w-9 h-9 rounded-lg bg-white dark:bg-warm-700 flex items-center justify-center flex-shrink-0">
+        <Icon className="w-4 h-4 text-warm-600 dark:text-warm-300" />
       </div>
       
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
           <span className={`w-1.5 h-1.5 rounded-full ${PRIORITY_DOT_COLORS[action.priority]}`} />
-          <p className="text-sm font-medium text-warm-800 truncate">{action.title}</p>
+          <p className="text-sm font-medium text-warm-800 dark:text-warm-100 truncate">{action.title}</p>
         </div>
-        <p className="text-xs text-warm-500 truncate">{action.description}</p>
+        <p className="text-xs text-warm-500 dark:text-warm-400 truncate">{action.description}</p>
       </div>
       
       {/* Complete button */}
       <motion.button
         onClick={onComplete}
-        className="p-2 rounded-lg bg-white hover:bg-warm-100 transition-colors flex-shrink-0"
+        className="p-2 rounded-lg bg-white dark:bg-warm-700 hover:bg-warm-100 dark:hover:bg-warm-600 transition-colors flex-shrink-0"
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.9 }}
         aria-label="Mark as done"
       >
-        <CheckCircle className="w-5 h-5 text-warm-400" />
+        <CheckCircle className="w-5 h-5 text-warm-400 dark:text-warm-500" />
       </motion.button>
     </motion.div>
   );
