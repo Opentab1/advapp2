@@ -166,17 +166,68 @@ class ApiService {
     console.log('🔍 Fetching occupancy metrics from DynamoDB for venue:', venueId);
     
     try {
-      // Fetch directly from DynamoDB using the user's venueId
+      // Try the dedicated occupancy metrics resolver first
       const metrics = await dynamoDBService.getOccupancyMetrics(venueId);
-      console.log('✅ Occupancy metrics received from DynamoDB');
+      console.log('✅ Occupancy metrics received from DynamoDB:', {
+        current: metrics.current,
+        todayEntries: metrics.todayEntries,
+        todayExits: metrics.todayExits
+      });
       return metrics;
     } catch (error: any) {
-      console.error('❌ Occupancy metrics DynamoDB fetch failed:', error);
-      // Avoid double-wrapping error messages
+      console.warn('⚠️ Dedicated occupancy metrics resolver failed, trying to calculate from sensor data...');
+      
+      // Fallback: Calculate occupancy from recent sensor data
+      try {
+        const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '24h');
+        if (historicalData?.data && historicalData.data.length > 0) {
+          // Find the most recent entry with occupancy data
+          const dataWithOccupancy = historicalData.data.filter(d => d.occupancy);
+          
+          if (dataWithOccupancy.length > 0) {
+            const latest = dataWithOccupancy[0]; // Most recent
+            const occupancy = latest.occupancy!;
+            
+            // Find peak occupancy from today's data
+            let peakOccupancy = 0;
+            let peakTime: string | null = null;
+            
+            dataWithOccupancy.forEach(d => {
+              if (d.occupancy && d.occupancy.current > peakOccupancy) {
+                peakOccupancy = d.occupancy.current;
+                peakTime = new Date(d.timestamp).toLocaleTimeString('en-US', { 
+                  hour: 'numeric', 
+                  minute: '2-digit' 
+                });
+              }
+            });
+            
+            const calculatedMetrics: OccupancyMetrics = {
+              current: occupancy.current || 0,
+              todayEntries: occupancy.entries || 0,
+              todayExits: occupancy.exits || 0,
+              todayTotal: occupancy.entries || 0,
+              sevenDayAvg: 0,
+              fourteenDayAvg: 0,
+              thirtyDayAvg: 0,
+              peakOccupancy,
+              peakTime,
+              avgDwellTimeMinutes: null
+            };
+            
+            console.log('✅ Occupancy calculated from sensor data:', calculatedMetrics);
+            return calculatedMetrics;
+          }
+        }
+      } catch (fallbackError) {
+        console.error('❌ Fallback occupancy calculation also failed:', fallbackError);
+      }
+      
+      // If all else fails, throw the original error
       const errorMessage = error?.message || error?.toString() || 'Unknown error';
       if (errorMessage.startsWith('Failed to fetch occupancy metrics from DynamoDB') || 
           errorMessage.startsWith('Failed to fetch')) {
-        throw error; // Re-throw original error if already wrapped
+        throw error;
       }
       throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
     }

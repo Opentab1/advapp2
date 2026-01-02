@@ -130,8 +130,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         setOccupancyMetrics(metrics);
       }
     } catch (err: any) {
-      console.error('Failed to fetch occupancy:', err);
-      // Don't set error - occupancy is optional
+      console.error('Failed to fetch occupancy from dedicated resolver:', err);
+      // Don't set error - will fall back to sensor data occupancy
     }
   }, [venueId]);
   
@@ -238,6 +238,41 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   const isConnected = dataAgeSeconds < DATA_FRESHNESS.disconnected;
   
+  // ============ OCCUPANCY FALLBACK ============
+  // If the dedicated occupancy resolver fails, fall back to sensor data occupancy
+  const effectiveOccupancy = useMemo(() => {
+    // Prefer dedicated occupancy metrics if available
+    if (occupancyMetrics && (occupancyMetrics.current > 0 || occupancyMetrics.todayEntries > 0)) {
+      return {
+        current: occupancyMetrics.current ?? 0,
+        todayEntries: occupancyMetrics.todayEntries ?? 0,
+        todayExits: occupancyMetrics.todayExits ?? 0,
+        peakOccupancy: occupancyMetrics.peakOccupancy ?? 0,
+        peakTime: occupancyMetrics.peakTime ?? null,
+      };
+    }
+    
+    // Fall back to sensor data occupancy
+    if (sensorData?.occupancy) {
+      return {
+        current: sensorData.occupancy.current ?? 0,
+        todayEntries: sensorData.occupancy.entries ?? 0,
+        todayExits: sensorData.occupancy.exits ?? 0,
+        peakOccupancy: sensorData.occupancy.current ?? 0, // Use current as peak if no metrics
+        peakTime: null,
+      };
+    }
+    
+    // No occupancy data available
+    return {
+      current: 0,
+      todayEntries: 0,
+      todayExits: 0,
+      peakOccupancy: 0,
+      peakTime: null,
+    };
+  }, [occupancyMetrics, sensorData?.occupancy]);
+  
   // ============ RETURN ============
   
   return {
@@ -264,12 +299,12 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     currentDecibels: sensorData?.decibels ?? null,
     currentLight: sensorData?.light ?? null,
     
-    // Occupancy
-    currentOccupancy: occupancyMetrics?.current ?? 0,
-    todayEntries: occupancyMetrics?.todayEntries ?? 0,
-    todayExits: occupancyMetrics?.todayExits ?? 0,
-    peakOccupancy: occupancyMetrics?.peakOccupancy ?? 0,
-    peakTime: occupancyMetrics?.peakTime ?? null,
+    // Occupancy - use effective occupancy which falls back to sensor data
+    currentOccupancy: effectiveOccupancy.current,
+    todayEntries: effectiveOccupancy.todayEntries,
+    todayExits: effectiveOccupancy.todayExits,
+    peakOccupancy: effectiveOccupancy.peakOccupancy,
+    peakTime: effectiveOccupancy.peakTime,
     
     // Dwell time
     dwellTimeMinutes,
