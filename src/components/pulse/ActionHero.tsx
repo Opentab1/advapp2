@@ -21,22 +21,22 @@ interface ActionHeroProps {
 const PRIORITY_STYLES = {
   critical: {
     gradient: 'from-red-500 to-rose-600',
-    bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+    bg: 'bg-red-900/20 border-red-800',
     label: '🚨 Do This Now',
   },
   high: {
     gradient: 'from-amber-500 to-orange-500',
-    bg: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800',
+    bg: 'bg-amber-900/20 border-amber-800',
     label: '⚡ Priority Action',
   },
   medium: {
     gradient: 'from-primary to-blue-600',
-    bg: 'bg-primary-50 dark:bg-primary/10 border-primary-100 dark:border-primary/30',
+    bg: 'bg-primary/10 border-primary/30',
     label: '💡 Recommended',
   },
   low: {
     gradient: 'from-green-500 to-emerald-600',
-    bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',
+    bg: 'bg-green-900/20 border-green-800',
     label: '✨ Nice to Have',
   },
 };
@@ -86,26 +86,26 @@ export function ActionHero({ action, onSeeWhy, onComplete, completedCount }: Act
           
           {/* Text */}
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-bold text-warm-800 dark:text-warm-100 mb-1">{action.title}</h3>
-            <p className="text-sm text-warm-600 dark:text-warm-400 mb-3">{action.description}</p>
+            <h3 className="text-lg font-bold text-warm-100 mb-1">{action.title}</h3>
+            <p className="text-sm text-warm-400 mb-3">{action.description}</p>
             
             {/* Current → Target */}
             {action.currentValue && action.targetValue && (
-              <div className="flex items-center gap-3 mb-3 p-2.5 rounded-lg bg-white/60 dark:bg-warm-800/60">
+              <div className="flex items-center gap-3 mb-3 p-2.5 rounded-lg bg-warm-800/60">
                 <div>
-                  <p className="text-[10px] text-warm-500 dark:text-warm-400 uppercase">Current</p>
-                  <p className="text-base font-bold text-warm-800 dark:text-warm-100">{action.currentValue}</p>
+                  <p className="text-[10px] text-warm-400 uppercase">Current</p>
+                  <p className="text-base font-bold text-warm-100">{action.currentValue}</p>
                 </div>
                 <ChevronRight className="w-4 h-4 text-warm-400" />
                 <div>
-                  <p className="text-[10px] text-warm-500 dark:text-warm-400 uppercase">Target</p>
-                  <p className="text-base font-bold text-green-600 dark:text-green-400">{action.targetValue}</p>
+                  <p className="text-[10px] text-warm-400 uppercase">Target</p>
+                  <p className="text-base font-bold text-green-400">{action.targetValue}</p>
                 </div>
               </div>
             )}
             
             {/* Impact */}
-            <div className="flex items-center gap-2 text-sm text-warm-600 dark:text-warm-400">
+            <div className="flex items-center gap-2 text-sm text-warm-400">
               <TrendingUp className="w-4 h-4 text-green-500" />
               <span>{action.impact}</span>
             </div>
@@ -116,14 +116,14 @@ export function ActionHero({ action, onSeeWhy, onComplete, completedCount }: Act
         <div className="flex gap-3 mt-5">
           <motion.button
             onClick={handleSeeWhy}
-            className="flex-1 py-2.5 rounded-xl bg-white dark:bg-warm-700 border border-warm-200 dark:border-warm-600 text-warm-700 dark:text-warm-200 font-medium text-sm hover:bg-warm-50 dark:hover:bg-warm-600 transition-colors"
+            className="flex-1 py-2.5 rounded-xl bg-warm-700 border border-warm-600 text-warm-200 font-medium text-sm hover:bg-warm-600 transition-colors"
             whileTap={{ scale: 0.98 }}
           >
             See Why
           </motion.button>
           <motion.button
             onClick={handleComplete}
-            className="flex-1 py-2.5 rounded-xl bg-warm-800 dark:bg-white text-white dark:text-warm-800 font-medium text-sm flex items-center justify-center gap-2 hover:bg-warm-900 dark:hover:bg-warm-100 transition-colors"
+            className="flex-1 py-2.5 rounded-xl bg-white text-warm-900 font-medium text-sm flex items-center justify-center gap-2 hover:bg-warm-100 transition-colors"
             whileTap={{ scale: 0.98 }}
           >
             <CheckCircle className="w-4 h-4" />

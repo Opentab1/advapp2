@@ -61,7 +61,7 @@ export function LiveStats({
   
   return (
     <motion.div
-      className={`bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors ${onTap ? 'cursor-pointer hover:shadow-card-hover active:scale-[0.99]' : ''}`}
+      className={`bg-warm-800 rounded-2xl border border-warm-700 p-4 transition-colors ${onTap ? 'cursor-pointer hover:shadow-card-hover active:scale-[0.99]' : ''}`}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       onClick={handleTap}
@@ -69,10 +69,10 @@ export function LiveStats({
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-warm-800 dark:text-warm-100">Live Stats</h3>
+        <h3 className="text-sm font-semibold text-warm-100">Live Stats</h3>
         <div className="flex items-center gap-1.5">
           <span className={`w-2 h-2 rounded-full ${isFresh ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
-          <span className="text-xs text-warm-500 dark:text-warm-400">
+          <span className="text-xs text-warm-400">
             {isFresh ? 'Live' : secondsAgo ? `${secondsAgo}s ago` : 'No data'}
           </span>
           {onTap && <ChevronRight className="w-4 h-4 text-warm-400 ml-1" />}
@@ -113,7 +113,7 @@ export function LiveStats({
       {/* Now Playing */}
       {currentSong && (
         <motion.div
-          className="mt-3 pt-3 border-t border-warm-100 dark:border-warm-700 flex items-center gap-3"
+          className="mt-3 pt-3 border-t border-warm-700 flex items-center gap-3"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.2 }}
@@ -129,14 +129,14 @@ export function LiveStats({
               transition={{ type: 'spring', stiffness: 300 }}
             />
           ) : (
-            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 dark:from-primary/30 dark:to-primary/10 flex items-center justify-center flex-shrink-0">
+            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center flex-shrink-0">
               <Music className="w-5 h-5 text-primary" />
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-warm-800 dark:text-warm-100 truncate">{currentSong}</p>
+            <p className="text-sm font-medium text-warm-100 truncate">{currentSong}</p>
             {artist && (
-              <p className="text-xs text-warm-500 dark:text-warm-400 truncate">{artist}</p>
+              <p className="text-xs text-warm-400 truncate">{artist}</p>
             )}
           </div>
           {/* Animated equalizer bars */}
@@ -178,10 +178,10 @@ interface StatChipProps {
 }
 
 const STATUS_STYLES: Record<Status, { bg: string; text: string; icon: string }> = {
-  optimal: { bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400', icon: 'text-green-500' },
-  warning: { bg: 'bg-amber-50 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-400', icon: 'text-amber-500' },
-  critical: { bg: 'bg-red-50 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400', icon: 'text-red-500' },
-  neutral: { bg: 'bg-warm-50 dark:bg-warm-700/50', text: 'text-warm-700 dark:text-warm-200', icon: 'text-warm-500 dark:text-warm-400' },
+  optimal: { bg: 'bg-green-900/30', text: 'text-green-400', icon: 'text-green-500' },
+  warning: { bg: 'bg-amber-900/30', text: 'text-amber-400', icon: 'text-amber-500' },
+  critical: { bg: 'bg-red-900/30', text: 'text-red-400', icon: 'text-red-500' },
+  neutral: { bg: 'bg-warm-700/50', text: 'text-warm-200', icon: 'text-warm-400' },
 };
 
 function StatChip({ icon: Icon, label, value, unit, status, extra }: StatChipProps) {
@@ -192,7 +192,7 @@ function StatChip({ icon: Icon, label, value, unit, status, extra }: StatChipPro
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-1.5">
           <Icon className={`w-3.5 h-3.5 ${style.icon}`} />
-          <span className="text-[10px] text-warm-500 dark:text-warm-400 uppercase tracking-wide">{label}</span>
+          <span className="text-[10px] text-warm-400 uppercase tracking-wide">{label}</span>
         </div>
         {extra}
       </div>
@@ -202,7 +202,7 @@ function StatChip({ icon: Icon, label, value, unit, status, extra }: StatChipPro
           className={`text-lg font-bold ${style.text}`}
           formatFn={(v) => v.toFixed(0)}
         />
-        <span className="text-xs text-warm-400 dark:text-warm-500">{unit}</span>
+        <span className="text-xs text-warm-500">{unit}</span>
       </div>
     </div>
   );

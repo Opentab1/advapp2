@@ -32,13 +32,13 @@ export function ReputationBreakdownModal({
     return (
       <Modal isOpen={isOpen} onClose={onClose} title="Reputation">
         <div className="text-center py-10">
-          <div className="w-16 h-16 rounded-full bg-warm-100 dark:bg-warm-700 flex items-center justify-center mx-auto mb-4">
-            <Star className="w-8 h-8 text-warm-400 dark:text-warm-500" />
+          <div className="w-16 h-16 rounded-full bg-warm-700 flex items-center justify-center mx-auto mb-4">
+            <Star className="w-8 h-8 text-warm-500" />
           </div>
-          <h3 className="text-lg font-semibold text-warm-700 dark:text-warm-200 mb-2">
+          <h3 className="text-lg font-semibold text-warm-200 mb-2">
             No Review Data
           </h3>
-          <p className="text-sm text-warm-500 dark:text-warm-400 max-w-xs mx-auto mb-4">
+          <p className="text-sm text-warm-400 max-w-xs mx-auto mb-4">
             Set up your venue address in Settings to pull your Google Reviews automatically.
           </p>
           <button 
@@ -57,8 +57,8 @@ export function ReputationBreakdownModal({
     if (rating >= 4.5) return {
       tier: 'Outstanding',
       emoji: '🌟',
-      color: 'text-green-600 dark:text-green-400',
-      bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',
+      color: 'text-green-400',
+      bg: 'bg-green-900/20 border-green-800',
       message: 'You\'re in the top tier. This rating attracts new customers.',
       impact: '+15-20% more foot traffic compared to 4.0 venues'
     };
@@ -66,23 +66,23 @@ export function ReputationBreakdownModal({
       tier: 'Strong',
       emoji: '✅',
       color: 'text-primary',
-      bg: 'bg-primary/10 dark:bg-primary/20 border-primary/20',
+      bg: 'bg-primary/20 border-primary/20',
       message: 'Solid reputation. Push for 4.5+ to stand out.',
       impact: 'Most customers consider 4.0+ acceptable'
     };
     if (rating >= 3.5) return {
       tier: 'Average',
       emoji: '⚠️',
-      color: 'text-amber-600 dark:text-amber-400',
-      bg: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800',
+      color: 'text-amber-400',
+      bg: 'bg-amber-900/20 border-amber-800',
       message: 'Some customers may hesitate. Work on recent reviews.',
       impact: 'Below 4.0 can reduce foot traffic by 10-15%'
     };
     return {
       tier: 'Needs Work',
       emoji: '🚨',
-      color: 'text-red-600 dark:text-red-400',
-      bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+      color: 'text-red-400',
+      bg: 'bg-red-900/20 border-red-800',
       message: 'Low rating is hurting business. Prioritize improvement.',
       impact: 'Many customers skip venues below 3.5 stars'
     };
@@ -94,11 +94,11 @@ export function ReputationBreakdownModal({
     <Modal isOpen={isOpen} onClose={onClose} title="Reputation">
       <div className="space-y-6">
         {/* Hero Rating */}
-        <div className="text-center py-6 bg-warm-50 dark:bg-warm-700/50 rounded-2xl -mx-2">
+        <div className="text-center py-6 bg-warm-700/50 rounded-2xl -mx-2">
           <div className="flex items-center justify-center gap-2 mb-3">
             <AnimatedNumber
               value={reviews.rating}
-              className="text-5xl font-bold text-warm-800 dark:text-warm-100"
+              className="text-5xl font-bold text-warm-100"
               formatFn={(v) => v.toFixed(1)}
             />
             <Star className="w-10 h-10 text-amber-500 fill-amber-500" />
@@ -112,13 +112,13 @@ export function ReputationBreakdownModal({
                 className={`w-6 h-6 ${
                   i <= Math.round(reviews.rating) 
                     ? 'text-amber-500 fill-amber-500' 
-                    : 'text-warm-300 dark:text-warm-600'
+                    : 'text-warm-600'
                 }`}
               />
             ))}
           </div>
           
-          <p className="text-sm text-warm-500 dark:text-warm-400">
+          <p className="text-sm text-warm-400">
             {reviews.reviewCount.toLocaleString()} reviews on Google
           </p>
         </div>
@@ -129,13 +129,13 @@ export function ReputationBreakdownModal({
             <span className="text-lg">{tier.emoji}</span>
             <span className={`font-semibold ${tier.color}`}>{tier.tier}</span>
           </div>
-          <p className="text-sm text-warm-700 dark:text-warm-200 mb-2">{tier.message}</p>
-          <p className="text-xs text-warm-500 dark:text-warm-400 italic">{tier.impact}</p>
+          <p className="text-sm text-warm-200 mb-2">{tier.message}</p>
+          <p className="text-xs text-warm-400 italic">{tier.impact}</p>
         </div>
         
         {/* How to Improve */}
         <div>
-          <h4 className="text-xs font-semibold text-warm-500 dark:text-warm-400 uppercase tracking-wide mb-3">
+          <h4 className="text-xs font-semibold text-warm-400 uppercase tracking-wide mb-3">
             How to Improve Your Rating
           </h4>
           <div className="space-y-2">
@@ -177,13 +177,13 @@ export function ReputationBreakdownModal({
 
 function TipCard({ icon: Icon, title, desc }: { icon: typeof MessageSquare; title: string; desc: string }) {
   return (
-    <div className="flex items-start gap-3 p-3 rounded-lg bg-warm-50 dark:bg-warm-700/50">
-      <div className="w-8 h-8 rounded-lg bg-primary/10 dark:bg-primary/20 flex items-center justify-center flex-shrink-0">
+    <div className="flex items-start gap-3 p-3 rounded-lg bg-warm-700/50">
+      <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
         <Icon className="w-4 h-4 text-primary" />
       </div>
       <div>
-        <p className="text-sm font-medium text-warm-800 dark:text-warm-100">{title}</p>
-        <p className="text-xs text-warm-500 dark:text-warm-400 mt-0.5">{desc}</p>
+        <p className="text-sm font-medium text-warm-100">{title}</p>
+        <p className="text-xs text-warm-400 mt-0.5">{desc}</p>
       </div>
     </div>
   );

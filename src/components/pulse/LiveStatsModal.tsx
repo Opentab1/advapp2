@@ -78,14 +78,14 @@ export function LiveStatsModal({
         {/* Last Updated */}
         <div className="flex items-center justify-center gap-2 text-sm">
           <span className={`w-2 h-2 rounded-full ${isFresh ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
-          <span className="text-warm-500 dark:text-warm-400">
+          <span className="text-warm-400">
             {isFresh ? 'Live data' : secondsAgo ? `Updated ${secondsAgo}s ago` : 'No data'}
           </span>
         </div>
 
         {/* ============ ENVIRONMENT ============ */}
         <section>
-          <h3 className="text-sm font-semibold text-warm-500 dark:text-warm-400 uppercase tracking-wide mb-3">
+          <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
             Environment
           </h3>
           <div className="grid grid-cols-2 gap-3">
@@ -125,23 +125,23 @@ export function LiveStatsModal({
 
         {/* ============ OCCUPANCY ============ */}
         <section>
-          <h3 className="text-sm font-semibold text-warm-500 dark:text-warm-400 uppercase tracking-wide mb-3">
+          <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
             Occupancy
           </h3>
           <div className="grid grid-cols-2 gap-3">
             {/* Current */}
-            <div className="col-span-2 p-4 rounded-xl bg-primary/10 dark:bg-primary/20 border border-primary/20">
+            <div className="col-span-2 p-4 rounded-xl bg-primary/20 border border-primary/20">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Users className="w-5 h-5 text-primary" />
-                  <span className="text-sm font-medium text-warm-600 dark:text-warm-300">Currently Inside</span>
+                  <span className="text-sm font-medium text-warm-300">Currently Inside</span>
                 </div>
                 <div className="text-right">
                   <AnimatedNumber 
                     value={currentOccupancy} 
                     className="text-3xl font-bold text-primary"
                   />
-                  <p className="text-xs text-warm-500 dark:text-warm-400">
+                  <p className="text-xs text-warm-400">
                     Peak today: {peakOccupancy}
                   </p>
                 </div>
@@ -173,11 +173,11 @@ export function LiveStatsModal({
         {/* ============ NOW PLAYING ============ */}
         {currentSong && (
           <section>
-            <h3 className="text-sm font-semibold text-warm-500 dark:text-warm-400 uppercase tracking-wide mb-3">
+            <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
               Now Playing
             </h3>
             <motion.div 
-              className="p-4 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/10 border border-primary/20 flex items-center gap-4"
+              className="p-4 rounded-xl bg-gradient-to-br from-primary/20 to-primary/10 border border-primary/20 flex items-center gap-4"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
             >
@@ -198,11 +198,11 @@ export function LiveStatsModal({
               
               {/* Info */}
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-warm-800 dark:text-warm-100 truncate text-lg">
+                <p className="font-semibold text-warm-100 truncate text-lg">
                   {currentSong}
                 </p>
                 {artist && (
-                  <p className="text-sm text-warm-500 dark:text-warm-400 truncate">
+                  <p className="text-sm text-warm-400 truncate">
                     {artist}
                   </p>
                 )}
@@ -234,16 +234,16 @@ export function LiveStatsModal({
         {/* ============ REVIEWS ============ */}
         {reviews && (
           <section>
-            <h3 className="text-sm font-semibold text-warm-500 dark:text-warm-400 uppercase tracking-wide mb-3">
+            <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
               Google Reviews
             </h3>
-            <div className="p-4 rounded-xl bg-white dark:bg-warm-700/50 border border-warm-200 dark:border-warm-600">
+            <div className="p-4 rounded-xl bg-warm-700/50 border border-warm-600">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
                   {/* Rating */}
                   <div className="flex items-center gap-1">
                     <Star className="w-6 h-6 text-amber-500 fill-amber-500" />
-                    <span className="text-2xl font-bold text-warm-800 dark:text-warm-100">
+                    <span className="text-2xl font-bold text-warm-100">
                       {reviews.rating.toFixed(1)}
                     </span>
                   </div>
@@ -256,7 +256,7 @@ export function LiveStatsModal({
                         className={`w-4 h-4 ${
                           star <= Math.round(reviews.rating)
                             ? 'text-amber-500 fill-amber-500'
-                            : 'text-warm-300 dark:text-warm-600'
+                            : 'text-warm-600'
                         }`}
                       />
                     ))}
@@ -277,7 +277,7 @@ export function LiveStatsModal({
                 )}
               </div>
               
-              <p className="text-sm text-warm-500 dark:text-warm-400">
+              <p className="text-sm text-warm-400">
                 Based on {reviews.reviewCount.toLocaleString()} reviews
               </p>
             </div>
@@ -305,24 +305,24 @@ interface StatCardProps {
 
 const STATUS_STYLES: Record<Status, { bg: string; border: string; text: string }> = {
   optimal: { 
-    bg: 'bg-green-50 dark:bg-green-900/20', 
-    border: 'border-green-200 dark:border-green-800',
-    text: 'text-green-700 dark:text-green-400' 
+    bg: 'bg-green-900/20', 
+    border: 'border-green-800',
+    text: 'text-green-400' 
   },
   warning: { 
-    bg: 'bg-amber-50 dark:bg-amber-900/20', 
-    border: 'border-amber-200 dark:border-amber-800',
-    text: 'text-amber-700 dark:text-amber-400' 
+    bg: 'bg-amber-900/20', 
+    border: 'border-amber-800',
+    text: 'text-amber-400' 
   },
   critical: { 
-    bg: 'bg-red-50 dark:bg-red-900/20', 
-    border: 'border-red-200 dark:border-red-800',
-    text: 'text-red-700 dark:text-red-400' 
+    bg: 'bg-red-900/20', 
+    border: 'border-red-800',
+    text: 'text-red-400' 
   },
   neutral: { 
-    bg: 'bg-warm-50 dark:bg-warm-700/50', 
-    border: 'border-warm-200 dark:border-warm-600',
-    text: 'text-warm-700 dark:text-warm-200' 
+    bg: 'bg-warm-700/50', 
+    border: 'border-warm-600',
+    text: 'text-warm-200' 
   },
 };
 
@@ -334,7 +334,7 @@ function StatCard({ icon: Icon, label, value, unit, status, optimal, extra, icon
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Icon className={`w-4 h-4 ${iconColor || (status === 'neutral' ? 'text-warm-500' : style.text)}`} />
-          <span className="text-xs text-warm-500 dark:text-warm-400">{label}</span>
+          <span className="text-xs text-warm-400">{label}</span>
         </div>
         {extra}
       </div>
@@ -349,11 +349,11 @@ function StatCard({ icon: Icon, label, value, unit, status, optimal, extra, icon
         ) : (
           <span className="text-xl font-bold text-warm-400">--</span>
         )}
-        <span className="text-sm text-warm-400 dark:text-warm-500">{unit}</span>
+        <span className="text-sm text-warm-500">{unit}</span>
       </div>
       
       {optimal && status !== 'neutral' && (
-        <p className="text-[10px] text-warm-400 dark:text-warm-500 mt-1">
+        <p className="text-[10px] text-warm-500 mt-1">
           Optimal: {optimal}
         </p>
       )}

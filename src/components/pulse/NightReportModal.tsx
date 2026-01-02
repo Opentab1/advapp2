@@ -342,17 +342,17 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
           
           {/* Modal */}
           <motion.div
-            className="fixed inset-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-lg sm:max-h-[85vh] bg-white dark:bg-warm-800 rounded-2xl z-50 overflow-hidden flex flex-col"
+            className="fixed inset-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-lg sm:max-h-[85vh] bg-warm-800 rounded-2xl z-50 overflow-hidden flex flex-col"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
           >
             {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-warm-200 dark:border-warm-700">
+            <div className="flex items-center justify-between p-4 border-b border-warm-700">
               <div>
-                <h2 className="text-lg font-bold text-warm-800 dark:text-warm-100">Night Report</h2>
+                <h2 className="text-lg font-bold text-warm-100">Night Report</h2>
                 {summary && (
-                  <p className="text-sm text-warm-500 dark:text-warm-400">
+                  <p className="text-sm text-warm-400">
                     {summary.dayOfWeek}, {summary.dateFormatted}
                   </p>
                 )}
@@ -376,7 +376,7 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
                 </motion.button>
                 <motion.button
                   onClick={onClose}
-                  className="p-2 rounded-lg hover:bg-warm-100 dark:hover:bg-warm-700 transition-colors"
+                  className="p-2 rounded-lg hover:bg-warm-700 transition-colors"
                   whileTap={{ scale: 0.95 }}
                 >
                   <X className="w-5 h-5 text-warm-500" />
@@ -392,9 +392,9 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
                 </div>
               ) : !summary ? (
                 <div className="text-center py-12">
-                  <Calendar className="w-12 h-12 text-warm-300 dark:text-warm-600 mx-auto mb-3" />
-                  <p className="text-warm-600 dark:text-warm-300 font-medium">No data for tonight</p>
-                  <p className="text-sm text-warm-500 dark:text-warm-400 mt-1">
+                  <Calendar className="w-12 h-12 text-warm-600 mx-auto mb-3" />
+                  <p className="text-warm-300 font-medium">No data for tonight</p>
+                  <p className="text-sm text-warm-400 mt-1">
                     Check back after your venue has been open.
                   </p>
                 </div>
@@ -403,16 +403,16 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
                   {/* Hero Stats */}
                   <div className="grid grid-cols-2 gap-3">
                     {/* Overall Pulse Score */}
-                    <div className="col-span-2 p-4 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/10 border border-primary/20">
+                    <div className="col-span-2 p-4 rounded-xl bg-gradient-to-br from-primary/20 to-primary/10 border border-primary/20">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-sm text-warm-500 dark:text-warm-400 mb-1">Average Pulse Score</p>
+                          <p className="text-sm text-warm-400 mb-1">Average Pulse Score</p>
                           <div className="flex items-baseline gap-2">
                             <span className="text-4xl font-bold text-primary">
                               {summary.overallPulseScore ?? '--'}
                             </span>
                             {summary.hoursTracked > 0 && (
-                              <span className="text-sm text-warm-500 dark:text-warm-400">
+                              <span className="text-sm text-warm-400">
                                 / {summary.hoursTracked}hrs tracked
                               </span>
                             )}
@@ -426,7 +426,7 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
                         {summary.peakPulseHour && (
                           <div className="flex items-center gap-2">
                             <TrendingUp className="w-4 h-4 text-green-500" />
-                            <span className="text-sm text-warm-600 dark:text-warm-300">
+                            <span className="text-sm text-warm-300">
                               Peak: <strong>{summary.peakPulseScore}</strong> @ {summary.peakPulseHour}
                             </span>
                           </div>
@@ -434,7 +434,7 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
                         {summary.lowestPulseHour && (
                           <div className="flex items-center gap-2">
                             <TrendingDown className="w-4 h-4 text-red-500" />
-                            <span className="text-sm text-warm-600 dark:text-warm-300">
+                            <span className="text-sm text-warm-300">
                               Low: <strong>{summary.lowestPulseScore}</strong> @ {summary.lowestPulseHour}
                             </span>
                           </div>
@@ -462,7 +462,7 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
                   {/* Hourly Breakdown */}
                   <div>
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-semibold text-warm-800 dark:text-warm-100">Hourly Breakdown</h3>
+                      <h3 className="font-semibold text-warm-100">Hourly Breakdown</h3>
                       <button
                         onClick={() => setShowAllHours(!showAllHours)}
                         className="flex items-center gap-1 text-sm text-primary"
@@ -474,7 +474,7 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
                     
                     <div className="space-y-2">
                       {visibleHours.length === 0 ? (
-                        <p className="text-sm text-warm-500 dark:text-warm-400 text-center py-4">
+                        <p className="text-sm text-warm-400 text-center py-4">
                           No data for these hours
                         </p>
                       ) : (
@@ -486,8 +486,8 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
                   </div>
                   
                   {/* Footer */}
-                  <div className="text-center pt-4 border-t border-warm-200 dark:border-warm-700">
-                    <p className="text-xs text-warm-400 dark:text-warm-500">
+                  <div className="text-center pt-4 border-t border-warm-700">
+                    <p className="text-xs text-warm-500">
                       Report generated by Advizia Pulse
                     </p>
                   </div>
@@ -513,19 +513,19 @@ interface StatCardProps {
 
 function StatCard({ icon: Icon, label, value, unit, subtitle }: StatCardProps) {
   return (
-    <div className="p-3 rounded-xl bg-warm-50 dark:bg-warm-700/50 border border-warm-200 dark:border-warm-600">
+    <div className="p-3 rounded-xl bg-warm-700/50 border border-warm-600">
       <div className="flex items-center gap-2 mb-1">
-        <Icon className="w-4 h-4 text-warm-500 dark:text-warm-400" />
-        <span className="text-xs text-warm-500 dark:text-warm-400">{label}</span>
+        <Icon className="w-4 h-4 text-warm-400" />
+        <span className="text-xs text-warm-400">{label}</span>
       </div>
       <div className="flex items-baseline gap-1">
-        <span className="text-2xl font-bold text-warm-800 dark:text-warm-100">
+        <span className="text-2xl font-bold text-warm-100">
           {value !== null ? value.toLocaleString() : '--'}
         </span>
         {unit && <span className="text-sm text-warm-400">{unit}</span>}
       </div>
       {subtitle && (
-        <p className="text-xs text-warm-500 dark:text-warm-400 mt-1">{subtitle}</p>
+        <p className="text-xs text-warm-400 mt-1">{subtitle}</p>
       )}
     </div>
   );
@@ -541,21 +541,21 @@ function HourRow({ data }: HourRowProps) {
   const pulseColor = data.avgPulseScore === null 
     ? 'text-warm-400' 
     : data.avgPulseScore >= 85 
-      ? 'text-green-600 dark:text-green-400' 
+      ? 'text-green-400' 
       : data.avgPulseScore >= 60 
-        ? 'text-amber-600 dark:text-amber-400' 
-        : 'text-red-600 dark:text-red-400';
+        ? 'text-amber-400' 
+        : 'text-red-400';
   
   return (
-    <div className="flex items-center gap-3 p-2 rounded-lg bg-warm-50 dark:bg-warm-700/30">
+    <div className="flex items-center gap-3 p-2 rounded-lg bg-warm-700/30">
       {/* Time */}
-      <div className="w-16 text-sm font-medium text-warm-600 dark:text-warm-300">
+      <div className="w-16 text-sm font-medium text-warm-300">
         {data.hourLabel}
       </div>
       
       {/* Pulse Score Bar */}
       <div className="flex-1">
-        <div className="h-6 bg-warm-200 dark:bg-warm-600 rounded-full overflow-hidden">
+        <div className="h-6 bg-warm-600 rounded-full overflow-hidden">
           {data.avgPulseScore !== null && (
             <motion.div
               className={`h-full rounded-full ${
@@ -579,7 +579,7 @@ function HourRow({ data }: HourRowProps) {
       </div>
       
       {/* Occupancy */}
-      <div className="w-14 text-right text-sm text-warm-500 dark:text-warm-400">
+      <div className="w-14 text-right text-sm text-warm-400">
         <Users className="w-3 h-3 inline mr-1" />
         {data.peakOccupancy}
       </div>

@@ -2,6 +2,7 @@
  * GlowRing - Ring with animated glow effect based on status
  * 
  * Glows green when optimal, amber when good, red when poor.
+ * Matte black theme.
  */
 
 import { motion } from 'framer-motion';
@@ -68,9 +69,8 @@ export function GlowRing({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#E7E5E4"
+          stroke="#44403C"
           strokeWidth={strokeWidth}
-          className="dark:stroke-warm-700"
         />
         
         {/* Progress ring */}

@@ -6,7 +6,7 @@
  * - Empty state with guidance
  * - Loading state
  * - Clickable variant with hover effects
- * - Dark mode support
+ * - Matte black theme
  */
 
 import { ReactNode } from 'react';
@@ -37,12 +37,12 @@ export function Card({
   animate = true,
 }: CardProps) {
   const baseClasses = `
-    bg-white dark:bg-warm-800 
+    bg-warm-800 
     rounded-2xl 
-    border border-warm-200 dark:border-warm-700 
+    border border-warm-700 
     transition-all duration-200
     ${PADDING[padding]}
-    ${onClick ? 'cursor-pointer hover:border-warm-300 dark:hover:border-warm-600 hover:shadow-md active:scale-[0.99]' : ''}
+    ${onClick ? 'cursor-pointer hover:border-warm-600 hover:shadow-md active:scale-[0.99]' : ''}
     ${className}
   `;
   
@@ -97,19 +97,19 @@ export function EmptyState({
 }: EmptyStateProps) {
   const variants = {
     default: {
-      iconBg: 'bg-warm-100 dark:bg-warm-700',
-      iconColor: 'text-warm-400 dark:text-warm-500',
+      iconBg: 'bg-warm-700',
+      iconColor: 'text-warm-500',
     },
     'no-data': {
-      iconBg: 'bg-amber-50 dark:bg-amber-900/20',
+      iconBg: 'bg-amber-900/20',
       iconColor: 'text-amber-500',
     },
     error: {
-      iconBg: 'bg-red-50 dark:bg-red-900/20',
+      iconBg: 'bg-red-900/20',
       iconColor: 'text-red-500',
     },
     offline: {
-      iconBg: 'bg-warm-100 dark:bg-warm-700',
+      iconBg: 'bg-warm-700',
       iconColor: 'text-warm-400',
     },
   };
@@ -125,11 +125,11 @@ export function EmptyState({
           <DisplayIcon className={`w-6 h-6 ${style.iconColor}`} />
         </div>
       )}
-      <h3 className="text-base font-semibold text-warm-700 dark:text-warm-200 mb-1">
+      <h3 className="text-base font-semibold text-warm-200 mb-1">
         {title}
       </h3>
       {description && (
-        <p className="text-sm text-warm-500 dark:text-warm-400 max-w-xs">
+        <p className="text-sm text-warm-400 max-w-xs">
           {description}
         </p>
       )}
@@ -161,9 +161,9 @@ export function CardHeader({ title, subtitle, icon: Icon, iconColor = 'text-prim
       <div className="flex items-center gap-2">
         {Icon && <Icon className={`w-4 h-4 ${iconColor}`} />}
         <div>
-          <h3 className="text-sm font-semibold text-warm-800 dark:text-warm-100">{title}</h3>
+          <h3 className="text-sm font-semibold text-warm-100">{title}</h3>
           {subtitle && (
-            <p className="text-xs text-warm-500 dark:text-warm-400">{subtitle}</p>
+            <p className="text-xs text-warm-400">{subtitle}</p>
           )}
         </div>
       </div>
@@ -193,19 +193,19 @@ export function StatRow({ label, value, subValue, icon: Icon, iconColor = 'text-
   
   return (
     <div 
-      className={`flex items-center justify-between py-2 ${onClick ? 'cursor-pointer hover:bg-warm-50 dark:hover:bg-warm-700/50 -mx-2 px-2 rounded-lg transition-colors' : ''}`}
+      className={`flex items-center justify-between py-2 ${onClick ? 'cursor-pointer hover:bg-warm-700/50 -mx-2 px-2 rounded-lg transition-colors' : ''}`}
       onClick={onClick}
     >
       <div className="flex items-center gap-2">
         {Icon && <Icon className={`w-4 h-4 ${iconColor}`} />}
-        <span className="text-sm text-warm-600 dark:text-warm-300">{label}</span>
+        <span className="text-sm text-warm-300">{label}</span>
       </div>
       <div className="text-right">
-        <span className={`text-sm font-semibold ${trend ? trendColors[trend] : 'text-warm-800 dark:text-warm-100'}`}>
+        <span className={`text-sm font-semibold ${trend ? trendColors[trend] : 'text-warm-100'}`}>
           {value}
         </span>
         {subValue && (
-          <span className="text-xs text-warm-400 dark:text-warm-500 ml-1">{subValue}</span>
+          <span className="text-xs text-warm-500 ml-1">{subValue}</span>
         )}
       </div>
     </div>

@@ -26,7 +26,7 @@ export function InsightsPanel({ insights }: InsightsPanelProps) {
       {/* Header */}
       <div className="flex items-center gap-2">
         <Sparkles className="w-5 h-5 text-purple-500" />
-        <h3 className="font-semibold text-warm-800 dark:text-warm-100">Insights</h3>
+        <h3 className="font-semibold text-warm-100">Insights</h3>
       </div>
       
       {/* Insight cards */}
@@ -45,10 +45,10 @@ interface InsightCardProps {
 }
 
 const TYPE_STYLES = {
-  staff: { border: 'border-l-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/20' },
-  time: { border: 'border-l-blue-500', bg: 'bg-blue-50 dark:bg-blue-900/20' },
-  environment: { border: 'border-l-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-  trend: { border: 'border-l-green-500', bg: 'bg-green-50 dark:bg-green-900/20' },
+  staff: { border: 'border-l-purple-500', bg: 'bg-purple-900/20' },
+  time: { border: 'border-l-blue-500', bg: 'bg-blue-900/20' },
+  environment: { border: 'border-l-amber-500', bg: 'bg-amber-900/20' },
+  trend: { border: 'border-l-green-500', bg: 'bg-green-900/20' },
 };
 
 function InsightCard({ insight, index }: InsightCardProps) {
@@ -64,8 +64,8 @@ function InsightCard({ insight, index }: InsightCardProps) {
       <div className="flex items-start gap-2">
         <span className="text-lg">{insight.icon}</span>
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-warm-800 dark:text-warm-100 text-sm">{insight.title}</p>
-          <p className="text-xs text-warm-600 dark:text-warm-400 mt-0.5">{insight.description}</p>
+          <p className="font-medium text-warm-100 text-sm">{insight.title}</p>
+          <p className="text-xs text-warm-400 mt-0.5">{insight.description}</p>
           {insight.actionable && (
             <p className="text-xs text-primary font-medium mt-1 flex items-center gap-1">
               <Lightbulb className="w-3 h-3" />

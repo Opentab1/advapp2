@@ -29,7 +29,7 @@ export function ContextBar({ games, nextHoliday, weather }: ContextBarProps) {
       iconColor: 'text-yellow-500',
       text: `${games.length} game${games.length > 1 ? 's' : ''} today`,
       badge: '+Traffic',
-      badgeColor: 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/40',
+      badgeColor: 'text-green-400 bg-green-900/40',
     });
   }
   
@@ -67,7 +67,7 @@ export function ContextBar({ games, nextHoliday, weather }: ContextBarProps) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      <h4 className="text-sm font-medium text-warm-500 dark:text-warm-400">Tonight</h4>
+      <h4 className="text-sm font-medium text-warm-400">Tonight</h4>
       <div className="flex flex-wrap gap-2">
         {items.map((item, index) => (
           <ContextChip key={index} item={item} />
@@ -94,11 +94,11 @@ function ContextChip({ item }: { item: ContextItem }) {
   
   return (
     <motion.div 
-      className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white dark:bg-warm-800 border border-warm-200 dark:border-warm-700 transition-colors"
+      className="flex items-center gap-2 px-3 py-2 rounded-lg bg-warm-800 border border-warm-700 transition-colors"
       whileHover={{ scale: 1.02 }}
     >
       <Icon className={`w-4 h-4 ${item.iconColor}`} />
-      <span className="text-sm text-warm-700 dark:text-warm-200">{item.text}</span>
+      <span className="text-sm text-warm-200">{item.text}</span>
       {item.badge && (
         <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${item.badgeColor}`}>
           <TrendingUp className="w-3 h-3 inline mr-0.5" />

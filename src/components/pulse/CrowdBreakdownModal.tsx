@@ -39,11 +39,11 @@ export function CrowdBreakdownModal({
   
   // Determine status
   const getStatus = () => {
-    if (currentOccupancy === 0) return { label: 'Empty', color: 'text-warm-500', bg: 'bg-warm-100 dark:bg-warm-700' };
-    if (capacityUsage < 30) return { label: 'Quiet', color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-900/20' };
-    if (capacityUsage < 60) return { label: 'Moderate', color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-900/20' };
-    if (capacityUsage < 85) return { label: 'Busy', color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-900/20' };
-    return { label: 'Packed', color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-900/20' };
+    if (currentOccupancy === 0) return { label: 'Empty', color: 'text-warm-500', bg: 'bg-warm-700' };
+    if (capacityUsage < 30) return { label: 'Quiet', color: 'text-amber-400', bg: 'bg-amber-900/20' };
+    if (capacityUsage < 60) return { label: 'Moderate', color: 'text-green-400', bg: 'bg-green-900/20' };
+    if (capacityUsage < 85) return { label: 'Busy', color: 'text-green-400', bg: 'bg-green-900/20' };
+    return { label: 'Packed', color: 'text-red-400', bg: 'bg-red-900/20' };
   };
   
   const status = getStatus();
@@ -55,27 +55,27 @@ export function CrowdBreakdownModal({
     <Modal isOpen={isOpen} onClose={onClose} title="Crowd Details">
       <div className="space-y-6">
         {/* Current Occupancy Hero */}
-        <div className="text-center py-6 bg-warm-50 dark:bg-warm-700/50 rounded-2xl -mx-2">
+        <div className="text-center py-6 bg-warm-700/50 rounded-2xl -mx-2">
           <div className="flex items-center justify-center gap-3 mb-2">
             <Users className="w-8 h-8 text-primary" />
             <AnimatedNumber
               value={currentOccupancy}
-              className="text-6xl font-bold text-warm-800 dark:text-warm-100"
+              className="text-6xl font-bold text-warm-100"
             />
           </div>
-          <p className="text-sm text-warm-500 dark:text-warm-400 mb-2">people in venue right now</p>
+          <p className="text-sm text-warm-400 mb-2">people in venue right now</p>
           <span className={`inline-block px-4 py-1.5 rounded-full text-sm font-semibold ${status.bg} ${status.color}`}>
             {status.label}
           </span>
         </div>
         
         {/* Capacity Gauge */}
-        <div className="bg-white dark:bg-warm-800 rounded-xl border border-warm-200 dark:border-warm-700 p-4">
+        <div className="bg-warm-800 rounded-xl border border-warm-700 p-4">
           <div className="flex justify-between text-sm mb-2">
-            <span className="text-warm-600 dark:text-warm-300">Capacity Usage</span>
-            <span className="font-semibold text-warm-800 dark:text-warm-100">{capacityUsage}%</span>
+            <span className="text-warm-300">Capacity Usage</span>
+            <span className="font-semibold text-warm-100">{capacityUsage}%</span>
           </div>
-          <div className="h-3 bg-warm-200 dark:bg-warm-600 rounded-full overflow-hidden">
+          <div className="h-3 bg-warm-600 rounded-full overflow-hidden">
             <motion.div
               className={`h-full rounded-full ${
                 capacityUsage < 60 ? 'bg-green-500' : capacityUsage < 85 ? 'bg-amber-500' : 'bg-red-500'
@@ -85,7 +85,7 @@ export function CrowdBreakdownModal({
               transition={{ duration: 0.5 }}
             />
           </div>
-          <div className="flex justify-between text-xs text-warm-400 dark:text-warm-500 mt-1">
+          <div className="flex justify-between text-xs text-warm-500 mt-1">
             <span>0</span>
             <span>~{Math.round(estimatedCapacity)} est. capacity</span>
           </div>
@@ -93,7 +93,7 @@ export function CrowdBreakdownModal({
         
         {/* Traffic Flow */}
         <div>
-          <h4 className="text-xs font-semibold text-warm-500 dark:text-warm-400 uppercase tracking-wide mb-3">
+          <h4 className="text-xs font-semibold text-warm-400 uppercase tracking-wide mb-3">
             Today's Traffic
           </h4>
           <div className="grid grid-cols-3 gap-3">
@@ -123,16 +123,16 @@ export function CrowdBreakdownModal({
         </div>
         
         {/* Peak Info */}
-        <div className="bg-primary/5 dark:bg-primary/10 rounded-xl p-4 border border-primary/10 dark:border-primary/20">
+        <div className="bg-primary/10 rounded-xl p-4 border border-primary/20">
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-lg bg-primary/10 dark:bg-primary/20 flex items-center justify-center flex-shrink-0">
+            <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
               <TrendingUp className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <h5 className="text-sm font-semibold text-warm-800 dark:text-warm-100 mb-1">Peak Today</h5>
+              <h5 className="text-sm font-semibold text-warm-100 mb-1">Peak Today</h5>
               <p className="text-2xl font-bold text-primary">{peakOccupancy} people</p>
               {peakTime && (
-                <p className="text-xs text-warm-500 dark:text-warm-400 mt-1 flex items-center gap-1">
+                <p className="text-xs text-warm-400 mt-1 flex items-center gap-1">
                   <Clock className="w-3 h-3" />
                   at {peakTime}
                 </p>
@@ -143,13 +143,13 @@ export function CrowdBreakdownModal({
         
         {/* Insight */}
         {insight && (
-          <div className="bg-warm-50 dark:bg-warm-700/50 rounded-xl p-4">
+          <div className="bg-warm-700/50 rounded-xl p-4">
             <div className="flex items-start gap-3">
               <Info className="w-4 h-4 text-warm-400 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-sm text-warm-700 dark:text-warm-200">{insight.message}</p>
+                <p className="text-sm text-warm-200">{insight.message}</p>
                 {insight.tip && (
-                  <p className="text-xs text-warm-500 dark:text-warm-400 mt-1">
+                  <p className="text-xs text-warm-400 mt-1">
                     💡 {insight.tip}
                   </p>
                 )}
@@ -159,7 +159,7 @@ export function CrowdBreakdownModal({
         )}
         
         {/* Data info */}
-        <p className="text-xs text-warm-400 dark:text-warm-500 text-center">
+        <p className="text-xs text-warm-500 text-center">
           Traffic resets at 3am daily • Based on entry/exit sensor data
         </p>
       </div>
@@ -182,16 +182,16 @@ function TrafficCard({ icon: Icon, iconColor, label: _label, value, subtext, hig
   return (
     <div className={`p-3 rounded-xl ${
       highlight 
-        ? 'bg-primary/5 dark:bg-primary/10 border border-primary/10' 
-        : 'bg-warm-50 dark:bg-warm-700/50'
+        ? 'bg-primary/10 border border-primary/10' 
+        : 'bg-warm-700/50'
     } text-center transition-colors`}>
       <Icon className={`w-5 h-5 ${iconColor} mx-auto mb-1`} />
       <AnimatedNumber
         value={value}
-        className={`text-xl font-bold ${highlight ? 'text-primary' : 'text-warm-800 dark:text-warm-100'}`}
+        className={`text-xl font-bold ${highlight ? 'text-primary' : 'text-warm-100'}`}
         formatFn={(v) => (v >= 0 ? v.toString() : v.toString())}
       />
-      <p className="text-xs text-warm-500 dark:text-warm-400">{subtext}</p>
+      <p className="text-xs text-warm-400">{subtext}</p>
     </div>
   );
 }

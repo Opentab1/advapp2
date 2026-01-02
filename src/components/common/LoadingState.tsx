@@ -4,7 +4,7 @@
  * Features:
  * - Shimmer animation instead of pulse
  * - Smooth fade transitions
- * - Dark mode support
+ * - Matte black theme
  * - Contextual empty states
  */
 
@@ -15,9 +15,9 @@ import { WifiOff, AlertCircle, BarChart2, Zap } from 'lucide-react';
 
 function Shimmer({ className }: { className: string }) {
   return (
-    <div className={`relative overflow-hidden bg-warm-200 dark:bg-warm-700 ${className}`}>
+    <div className={`relative overflow-hidden bg-warm-700 ${className}`}>
       <motion.div
-        className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 dark:via-white/10 to-transparent"
+        className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
         animate={{ x: ['-100%', '100%'] }}
         transition={{ repeat: Infinity, duration: 1.5, ease: 'easeInOut' }}
       />
@@ -93,7 +93,7 @@ export function ChartSkeleton() {
 export function FullScreenLoader({ message = 'Loading...' }: { message?: string }) {
   return (
     <motion.div 
-      className="fixed inset-0 bg-warm-50 dark:bg-warm-900 flex items-center justify-center z-50"
+      className="fixed inset-0 bg-warm-900 flex items-center justify-center z-50"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -104,10 +104,10 @@ export function FullScreenLoader({ message = 'Loading...' }: { message?: string 
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1.2, ease: 'linear' }}
         >
-          <div className="w-12 h-12 rounded-full border-4 border-warm-200 dark:border-warm-700" />
+          <div className="w-12 h-12 rounded-full border-4 border-warm-700" />
           <div className="absolute top-0 left-0 w-12 h-12 rounded-full border-4 border-transparent border-t-primary" />
         </motion.div>
-        <p className="text-warm-500 dark:text-warm-400 text-sm">{message}</p>
+        <p className="text-warm-400 text-sm">{message}</p>
       </div>
     </motion.div>
   );
@@ -120,11 +120,11 @@ export function InlineLoader({ text = 'Loading...' }: { text?: string }) {
     <div className="flex items-center justify-center py-8">
       <div className="flex flex-col items-center gap-3">
         <motion.div
-          className="w-8 h-8 border-3 border-warm-200 dark:border-warm-700 border-t-primary rounded-full"
+          className="w-8 h-8 border-3 border-warm-700 border-t-primary rounded-full"
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
         />
-        <p className="text-warm-500 dark:text-warm-400 text-sm">{text}</p>
+        <p className="text-warm-400 text-sm">{text}</p>
       </div>
     </div>
   );
@@ -151,13 +151,13 @@ export function NoDataState({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      <div className="w-16 h-16 rounded-full bg-warm-100 dark:bg-warm-800 flex items-center justify-center mb-4">
-        <Icon className="w-8 h-8 text-warm-400 dark:text-warm-500" />
+      <div className="w-16 h-16 rounded-full bg-warm-800 flex items-center justify-center mb-4">
+        <Icon className="w-8 h-8 text-warm-500" />
       </div>
-      <h3 className="text-lg font-semibold text-warm-700 dark:text-warm-200 mb-1">
+      <h3 className="text-lg font-semibold text-warm-200 mb-1">
         {title}
       </h3>
-      <p className="text-sm text-warm-500 dark:text-warm-400 max-w-xs mb-4">
+      <p className="text-sm text-warm-400 max-w-xs mb-4">
         {description}
       </p>
       {onRetry && (
@@ -182,16 +182,16 @@ export function OfflineState({ lastUpdated }: { lastUpdated?: Date | null }) {
   
   return (
     <motion.div 
-      className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4 flex items-center gap-3"
+      className="bg-amber-900/20 border border-amber-800 rounded-xl p-4 flex items-center gap-3"
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
     >
       <WifiOff className="w-5 h-5 text-amber-500 flex-shrink-0" />
       <div>
-        <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+        <p className="text-sm font-medium text-amber-400">
           Connection lost
         </p>
-        <p className="text-xs text-amber-600 dark:text-amber-500">
+        <p className="text-xs text-amber-500">
           {timeAgo !== null 
             ? `Last updated ${timeAgo} min ago` 
             : 'Trying to reconnect...'}
@@ -216,15 +216,15 @@ export function ErrorState({
 }: ErrorStateProps) {
   return (
     <motion.div 
-      className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-6 text-center"
+      className="bg-red-900/20 border border-red-800 rounded-xl p-6 text-center"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
     >
       <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-3" />
-      <h3 className="text-base font-semibold text-red-700 dark:text-red-400 mb-1">
+      <h3 className="text-base font-semibold text-red-400 mb-1">
         {title}
       </h3>
-      <p className="text-sm text-red-600 dark:text-red-500 mb-4">
+      <p className="text-sm text-red-500 mb-4">
         {message}
       </p>
       {onRetry && (

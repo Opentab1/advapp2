@@ -2,6 +2,7 @@
  * BottomSheet - iOS/Android style bottom sheet modal
  * 
  * Slides up from bottom, can be dragged to close.
+ * Matte black theme.
  */
 
 import { ReactNode } from 'react';
@@ -37,7 +38,7 @@ export function BottomSheet({ isOpen, onClose, title, children }: BottomSheetPro
           
           {/* Sheet */}
           <motion.div
-            className="fixed bottom-0 left-0 right-0 z-50 bg-white dark:bg-warm-800 rounded-t-3xl max-h-[85vh] overflow-hidden"
+            className="fixed bottom-0 left-0 right-0 z-50 bg-warm-800 rounded-t-3xl max-h-[85vh] overflow-hidden"
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
@@ -49,15 +50,15 @@ export function BottomSheet({ isOpen, onClose, title, children }: BottomSheetPro
           >
             {/* Handle */}
             <div className="flex justify-center pt-3 pb-2">
-              <div className="w-10 h-1 bg-warm-300 dark:bg-warm-600 rounded-full" />
+              <div className="w-10 h-1 bg-warm-600 rounded-full" />
             </div>
             
             {/* Header */}
-            <div className="flex items-center justify-between px-5 pb-3 border-b border-warm-200 dark:border-warm-700">
-              <h3 className="text-lg font-bold text-warm-800 dark:text-warm-100">{title}</h3>
+            <div className="flex items-center justify-between px-5 pb-3 border-b border-warm-700">
+              <h3 className="text-lg font-bold text-warm-100">{title}</h3>
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-lg hover:bg-warm-100 dark:hover:bg-warm-700 transition-colors"
+                className="p-1.5 rounded-lg hover:bg-warm-700 transition-colors"
               >
                 <X className="w-5 h-5 text-warm-400" />
               </button>

@@ -3,6 +3,7 @@
  * 
  * Core visual component for Pulse Score and supporting metrics.
  * Features WHOOP-style glow based on score status.
+ * Matte black theme.
  */
 
 import { motion } from 'framer-motion';
@@ -121,7 +122,7 @@ export function Ring({
     <div
       className={`
         flex flex-col items-center gap-2 ${padding} rounded-2xl 
-        bg-white dark:bg-warm-800 border border-warm-200 dark:border-warm-700 shadow-card
+        bg-warm-800 border border-warm-700 shadow-card
         ${onClick ? 'hover:shadow-card-hover cursor-pointer' : ''} 
         transition-all duration-200
       `}
@@ -153,9 +154,8 @@ export function Ring({
             cy={ringSize / 2}
             r={radius}
             fill="none"
-            stroke="#E7E5E4"
+            stroke="#44403C"
             strokeWidth={strokeWidth}
-            className="dark:stroke-warm-700"
           />
           {/* Animated progress ring */}
           {score !== null && (
@@ -183,20 +183,20 @@ export function Ring({
           {isNumeric ? (
             <AnimatedNumber 
               value={score} 
-              className={`${scoreClass} text-warm-800 dark:text-warm-100`}
+              className={`${scoreClass} text-warm-100`}
             />
           ) : (
-            <span className={`${scoreClass} text-warm-800 dark:text-warm-100`}>{displayValue}</span>
+            <span className={`${scoreClass} text-warm-100`}>{displayValue}</span>
           )}
           {subtitle && (
-            <span className={`${subtitleClass} text-warm-500 dark:text-warm-400`}>{subtitle}</span>
+            <span className={`${subtitleClass} text-warm-400`}>{subtitle}</span>
           )}
         </div>
       </div>
 
       {/* Label */}
       <div className="text-center">
-        <span className={`${labelClass} text-warm-700 dark:text-warm-300`}>{label}</span>
+        <span className={`${labelClass} text-warm-300`}>{label}</span>
         {showHint && (
           <p className="text-[10px] text-primary mt-0.5">tap for details</p>
         )}

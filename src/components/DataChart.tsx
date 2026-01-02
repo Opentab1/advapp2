@@ -238,7 +238,7 @@ export function DataChart({ data, metric, title, color = '#0077B6', timeRange = 
   // No data state
   if (!data || data.length === 0) {
     return (
-      <div className="h-[200px] flex items-center justify-center text-warm-400 dark:text-warm-500">
+      <div className="h-[200px] flex items-center justify-center text-warm-500">
         No data available
       </div>
     );
@@ -265,7 +265,7 @@ export function DataChart({ data, metric, title, color = '#0077B6', timeRange = 
     >
       {/* Data range info */}
       {dataInfo && (
-        <div className="flex justify-between text-xs text-warm-400 dark:text-warm-500">
+        <div className="flex justify-between text-xs text-warm-500">
           <span>{dataInfo.from} – {dataInfo.to}</span>
           <span>{dataInfo.points.toLocaleString()} readings</span>
         </div>

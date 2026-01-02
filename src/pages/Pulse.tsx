@@ -280,7 +280,7 @@ export function Pulse() {
           animate={{ opacity: 1, y: 0 }}
         >
           <Zap className="w-6 h-6 text-primary" />
-          <h1 className="text-xl font-bold text-warm-800 dark:text-warm-100">Pulse</h1>
+          <h1 className="text-xl font-bold text-warm-100">Pulse</h1>
         </motion.div>
         <ErrorState 
           title="Couldn't load venue data"
@@ -304,12 +304,12 @@ export function Pulse() {
         >
           <div className="flex items-center gap-2">
             <Zap className="w-6 h-6 text-primary" />
-            <h1 className="text-xl font-bold text-warm-800 dark:text-warm-100">Pulse</h1>
+            <h1 className="text-xl font-bold text-warm-100">Pulse</h1>
           </div>
           <div className="flex items-center gap-2">
             <motion.button
               onClick={() => { haptic('light'); setShowNightReport(true); }}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 dark:bg-primary/20 text-primary text-sm font-medium hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/20 text-primary text-sm font-medium hover:bg-primary/30 transition-colors"
               whileTap={{ scale: 0.95 }}
             >
               <FileText className="w-4 h-4" />
@@ -318,10 +318,10 @@ export function Pulse() {
             <motion.button
               onClick={() => { haptic('light'); pulseData.refresh(); }}
               disabled={pulseData.loading}
-              className="p-2 rounded-xl bg-warm-100 dark:bg-warm-800 hover:bg-warm-200 dark:hover:bg-warm-700 transition-colors"
+              className="p-2 rounded-xl bg-warm-800 hover:bg-warm-700 transition-colors"
               whileTap={{ scale: 0.95 }}
             >
-              <RefreshCw className={`w-5 h-5 text-warm-600 dark:text-warm-400 ${pulseData.loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-5 h-5 text-warm-400 ${pulseData.loading ? 'animate-spin' : ''}`} />
             </motion.button>
           </div>
         </motion.div>
