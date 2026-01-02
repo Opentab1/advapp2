@@ -377,92 +377,75 @@ class DynamoDBService {
 
       const { startTime, endTime } = this.getTimeRangeValues(range);
       const client = this.getClient();
-
-      // ============================================
-      // SMART PAGINATION WITH CLIENT-SIDE FILTERING
-      // ============================================
-      // The backend may not filter by time correctly, so we:
-      // 1. Set reasonable limits based on expected data volume
-      // 2. Filter results client-side by timestamp
-      // 3. Stop early once we have enough data for the time range
-      
-      const pageSize = 1000;
       const startTimeMs = new Date(startTime).getTime();
       const endTimeMs = new Date(endTime).getTime();
+
+      // ============================================
+      // CHUNKED FETCHING FOR FULL TIME RANGE COVERAGE
+      // ============================================
+      // Split time range into chunks and fetch from each to ensure
+      // we get data distributed across the entire period
       
-      // PERFORMANCE FIX: Limit data based on time range
-      // Charts only need ~500-2000 points for smooth visualization
-      const rangeConfig: Record<string, { maxItems: number; maxPages: number }> = {
-        '24h': { maxItems: 3000, maxPages: 5 },   // ~3k points for 24h detail
-        '7d':  { maxItems: 2000, maxPages: 3 },   // ~2k points for 7 days
-        '30d': { maxItems: 1500, maxPages: 2 },   // ~1.5k points for 30 days
-        '90d': { maxItems: 1000, maxPages: 2 },   // ~1k points for 90 days
+      const chunkConfig: Record<string, { chunks: number; itemsPerChunk: number }> = {
+        '24h': { chunks: 1, itemsPerChunk: 2000 },    // Single fetch for 24h
+        '7d':  { chunks: 7, itemsPerChunk: 200 },     // 1 chunk per day
+        '30d': { chunks: 10, itemsPerChunk: 150 },    // 3 days per chunk
+        '90d': { chunks: 15, itemsPerChunk: 100 },    // 6 days per chunk
       };
-      const config = rangeConfig[range as string] || { maxItems: 2000, maxPages: 3 };
-      const { maxItems, maxPages } = config;
+      const config = chunkConfig[range as string] || { chunks: 7, itemsPerChunk: 200 };
+      const { chunks, itemsPerChunk } = config;
       
-      console.log(`📊 [${range}] Starting fetch: ${startTime} to ${endTime} (max ${maxItems} items, ${maxPages} pages)`);
+      const totalRangeMs = endTimeMs - startTimeMs;
+      const chunkDurationMs = totalRangeMs / chunks;
+      
+      console.log(`📊 [${range}] Fetching in ${chunks} chunks, ~${itemsPerChunk} items each`);
 
-      // Paginate through ALL data - no early termination
-      // The backend SHOULD filter by startTime/endTime, but we'll verify client-side
       let allItems: any[] = [];
-      let nextToken: string | null = null;
-      let pageCount = 0;
-
-      do {
-        pageCount++;
-        const response = await client.graphql({
-          query: listSensorData,
-          variables: { 
-            venueId, 
-            startTime,
-            endTime,
-            limit: pageSize,
-            nextToken: nextToken
-          },
-          authMode: 'userPool'
-        }) as any;
-
-        // Check for GraphQL errors
-        if (response?.errors && response.errors.length > 0) {
-          console.error('❌ GraphQL Response Errors:', response.errors);
-          const errorMessages = response.errors.map((e: any) => e.message || e).join(', ');
-          throw new Error(`GraphQL error: ${errorMessages}`);
+      
+      // Fetch each chunk in parallel for speed
+      const chunkPromises = [];
+      for (let i = 0; i < chunks; i++) {
+        const chunkStart = new Date(startTimeMs + (i * chunkDurationMs)).toISOString();
+        const chunkEnd = new Date(startTimeMs + ((i + 1) * chunkDurationMs)).toISOString();
+        
+        chunkPromises.push(
+          client.graphql({
+            query: listSensorData,
+            variables: { 
+              venueId, 
+              startTime: chunkStart,
+              endTime: chunkEnd,
+              limit: itemsPerChunk
+            },
+            authMode: 'userPool'
+          }).then((response: any) => {
+            if (response?.errors?.length > 0) {
+              console.warn(`⚠️ Chunk ${i} errors:`, response.errors);
+              return [];
+            }
+            return response?.data?.listSensorData?.items || [];
+          }).catch((err: any) => {
+            console.warn(`⚠️ Chunk ${i} failed:`, err.message);
+            return [];
+          })
+        );
+      }
+      
+      // Wait for all chunks
+      const chunkResults = await Promise.all(chunkPromises);
+      
+      // Combine results
+      for (let i = 0; i < chunkResults.length; i++) {
+        const items = chunkResults[i];
+        allItems.push(...items);
+        if (items.length > 0) {
+          console.log(`📊 [${range}] Chunk ${i + 1}/${chunks}: ${items.length} items`);
         }
-
-        const pageItems = response?.data?.listSensorData?.items || [];
-        nextToken = response?.data?.listSensorData?.nextToken || null;
-        
-        // CLIENT-SIDE FILTERING: Only keep items within our time range
-        // This is a safety net in case backend doesn't filter correctly
-        const filteredItems = pageItems.filter((item: any) => {
-          const itemTime = new Date(item.timestamp).getTime();
-          return itemTime >= startTimeMs && itemTime <= endTimeMs;
-        });
-        
-        // Add all filtered items
-        allItems.push(...filteredItems);
-        
-        // Log progress every 5 pages, first page, and last page
-        if (pageCount % 5 === 0 || !nextToken || pageCount === 1) {
-          console.log(`📊 [${range}] Page ${pageCount}: ${filteredItems.length}/${pageItems.length} items in range, total: ${allItems.length}`);
-        }
-        
-        // Stop early when we have enough data for chart display
-        if (pageCount >= maxPages) {
-          console.log(`📊 [${range}] Reached page limit (${maxPages}). Have ${allItems.length} items - sufficient for charts.`);
-          break;
-        }
-        
-        if (allItems.length >= maxItems) {
-          console.log(`📊 [${range}] Reached item limit (${maxItems}) - sufficient for charts.`);
-          break;
-        }
-        
-      } while (nextToken);
+      }
+      
+      console.log(`📊 [${range}] Total fetched: ${allItems.length} items from ${chunks} chunks`);
 
       const items = allItems;
-      console.log(`📊 [${range}] Complete: ${pageCount} pages, ${items.length} items total`);
       
       // Sort items by timestamp (newest first) and log date range
       items.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
