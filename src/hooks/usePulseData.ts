@@ -241,8 +241,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   // ============ OCCUPANCY FALLBACK ============
   // If the dedicated occupancy resolver fails, fall back to sensor data occupancy
   const effectiveOccupancy = useMemo(() => {
-    // Prefer dedicated occupancy metrics if available
-    if (occupancyMetrics && (occupancyMetrics.current > 0 || occupancyMetrics.todayEntries > 0)) {
+    // Prefer dedicated occupancy metrics if available (these are properly calculated)
+    if (occupancyMetrics) {
       return {
         current: occupancyMetrics.current ?? 0,
         todayEntries: occupancyMetrics.todayEntries ?? 0,
@@ -252,13 +252,15 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       };
     }
     
-    // Fall back to sensor data occupancy
+    // Fall back to sensor data occupancy for CURRENT only
+    // DO NOT use sensorData.occupancy.entries/exits as they are CUMULATIVE totals
+    // not today's values (they could be 35000+ from months of operation)
     if (sensorData?.occupancy) {
       return {
         current: sensorData.occupancy.current ?? 0,
-        todayEntries: sensorData.occupancy.entries ?? 0,
-        todayExits: sensorData.occupancy.exits ?? 0,
-        peakOccupancy: sensorData.occupancy.current ?? 0, // Use current as peak if no metrics
+        todayEntries: 0, // Don't show cumulative as "today"
+        todayExits: 0,   // Don't show cumulative as "today"
+        peakOccupancy: sensorData.occupancy.current ?? 0,
         peakTime: null,
       };
     }

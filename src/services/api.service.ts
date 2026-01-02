@@ -201,13 +201,9 @@ class ApiService {
             const oldestExits = oldest.occupancy?.exits || 0;
             
             // Today's entries = latest cumulative - oldest cumulative from today
+            // This correctly calculates traffic within the 24h window
             const todayEntries = Math.max(0, latestEntries - oldestEntries);
             const todayExits = Math.max(0, latestExits - oldestExits);
-            
-            // If the difference is 0 or negative, the counter might have reset
-            // In that case, just use the latest values (they might be actual daily values)
-            const effectiveTodayEntries = todayEntries > 0 ? todayEntries : latestEntries;
-            const effectiveTodayExits = todayExits > 0 ? todayExits : latestExits;
             
             // Find peak occupancy
             let peakOccupancy = 0;
@@ -225,9 +221,9 @@ class ApiService {
             
             const calculatedMetrics: OccupancyMetrics = {
               current: latest.occupancy?.current || 0,
-              todayEntries: effectiveTodayEntries,
-              todayExits: effectiveTodayExits,
-              todayTotal: effectiveTodayEntries,
+              todayEntries: todayEntries,
+              todayExits: todayExits,
+              todayTotal: todayEntries,
               sevenDayAvg: 0,
               fourteenDayAvg: 0,
               thirtyDayAvg: 0,
