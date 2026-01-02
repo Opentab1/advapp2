@@ -49,6 +49,13 @@ function ProtectedDashboard() {
   // Simple connection check (could be enhanced)
   const [isConnected, setIsConnected] = useState(true);
   
+  // Set browser tab title to venue name from AWS
+  useEffect(() => {
+    document.title = venueName && venueName !== 'Your Venue' 
+      ? `${venueName} | Pulse` 
+      : 'Pulse Dashboard';
+  }, [venueName]);
+  
   useEffect(() => {
     const handleOnline = () => setIsConnected(true);
     const handleOffline = () => setIsConnected(false);
