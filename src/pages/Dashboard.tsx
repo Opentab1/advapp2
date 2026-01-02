@@ -20,7 +20,6 @@ import { PulseScoreLive } from '../components/PulseScoreLive';
 import { SportsWidget } from '../components/SportsWidget';
 import { DataChart } from '../components/DataChart';
 import { TimeRangeToggle } from '../components/TimeRangeToggle';
-import { NowPlaying } from '../components/NowPlaying';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { ConnectionStatus } from '../components/ConnectionStatus';
@@ -30,7 +29,6 @@ import { LiveView } from '../components/LiveView';
 import { Settings } from './Settings';
 import { SongLog } from './SongLog';
 import { Reports } from './Reports';
-import { Support } from './Support';
 import { Insights } from './Insights';
 import { PulsePlus } from './PulsePlus';
 import { AdminPortal } from './admin/AdminPortal';
@@ -39,8 +37,6 @@ import { LiveContext } from '../components/LiveContext';
 import { isAdminUser, isClientUser, canSkipTerms } from '../utils/userRoles';
 import { useRealTimeData } from '../hooks/useRealTimeData';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { calculateComfortLevel, calculateComfortBreakdown } from '../utils/comfort';
-import { formatTemperature, formatDecibels as formatDecibelsLegacy, formatLight as formatLightLegacy, formatHumidity as formatHumidityLegacy } from '../utils/format';
 import { formatDwellTime, calculateRecentDwellTime, calculateDwellTimeFromHistory } from '../utils/dwellTime';
 import { formatValueNoZero, formatValueAllowZero, formatOccupancy } from '../utils/dataDisplay';
 import { calculateBarDayOccupancy, formatBarDayRange, aggregateOccupancyByBarDay } from '../utils/barDay';
@@ -555,10 +551,6 @@ export function Dashboard() {
   const chartData: SensorData[] = timeRange === 'live'
     ? liveData ? [liveData] : []
     : historicalData?.data || [];
-
-  const comfortLevel = currentData ? calculateComfortLevel(currentData) : null;
-  const comfortBreakdown = currentData ? calculateComfortBreakdown(currentData) : null;
-
 
   // Show loading state
   if (timeRange === 'live' && liveLoading && !liveData) {

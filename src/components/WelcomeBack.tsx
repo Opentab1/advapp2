@@ -255,7 +255,6 @@ function MetricDelta({ icon: Icon, label, change, unit, invertColors = false }: 
 
   const absChange = Math.abs(change);
   const isPositive = invertColors ? change < 0 : change > 0;
-  const isNegative = invertColors ? change > 0 : change < 0;
   const isNeutral = change === 0 || absChange < 1;
 
   return (

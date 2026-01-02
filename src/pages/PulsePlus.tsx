@@ -28,8 +28,7 @@ import {
   Clock,
   Music,
   X,
-  HelpCircle,
-  BarChart2
+  HelpCircle
 } from 'lucide-react';
 import { PulseRing } from '../components/PulseRing';
 import { usePulseScore } from '../hooks/usePulseScore';
@@ -45,14 +44,13 @@ import { WelcomeBack } from '../components/WelcomeBack';
 import { useSessionMemory, calculateSessionDelta } from '../hooks/useSessionMemory';
 import { useTimeContext, useMetricAttribution } from '../hooks/useTimeContext';
 import { TimeContextBadge, PeriodIndicator } from '../components/TimeContext';
-import { WhatChanged, ScoreBreakdown } from '../components/Attribution';
-import { HistoricalComparison, DayComparisonBanner, generateMockHistoricalData } from '../components/HistoricalComparison';
+import { WhatChanged } from '../components/Attribution';
+import { HistoricalComparison, DayComparisonBanner } from '../components/HistoricalComparison';
+import { useHistoricalComparison } from '../hooks/useHistoricalComparison';
 import { useShiftTracking } from '../hooks/useShiftTracking';
 import { ActiveShiftBanner, ShiftSummaryModal } from '../components/ShiftSummary';
 import { PulsePlusSkeleton } from '../components/Skeletons';
 import { InlineError } from '../components/ErrorBoundary';
-import { ROIDashboard } from '../components/ROIDashboard';
-import useROITracking from '../hooks/useROITracking';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
 import type { SportsGame, OccupancyMetrics } from '../types';
@@ -101,9 +99,6 @@ export function PulsePlus() {
   // Trust/Explainer modal state
   const [showExplainer, setShowExplainer] = useState(false);
   
-  // ROI Dashboard state
-  const [showROI, setShowROI] = useState(false);
-  const roiData = useROITracking();
   
   // Feedback loop: action tracking with before/after snapshots
   const { 
@@ -121,7 +116,6 @@ export function PulsePlus() {
     isShiftActive,
     shiftStartTime,
     currentStats: shiftStats,
-    startShift,
     endShift,
     recordSnapshot: recordShiftSnapshot,
   } = useShiftTracking({ enabled: true, autoDetectShift: true });
@@ -208,10 +202,10 @@ export function PulsePlus() {
   }, [loading, pulseScore, currentDecibels, currentLight, currentOccupancy, saveCurrentSession]);
 
   // Time context for expectations (addresses "Is 72 good or bad RIGHT NOW?")
-  const { dayOfWeek, dayName, scoreContext, expectation } = useTimeContext(pulseScore);
+  const { dayName, scoreContext, expectation } = useTimeContext(pulseScore);
 
   // Metric attribution for anomaly detection (addresses "What caused this?")
-  const { anomalies, primaryAnomaly, recordMetrics, clearAnomalies } = useMetricAttribution();
+  const { anomalies, recordMetrics, clearAnomalies } = useMetricAttribution();
 
   // Record metrics for attribution tracking
   useEffect(() => {
@@ -258,10 +252,8 @@ export function PulsePlus() {
     }
   };
 
-  // Historical comparison (mock data for now - would come from API)
-  const historicalData = useMemo(() => {
-    return generateMockHistoricalData(dayOfWeek);
-  }, [dayOfWeek]);
+  // Historical comparison (real data from DynamoDB)
+  const { data: historicalData } = useHistoricalComparison();
 
   // Load external data (sports, holidays)
   useEffect(() => {
@@ -378,24 +370,14 @@ export function PulsePlus() {
           </div>
           <p className="text-warm-500">Your venue command center</p>
         </div>
-        <div className="flex items-center gap-2">
-          <motion.button
-            onClick={() => setShowROI(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-green-100 hover:bg-green-200 text-green-700 text-sm font-medium transition-colors"
-            whileTap={{ scale: 0.95 }}
-          >
-            <BarChart2 className="w-4 h-4" />
-            <span className="hidden sm:inline">Your ROI</span>
-          </motion.button>
-          <motion.button
-            onClick={handleRefresh}
-            disabled={loading}
-            className="p-2 rounded-xl bg-warm-100 hover:bg-warm-200 transition-colors"
-            whileTap={{ scale: 0.95 }}
-          >
-            <RefreshCw className={`w-5 h-5 text-warm-600 ${loading ? 'animate-spin' : ''}`} />
-          </motion.button>
-        </div>
+        <motion.button
+          onClick={handleRefresh}
+          disabled={loading}
+          className="p-2 rounded-xl bg-warm-100 hover:bg-warm-200 transition-colors"
+          whileTap={{ scale: 0.95 }}
+        >
+          <RefreshCw className={`w-5 h-5 text-warm-600 ${loading ? 'animate-spin' : ''}`} />
+        </motion.button>
       </div>
 
       {/* ============ ACTIVE SHIFT BANNER ============ */}
@@ -736,33 +718,6 @@ export function PulsePlus() {
         summary={shiftSummary}
       />
 
-      {/* ============ ROI DASHBOARD MODAL ============ */}
-      <AnimatePresence>
-        {showROI && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
-            onClick={() => setShowROI(false)}
-          >
-            <motion.div
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 25 }}
-              className="absolute inset-0 top-12 bg-white rounded-t-3xl overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <ROIDashboard 
-                data={roiData} 
-                onClose={() => setShowROI(false)}
-                isModal={false}
-              />
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

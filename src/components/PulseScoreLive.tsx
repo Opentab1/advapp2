@@ -81,7 +81,6 @@ export function PulseScoreLive({ sensorData }: PulseScoreLiveProps) {
 
   // Overall status
   const overallStatus = getStatus(totalScore);
-  const OverallIcon = overallStatus.icon;
 
   // Score color gradient
   const getScoreColor = (score: number) => {

@@ -9,7 +9,7 @@
  */
 
 import { useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { 
   AlertTriangle,
   TrendingUp,
@@ -91,7 +91,6 @@ export function AttributionAlert({ anomaly, onDismiss }: AttributionAlertProps) 
   const Icon = getIcon();
   const style = getStyle();
   const TrendIcon = anomaly.direction === 'spike' ? TrendingUp : TrendingDown;
-  const time = new Date(anomaly.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
   return (
     <motion.div
@@ -347,7 +346,7 @@ export function WhatChanged({ anomalies, soundScore, lightScore, onDismiss }: Wh
         )}
 
         {/* Recent anomalies */}
-        {recentAnomalies.map((anomaly, i) => (
+        {recentAnomalies.map((anomaly) => (
           <div 
             key={`${anomaly.metric}-${anomaly.timestamp}`}
             className="flex items-center gap-2 text-sm text-warm-600"

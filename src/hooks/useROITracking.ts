@@ -6,9 +6,16 @@
  * - Calculates dwell time, score, and visitor trends
  * - Compares periods (this week vs last, this month vs last)
  * - Estimates revenue impact
+ * 
+ * For real venues: Fetches from DynamoDB
+ * For demo accounts: Uses mock data
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import authService from '../services/auth.service';
+import apiService from '../services/api.service';
+import { isDemoAccount } from '../utils/demoData';
+import type { SensorData } from '../types';
 
 // ============ TYPES ============
 
@@ -93,6 +100,10 @@ export interface ROIData {
     total: number;
     assumptions: string;
   } | null;
+  
+  // Loading state
+  loading: boolean;
+  error: string | null;
 }
 
 export interface UseROITrackingOptions {
@@ -102,18 +113,101 @@ export interface UseROITrackingOptions {
 
 // ============ CONSTANTS ============
 
-const STORAGE_KEY = 'pulse_roi_history';
 const DEFAULT_SPEND_PER_MINUTE = 0.50; // $0.50 per minute of dwell
 const DEFAULT_SPEND_PER_VISITOR = 25; // $25 per visitor
 
-// ============ MOCK DATA GENERATOR ============
-// In production, this would come from API/DynamoDB
+// Optimal ranges for Pulse Score calculation
+const OPTIMAL_SOUND = { min: 70, max: 82 };
+const OPTIMAL_LIGHT = { min: 50, max: 350 };
 
+// ============ HELPER FUNCTIONS ============
+
+function calculatePulseScore(decibels: number | undefined, light: number | undefined): number {
+  const scoreFactor = (value: number | undefined, range: { min: number; max: number }): number => {
+    if (!value) return 0;
+    if (value >= range.min && value <= range.max) return 100;
+    const rangeSize = range.max - range.min;
+    const tolerance = rangeSize * 0.5;
+    if (value < range.min) {
+      return Math.max(0, Math.round(100 - ((range.min - value) / tolerance) * 100));
+    }
+    return Math.max(0, Math.round(100 - ((value - range.max) / tolerance) * 100));
+  };
+  
+  const soundScore = scoreFactor(decibels, OPTIMAL_SOUND);
+  const lightScore = scoreFactor(light, OPTIMAL_LIGHT);
+  
+  return Math.round(soundScore * 0.6 + lightScore * 0.4);
+}
+
+interface DailyRecord {
+  date: string;
+  avgPulseScore: number;
+  avgDwellTime: number;
+  visitors: number;
+  optimalMinutes: number;
+  totalMinutes: number;
+}
+
+function aggregateByDay(sensorData: SensorData[]): DailyRecord[] {
+  const dailyMap = new Map<string, SensorData[]>();
+  
+  // Group by date
+  sensorData.forEach(item => {
+    const dateKey = new Date(item.timestamp).toISOString().split('T')[0];
+    if (!dailyMap.has(dateKey)) {
+      dailyMap.set(dateKey, []);
+    }
+    dailyMap.get(dateKey)!.push(item);
+  });
+  
+  const records: DailyRecord[] = [];
+  
+  dailyMap.forEach((items, date) => {
+    if (items.length === 0) return;
+    
+    // Calculate Pulse scores for each reading
+    const pulseScores = items
+      .map(i => calculatePulseScore(i.decibels, i.light))
+      .filter(s => s > 0);
+    
+    const avgPulseScore = pulseScores.length > 0
+      ? Math.round(pulseScores.reduce((a, b) => a + b, 0) / pulseScores.length)
+      : 0;
+    
+    // Get peak visitors for the day
+    const peakVisitors = items.reduce((max, i) => {
+      const current = i.occupancy?.current || 0;
+      return current > max ? current : max;
+    }, 0);
+    
+    // Estimate dwell time (minutes between readings with occupancy)
+    // This is a rough estimate - actual dwell needs entry/exit tracking
+    const avgDwellTime = peakVisitors > 0 ? Math.min(90, 30 + peakVisitors / 3) : 0;
+    
+    // Calculate optimal time (readings with Pulse >= 85)
+    const optimalReadings = pulseScores.filter(s => s >= 85).length;
+    const optimalMinutes = Math.round((optimalReadings / pulseScores.length) * items.length * 5); // Assume 5 min per reading
+    const totalMinutes = items.length * 5;
+    
+    records.push({
+      date,
+      avgPulseScore,
+      avgDwellTime,
+      visitors: peakVisitors,
+      optimalMinutes,
+      totalMinutes,
+    });
+  });
+  
+  return records.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+}
+
+// Generate mock data for demo accounts
 function generateMockHistoricalData(): DailyRecord[] {
   const records: DailyRecord[] = [];
   const today = new Date();
   
-  // Generate 60 days of mock data
   for (let i = 60; i >= 0; i--) {
     const date = new Date(today);
     date.setDate(date.getDate() - i);
@@ -121,10 +215,9 @@ function generateMockHistoricalData(): DailyRecord[] {
     const dayOfWeek = date.getDay();
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
     
-    // Simulate improvement over time (newer = better)
-    const improvementFactor = 1 + (60 - i) * 0.003; // 0.3% improvement per day
+    // Simulate improvement over time
+    const improvementFactor = 1 + (60 - i) * 0.003;
     
-    // Base metrics with some randomness
     const basePulse = isWeekend ? 78 : 70;
     const baseDwell = isWeekend ? 45 : 35;
     const baseVisitors = isWeekend ? 120 : 65;
@@ -142,15 +235,6 @@ function generateMockHistoricalData(): DailyRecord[] {
   return records;
 }
 
-interface DailyRecord {
-  date: string;
-  avgPulseScore: number;
-  avgDwellTime: number;
-  visitors: number;
-  optimalMinutes: number;
-  totalMinutes: number;
-}
-
 // ============ MAIN HOOK ============
 
 export function useROITracking(options: UseROITrackingOptions = {}): ROIData & { refresh: () => void } {
@@ -161,28 +245,61 @@ export function useROITracking(options: UseROITrackingOptions = {}): ROIData & {
 
   const [historicalData, setHistoricalData] = useState<DailyRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const user = authService.getStoredUser();
+  const venueId = user?.venueId || '';
 
   // Load historical data
-  const loadData = useCallback(() => {
+  const loadData = useCallback(async () => {
+    if (!venueId) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
+    setError(null);
+
     try {
-      // In production, this would be an API call
-      // For now, use mock data
-      const data = generateMockHistoricalData();
-      setHistoricalData(data);
-    } catch (e) {
-      console.error('Failed to load ROI data:', e);
+      // For demo accounts, use mock data
+      if (isDemoAccount(venueId)) {
+        await new Promise(r => setTimeout(r, 300)); // Simulate network delay
+        const data = generateMockHistoricalData();
+        setHistoricalData(data);
+        setLoading(false);
+        return;
+      }
+
+      // For real accounts, fetch from DynamoDB
+      // Try to get 60 days of data
+      const result = await apiService.getHistoricalData(venueId, '90d');
+      const sensorData = result?.data || [];
+      
+      if (sensorData.length === 0) {
+        setHistoricalData([]);
+        setLoading(false);
+        return;
+      }
+
+      // Aggregate sensor data by day
+      const dailyRecords = aggregateByDay(sensorData);
+      setHistoricalData(dailyRecords);
+
+    } catch (err: any) {
+      console.error('Failed to load ROI data:', err);
+      setError(err.message || 'Failed to load data');
+      setHistoricalData([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [venueId]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
   // Calculate all metrics
-  const roiData = useMemo((): ROIData => {
+  const roiData = useMemo((): Omit<ROIData, 'refresh'> => {
     if (historicalData.length === 0) {
       return {
         daysSinceStart: 0,
@@ -196,6 +313,8 @@ export function useROITracking(options: UseROITrackingOptions = {}): ROIData & {
         monthOverMonth: null,
         insights: [],
         estimatedRevenueImpact: null,
+        loading,
+        error,
       };
     }
 
@@ -322,8 +441,10 @@ export function useROITracking(options: UseROITrackingOptions = {}): ROIData & {
       monthOverMonth,
       insights,
       estimatedRevenueImpact,
+      loading,
+      error,
     };
-  }, [historicalData, avgSpendPerMinute, avgSpendPerVisitor]);
+  }, [historicalData, avgSpendPerMinute, avgSpendPerVisitor, loading, error]);
 
   return {
     ...roiData,
@@ -331,7 +452,7 @@ export function useROITracking(options: UseROITrackingOptions = {}): ROIData & {
   };
 }
 
-// ============ HELPER FUNCTIONS ============
+// ============ COMPARISON HELPER ============
 
 function calculateComparison(
   current: PeriodMetrics | null, 
@@ -400,6 +521,8 @@ function calculateComparison(
     summary,
   };
 }
+
+// ============ INSIGHTS GENERATOR ============
 
 function generateInsights(
   currentWeek: PeriodMetrics | null,
@@ -504,8 +627,21 @@ function generateInsights(
     });
   }
 
+  // If no data yet, show getting started insight
+  if (insights.length === 0 && daysSinceStart < 7) {
+    insights.push({
+      id: 'getting-started',
+      type: 'milestone',
+      icon: '🚀',
+      title: 'Just Getting Started',
+      description: 'Keep collecting data! After a week, we\'ll show you trends and insights.',
+    });
+  }
+
   return insights.slice(0, 5); // Limit to top 5 insights
 }
+
+// ============ REVENUE IMPACT CALCULATOR ============
 
 function calculateRevenueImpact(
   currentMonth: PeriodMetrics | null,

@@ -26,7 +26,7 @@ interface HistoricalComparison {
 export function LiveContext({ currentOccupancy, todayEntries }: LiveContextProps) {
   const [comparison, setComparison] = useState<HistoricalComparison | null>(null);
   const [loading, setLoading] = useState(true);
-  const [hourlyTrend, setHourlyTrend] = useState<number>(0);
+  const [, setHourlyTrend] = useState<number>(0);
 
   const user = authService.getStoredUser();
   const venueId = user?.venueId || '';

@@ -23,15 +23,11 @@ import {
   Calendar,
   DollarSign,
   Download,
-  ChevronRight,
   Award,
-  Lightbulb,
-  Flag,
   ArrowUpRight,
   ArrowDownRight,
   BarChart2,
   X,
-  Share2
 } from 'lucide-react';
 import type { ROIData, ROIComparison, ROIInsight, PeriodMetrics } from '../hooks/useROITracking';
 
@@ -68,12 +64,130 @@ export function ROIDashboard({ data, onClose, isModal = false }: ROIDashboardPro
     currentMonth,
     previousWeek,
     previousMonth,
-    allTime,
     weekOverWeek,
     monthOverMonth,
     insights,
     estimatedRevenueImpact,
+    loading,
+    error,
   } = data;
+
+  // Handle loading state
+  if (loading) {
+    const containerClass = isModal 
+      ? 'fixed inset-0 z-50 bg-white overflow-auto' 
+      : 'max-w-2xl mx-auto';
+    
+    return (
+      <div className={containerClass}>
+        <div className="sticky top-0 bg-white border-b border-warm-200 px-4 py-4 z-10">
+          <div className="flex items-center justify-between max-w-2xl mx-auto">
+            <div>
+              <h1 className="text-xl font-bold text-warm-800 flex items-center gap-2">
+                <BarChart2 className="w-5 h-5 text-primary" />
+                Your ROI
+              </h1>
+              <p className="text-sm text-warm-500">Loading data...</p>
+            </div>
+            {onClose && (
+              <button onClick={onClose} className="p-2 hover:bg-warm-100 rounded-lg">
+                <X className="w-5 h-5 text-warm-400" />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-center p-12">
+          <div className="text-center">
+            <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+              <BarChart2 className="w-6 h-6 text-primary animate-pulse" />
+            </div>
+            <p className="text-warm-600 font-medium">Calculating your ROI...</p>
+            <p className="text-warm-400 text-sm mt-1">Analyzing your historical data</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Handle error state
+  if (error) {
+    const containerClass = isModal 
+      ? 'fixed inset-0 z-50 bg-white overflow-auto' 
+      : 'max-w-2xl mx-auto';
+    
+    return (
+      <div className={containerClass}>
+        <div className="sticky top-0 bg-white border-b border-warm-200 px-4 py-4 z-10">
+          <div className="flex items-center justify-between max-w-2xl mx-auto">
+            <div>
+              <h1 className="text-xl font-bold text-warm-800 flex items-center gap-2">
+                <BarChart2 className="w-5 h-5 text-primary" />
+                Your ROI
+              </h1>
+            </div>
+            {onClose && (
+              <button onClick={onClose} className="p-2 hover:bg-warm-100 rounded-lg">
+                <X className="w-5 h-5 text-warm-400" />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-center p-12">
+          <div className="text-center">
+            <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
+              <X className="w-6 h-6 text-red-500" />
+            </div>
+            <p className="text-warm-800 font-medium">Unable to load data</p>
+            <p className="text-warm-500 text-sm mt-1">{error}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Handle no data state
+  if (!currentWeek && !currentMonth && daysSinceStart < 7) {
+    const containerClass = isModal 
+      ? 'fixed inset-0 z-50 bg-white overflow-auto' 
+      : 'max-w-2xl mx-auto';
+    
+    return (
+      <div className={containerClass}>
+        <div className="sticky top-0 bg-white border-b border-warm-200 px-4 py-4 z-10">
+          <div className="flex items-center justify-between max-w-2xl mx-auto">
+            <div>
+              <h1 className="text-xl font-bold text-warm-800 flex items-center gap-2">
+                <BarChart2 className="w-5 h-5 text-primary" />
+                Your ROI
+              </h1>
+            </div>
+            {onClose && (
+              <button onClick={onClose} className="p-2 hover:bg-warm-100 rounded-lg">
+                <X className="w-5 h-5 text-warm-400" />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-center p-12">
+          <div className="text-center max-w-sm">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+              <Trophy className="w-8 h-8 text-primary" />
+            </div>
+            <h2 className="text-lg font-bold text-warm-800">Just Getting Started</h2>
+            <p className="text-warm-500 text-sm mt-2">
+              Keep using Pulse! After a week of data collection, we'll show you trends, 
+              comparisons, and estimated revenue impact.
+            </p>
+            <div className="mt-6 p-3 rounded-lg bg-warm-50 border border-warm-100">
+              <p className="text-sm text-warm-600">
+                📊 Data collecting since {firstRecordedDate?.toLocaleDateString([], { month: 'short', day: 'numeric' }) || 'today'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Handle export
   const handleExport = () => {
@@ -516,11 +630,9 @@ function MetricCard({
   change,
   changePercent,
   unit = '',
-  format = 'number',
   higherIsBetter = true,
 }: MetricCardProps) {
   const isPositive = change !== null && (higherIsBetter ? change > 0 : change < 0);
-  const isNegative = change !== null && (higherIsBetter ? change < 0 : change > 0);
   const isNeutral = change === null || change === 0;
 
   return (
@@ -567,10 +679,6 @@ function InsightCard({ insight, index }: { insight: ROIInsight; index: number })
       default: return 'bg-warm-100 text-warm-600';
     }
   };
-
-  const Icon = insight.type === 'win' ? Trophy : 
-               insight.type === 'opportunity' ? Lightbulb : 
-               Flag;
 
   return (
     <motion.div

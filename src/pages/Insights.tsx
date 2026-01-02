@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Calendar,
   Clock,
-  Users,
   Star,
   Zap,
   AlertCircle,
@@ -77,7 +76,7 @@ export function Insights({ hideRings = false }: InsightsProps) {
   const [patterns, setPatterns] = useState<PatternInsight[]>([]);
   const [headline, setHeadline] = useState<{ text: string; type: 'good' | 'warning' | 'neutral' } | null>(null);
   const [dwellTime, setDwellTime] = useState<number | null>(null);
-  const [allSensorData, setAllSensorData] = useState<SensorData[]>([]);
+  const [, setAllSensorData] = useState<SensorData[]>([]);
 
   const user = authService.getStoredUser();
   const venueId = user?.venueId || '';
@@ -195,7 +194,7 @@ export function Insights({ hideRings = false }: InsightsProps) {
     };
   };
 
-  const generatePatterns = (tw: WeekData | null, lw: WeekData | null, allData: SensorData[]) => {
+  const generatePatterns = (tw: WeekData | null, lw: WeekData | null, _allData: SensorData[]) => {
     const insights: PatternInsight[] = [];
 
     if (tw && lw && lw.totalEntries > 0) {

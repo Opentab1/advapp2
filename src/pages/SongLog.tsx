@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Music, Download, Clock, TrendingUp, RefreshCw, Star, Zap, ListMusic, 
-  Calendar, FileText, FileJson, Filter, ChevronDown, Award, Disc3,
+  Calendar, FileText, FileJson, ChevronDown, Disc3,
   BarChart3, Timer, Users
 } from 'lucide-react';
 import { format } from 'date-fns';

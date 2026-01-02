@@ -15,14 +15,11 @@ import {
   CheckCircle,
   TrendingUp,
   TrendingDown,
-  Minus,
   Volume2,
   Sun,
   Users,
   Clock,
   Zap,
-  Trophy,
-  Sparkles,
   ArrowRight,
   PartyPopper,
   Target
@@ -85,7 +82,7 @@ export function ActionCelebration({ isOpen, onClose, action }: ActionCelebration
 
   if (!isOpen || !action) return null;
 
-  const hasImprovement = action.improvement.pulseChange > 0 || action.improvement.primary?.improved;
+  const hasImprovement = action.improvement.pulseChange > 0 || (action.improvement.primary?.improved ?? false);
   const timeTaken = Math.round((action.completedAt - action.startedAt) / 60000); // minutes
 
   return (
