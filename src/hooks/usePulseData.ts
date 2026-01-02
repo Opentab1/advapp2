@@ -125,13 +125,68 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     if (!venueId) return;
     
     try {
-      const metrics = await apiService.getOccupancyMetrics(venueId);
-      if (metrics) {
-        setOccupancyMetrics(metrics);
+      // Calculate occupancy from the same sensor data used for everything else
+      // Get 24h of historical data to calculate bar day (3am-3am) entries/exits
+      const historicalData = await apiService.getHistoricalData(venueId, '24h');
+      
+      if (historicalData?.data && historicalData.data.length > 0) {
+        // Import bar day calculation utility
+        const { calculateBarDayOccupancy } = await import('../utils/barDay');
+        
+        // Filter items that have occupancy data
+        const itemsWithOccupancy = historicalData.data.filter(d => d.occupancy);
+        console.log(`📊 Occupancy calc: ${historicalData.data.length} items, ${itemsWithOccupancy.length} have occupancy`);
+        
+        if (itemsWithOccupancy.length > 0) {
+          // Calculate bar day entries/exits (difference since 3am)
+          const barDay = calculateBarDayOccupancy(historicalData.data);
+          console.log('📊 Bar day result:', barDay);
+          
+          // Get the most recent occupancy reading for current count
+          const sorted = [...itemsWithOccupancy].sort((a, b) => 
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+          const latestOccupancy = sorted[0].occupancy;
+          
+          // Find peak occupancy from today's data
+          let peakOccupancy = barDay.current;
+          let peakTime: string | undefined;
+          
+          itemsWithOccupancy.forEach(item => {
+            const current = item.occupancy?.current || 0;
+            if (current > peakOccupancy) {
+              peakOccupancy = current;
+              peakTime = new Date(item.timestamp).toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit'
+              });
+            }
+          });
+          
+          setOccupancyMetrics({
+            current: latestOccupancy?.current || barDay.current,
+            todayEntries: barDay.entries,
+            todayExits: barDay.exits,
+            todayTotal: barDay.entries,
+            sevenDayAvg: 0,
+            fourteenDayAvg: 0,
+            thirtyDayAvg: 0,
+            peakOccupancy,
+            peakTime,
+            avgDwellTimeMinutes: null
+          });
+          
+          console.log('✅ Occupancy calculated from sensor data:', {
+            current: latestOccupancy?.current || barDay.current,
+            todayEntries: barDay.entries,
+            todayExits: barDay.exits
+          });
+        } else {
+          console.warn('⚠️ No sensor data has occupancy field - is the IoT device sending entries/exits?');
+        }
       }
     } catch (err: any) {
-      console.error('Failed to fetch occupancy from dedicated resolver:', err);
-      // Don't set error - will fall back to sensor data occupancy
+      console.error('Failed to calculate occupancy from sensor data:', err);
     }
   }, [venueId]);
   
