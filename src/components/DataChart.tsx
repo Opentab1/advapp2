@@ -1,3 +1,9 @@
+/**
+ * DataChart - Clean, professional chart component
+ * 
+ * Light theme styling with clear, readable axes.
+ */
+
 import { useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -13,7 +19,6 @@ import {
   Filler
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
-import zoomPlugin from 'chartjs-plugin-zoom';
 import 'chartjs-adapter-date-fns';
 import type { SensorData } from '../types';
 
@@ -26,8 +31,7 @@ ChartJS.register(
   Tooltip,
   Legend,
   TimeScale,
-  Filler,
-  zoomPlugin
+  Filler
 );
 
 interface DataChartProps {
@@ -37,27 +41,47 @@ interface DataChartProps {
   color?: string;
 }
 
-export function DataChart({ data, metric, title, color = '#00d4ff' }: DataChartProps) {
+export function DataChart({ data, metric, title, color = '#0077B6' }: DataChartProps) {
   const chartRef = useRef<ChartJS<'line'>>(null);
+
+  // Extract values based on metric
+  const values = data.map(d => {
+    if (metric === 'occupancy') {
+      return d.occupancy?.current || 0;
+    }
+    return d[metric] as number;
+  });
 
   const chartData = {
     labels: data.map(d => new Date(d.timestamp)),
     datasets: [
       {
         label: title,
-        data: data.map(d => metric === 'occupancy' ? (d.occupancy?.current || 0) : d[metric]),
+        data: values,
         borderColor: color,
-        backgroundColor: `${color}20`,
+        backgroundColor: `${color}15`,
         borderWidth: 2,
         pointRadius: 0,
-        pointHoverRadius: 6,
+        pointHoverRadius: 5,
         pointHoverBackgroundColor: color,
         pointHoverBorderColor: '#fff',
         pointHoverBorderWidth: 2,
         fill: true,
-        tension: 0.4
+        tension: 0.3
       }
     ]
+  };
+
+  const getUnit = () => {
+    switch (metric) {
+      case 'decibels': return 'dB';
+      case 'light': return 'lux';
+      case 'indoorTemp':
+      case 'outdoorTemp': return '°F';
+      case 'humidity': return '%';
+      case 'occupancy': return '';
+      default: return '';
+    }
   };
 
   const options = {
@@ -72,57 +96,33 @@ export function DataChart({ data, metric, title, color = '#00d4ff' }: DataChartP
         display: false
       },
       tooltip: {
-        backgroundColor: 'rgba(10, 25, 47, 0.95)',
-        titleColor: '#00d4ff',
-        bodyColor: '#fff',
-        borderColor: 'rgba(0, 212, 255, 0.3)',
+        backgroundColor: '#1C1917',
+        titleColor: '#FAFAFA',
+        bodyColor: '#FAFAFA',
+        borderColor: '#44403C',
         borderWidth: 1,
         padding: 12,
+        cornerRadius: 8,
         displayColors: false,
         callbacks: {
           title: (items: any) => {
             const date = new Date(items[0].parsed.x);
-            return date.toLocaleString();
+            return date.toLocaleString('en-US', {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit'
+            });
           },
           label: (context: any) => {
-            let label = context.dataset.label || '';
-            if (label) {
-              label += ': ';
-            }
             const value = context.parsed.y;
-            if (metric === 'decibels') {
-              label += `${value.toFixed(1)} dB`;
-            } else if (metric === 'light') {
-              label += `${Math.round(value)} lux`;
-            } else if (metric.includes('Temp')) {
-              label += `${value.toFixed(1)}°F`;
-            } else if (metric === 'humidity') {
-              label += `${value.toFixed(0)}%`;
-            } else if (metric === 'occupancy') {
-              label += `${Math.round(value)} people`;
-            } else {
-              label += value.toFixed(1);
+            const unit = getUnit();
+            if (metric === 'occupancy') {
+              return `${Math.round(value)} people`;
             }
-            return label;
+            return `${value.toFixed(metric === 'decibels' ? 1 : 0)}${unit}`;
           }
-        }
-      },
-      zoom: {
-        zoom: {
-          wheel: {
-            enabled: true
-          },
-          pinch: {
-            enabled: true
-          },
-          mode: 'x' as const
-        },
-        pan: {
-          enabled: true,
-          mode: 'x' as const
-        },
-        limits: {
-          x: { min: 'original' as const, max: 'original' as const }
         }
       }
     },
@@ -131,80 +131,63 @@ export function DataChart({ data, metric, title, color = '#00d4ff' }: DataChartP
         type: 'time' as const,
         time: {
           displayFormats: {
-            hour: 'HH:mm',
-            day: 'MMM dd'
+            hour: 'ha',
+            day: 'MMM d'
           }
         },
         grid: {
-          color: 'rgba(255, 255, 255, 0.05)',
+          color: '#E7E5E4',
           drawBorder: false
         },
         ticks: {
-          color: 'rgba(255, 255, 255, 0.6)',
+          color: '#78716C',
           font: {
-            size: 11
-          }
+            size: 11,
+            family: 'Inter'
+          },
+          maxRotation: 0
         }
       },
       y: {
         grid: {
-          color: 'rgba(255, 255, 255, 0.05)',
+          color: '#E7E5E4',
           drawBorder: false
         },
         ticks: {
-          color: 'rgba(255, 255, 255, 0.6)',
+          color: '#78716C',
           font: {
-            size: 11
+            size: 11,
+            family: 'Inter'
           },
           callback: function(value: any) {
-            if (metric === 'decibels') {
-              return `${value} dB`;
-            } else if (metric === 'light') {
-              return `${value} lux`;
-            } else if (metric.includes('Temp')) {
-              return `${value}°F`;
-            } else if (metric === 'humidity') {
-              return `${value}%`;
-            } else if (metric === 'occupancy') {
-              return `${value}`;
-            }
-            return value;
+            const unit = getUnit();
+            if (metric === 'occupancy') return value;
+            return `${value}${unit}`;
           }
         }
       }
     }
   };
 
-  const handleResetZoom = () => {
-    if (chartRef.current) {
-      chartRef.current.resetZoom();
-    }
-  };
+  // No data state
+  if (!data || data.length === 0) {
+    return (
+      <div className="h-[200px] flex items-center justify-center text-warm-400">
+        No data available
+      </div>
+    );
+  }
 
   return (
     <motion.div
-      className="glass-card p-6 h-[400px]"
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
+      className="h-[200px]"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
     >
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-white">{title}</h3>
-        <button
-          onClick={handleResetZoom}
-          className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-cyan transition-colors"
-        >
-          Reset Zoom
-        </button>
-      </div>
-      
-      <div className="h-[calc(100%-3rem)]">
-        <Line ref={chartRef} data={chartData} options={options} />
-      </div>
-      
-      <p className="text-xs text-gray-400 mt-2 text-center">
-        Scroll to zoom • Drag to pan
-      </p>
+      <Line ref={chartRef} data={chartData} options={options} />
     </motion.div>
   );
 }
+
+export default DataChart;

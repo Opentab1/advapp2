@@ -67,9 +67,14 @@ function ProtectedDashboard() {
     };
   }, []);
   
-  const handleLogout = () => {
-    authService.logout();
-    window.location.href = '/login';
+  const handleLogout = async () => {
+    try {
+      await authService.logout();
+    } catch (e) {
+      console.error('Logout error:', e);
+    }
+    // Force full page reload to clear all state
+    window.location.replace('/login');
   };
   
   // Render active tab content
