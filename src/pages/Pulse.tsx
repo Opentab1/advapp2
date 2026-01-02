@@ -4,13 +4,14 @@
  * The home screen. Shows:
  * - Pulse Score (hero ring)
  * - Supporting rings (Dwell, Reputation, Crowd)
+ * - Streaks, Goals, Insights
  * - Next Action (hero action card)
  * - Context bar (games, holidays)
  * 
  * All details accessed via tap → modal.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Zap, RefreshCw } from 'lucide-react';
 
@@ -21,6 +22,11 @@ import { ActionHero } from '../components/pulse/ActionHero';
 import { ActionQueue } from '../components/pulse/ActionQueue';
 import { ContextBar } from '../components/pulse/ContextBar';
 import { LiveStats } from '../components/pulse/LiveStats';
+import { StreakBadge } from '../components/pulse/StreakBadge';
+import { GoalProgress } from '../components/pulse/GoalProgress';
+import { InsightsPanel } from '../components/pulse/InsightsPanel';
+import { CelebrationModal, CelebrationType } from '../components/pulse/CelebrationModal';
+import { GoalSetterModal } from '../components/pulse/GoalSetterModal';
 import { ActionDetailModal } from '../components/pulse/ActionDetailModal';
 import { PulseBreakdownModal } from '../components/pulse/PulseBreakdownModal';
 import { DwellBreakdownModal } from '../components/pulse/DwellBreakdownModal';
@@ -34,11 +40,23 @@ import { useActions } from '../hooks/useActions';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
 import authService from '../services/auth.service';
+import achievementsService, { Streak, WeeklyGoal, Insight } from '../services/achievements.service';
+import staffService from '../services/staff.service';
 import type { SportsGame } from '../types';
 
 // ============ MODAL TYPES ============
 
 type ModalType = 'pulse' | 'dwell' | 'reputation' | 'crowd' | 'action' | null;
+
+interface CelebrationState {
+  isOpen: boolean;
+  type: CelebrationType;
+  title: string;
+  subtitle: string;
+  value: string | number;
+  previousValue?: string | number;
+  detail?: string;
+}
 
 // ============ MAIN COMPONENT ============
 
@@ -48,6 +66,21 @@ export function Pulse() {
   
   // Modal state
   const [activeModal, setActiveModal] = useState<ModalType>(null);
+  const [showGoalSetter, setShowGoalSetter] = useState(false);
+  
+  // Celebration state
+  const [celebration, setCelebration] = useState<CelebrationState>({
+    isOpen: false,
+    type: 'record',
+    title: '',
+    subtitle: '',
+    value: '',
+  });
+  
+  // Achievement data
+  const [streak, setStreak] = useState<Streak>(achievementsService.getStreak());
+  const [weeklyGoal, setWeeklyGoal] = useState<WeeklyGoal | null>(achievementsService.getWeeklyGoal());
+  const [insights, setInsights] = useState<Insight[]>([]);
   
   // External data
   const [todayGames, setTodayGames] = useState<SportsGame[]>([]);
@@ -81,6 +114,107 @@ export function Pulse() {
     }
     loadExternalData();
   }, []);
+  
+  // Generate insights
+  useEffect(() => {
+    const generatedInsights = achievementsService.generateInsights();
+    setInsights(generatedInsights);
+  }, []);
+  
+  // Track achievements when pulse score changes
+  const checkAchievements = useCallback(() => {
+    if (pulseData.pulseScore === null) return;
+    
+    // Check for new record
+    const recordResult = achievementsService.checkAndUpdateRecord(
+      'best-pulse',
+      'Best Pulse Score',
+      pulseData.pulseScore,
+      ''
+    );
+    
+    if (recordResult?.isNew && recordResult.improvement) {
+      setCelebration({
+        isOpen: true,
+        type: 'record',
+        title: 'Best Pulse Score!',
+        subtitle: 'You just set a new personal record',
+        value: recordResult.record.value,
+        previousValue: recordResult.record.previousValue,
+        detail: `+${recordResult.improvement} points improvement`,
+      });
+    }
+    
+    // Check occupancy record
+    if (pulseData.currentOccupancy > 0) {
+      const occupancyRecord = achievementsService.checkAndUpdateRecord(
+        'best-occupancy',
+        'Busiest Night',
+        pulseData.currentOccupancy,
+        ' guests'
+      );
+      
+      if (occupancyRecord?.isNew && occupancyRecord.improvement && occupancyRecord.improvement > 5) {
+        setCelebration({
+          isOpen: true,
+          type: 'record',
+          title: 'Busiest Night Ever!',
+          subtitle: 'New occupancy record',
+          value: `${occupancyRecord.record.value} guests`,
+          previousValue: occupancyRecord.record.previousValue ? `${occupancyRecord.record.previousValue} guests` : undefined,
+        });
+      }
+    }
+    
+    // Update streak
+    const streakResult = achievementsService.updateStreak(pulseData.pulseScore);
+    setStreak(achievementsService.getStreak());
+    
+    if (streakResult.newMilestone) {
+      setCelebration({
+        isOpen: true,
+        type: 'streak',
+        title: `${streakResult.newMilestone}-Night Streak!`,
+        subtitle: `Above ${streak.threshold} Pulse Score`,
+        value: `🔥 ${streakResult.newMilestone}`,
+        detail: 'Keep the momentum going!',
+      });
+    }
+    
+    // Update weekly goal
+    const goalResult = achievementsService.recordDailyScore(pulseData.pulseScore);
+    setWeeklyGoal(achievementsService.getWeeklyGoal());
+    
+    if (goalResult.goalAchieved) {
+      const goal = achievementsService.getWeeklyGoal();
+      setCelebration({
+        isOpen: true,
+        type: 'goal',
+        title: 'Weekly Goal Achieved!',
+        subtitle: `You hit your target of ${goal?.target}`,
+        value: `${goal?.currentAvg} avg`,
+        detail: `${goal?.daysTracked} days tracked this week`,
+      });
+    }
+    
+    // Record for staff tracking
+    if (pulseData.pulseScore > 0) {
+      staffService.recordPulseScore(pulseData.pulseScore, pulseData.currentOccupancy);
+    }
+  }, [pulseData.pulseScore, pulseData.currentOccupancy, streak.threshold]);
+  
+  // Check achievements periodically (not on every render)
+  useEffect(() => {
+    if (pulseData.pulseScore !== null) {
+      checkAchievements();
+    }
+  }, [pulseData.pulseScore]); // Only when score changes
+  
+  // Handle setting a new goal
+  const handleSetGoal = (target: number) => {
+    achievementsService.setWeeklyGoalTarget(target);
+    setWeeklyGoal(achievementsService.getWeeklyGoal());
+  };
   
   // Holiday data
   const upcomingHolidays = holidayService.getUpcomingHolidays(7);
@@ -187,6 +321,31 @@ export function Pulse() {
         />
       </motion.div>
       
+      {/* Streak + Goal Row */}
+      <motion.div
+        className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25 }}
+      >
+        <StreakBadge streak={streak} />
+        <GoalProgress 
+          goal={weeklyGoal} 
+          onSetGoal={() => setShowGoalSetter(true)} 
+        />
+      </motion.div>
+      
+      {/* Insights */}
+      {insights.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.28 }}
+        >
+          <InsightsPanel insights={insights} />
+        </motion.div>
+      )}
+      
       {/* Action Hero */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
@@ -277,6 +436,26 @@ export function Pulse() {
         onClose={() => setActiveModal(null)}
         action={heroAction}
         onComplete={() => handleActionComplete()}
+      />
+      
+      {/* Goal Setter */}
+      <GoalSetterModal
+        isOpen={showGoalSetter}
+        onClose={() => setShowGoalSetter(false)}
+        onSetGoal={handleSetGoal}
+        currentTarget={weeklyGoal?.target}
+      />
+      
+      {/* Celebration */}
+      <CelebrationModal
+        isOpen={celebration.isOpen}
+        onClose={() => setCelebration(prev => ({ ...prev, isOpen: false }))}
+        type={celebration.type}
+        title={celebration.title}
+        subtitle={celebration.subtitle}
+        value={celebration.value}
+        previousValue={celebration.previousValue}
+        detail={celebration.detail}
       />
     </div>
   );
