@@ -128,6 +128,24 @@ class ApiService {
       try {
         const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '24h');
         if (historicalData?.data && historicalData.data.length > 0) {
+          // Debug: Check how many items have occupancy data
+          const itemsWithOccupancy = historicalData.data.filter(d => d.occupancy);
+          console.log(`📊 Historical data: ${historicalData.data.length} items, ${itemsWithOccupancy.length} have occupancy`);
+          
+          if (itemsWithOccupancy.length > 0) {
+            // Log first and last occupancy readings for debugging
+            const first = itemsWithOccupancy[0];
+            const last = itemsWithOccupancy[itemsWithOccupancy.length - 1];
+            console.log('📊 First occupancy reading:', first.occupancy, 'at', first.timestamp);
+            console.log('📊 Last occupancy reading:', last.occupancy, 'at', last.timestamp);
+          } else {
+            console.warn('⚠️ No items have occupancy data! Check if IoT device is sending entries/exits.');
+            // Log a sample of what the data looks like
+            if (historicalData.data.length > 0) {
+              console.log('📊 Sample sensor data (no occupancy):', JSON.stringify(historicalData.data[0], null, 2));
+            }
+          }
+          
           const { calculateBarDayOccupancy } = await import('../utils/barDay');
           const result = calculateBarDayOccupancy(historicalData.data);
           console.log('📊 Bar day calculation result:', result);
@@ -180,9 +198,16 @@ class ApiService {
           calculateBarDayEntriesExits()
         ]);
         
+        // Debug: Log what live data contains
+        console.log('📊 Live sensor data structure:', {
+          hasOccupancy: !!liveData?.occupancy,
+          occupancy: liveData?.occupancy,
+          allFields: liveData ? Object.keys(liveData) : 'no data'
+        });
+        
         const current = liveData?.occupancy?.current || barDay.current;
         
-        console.log('📊 Fallback occupancy:', { 
+        console.log('📊 Fallback occupancy result:', { 
           current, 
           entries: barDay.entries, 
           exits: barDay.exits,
