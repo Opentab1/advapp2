@@ -99,7 +99,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   // Data states
   const [sensorData, setSensorData] = useState<SensorData | null>(null);
-  const [occupancyMetrics, setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
+  const [occupancyMetrics, _setOccupancyMetrics] = useState<OccupancyMetrics | null>(null);
   const [reviews, setReviews] = useState<GoogleReviewsData | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   
@@ -122,93 +122,75 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   }, [venueId]);
   
   const fetchOccupancy = useCallback(async () => {
-    console.log('🔢 fetchOccupancy called, venueId:', venueId);
     if (!venueId) return;
     
     try {
-      // Calculate occupancy from the same sensor data used for everything else
-      // Get 24h of historical data to calculate bar day (3am-3am) entries/exits
-      console.log('🔢 Fetching 24h data for occupancy calculation...');
-      const historicalData = await apiService.getHistoricalData(venueId, '24h');
-      console.log('🔢 Got historical data:', historicalData?.data?.length || 0, 'items');
+      // Get the 3am baseline from DynamoDB (just a 1-hour window, not 24h)
+      const BAR_DAY_HOUR = 3;
+      const now = new Date();
+      const currentHour = now.getHours();
       
-      if (historicalData?.data && historicalData.data.length > 0) {
-        // Import bar day calculation utility
-        const { calculateBarDayOccupancy } = await import('../utils/barDay');
+      // Calculate when the current bar day started (3am today or yesterday)
+      const barDayStart = new Date(now);
+      barDayStart.setHours(BAR_DAY_HOUR, 0, 0, 0);
+      if (currentHour < BAR_DAY_HOUR) {
+        barDayStart.setDate(barDayStart.getDate() - 1);
+      }
+      
+      // Fetch just 1 hour of data starting from 3am (to get the baseline)
+      const barDayEnd = new Date(barDayStart);
+      barDayEnd.setHours(barDayStart.getHours() + 1);
+      
+      console.log('🔢 Fetching 3am baseline data:', {
+        barDayStart: barDayStart.toISOString(),
+        barDayEnd: barDayEnd.toISOString()
+      });
+      
+      // Use the dynamodb service directly for a targeted time range query
+      const dynamoDBService = (await import('../services/dynamodb.service')).default;
+      const baselineData = await dynamoDBService.getSensorDataByDateRange(
+        venueId,
+        barDayStart,
+        barDayEnd,
+        100 // Just need a few records from 3am-4am
+      );
+      
+      console.log('🔢 Got baseline data:', baselineData?.length || 0, 'items');
+      
+      if (baselineData && baselineData.length > 0) {
+        // Find the first reading with occupancy data
+        const baselineWithOccupancy = baselineData.filter(d => d.occupancy);
         
-        // Filter items that have occupancy data
-        const itemsWithOccupancy = historicalData.data.filter(d => d.occupancy);
-        console.log(`📊 Occupancy calc: ${historicalData.data.length} items, ${itemsWithOccupancy.length} have occupancy`);
-        
-        // DEBUG: Log what the occupancy data actually looks like
-        if (itemsWithOccupancy.length > 0) {
-          const sample = itemsWithOccupancy[0];
-          console.log('📊 Sample occupancy data structure:', {
-            timestamp: sample.timestamp,
-            occupancy: sample.occupancy,
-            hasEntries: 'entries' in (sample.occupancy || {}),
-            hasExits: 'exits' in (sample.occupancy || {}),
-            hasCurrent: 'current' in (sample.occupancy || {})
-          });
-          
-          // Log first and last to see if entries/exits are changing
-          const first = itemsWithOccupancy[0];
-          const last = itemsWithOccupancy[itemsWithOccupancy.length - 1];
-          console.log('📊 First reading:', first.timestamp, first.occupancy);
-          console.log('📊 Last reading:', last.timestamp, last.occupancy);
-        }
-        
-        if (itemsWithOccupancy.length > 0) {
-          // Calculate bar day entries/exits (difference since 3am)
-          const barDay = calculateBarDayOccupancy(historicalData.data);
-          console.log('📊 Bar day result:', barDay);
-          
-          // Get the most recent occupancy reading for current count
-          const sorted = [...itemsWithOccupancy].sort((a, b) => 
-            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        if (baselineWithOccupancy.length > 0) {
+          // Sort by timestamp ascending (oldest first)
+          baselineWithOccupancy.sort((a, b) => 
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
           );
-          const latestOccupancy = sorted[0].occupancy;
           
-          // Find peak occupancy from today's data
-          let peakOccupancy = barDay.current;
-          let peakTime: string | undefined;
-          
-          itemsWithOccupancy.forEach(item => {
-            const current = item.occupancy?.current || 0;
-            if (current > peakOccupancy) {
-              peakOccupancy = current;
-              peakTime = new Date(item.timestamp).toLocaleTimeString('en-US', {
-                hour: 'numeric',
-                minute: '2-digit'
-              });
-            }
+          const baseline = baselineWithOccupancy[0].occupancy!;
+          console.log('🔢 Found 3am baseline:', {
+            timestamp: baselineWithOccupancy[0].timestamp,
+            entries: baseline.entries,
+            exits: baseline.exits
           });
           
-          setOccupancyMetrics({
-            current: latestOccupancy?.current || barDay.current,
-            todayEntries: barDay.entries,
-            todayExits: barDay.exits,
-            todayTotal: barDay.entries,
-            sevenDayAvg: 0,
-            fourteenDayAvg: 0,
-            thirtyDayAvg: 0,
-            peakOccupancy,
-            peakTime,
-            avgDwellTimeMinutes: null
-          });
+          // Store in localStorage for the effectiveOccupancy calculation
+          const barDayKey = `occupancy_baseline_${venueId}_${barDayStart.toDateString()}`;
+          localStorage.setItem(barDayKey, JSON.stringify({
+            entries: baseline.entries,
+            exits: baseline.exits,
+            fetchedAt: new Date().toISOString()
+          }));
           
-          console.log('✅ Occupancy calculated from sensor data:', {
-            current: latestOccupancy?.current || barDay.current,
-            todayEntries: barDay.entries,
-            todayExits: barDay.exits
-          });
+          console.log('✅ Saved 3am baseline to localStorage');
         } else {
-          console.warn('⚠️ No sensor data has occupancy field - is the IoT device sending entries/exits?');
+          console.warn('⚠️ No occupancy data found in 3am-4am window');
         }
+      } else {
+        console.warn('⚠️ No sensor data found in 3am-4am window');
       }
     } catch (err: any) {
-      console.error('❌ Failed to calculate occupancy from sensor data:', err);
-      console.error('❌ Error details:', err?.message, err?.stack);
+      console.error('❌ Failed to fetch 3am baseline:', err?.message);
     }
   }, [venueId]);
   
