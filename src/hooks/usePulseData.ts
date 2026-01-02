@@ -137,6 +137,24 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         const itemsWithOccupancy = historicalData.data.filter(d => d.occupancy);
         console.log(`📊 Occupancy calc: ${historicalData.data.length} items, ${itemsWithOccupancy.length} have occupancy`);
         
+        // DEBUG: Log what the occupancy data actually looks like
+        if (itemsWithOccupancy.length > 0) {
+          const sample = itemsWithOccupancy[0];
+          console.log('📊 Sample occupancy data structure:', {
+            timestamp: sample.timestamp,
+            occupancy: sample.occupancy,
+            hasEntries: 'entries' in (sample.occupancy || {}),
+            hasExits: 'exits' in (sample.occupancy || {}),
+            hasCurrent: 'current' in (sample.occupancy || {})
+          });
+          
+          // Log first and last to see if entries/exits are changing
+          const first = itemsWithOccupancy[0];
+          const last = itemsWithOccupancy[itemsWithOccupancy.length - 1];
+          console.log('📊 First reading:', first.timestamp, first.occupancy);
+          console.log('📊 Last reading:', last.timestamp, last.occupancy);
+        }
+        
         if (itemsWithOccupancy.length > 0) {
           // Calculate bar day entries/exits (difference since 3am)
           const barDay = calculateBarDayOccupancy(historicalData.data);
