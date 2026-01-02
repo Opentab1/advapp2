@@ -16,7 +16,7 @@ import { motion } from 'framer-motion';
 import { 
   Volume2, Sun, Users, UserPlus, UserMinus, 
   Thermometer, Music, Star, 
-  ExternalLink, TrendingUp, TrendingDown
+  ExternalLink
 } from 'lucide-react';
 import { BottomSheet } from '../common/BottomSheet';
 import { AnimatedNumber } from '../common/AnimatedNumber';
@@ -280,20 +280,6 @@ export function LiveStatsModal({
               <p className="text-sm text-warm-500 dark:text-warm-400">
                 Based on {reviews.reviewCount.toLocaleString()} reviews
               </p>
-              
-              {/* Trend indicator */}
-              {reviews.trend !== undefined && reviews.trend !== 0 && (
-                <div className={`mt-2 flex items-center gap-1 text-sm ${
-                  reviews.trend > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
-                }`}>
-                  {reviews.trend > 0 ? (
-                    <TrendingUp className="w-4 h-4" />
-                  ) : (
-                    <TrendingDown className="w-4 h-4" />
-                  )}
-                  <span>{reviews.trend > 0 ? '+' : ''}{reviews.trend.toFixed(1)} this month</span>
-                </div>
-              )}
             </div>
           </section>
         )}

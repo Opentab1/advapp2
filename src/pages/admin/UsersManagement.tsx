@@ -1,11 +1,9 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  Users, 
   Plus, 
   Search, 
   MoreVertical,
-  Mail,
   Building2,
   Shield,
   Edit,
@@ -31,7 +29,7 @@ interface UserAccount {
 
 export function UsersManagement() {
   const [searchTerm, setSearchTerm] = useState('');
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [, setShowCreateModal] = useState(false);
 
   // TODO: Replace with real data from API
   const users: UserAccount[] = [

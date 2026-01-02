@@ -190,30 +190,6 @@ export function useSessionMemory(options: UseSessionMemoryOptions = {}): UseSess
     setWelcomeDismissed(true);
   }, []);
 
-  // Calculate delta between last session and now (reserved for future use)
-  const _calculateDelta = useCallback((current: SessionSnapshot | null): SessionDelta | null => {
-    if (!lastSession || !current) return null;
-
-    const timeSinceLastVisit = (Date.now() - lastSession.timestamp) / 60000; // minutes
-
-    return {
-      pulseChange: current.pulseScore !== null && lastSession.pulseScore !== null
-        ? current.pulseScore - lastSession.pulseScore
-        : null,
-      decibelChange: current.decibels !== null && lastSession.decibels !== null
-        ? current.decibels - lastSession.decibels
-        : null,
-      lightChange: current.light !== null && lastSession.light !== null
-        ? current.light - lastSession.light
-        : null,
-      occupancyChange: current.occupancy - lastSession.occupancy,
-      timeSinceLastVisit,
-      lastVisitFormatted: formatTimeSince(timeSinceLastVisit),
-      isSameDay: isSameDayCheck(lastSession.timestamp, Date.now()),
-      isSameHour: lastSession.hourOfDay === new Date().getHours(),
-    };
-  }, [lastSession]);
-
   // Compute derived values
   const visitCount = sessionHistory.length;
   const lastVisitTimestamp = lastSession?.timestamp ?? null;

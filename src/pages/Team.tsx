@@ -8,8 +8,8 @@
  */
 
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Plus, Trophy, ChevronRight, Clock, Zap, Target, ArrowLeft } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Users, Plus, Trophy, ChevronRight, Clock } from 'lucide-react';
 import { staffService, StaffMember, StaffPerformance } from '../services/staff.service';
 import { AddStaffModal } from '../components/team/AddStaffModal';
 import { StaffDetailView } from '../components/team/StaffDetailView';

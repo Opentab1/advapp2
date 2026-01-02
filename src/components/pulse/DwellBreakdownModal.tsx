@@ -10,9 +10,8 @@
 
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Clock, DollarSign, TrendingUp, Lightbulb, AlertTriangle } from 'lucide-react';
+import { Clock, DollarSign, Lightbulb } from 'lucide-react';
 import { getDwellTimeCategory, formatDwellTime, getDwellTimeScore } from '../../utils/scoring';
-import { AnimatedNumber } from '../common/AnimatedNumber';
 import { DWELL_TIME_THRESHOLDS } from '../../utils/constants';
 
 interface DwellBreakdownModalProps {

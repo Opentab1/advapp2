@@ -4,9 +4,7 @@ import {
   Users, 
   Wifi, 
   AlertTriangle,
-  TrendingUp,
-  Calendar,
-  DollarSign
+  TrendingUp
 } from 'lucide-react';
 
 export function AdminDashboard() {

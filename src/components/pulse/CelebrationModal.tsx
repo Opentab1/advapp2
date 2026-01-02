@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Flame, Target, Star, X } from 'lucide-react';
+import { Trophy, Flame, Target, X } from 'lucide-react';
 
 export type CelebrationType = 'record' | 'streak' | 'goal';
 

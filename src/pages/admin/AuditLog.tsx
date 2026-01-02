@@ -1,14 +1,9 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  ScrollText, 
   Search, 
-  Filter,
   Download,
-  Calendar,
   User,
-  Building2,
-  Settings,
   UserPlus,
   Trash2,
   Edit,

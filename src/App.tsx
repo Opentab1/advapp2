@@ -37,9 +37,6 @@ import { usePulseScore } from './stores/pulseStore';
 function ProtectedDashboard() {
   const [activeTab, setActiveTab] = useState<TabId>('pulse');
   
-  const user = authService.getStoredUser();
-  const venueName = user?.venueName || 'Your Venue';
-  
   // Dark mode
   const { isDark, toggle: toggleDark } = useDarkMode();
   

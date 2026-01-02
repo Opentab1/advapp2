@@ -8,11 +8,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  X, Download, Share2, Clock, Users, Zap, Volume2, 
-  TrendingUp, TrendingDown, Minus, Trophy, Target,
-  ChevronDown, ChevronUp, Calendar, Star
+  X, Download, Share2, Users, Zap, Volume2, 
+  TrendingUp, TrendingDown,
+  ChevronDown, ChevronUp, Calendar
 } from 'lucide-react';
-import { AnimatedNumber } from '../common/AnimatedNumber';
 import apiService from '../../services/api.service';
 import { calculatePulseScore } from '../../utils/scoring';
 import type { SensorData } from '../../types';

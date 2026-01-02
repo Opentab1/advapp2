@@ -11,7 +11,7 @@
 
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Volume2, Sun, Info, TrendingUp, TrendingDown, Target, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { OPTIMAL_RANGES, FACTOR_WEIGHTS, SCORE_THRESHOLDS } from '../../utils/constants';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 

@@ -295,7 +295,6 @@ class AchievementsService {
 
   generateInsights(): Insight[] {
     const insights: Insight[] = [];
-    const venueId = this.getVenueId();
 
     // Staff insights
     const staffInsights = this.generateStaffInsights();
@@ -403,15 +402,18 @@ class AchievementsService {
       return daysSince <= 7 && r.previousValue;
     });
 
-    if (recentRecord && recentRecord.improvement) {
-      insights.push({
-        id: 'recent-record',
-        type: 'trend',
-        icon: '🏆',
-        title: `You set a new ${recentRecord.label} record!`,
-        description: `${recentRecord.value}${recentRecord.unit} — up ${recentRecord.improvement} from your previous best.`,
-        confidence: 1,
-      });
+    if (recentRecord && recentRecord.previousValue !== undefined) {
+      const improvement = recentRecord.value - recentRecord.previousValue;
+      if (improvement > 0) {
+        insights.push({
+          id: 'recent-record',
+          type: 'trend',
+          icon: '🏆',
+          title: `You set a new ${recentRecord.label} record!`,
+          description: `${recentRecord.value}${recentRecord.unit} — up ${improvement} from your previous best.`,
+          confidence: 1,
+        });
+      }
     }
 
     // General improvement suggestion

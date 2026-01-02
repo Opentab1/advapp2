@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  UserCog, 
   Plus, 
   Search, 
   Shield,
@@ -27,7 +26,7 @@ interface TeamMember {
 
 export function TeamManagement() {
   const [searchTerm, setSearchTerm] = useState('');
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [, setShowCreateModal] = useState(false);
   const [expandedPermissions, setExpandedPermissions] = useState<string | null>(null);
 
   // TODO: Replace with real data from API

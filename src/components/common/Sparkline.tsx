@@ -22,8 +22,8 @@ export function Sparkline({
   color = '#0077B6',
   showDot = true,
 }: SparklineProps) {
-  const path = useMemo(() => {
-    if (data.length < 2) return '';
+  const pathData = useMemo(() => {
+    if (data.length < 2) return null;
     
     const min = Math.min(...data);
     const max = Math.max(...data);
@@ -49,7 +49,7 @@ export function Sparkline({
     return { d, lastPoint: points[points.length - 1] };
   }, [data, width, height]);
   
-  if (data.length < 2) {
+  if (!pathData) {
     return (
       <div 
         className="flex items-center justify-center text-warm-400 text-xs"
@@ -64,7 +64,7 @@ export function Sparkline({
     <svg width={width} height={height} className="overflow-visible">
       {/* Line */}
       <motion.path
-        d={path.d}
+        d={pathData.d}
         fill="none"
         stroke={color}
         strokeWidth={2}
@@ -76,10 +76,10 @@ export function Sparkline({
       />
       
       {/* End dot */}
-      {showDot && path.lastPoint && (
+      {showDot && (
         <motion.circle
-          cx={path.lastPoint.x}
-          cy={path.lastPoint.y}
+          cx={pathData.lastPoint.x}
+          cy={pathData.lastPoint.y}
           r={3}
           fill={color}
           initial={{ scale: 0 }}

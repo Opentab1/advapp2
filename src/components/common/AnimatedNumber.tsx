@@ -4,7 +4,7 @@
  * WHOOP-style animated counting effect.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, useSpring, useTransform } from 'framer-motion';
 
 interface AnimatedNumberProps {

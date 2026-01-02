@@ -10,7 +10,7 @@
 
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Star, ExternalLink, TrendingUp, TrendingDown, MessageSquare, ThumbsUp, AlertTriangle } from 'lucide-react';
+import { Star, ExternalLink, MessageSquare, ThumbsUp, AlertTriangle } from 'lucide-react';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import type { GoogleReviewsData } from '../../services/google-reviews.service';
 
@@ -89,7 +89,6 @@ export function ReputationBreakdownModal({
   };
   
   const tier = getTierConfig(reviews.rating);
-  const score = Math.round(((reviews.rating - 1) / 4) * 100);
   
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Reputation">
@@ -122,18 +121,6 @@ export function ReputationBreakdownModal({
           <p className="text-sm text-warm-500 dark:text-warm-400">
             {reviews.reviewCount.toLocaleString()} reviews on Google
           </p>
-          
-          {/* Trend */}
-          {reviews.trend !== undefined && reviews.trend !== 0 && (
-            <div className={`inline-flex items-center gap-1 mt-2 px-3 py-1 rounded-full text-sm ${
-              reviews.trend > 0 
-                ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' 
-                : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
-            }`}>
-              {reviews.trend > 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-              <span>{reviews.trend > 0 ? '+' : ''}{reviews.trend.toFixed(1)} this month</span>
-            </div>
-          )}
         </div>
         
         {/* Tier Badge */}

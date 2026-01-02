@@ -11,7 +11,7 @@
 
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Users, UserPlus, UserMinus, TrendingUp, Clock, ArrowRight, Info } from 'lucide-react';
+import { Users, UserPlus, UserMinus, TrendingUp, Clock, Info } from 'lucide-react';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 
 interface CrowdBreakdownModalProps {
@@ -34,8 +34,6 @@ export function CrowdBreakdownModal({
   peakTime,
 }: CrowdBreakdownModalProps) {
   // Calculate metrics
-  const turnover = todayEntries > 0 ? ((todayExits / todayEntries) * 100) : 0;
-  const retentionRate = 100 - turnover;
   const estimatedCapacity = Math.max(peakOccupancy * 1.2, 50);
   const capacityUsage = Math.min(100, Math.round((currentOccupancy / estimatedCapacity) * 100));
   
@@ -180,7 +178,7 @@ interface TrafficCardProps {
   highlight?: boolean;
 }
 
-function TrafficCard({ icon: Icon, iconColor, label, value, subtext, highlight }: TrafficCardProps) {
+function TrafficCard({ icon: Icon, iconColor, label: _label, value, subtext, highlight }: TrafficCardProps) {
   return (
     <div className={`p-3 rounded-xl ${
       highlight 

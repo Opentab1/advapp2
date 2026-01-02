@@ -9,7 +9,7 @@
  */
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Wifi, WifiOff, AlertCircle, BarChart2, Zap } from 'lucide-react';
+import { WifiOff, AlertCircle, BarChart2, Zap } from 'lucide-react';
 
 // ============ SHIMMER SKELETON ============
 

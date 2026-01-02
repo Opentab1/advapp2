@@ -7,7 +7,6 @@ import {
   Building2,
   Wifi,
   AlertTriangle,
-  Calendar,
   Activity
 } from 'lucide-react';
 

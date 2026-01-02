@@ -17,7 +17,6 @@ export function PullToRefresh({ children, onRefresh, disabled }: PullToRefreshPr
   const containerRef = useRef<HTMLDivElement>(null);
   const y = useMotionValue(0);
   
-  const pullProgress = useTransform(y, [0, 80], [0, 1]);
   const rotation = useTransform(y, [0, 80], [0, 360]);
   const opacity = useTransform(y, [0, 40, 80], [0, 0.5, 1]);
   const scale = useTransform(y, [0, 80], [0.5, 1]);
