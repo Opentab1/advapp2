@@ -178,6 +178,7 @@ export function History() {
               metric="occupancy"
               title=""
               color="#22C55E"
+              timeRange={timeRange}
             />
           </div>
           
@@ -189,6 +190,7 @@ export function History() {
               metric="decibels"
               title=""
               color="#0077B6"
+              timeRange={timeRange}
             />
           </div>
           
@@ -200,6 +202,7 @@ export function History() {
               metric="light"
               title=""
               color="#F59E0B"
+              timeRange={timeRange}
             />
           </div>
         </motion.div>
