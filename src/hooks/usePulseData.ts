@@ -357,12 +357,13 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         const stored = localStorage.getItem(barDayKey);
         if (stored) {
           baseline = JSON.parse(stored);
+          console.log('📊 Using stored baseline:', baseline, 'from', barDayStart.toDateString());
         } else {
           // No baseline for today - this is the first reading since 3am
           // Save current values as the baseline
           baseline = { entries, exits };
           localStorage.setItem(barDayKey, JSON.stringify(baseline));
-          console.log('📊 Saved new bar day baseline:', baseline, 'for', barDayStart.toDateString());
+          console.log('📊 NEW baseline saved:', baseline, 'for', barDayStart.toDateString());
           
           // Clean up old baselines (keep only last 7 days)
           for (let i = 0; i < localStorage.length; i++) {
