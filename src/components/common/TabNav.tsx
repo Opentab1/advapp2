@@ -1,15 +1,15 @@
 /**
  * TabNav - Bottom navigation for mobile + side nav for desktop
  * 
- * 4 tabs: Pulse, History, Songs, Settings
+ * 5 tabs: Pulse, History, Team, Songs, Settings
  * Mobile: Fixed bottom bar
- * Desktop: Left sidebar (optional, can stay bottom)
+ * Desktop: Left sidebar
  */
 
 import { motion } from 'framer-motion';
-import { Zap, BarChart2, Music, Settings, LucideIcon } from 'lucide-react';
+import { Zap, BarChart2, Users, Music, Settings, LucideIcon } from 'lucide-react';
 
-export type TabId = 'pulse' | 'history' | 'songs' | 'settings';
+export type TabId = 'pulse' | 'history' | 'team' | 'songs' | 'settings';
 
 interface Tab {
   id: TabId;
@@ -20,6 +20,7 @@ interface Tab {
 const TABS: Tab[] = [
   { id: 'pulse', label: 'Pulse', icon: Zap },
   { id: 'history', label: 'History', icon: BarChart2 },
+  { id: 'team', label: 'Team', icon: Users },
   { id: 'songs', label: 'Songs', icon: Music },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
@@ -78,8 +79,8 @@ function TabButton({ tab, isActive, onClick, variant = 'mobile' }: TabButtonProp
     <motion.button
       onClick={onClick}
       className={`
-        relative flex flex-col items-center justify-center gap-1 rounded-xl transition-colors
-        ${variant === 'desktop' ? 'p-3' : 'px-4 py-2 min-w-[64px]'}
+        relative flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors
+        ${variant === 'desktop' ? 'p-3' : 'px-2 py-2 min-w-[56px]'}
         ${isActive 
           ? 'text-primary' 
           : 'text-warm-400 hover:text-warm-600'

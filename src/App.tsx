@@ -18,6 +18,7 @@ import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
 import { Pulse } from './pages/Pulse';
 import { History } from './pages/History';
+import { Team } from './pages/Team';
 import { Settings } from './pages/Settings';
 import { SongLog } from './pages/SongLog';
 
@@ -64,6 +65,8 @@ function ProtectedDashboard() {
         return <Pulse />;
       case 'history':
         return <History />;
+      case 'team':
+        return <Team />;
       case 'songs':
         return <SongLog />;
       case 'settings':
