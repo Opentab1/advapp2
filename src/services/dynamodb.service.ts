@@ -72,6 +72,13 @@ class HistoricalDataCache {
     }
   }
   
+  // Clear cache for a specific venue and range
+  clearRange(venueId: string, range: string): void {
+    const key = this.getCacheKey(venueId, range);
+    this.cache.delete(key);
+    console.log(`📦 [${range}] Cache CLEARED for venue ${venueId}`);
+  }
+  
   // Clear all cache
   clearAll(): void {
     this.cache.clear();

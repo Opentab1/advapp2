@@ -17,6 +17,7 @@ import { WeeklyComparison } from '../components/history/WeeklyComparison';
 import { useWeeklyComparison } from '../hooks/useWeeklyComparison';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
+import { historicalCache } from '../services/dynamodb.service';
 import type { TimeRange, SensorData, HistoricalData } from '../types';
 
 // ============ TIME RANGES ============
@@ -47,13 +48,26 @@ export function History() {
   const fetchData = useCallback(async () => {
     if (!venueId) return;
     
+    console.log(`📊 History: Fetching data for range: ${timeRange}`);
     setLoading(true);
     setError(null);
+    setData(null); // Clear old data to force re-render
     
     try {
       const result = await apiService.getHistoricalData(venueId, timeRange);
+      console.log(`📊 History: Received ${result?.data?.length || 0} data points for ${timeRange}`);
+      
+      // Log date range of received data
+      if (result?.data?.length > 0) {
+        const sorted = [...result.data].sort((a, b) => 
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+        console.log(`📊 History: Data range: ${sorted[0].timestamp} to ${sorted[sorted.length - 1].timestamp}`);
+      }
+      
       setData(result);
     } catch (err: any) {
+      console.error(`📊 History: Error fetching ${timeRange}:`, err);
       setError(err.message || 'Failed to load historical data');
     } finally {
       setLoading(false);
@@ -63,6 +77,14 @@ export function History() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+  
+  // Force refresh - clears cache first
+  const handleRefresh = () => {
+    if (venueId) {
+      historicalCache.clearRange(venueId, timeRange);
+    }
+    fetchData();
+  };
   
   // Export handler
   const handleExport = () => {
@@ -97,7 +119,7 @@ export function History() {
             Export
           </motion.button>
           <motion.button
-            onClick={fetchData}
+            onClick={handleRefresh}
             disabled={loading}
             className="p-2 rounded-xl bg-warm-100 dark:bg-warm-800 hover:bg-warm-200 dark:hover:bg-warm-700 transition-colors"
             whileTap={{ scale: 0.95 }}
@@ -117,7 +139,15 @@ export function History() {
         {TIME_RANGES.map((range) => (
           <button
             key={range.value}
-            onClick={() => setTimeRange(range.value)}
+            onClick={() => {
+              if (range.value !== timeRange) {
+                // Clear cache for the new range to ensure fresh data
+                if (venueId) {
+                  historicalCache.clearRange(venueId, range.value);
+                }
+                setTimeRange(range.value);
+              }
+            }}
             className={`
               px-4 py-2 rounded-xl text-sm font-medium transition-colors
               ${timeRange === range.value
@@ -165,6 +195,7 @@ export function History() {
       {/* Charts */}
       {data?.data && data.data.length > 0 && (
         <motion.div
+          key={`charts-${timeRange}-${data.data.length}`}
           className="space-y-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -174,6 +205,7 @@ export function History() {
           <div className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors">
             <h3 className="text-base font-semibold text-warm-800 dark:text-warm-100 mb-4">Occupancy</h3>
             <DataChart
+              key={`occupancy-${timeRange}`}
               data={data.data}
               metric="occupancy"
               title=""
@@ -186,6 +218,7 @@ export function History() {
           <div className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors">
             <h3 className="text-base font-semibold text-warm-800 dark:text-warm-100 mb-4">Sound Level</h3>
             <DataChart
+              key={`sound-${timeRange}`}
               data={data.data}
               metric="decibels"
               title=""
@@ -198,6 +231,7 @@ export function History() {
           <div className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors">
             <h3 className="text-base font-semibold text-warm-800 dark:text-warm-100 mb-4">Light Level</h3>
             <DataChart
+              key={`light-${timeRange}`}
               data={data.data}
               metric="light"
               title=""
