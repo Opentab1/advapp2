@@ -123,118 +123,64 @@ class ApiService {
   async getOccupancyMetrics(venueId: string): Promise<OccupancyMetrics> {
     console.log('🔍 Fetching occupancy metrics from DynamoDB for venue:', venueId);
     
-    // Helper to calculate metrics from sensor data using bar day logic
-    const calculateFromSensorData = async (): Promise<OccupancyMetrics | null> => {
+    try {
+      // Try the dedicated occupancy metrics resolver
+      const metrics = await dynamoDBService.getOccupancyMetrics(venueId);
+      console.log('📊 Occupancy metrics from backend:', {
+        current: metrics.current,
+        todayEntries: metrics.todayEntries,
+        todayExits: metrics.todayExits
+      });
+      
+      // Return backend values as-is - trust the backend resolver
+      // The backend should be properly calculating these values
+      return metrics;
+    } catch (error: any) {
+      console.warn('⚠️ Dedicated occupancy resolver failed:', error.message);
+      
+      // Fallback: Try to get occupancy from live sensor data
       try {
-        const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '24h');
-        if (historicalData?.data && historicalData.data.length > 0) {
-          // Use the proper bar day calculation utility
-          const { calculateBarDayOccupancy } = await import('../utils/barDay');
-          const barDayOccupancy = calculateBarDayOccupancy(historicalData.data);
+        const liveData = await dynamoDBService.getLiveSensorData(venueId);
+        console.log('📊 Fallback: Using live sensor data, occupancy:', liveData?.occupancy);
+        
+        if (liveData?.occupancy) {
+          // For entries/exits, try to calculate from historical data
+          let todayEntries = 0;
+          let todayExits = 0;
           
-          // Find peak from the actual data
-          let peakOccupancy = barDayOccupancy.current;
-          historicalData.data.forEach(item => {
-            if (item.occupancy?.current && item.occupancy.current > peakOccupancy) {
-              // Only use if it's reasonable (under 1000 - a busy venue max)
-              if (item.occupancy.current < 1000) {
-                peakOccupancy = item.occupancy.current;
-              }
+          try {
+            const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '24h');
+            if (historicalData?.data && historicalData.data.length > 0) {
+              const { calculateBarDayOccupancy } = await import('../utils/barDay');
+              const barDayResult = calculateBarDayOccupancy(historicalData.data);
+              todayEntries = barDayResult.entries;
+              todayExits = barDayResult.exits;
+              console.log('📊 Bar day calculated entries/exits:', { todayEntries, todayExits });
             }
-          });
+          } catch (calcError) {
+            console.warn('⚠️ Bar day calculation failed, using 0 for entries/exits');
+          }
           
-          const peakTime = new Date().toLocaleTimeString('en-US', { 
-            hour: 'numeric', 
-            minute: '2-digit' 
-          });
-          
-          const calculatedMetrics: OccupancyMetrics = {
-            current: barDayOccupancy.current,
-            todayEntries: barDayOccupancy.entries,
-            todayExits: barDayOccupancy.exits,
-            todayTotal: barDayOccupancy.entries,
+          return {
+            current: liveData.occupancy.current || 0,
+            todayEntries,
+            todayExits,
+            todayTotal: todayEntries,
             sevenDayAvg: 0,
             fourteenDayAvg: 0,
             thirtyDayAvg: 0,
-            peakOccupancy,
-            peakTime,
+            peakOccupancy: liveData.occupancy.current || 0,
+            peakTime: undefined,
             avgDwellTimeMinutes: null
           };
-          
-          console.log('✅ Occupancy calculated using bar day logic:', calculatedMetrics);
-          return calculatedMetrics;
         }
       } catch (fallbackError) {
-        console.error('❌ Bar day occupancy calculation failed:', fallbackError);
-      }
-      return null;
-    };
-    
-    try {
-      // Try the dedicated occupancy metrics resolver first
-      const metrics = await dynamoDBService.getOccupancyMetrics(venueId);
-      console.log('📊 Raw occupancy metrics from backend:', {
-        current: metrics.current,
-        todayEntries: metrics.todayEntries,
-        todayExits: metrics.todayExits
-      });
-      
-      // Validate the metrics - check if values look like cumulative totals
-      // Signs of cumulative values:
-      // 1. todayEntries/todayExits are unreasonably high (>5000 in a single day is suspicious)
-      // 2. current is much higher than expected for a venue
-      const REASONABLE_DAILY_MAX = 2000; // Max entries/exits per day
-      const REASONABLE_CURRENT_MAX = 500; // Max people currently inside
-      
-      const looksLikeCumulative = 
-        (metrics.todayEntries > REASONABLE_DAILY_MAX) ||
-        (metrics.todayExits > REASONABLE_DAILY_MAX) ||
-        (metrics.current > REASONABLE_CURRENT_MAX);
-      
-      if (looksLikeCumulative) {
-        console.warn('⚠️ Occupancy values look like cumulative totals, recalculating using bar day logic...');
-        console.warn(`   todayEntries: ${metrics.todayEntries}, todayExits: ${metrics.todayExits}, current: ${metrics.current}`);
-        
-        // Recalculate using bar day logic
-        const recalculated = await calculateFromSensorData();
-        if (recalculated) {
-          return recalculated;
-        }
-        
-        // If recalculation failed, return zeros to avoid showing bogus numbers
-        console.warn('⚠️ Recalculation failed, returning zeros');
-        return {
-          ...metrics,
-          current: 0,
-          todayEntries: 0,
-          todayExits: 0,
-          todayTotal: 0,
-          peakOccupancy: 0
-        };
-      }
-      
-      console.log('✅ Occupancy metrics look valid:', {
-        current: metrics.current,
-        todayEntries: metrics.todayEntries,
-        todayExits: metrics.todayExits
-      });
-      return metrics;
-    } catch (error: any) {
-      console.warn('⚠️ Dedicated occupancy metrics resolver failed, trying to calculate from sensor data...');
-      
-      // Fallback: Calculate occupancy using bar day logic (3am-3am)
-      const calculated = await calculateFromSensorData();
-      if (calculated) {
-        return calculated;
+        console.error('❌ Live sensor fallback also failed:', fallbackError);
       }
       
       // If all else fails, throw the original error
       const errorMessage = error?.message || error?.toString() || 'Unknown error';
-      if (errorMessage.startsWith('Failed to fetch occupancy metrics from DynamoDB') || 
-          errorMessage.startsWith('Failed to fetch')) {
-        throw error;
-      }
-      throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
+      throw new Error(`Failed to fetch occupancy metrics: ${errorMessage}`);
     }
   }
 
