@@ -40,20 +40,27 @@ export function History() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<HistoricalData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fetchId, setFetchId] = useState(0); // Forces chart re-render on new fetch
   
   // Weekly comparison data
   const weeklyComparison = useWeeklyComparison(venueId);
   
   // Fetch data
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (forceRefresh = false) => {
     if (!venueId) return;
     
-    console.log(`📊 History: Fetching data for range: ${timeRange}`);
+    console.log(`📊 History: Fetching data for range: ${timeRange}${forceRefresh ? ' (force refresh)' : ''}`);
     setLoading(true);
     setError(null);
     setData(null); // Clear old data to force re-render
+    setFetchId(prev => prev + 1); // Increment to force chart remount
     
     try {
+      // Always clear cache before fetching to ensure fresh data
+      if (forceRefresh) {
+        historicalCache.clearRange(venueId, timeRange);
+      }
+      
       const result = await apiService.getHistoricalData(venueId, timeRange);
       console.log(`📊 History: Received ${result?.data?.length || 0} data points for ${timeRange}`);
       
@@ -75,15 +82,12 @@ export function History() {
   }, [venueId, timeRange]);
   
   useEffect(() => {
-    fetchData();
+    fetchData(false); // Don't force refresh on initial load
   }, [fetchData]);
   
   // Force refresh - clears cache first
   const handleRefresh = () => {
-    if (venueId) {
-      historicalCache.clearRange(venueId, timeRange);
-    }
-    fetchData();
+    fetchData(true); // Force refresh clears cache
   };
   
   // Export handler
@@ -139,17 +143,20 @@ export function History() {
         {TIME_RANGES.map((range) => (
           <button
             key={range.value}
+            disabled={loading}
             onClick={() => {
               if (range.value !== timeRange) {
                 // Clear cache for the new range to ensure fresh data
                 if (venueId) {
                   historicalCache.clearRange(venueId, range.value);
                 }
+                console.log(`📊 History: Switching from ${timeRange} to ${range.value}`);
                 setTimeRange(range.value);
               }
             }}
             className={`
               px-4 py-2 rounded-xl text-sm font-medium transition-colors
+              ${loading ? 'opacity-50 cursor-wait' : ''}
               ${timeRange === range.value
                 ? 'bg-primary text-white'
                 : 'bg-warm-800 text-warm-300 hover:bg-warm-700'
@@ -195,7 +202,7 @@ export function History() {
       {/* Charts */}
       {data?.data && data.data.length > 0 && (
         <motion.div
-          key={`charts-${timeRange}-${data.data.length}`}
+          key={`charts-${timeRange}-${fetchId}`}
           className="space-y-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -205,7 +212,7 @@ export function History() {
           <div className="bg-warm-800 rounded-2xl border border-warm-700 p-4 transition-colors">
             <h3 className="text-base font-semibold text-warm-100 mb-4">Occupancy</h3>
             <DataChart
-              key={`occupancy-${timeRange}`}
+              key={`occupancy-${timeRange}-${fetchId}`}
               data={data.data}
               metric="occupancy"
               title=""
@@ -218,7 +225,7 @@ export function History() {
           <div className="bg-warm-800 rounded-2xl border border-warm-700 p-4 transition-colors">
             <h3 className="text-base font-semibold text-warm-100 mb-4">Sound Level</h3>
             <DataChart
-              key={`sound-${timeRange}`}
+              key={`sound-${timeRange}-${fetchId}`}
               data={data.data}
               metric="decibels"
               title=""
@@ -231,7 +238,7 @@ export function History() {
           <div className="bg-warm-800 rounded-2xl border border-warm-700 p-4 transition-colors">
             <h3 className="text-base font-semibold text-warm-100 mb-4">Light Level</h3>
             <DataChart
-              key={`light-${timeRange}`}
+              key={`light-${timeRange}-${fetchId}`}
               data={data.data}
               metric="light"
               title=""
@@ -245,6 +252,7 @@ export function History() {
       {/* Summary Stats */}
       {summary && (
         <motion.div
+          key={`summary-${timeRange}-${fetchId}`}
           className="bg-warm-800 rounded-2xl border border-warm-700 p-4 transition-colors"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
