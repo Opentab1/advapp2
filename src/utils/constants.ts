@@ -5,8 +5,68 @@
  * Single source of truth for all scoring and recommendation logic.
  */
 
-// ============ OPTIMAL RANGES ============
-// These define "good" conditions for a bar/venue environment
+// ============ TIME SLOTS ============
+// Different times have different optimal conditions
+
+export type TimeSlot = 
+  | 'weekday_happy_hour'    // Mon-Thu 4-7pm
+  | 'weekday_night'         // Mon-Thu 7pm-close
+  | 'friday_early'          // Fri 4-9pm
+  | 'friday_peak'           // Fri 9pm-close
+  | 'saturday_early'        // Sat 4-9pm
+  | 'saturday_peak'         // Sat 9pm-close
+  | 'sunday_funday'         // Sun all day
+  | 'daytime';              // Before 4pm any day
+
+export const TIME_SLOT_RANGES: Record<TimeSlot, {
+  sound: { min: number; max: number };
+  light: { min: number; max: number };
+  genres: string[];
+}> = {
+  weekday_happy_hour: {
+    sound: { min: 65, max: 72 },
+    light: { min: 150, max: 400 },
+    genres: ['chill', 'jazz', 'acoustic', 'lounge', 'indie'],
+  },
+  weekday_night: {
+    sound: { min: 70, max: 78 },
+    light: { min: 50, max: 200 },
+    genres: ['pop', 'r&b', 'indie', 'soul', 'funk'],
+  },
+  friday_early: {
+    sound: { min: 70, max: 75 },
+    light: { min: 100, max: 300 },
+    genres: ['pop', 'hip-hop', 'r&b', 'dance'],
+  },
+  friday_peak: {
+    sound: { min: 75, max: 85 },
+    light: { min: 30, max: 150 },
+    genres: ['edm', 'hip-hop', 'dance', 'party', 'house', 'top 40'],
+  },
+  saturday_early: {
+    sound: { min: 70, max: 75 },
+    light: { min: 100, max: 300 },
+    genres: ['pop', 'hip-hop', 'r&b', 'dance'],
+  },
+  saturday_peak: {
+    sound: { min: 75, max: 85 },
+    light: { min: 30, max: 150 },
+    genres: ['edm', 'hip-hop', 'dance', 'party', 'house', 'top 40'],
+  },
+  sunday_funday: {
+    sound: { min: 68, max: 76 },
+    light: { min: 100, max: 350 },
+    genres: ['feel-good', 'pop', 'brunch', 'soul', 'reggae', 'classic'],
+  },
+  daytime: {
+    sound: { min: 60, max: 70 },
+    light: { min: 200, max: 500 },
+    genres: ['background', 'chill', 'acoustic', 'jazz'],
+  },
+};
+
+// ============ OPTIMAL RANGES (defaults) ============
+// Fallback ranges when time slot detection fails
 
 export const OPTIMAL_RANGES = {
   sound: {
@@ -43,8 +103,23 @@ export const OPTIMAL_RANGES = {
 // How much each factor contributes to Pulse Score (must sum to 1.0)
 
 export const FACTOR_WEIGHTS = {
-  sound: 0.60,  // 60% - Most impactful for bar atmosphere
-  light: 0.40,  // 40% - Sets the mood
+  sound: 0.40,      // 40% - Most impactful for bar atmosphere
+  light: 0.25,      // 25% - Sets the mood
+  temperature: 0.15, // 15% - Comfort factor
+  genre: 0.10,      // 10% - Right music for the moment
+  vibe: 0.10,       // 10% - Overall time/day fit
+} as const;
+
+// ============ TEMPERATURE COMFORT ============
+// Optimal indoor temp based on outdoor temp
+
+export const TEMP_COMFORT = {
+  // If outdoor is hot (>80°F), indoor should be cooler
+  hotOutdoor: { min: 68, max: 72 },
+  // If outdoor is mild (60-80°F), indoor should be comfortable
+  mildOutdoor: { min: 68, max: 74 },
+  // If outdoor is cold (<60°F), indoor should be warmer
+  coldOutdoor: { min: 70, max: 76 },
 } as const;
 
 // ============ SCORE THRESHOLDS ============

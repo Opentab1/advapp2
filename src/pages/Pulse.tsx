@@ -460,8 +460,15 @@ export function Pulse() {
         pulseStatusLabel={pulseData.pulseStatusLabel}
         soundScore={pulseData.soundScore}
         lightScore={pulseData.lightScore}
+        tempScore={pulseData.tempScore}
+        genreScore={pulseData.genreScore}
+        vibeScore={pulseData.vibeScore}
         currentDecibels={pulseData.currentDecibels}
         currentLight={pulseData.currentLight}
+        indoorTemp={pulseData.sensorData?.indoorTemp}
+        outdoorTemp={pulseData.weather?.temperature}
+        currentSong={pulseData.sensorData?.currentSong}
+        timeSlot={pulseData.timeSlot}
       />
       
       {/* Dwell Breakdown */}

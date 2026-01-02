@@ -3,17 +3,17 @@
  * 
  * Shows:
  * - Overall score with clear status
- * - Factor breakdown with WHY each score is what it is
- * - What optimal looks like
+ * - Factor breakdown: Sound, Light, Temp, Genre, Vibe
+ * - Context-aware based on time/day
  * - How to improve
- * - Historical context
  */
 
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { OPTIMAL_RANGES, FACTOR_WEIGHTS, SCORE_THRESHOLDS } from '../../utils/constants';
+import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Thermometer, Music, Clock } from 'lucide-react';
+import { OPTIMAL_RANGES, FACTOR_WEIGHTS, SCORE_THRESHOLDS, TIME_SLOT_RANGES, type TimeSlot } from '../../utils/constants';
 import { AnimatedNumber } from '../common/AnimatedNumber';
+import { getCurrentTimeSlot } from '../../utils/scoring';
 
 interface PulseBreakdownModalProps {
   isOpen: boolean;
@@ -22,8 +22,15 @@ interface PulseBreakdownModalProps {
   pulseStatusLabel: string;
   soundScore: number;
   lightScore: number;
+  tempScore: number;
+  genreScore: number;
+  vibeScore: number;
   currentDecibels: number | null;
   currentLight: number | null;
+  indoorTemp?: number | null;
+  outdoorTemp?: number | null;
+  currentSong?: string | null;
+  timeSlot?: string;
 }
 
 export function PulseBreakdownModal({
@@ -33,9 +40,32 @@ export function PulseBreakdownModal({
   pulseStatusLabel,
   soundScore,
   lightScore,
+  tempScore,
+  genreScore,
+  vibeScore,
   currentDecibels,
   currentLight,
+  indoorTemp,
+  outdoorTemp,
+  currentSong,
+  timeSlot: timeSlotProp,
 }: PulseBreakdownModalProps) {
+  // Get time slot
+  const timeSlot = (timeSlotProp as TimeSlot) || getCurrentTimeSlot();
+  const ranges = TIME_SLOT_RANGES[timeSlot];
+  
+  // Time slot display labels
+  const slotLabels: Record<TimeSlot, string> = {
+    weekday_happy_hour: 'Happy Hour',
+    weekday_night: 'Weeknight',
+    friday_early: 'Friday Evening',
+    friday_peak: 'Friday Night',
+    saturday_early: 'Saturday Evening',
+    saturday_peak: 'Saturday Night',
+    sunday_funday: 'Sunday Funday',
+    daytime: 'Daytime',
+  };
+  
   // Determine status colors
   const getStatusStyle = (score: number | null) => {
     if (score === null) return 'bg-warm-700 text-warm-300';
@@ -54,8 +84,11 @@ export function PulseBreakdownModal({
   const StatusIcon = getStatusIcon(pulseScore);
   
   // Generate insights based on scores
-  const soundInsight = getSoundInsight(currentDecibels, soundScore);
-  const lightInsight = getLightInsight(currentLight, lightScore);
+  const soundInsight = getSoundInsight(currentDecibels, soundScore, ranges.sound);
+  const lightInsight = getLightInsight(currentLight, lightScore, ranges.light);
+  const tempInsight = getTempInsight(indoorTemp, tempScore, outdoorTemp);
+  const genreInsight = getGenreInsight(currentSong, genreScore, timeSlot);
+  const vibeInsight = getVibeInsight(vibeScore, timeSlot);
   
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Pulse Score">
@@ -78,8 +111,14 @@ export function PulseBreakdownModal({
             {pulseStatusLabel}
           </p>
           
+          {/* Time slot context */}
+          <p className="text-xs text-warm-500 mt-2">
+            <Clock className="w-3 h-3 inline mr-1" />
+            Optimized for {slotLabels[timeSlot]}
+          </p>
+          
           {/* Score meaning */}
-          <p className="text-sm text-warm-400 mt-3 px-4">
+          <p className="text-sm text-warm-400 mt-2 px-4">
             {pulseScore !== null && pulseScore >= SCORE_THRESHOLDS.optimal
               ? 'Your venue atmosphere is ideal for guests right now.'
               : pulseScore !== null && pulseScore >= SCORE_THRESHOLDS.good
@@ -94,27 +133,60 @@ export function PulseBreakdownModal({
             Score Breakdown
           </h4>
           
-          <div className="space-y-4">
+          <div className="space-y-3">
             {/* Sound Factor */}
             <FactorCard
               icon={Volume2}
-              label="Sound Level"
+              label="Sound"
               weight={Math.round(FACTOR_WEIGHTS.sound * 100)}
               score={soundScore}
               currentValue={currentDecibels !== null ? `${currentDecibels.toFixed(0)} dB` : '--'}
-              optimalRange={`${OPTIMAL_RANGES.sound.min}-${OPTIMAL_RANGES.sound.max} dB`}
+              optimalRange={`${ranges.sound.min}-${ranges.sound.max} dB`}
               insight={soundInsight}
             />
             
             {/* Light Factor */}
             <FactorCard
               icon={Sun}
-              label="Light Level"
+              label="Light"
               weight={Math.round(FACTOR_WEIGHTS.light * 100)}
               score={lightScore}
               currentValue={currentLight !== null ? `${currentLight.toFixed(0)} lux` : '--'}
-              optimalRange={`${OPTIMAL_RANGES.light.min}-${OPTIMAL_RANGES.light.max} lux`}
+              optimalRange={`${ranges.light.min}-${ranges.light.max} lux`}
               insight={lightInsight}
+            />
+            
+            {/* Temperature Factor */}
+            <FactorCard
+              icon={Thermometer}
+              label="Comfort"
+              weight={Math.round(FACTOR_WEIGHTS.temperature * 100)}
+              score={tempScore}
+              currentValue={indoorTemp !== null && indoorTemp !== undefined ? `${indoorTemp.toFixed(0)}°F` : '--'}
+              optimalRange={outdoorTemp && outdoorTemp > 80 ? '68-72°F' : '68-74°F'}
+              insight={tempInsight}
+            />
+            
+            {/* Genre Factor */}
+            <FactorCard
+              icon={Music}
+              label="Music Fit"
+              weight={Math.round(FACTOR_WEIGHTS.genre * 100)}
+              score={genreScore}
+              currentValue={currentSong ? (currentSong.length > 20 ? currentSong.slice(0, 20) + '...' : currentSong) : 'No music'}
+              optimalRange={ranges.genres.slice(0, 3).join(', ')}
+              insight={genreInsight}
+            />
+            
+            {/* Vibe Factor */}
+            <FactorCard
+              icon={Clock}
+              label="Vibe Match"
+              weight={Math.round(FACTOR_WEIGHTS.vibe * 100)}
+              score={vibeScore}
+              currentValue={slotLabels[timeSlot]}
+              optimalRange="All factors aligned"
+              insight={vibeInsight}
             />
           </div>
         </div>
@@ -128,18 +200,26 @@ export function PulseBreakdownModal({
             </h4>
           </div>
           
-          <div className="space-y-2 text-sm">
+          <div className="space-y-1.5 text-sm">
             <div className="flex justify-between text-warm-300">
-              <span>Sound: {soundScore} × {Math.round(FACTOR_WEIGHTS.sound * 100)}%</span>
-              <span className="font-medium text-warm-100">
-                {(soundScore * FACTOR_WEIGHTS.sound).toFixed(0)}
-              </span>
+              <span>Sound × {Math.round(FACTOR_WEIGHTS.sound * 100)}%</span>
+              <span className="font-medium text-warm-100">{(soundScore * FACTOR_WEIGHTS.sound).toFixed(0)}</span>
             </div>
             <div className="flex justify-between text-warm-300">
-              <span>Light: {lightScore} × {Math.round(FACTOR_WEIGHTS.light * 100)}%</span>
-              <span className="font-medium text-warm-100">
-                {(lightScore * FACTOR_WEIGHTS.light).toFixed(0)}
-              </span>
+              <span>Light × {Math.round(FACTOR_WEIGHTS.light * 100)}%</span>
+              <span className="font-medium text-warm-100">{(lightScore * FACTOR_WEIGHTS.light).toFixed(0)}</span>
+            </div>
+            <div className="flex justify-between text-warm-300">
+              <span>Comfort × {Math.round(FACTOR_WEIGHTS.temperature * 100)}%</span>
+              <span className="font-medium text-warm-100">{(tempScore * FACTOR_WEIGHTS.temperature).toFixed(0)}</span>
+            </div>
+            <div className="flex justify-between text-warm-300">
+              <span>Music × {Math.round(FACTOR_WEIGHTS.genre * 100)}%</span>
+              <span className="font-medium text-warm-100">{(genreScore * FACTOR_WEIGHTS.genre).toFixed(0)}</span>
+            </div>
+            <div className="flex justify-between text-warm-300">
+              <span>Vibe × {Math.round(FACTOR_WEIGHTS.vibe * 100)}%</span>
+              <span className="font-medium text-warm-100">{(vibeScore * FACTOR_WEIGHTS.vibe).toFixed(0)}</span>
             </div>
             <div className="flex justify-between pt-2 border-t border-warm-600 font-semibold text-warm-100">
               <span>Pulse Score</span>
@@ -256,74 +336,115 @@ function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRan
 
 // ============ INSIGHT GENERATORS ============
 
-function getSoundInsight(db: number | null, score: number): { status: 'optimal' | 'warning' | 'critical'; message: string; action?: string } {
+type InsightResult = { status: 'optimal' | 'warning' | 'critical'; message: string; action?: string };
+
+function getSoundInsight(db: number | null, score: number, range: { min: number; max: number }): InsightResult {
   if (db === null) {
-    return { status: 'warning', message: 'No sound data available', action: 'Check sensor connection' };
+    return { status: 'warning', message: 'No sound data', action: 'Check sensor' };
   }
   
   if (score >= 85) {
-    return { status: 'optimal', message: 'Perfect level for conversation and atmosphere' };
+    return { status: 'optimal', message: 'Perfect energy level' };
   }
   
-  if (db > OPTIMAL_RANGES.sound.max) {
-    const diff = db - OPTIMAL_RANGES.sound.max;
+  if (db > range.max) {
+    const diff = db - range.max;
     if (diff > 10) {
-      return { 
-        status: 'critical', 
-        message: `${diff.toFixed(0)} dB above optimal — guests can't hear each other`,
-        action: 'Lower music volume immediately'
-      };
+      return { status: 'critical', message: 'Too loud right now', action: 'Lower music' };
     }
-    return { 
-      status: 'warning', 
-      message: 'Slightly loud — some guests may struggle to chat',
-      action: 'Consider lowering music by a few notches'
-    };
+    return { status: 'warning', message: 'Slightly loud', action: 'Consider turning down' };
   }
   
-  if (db < OPTIMAL_RANGES.sound.min) {
-    return { 
-      status: 'warning', 
-      message: 'Too quiet — venue feels empty',
-      action: 'Increase background music to add energy'
-    };
+  if (db < range.min) {
+    return { status: 'warning', message: 'Too quiet for now', action: 'Add more energy' };
   }
   
-  return { status: 'optimal', message: 'Sound level is good' };
+  return { status: 'optimal', message: 'Sound is good' };
 }
 
-function getLightInsight(lux: number | null, score: number): { status: 'optimal' | 'warning' | 'critical'; message: string; action?: string } {
+function getLightInsight(lux: number | null, score: number, range: { min: number; max: number }): InsightResult {
   if (lux === null) {
-    return { status: 'warning', message: 'No light data available', action: 'Check sensor connection' };
+    return { status: 'warning', message: 'No light data', action: 'Check sensor' };
   }
-  
-  const hour = new Date().getHours();
-  const isEvening = hour >= 18 || hour < 4;
   
   if (score >= 85) {
-    return { status: 'optimal', message: isEvening ? 'Perfect ambient lighting for evening' : 'Good daytime lighting' };
+    return { status: 'optimal', message: 'Perfect ambiance' };
   }
   
-  if (lux > OPTIMAL_RANGES.light.max) {
-    if (isEvening) {
-      return { 
-        status: 'warning', 
-        message: 'Too bright for evening ambiance',
-        action: 'Dim the lights to create a cozy atmosphere'
-      };
-    }
-    return { status: 'optimal', message: 'Bright, but acceptable for daytime' };
+  if (lux > range.max) {
+    return { status: 'warning', message: 'Too bright', action: 'Dim the lights' };
   }
   
-  if (lux < OPTIMAL_RANGES.light.min) {
-    return { 
-      status: 'warning', 
-      message: 'Very dim — guests may struggle to read menus',
-      action: 'Increase lighting slightly'
-    };
+  if (lux < range.min) {
+    return { status: 'warning', message: 'Too dark', action: 'Brighten up a bit' };
   }
   
   return { status: 'optimal', message: 'Lighting is good' };
+}
+
+function getTempInsight(indoor: number | null | undefined, score: number, outdoor: number | null | undefined): InsightResult {
+  if (indoor === null || indoor === undefined) {
+    return { status: 'warning', message: 'No temp data', action: 'Neutral score applied' };
+  }
+  
+  if (score >= 80) {
+    return { status: 'optimal', message: 'Comfortable temperature' };
+  }
+  
+  if (indoor < 68) {
+    return { status: 'warning', message: 'A bit cold', action: 'Turn up the heat' };
+  }
+  
+  if (indoor > 76) {
+    return { status: 'warning', message: 'A bit warm', action: 'Increase AC' };
+  }
+  
+  return { status: 'optimal', message: 'Temp is okay' };
+}
+
+function getGenreInsight(song: string | null | undefined, score: number, timeSlot: TimeSlot): InsightResult {
+  const ranges = TIME_SLOT_RANGES[timeSlot];
+  
+  if (!song) {
+    return { status: 'warning', message: 'No music playing', action: 'Neutral score applied' };
+  }
+  
+  if (score >= 80) {
+    return { status: 'optimal', message: 'Music fits the vibe' };
+  }
+  
+  if (score < 50) {
+    return { 
+      status: 'warning', 
+      message: 'Music mismatch', 
+      action: `Try ${ranges.genres[0]} or ${ranges.genres[1]}`
+    };
+  }
+  
+  return { status: 'optimal', message: 'Music is okay' };
+}
+
+function getVibeInsight(score: number, timeSlot: TimeSlot): InsightResult {
+  const slotLabels: Record<TimeSlot, string> = {
+    weekday_happy_hour: 'Happy Hour',
+    weekday_night: 'Weeknight',
+    friday_early: 'Friday Evening',
+    friday_peak: 'Friday Peak',
+    saturday_early: 'Saturday Evening',
+    saturday_peak: 'Saturday Peak',
+    sunday_funday: 'Sunday Funday',
+    daytime: 'Daytime',
+  };
+  
+  if (score >= 80) {
+    return { status: 'optimal', message: `Nailing ${slotLabels[timeSlot]}` };
+  }
+  
+  if (score >= 60) {
+    return { status: 'warning', message: 'Good but could be better', action: 'Align all factors' };
+  }
+  
+  return { status: 'critical', message: 'Factors out of sync', action: 'Review each factor' };
 }
 
 export default PulseBreakdownModal;

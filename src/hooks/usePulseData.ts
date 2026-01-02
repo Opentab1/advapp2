@@ -45,6 +45,12 @@ export interface PulseData {
   // Factor scores
   soundScore: number;
   lightScore: number;
+  tempScore: number;
+  genreScore: number;
+  vibeScore: number;
+  
+  // Time slot
+  timeSlot: string;
   
   // Current sensor values
   currentDecibels: number | null;
@@ -247,8 +253,18 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   // ============ COMPUTED VALUES ============
   
   const pulseScoreResult = useMemo(() => {
-    return calculatePulseScore(sensorData?.decibels, sensorData?.light);
-  }, [sensorData?.decibels, sensorData?.light]);
+    // Use outdoor temp from weather service if sensor doesn't have it
+    const outdoorTemp = sensorData?.outdoorTemp ?? weather?.temperature ?? null;
+    
+    return calculatePulseScore(
+      sensorData?.decibels,
+      sensorData?.light,
+      sensorData?.indoorTemp,
+      outdoorTemp,
+      sensorData?.currentSong,
+      sensorData?.artist
+    );
+  }, [sensorData?.decibels, sensorData?.light, sensorData?.indoorTemp, sensorData?.outdoorTemp, sensorData?.currentSong, sensorData?.artist, weather?.temperature]);
   
   const dwellTimeMinutes = null; // TODO: Calculate from baseline data
   const dwellScore = getDwellTimeScore(dwellTimeMinutes);
@@ -314,6 +330,12 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     // Factor scores
     soundScore: pulseScoreResult.factors.sound.score,
     lightScore: pulseScoreResult.factors.light.score,
+    tempScore: pulseScoreResult.factors.temperature.score,
+    genreScore: pulseScoreResult.factors.genre.score,
+    vibeScore: pulseScoreResult.factors.vibe.score,
+    
+    // Time slot
+    timeSlot: pulseScoreResult.timeSlot,
     
     // Current sensor values
     currentDecibels: sensorData?.decibels ?? null,
