@@ -9,13 +9,16 @@
  * 
  * Color-coded: green = optimal, amber = okay, red = needs attention
  * Dark mode supported.
+ * 
+ * Tappable to open detailed stats modal.
  */
 
 import { motion } from 'framer-motion';
-import { Volume2, Sun, Users, Music, Thermometer } from 'lucide-react';
+import { Volume2, Sun, Users, Music, Thermometer, ChevronRight } from 'lucide-react';
 import { OPTIMAL_RANGES } from '../../utils/constants';
 import { SoundVisualizer } from '../common/SoundVisualizer';
 import { AnimatedNumber } from '../common/AnimatedNumber';
+import { haptic } from '../../utils/haptics';
 
 interface LiveStatsProps {
   decibels: number | null;
@@ -26,6 +29,7 @@ interface LiveStatsProps {
   artist?: string | null;
   albumArt?: string | null;
   lastUpdated: Date | null;
+  onTap?: () => void;
 }
 
 export function LiveStats({
@@ -37,6 +41,7 @@ export function LiveStats({
   artist,
   albumArt,
   lastUpdated,
+  onTap,
 }: LiveStatsProps) {
   // Calculate freshness
   const secondsAgo = lastUpdated 
@@ -49,11 +54,20 @@ export function LiveStats({
     ? Math.min(100, Math.max(0, ((decibels - 40) / 50) * 100))
     : null;
   
+  const handleTap = () => {
+    if (onTap) {
+      haptic('light');
+      onTap();
+    }
+  };
+  
   return (
     <motion.div
-      className="bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors"
+      className={`bg-white dark:bg-warm-800 rounded-2xl border border-warm-200 dark:border-warm-700 p-4 transition-colors ${onTap ? 'cursor-pointer hover:shadow-card-hover active:scale-[0.99]' : ''}`}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
+      onClick={handleTap}
+      whileTap={onTap ? { scale: 0.98 } : undefined}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
@@ -63,6 +77,7 @@ export function LiveStats({
           <span className="text-xs text-warm-500 dark:text-warm-400">
             {isFresh ? 'Live' : secondsAgo ? `${secondsAgo}s ago` : 'No data'}
           </span>
+          {onTap && <ChevronRight className="w-4 h-4 text-warm-400 ml-1" />}
         </div>
       </div>
       

@@ -32,6 +32,7 @@ import { PulseBreakdownModal } from '../components/pulse/PulseBreakdownModal';
 import { DwellBreakdownModal } from '../components/pulse/DwellBreakdownModal';
 import { ReputationBreakdownModal } from '../components/pulse/ReputationBreakdownModal';
 import { CrowdBreakdownModal } from '../components/pulse/CrowdBreakdownModal';
+import { LiveStatsModal } from '../components/pulse/LiveStatsModal';
 import { PulsePageSkeleton } from '../components/common/LoadingState';
 
 // Hooks & Services
@@ -51,7 +52,7 @@ import { haptic } from '../utils/haptics';
 
 // ============ MODAL TYPES ============
 
-type ModalType = 'pulse' | 'dwell' | 'reputation' | 'crowd' | 'action' | null;
+type ModalType = 'pulse' | 'dwell' | 'reputation' | 'crowd' | 'action' | 'livestats' | null;
 
 interface CelebrationState {
   isOpen: boolean;
@@ -304,6 +305,7 @@ export function Pulse() {
           artist={pulseData.sensorData?.artist}
           albumArt={pulseData.sensorData?.albumArt}
           lastUpdated={pulseData.lastUpdated}
+          onTap={() => setActiveModal('livestats')}
         />
       </motion.div>
       
@@ -474,6 +476,26 @@ export function Pulse() {
         value={celebration.value}
         previousValue={celebration.previousValue}
         detail={celebration.detail}
+      />
+      
+      {/* Live Stats Detail */}
+      <LiveStatsModal
+        isOpen={activeModal === 'livestats'}
+        onClose={() => setActiveModal(null)}
+        decibels={pulseData.currentDecibels}
+        light={pulseData.currentLight}
+        indoorTemp={pulseData.sensorData?.indoorTemp ?? null}
+        outdoorTemp={pulseData.weather?.temperature ?? null}
+        humidity={pulseData.sensorData?.humidity ?? null}
+        currentOccupancy={pulseData.currentOccupancy}
+        todayEntries={pulseData.todayEntries}
+        todayExits={pulseData.todayExits}
+        peakOccupancy={pulseData.peakOccupancy}
+        currentSong={pulseData.sensorData?.currentSong ?? null}
+        artist={pulseData.sensorData?.artist ?? null}
+        albumArt={pulseData.sensorData?.albumArt ?? null}
+        reviews={pulseData.reviews}
+        lastUpdated={pulseData.lastUpdated}
       />
       </div>
     </PullToRefresh>
