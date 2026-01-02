@@ -19,7 +19,6 @@ import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
 import { Pulse } from './pages/Pulse';
 import { History } from './pages/History';
-import { Team } from './pages/Team';
 import { Settings } from './pages/Settings';
 import { SongLog } from './pages/SongLog';
 
@@ -29,16 +28,12 @@ import type { TabId } from './components/common/TabNav';
 
 // Services & Hooks
 import authService from './services/auth.service';
-import { useDarkMode } from './hooks/useDarkMode';
 import { usePulseScore } from './stores/pulseStore';
 
 // ============ PROTECTED DASHBOARD ============
 
 function ProtectedDashboard() {
   const [activeTab, setActiveTab] = useState<TabId>('pulse');
-  
-  // Dark mode
-  const { isDark, toggle: toggleDark } = useDarkMode();
   
   // Get shared pulse score for header mini display
   const pulseScore = usePulseScore();
@@ -81,8 +76,6 @@ function ProtectedDashboard() {
         return <Pulse />;
       case 'history':
         return <History />;
-      case 'team':
-        return <Team />;
       case 'songs':
         return <SongLog />;
       case 'settings':
@@ -97,8 +90,6 @@ function ProtectedDashboard() {
       venueName="Pulse"
       isConnected={isConnected}
       pulseScore={pulseScore}
-      isDark={isDark}
-      onToggleDark={toggleDark}
       activeTab={activeTab}
       onTabChange={setActiveTab}
       onLogout={handleLogout}

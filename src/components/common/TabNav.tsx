@@ -1,7 +1,7 @@
 /**
  * TabNav - Bottom navigation for mobile + side nav for desktop
  * 
- * 5 tabs: Pulse, History, Team, Songs, Settings
+ * 4 tabs: Pulse, History, Songs, Settings
  * Mobile: Fixed bottom bar
  * Desktop: Left sidebar
  * 
@@ -9,10 +9,10 @@
  */
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, BarChart2, Users, Music, Settings, LucideIcon } from 'lucide-react';
+import { Zap, BarChart2, Music, Settings, LucideIcon } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 
-export type TabId = 'pulse' | 'history' | 'team' | 'songs' | 'settings';
+export type TabId = 'pulse' | 'history' | 'songs' | 'settings';
 
 interface Tab {
   id: TabId;
@@ -23,7 +23,6 @@ interface Tab {
 const TABS: Tab[] = [
   { id: 'pulse', label: 'Pulse', icon: Zap },
   { id: 'history', label: 'History', icon: BarChart2 },
-  { id: 'team', label: 'Team', icon: Users },
   { id: 'songs', label: 'Songs', icon: Music },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
@@ -44,7 +43,7 @@ export function TabNav({ activeTab, onTabChange }: TabNavProps) {
   return (
     <>
       {/* Mobile Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-warm-900 border-t border-warm-200 dark:border-warm-700 z-50 lg:hidden safe-bottom transition-colors">
+      <nav className="fixed bottom-0 left-0 right-0 bg-warm-900 border-t border-warm-700 z-50 lg:hidden safe-bottom">
         <div className="flex justify-around items-center h-16 px-2">
           {TABS.map((tab) => (
             <TabButton
@@ -58,7 +57,7 @@ export function TabNav({ activeTab, onTabChange }: TabNavProps) {
       </nav>
 
       {/* Desktop Side Navigation */}
-      <aside className="hidden lg:flex flex-col w-20 bg-white dark:bg-warm-900 border-r border-warm-200 dark:border-warm-700 py-6 transition-colors">
+      <aside className="hidden lg:flex flex-col w-20 bg-warm-900 border-r border-warm-700 py-6">
         <nav className="flex flex-col gap-2 px-3">
           {TABS.map((tab) => (
             <TabButton
@@ -89,11 +88,11 @@ function TabButton({ tab, isActive, onClick, variant = 'mobile' }: TabButtonProp
     <motion.button
       onClick={onClick}
       className={`
-        relative flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors
+        relative flex flex-col items-center justify-center gap-0.5 rounded-xl
         ${variant === 'desktop' ? 'p-3' : 'px-2 py-2 min-w-[56px]'}
         ${isActive 
           ? 'text-primary' 
-          : 'text-warm-400 dark:text-warm-500 hover:text-warm-600 dark:hover:text-warm-300'
+          : 'text-warm-500 hover:text-warm-300'
         }
       `}
       whileTap={{ scale: 0.92 }}
@@ -104,7 +103,7 @@ function TabButton({ tab, isActive, onClick, variant = 'mobile' }: TabButtonProp
         {isActive && (
           <motion.div
             layoutId={variant === 'desktop' ? 'activeTabDesktop' : 'activeTabMobile'}
-            className="absolute inset-0 bg-primary/10 dark:bg-primary/20 rounded-xl"
+            className="absolute inset-0 bg-primary/20 rounded-xl"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

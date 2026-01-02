@@ -1,11 +1,12 @@
 /**
- * DashboardLayout - Main app shell with dark mode support
+ * DashboardLayout - Main app shell
  * 
  * Provides:
- * - Header with venue name, mini score, and dark mode toggle
+ * - Header with venue name and mini score
  * - Tab navigation (bottom on mobile, side on desktop)
  * - Content area with proper padding for nav
  * - Smooth page transitions
+ * - Matte black theme
  */
 
 import { ReactNode } from 'react';
@@ -18,8 +19,6 @@ interface DashboardLayoutProps {
   venueName: string;
   isConnected?: boolean;
   pulseScore?: number | null;
-  isDark?: boolean;
-  onToggleDark?: () => void;
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
   onLogout: () => void;
@@ -30,21 +29,17 @@ export function DashboardLayout({
   venueName,
   isConnected = true,
   pulseScore,
-  isDark = false,
-  onToggleDark,
   activeTab,
   onTabChange,
   onLogout,
 }: DashboardLayoutProps) {
   return (
-    <div className="min-h-screen bg-warm-50 dark:bg-warm-900 flex flex-col transition-colors">
-      {/* Header with mini score and dark mode */}
+    <div className="min-h-screen bg-warm-900 flex flex-col">
+      {/* Header with mini score */}
       <Header 
         venueName={venueName} 
         isConnected={isConnected}
         pulseScore={pulseScore}
-        isDark={isDark}
-        onToggleDark={onToggleDark}
         onLogout={onLogout}
       />
       
