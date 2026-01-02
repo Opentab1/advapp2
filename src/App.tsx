@@ -1,16 +1,96 @@
+/**
+ * App - Main application entry point
+ * 
+ * Handles:
+ * - Authentication state
+ * - Online/offline status
+ * - Routing between Login, Dashboard, and Admin
+ * - Tab-based navigation within Dashboard
+ */
+
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+
+// Pages
 import { Login } from './pages/Login';
-import { Dashboard } from './pages/Dashboard';
 import { AdminPortal } from './pages/admin/AdminPortal';
 import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
+import { Pulse } from './pages/Pulse';
+import { History } from './pages/History';
+import { Settings } from './pages/Settings';
+import { SongLog } from './pages/SongLog';
+
+// Layout
+import { DashboardLayout } from './layouts/DashboardLayout';
+import type { TabId } from './components/common/TabNav';
+
+// Services
 import authService from './services/auth.service';
+
+// ============ PROTECTED DASHBOARD ============
+
+function ProtectedDashboard() {
+  const [activeTab, setActiveTab] = useState<TabId>('pulse');
+  
+  const user = authService.getStoredUser();
+  const venueName = user?.venueName || 'Your Venue';
+  
+  // Simple connection check (could be enhanced)
+  const [isConnected, setIsConnected] = useState(true);
+  
+  useEffect(() => {
+    const handleOnline = () => setIsConnected(true);
+    const handleOffline = () => setIsConnected(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+  
+  const handleLogout = () => {
+    authService.logout();
+    window.location.href = '/login';
+  };
+  
+  // Render active tab content
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'pulse':
+        return <Pulse />;
+      case 'history':
+        return <History />;
+      case 'songs':
+        return <SongLog />;
+      case 'settings':
+        return <Settings />;
+      default:
+        return <Pulse />;
+    }
+  };
+  
+  return (
+    <DashboardLayout
+      venueName={venueName}
+      isConnected={isConnected}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      onLogout={handleLogout}
+    >
+      {renderTabContent()}
+    </DashboardLayout>
+  );
+}
+
+// ============ MAIN APP ============
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => authService.isAuthenticated());
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [userRole, setUserRole] = useState<string | null>(null);
 
   // Check if user is admin (has role but no venueId)
   const isAdmin = () => {
@@ -20,8 +100,8 @@ function App() {
     return role && !venueId;
   };
 
+  // Handle online/offline status
   useEffect(() => {
-    // Handle online/offline status
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
 
@@ -33,16 +113,6 @@ function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
-
-  useEffect(() => {
-    // Update user role when authentication changes
-    if (isAuthenticated) {
-      const user = authService.getStoredUser();
-      setUserRole(user?.role || null);
-    } else {
-      setUserRole(null);
-    }
-  }, [isAuthenticated]);
 
   // Check authentication status on mount and when storage changes
   useEffect(() => {
@@ -94,7 +164,7 @@ function App() {
               isAdmin() ? (
                 <Navigate to="/admin" replace />
               ) : (
-                <Dashboard />
+                <ProtectedDashboard />
               )
             ) : (
               <Navigate to="/login" replace />
