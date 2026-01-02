@@ -20,6 +20,7 @@ import { SupportingRings } from '../components/pulse/SupportingRings';
 import { ActionHero } from '../components/pulse/ActionHero';
 import { ActionQueue } from '../components/pulse/ActionQueue';
 import { ContextBar } from '../components/pulse/ContextBar';
+import { LiveStats } from '../components/pulse/LiveStats';
 import { ActionDetailModal } from '../components/pulse/ActionDetailModal';
 import { PulseBreakdownModal } from '../components/pulse/PulseBreakdownModal';
 import { DwellBreakdownModal } from '../components/pulse/DwellBreakdownModal';
@@ -136,11 +137,28 @@ export function Pulse() {
         </motion.button>
       </motion.div>
       
+      {/* Live Stats - Eagle's Eye View */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+      >
+        <LiveStats
+          decibels={pulseData.currentDecibels}
+          light={pulseData.currentLight}
+          occupancy={pulseData.currentOccupancy}
+          temperature={pulseData.sensorData?.indoorTemp}
+          currentSong={pulseData.sensorData?.currentSong}
+          artist={pulseData.sensorData?.artist}
+          lastUpdated={pulseData.lastUpdated}
+        />
+      </motion.div>
+      
       {/* Pulse Score Hero */}
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 0.1 }}
+        transition={{ delay: 0.15 }}
       >
         <PulseScoreHero
           score={pulseData.pulseScore}
