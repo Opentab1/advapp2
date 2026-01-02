@@ -315,11 +315,13 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   const isConnected = dataAgeSeconds < DATA_FRESHNESS.disconnected;
   
-  // ============ OCCUPANCY FALLBACK ============
-  // If the dedicated occupancy resolver fails, fall back to sensor data occupancy
+  // ============ OCCUPANCY CALCULATION ============
+  // Calculate occupancy from sensor data
+  // The sensor sends cumulative entries/exits - we calculate current as the difference
   const effectiveOccupancy = useMemo(() => {
-    // Prefer dedicated occupancy metrics if available (these are properly calculated)
+    // If we have calculated bar day metrics, use those for entries/exits
     if (occupancyMetrics) {
+      console.log('📊 Using calculated occupancy metrics:', occupancyMetrics);
       return {
         current: occupancyMetrics.current ?? 0,
         todayEntries: occupancyMetrics.todayEntries ?? 0,
@@ -329,15 +331,33 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       };
     }
     
-    // Fall back to sensor data occupancy for CURRENT only
-    // DO NOT use sensorData.occupancy.entries/exits as they are CUMULATIVE totals
-    // not today's values (they could be 35000+ from months of operation)
+    // Calculate from live sensor data
+    // The sensor tracks cumulative entries/exits - current people inside = entries - exits
     if (sensorData?.occupancy) {
+      const entries = sensorData.occupancy.entries ?? 0;
+      const exits = sensorData.occupancy.exits ?? 0;
+      // Current people inside is entries minus exits
+      const calculatedCurrent = Math.max(0, entries - exits);
+      
+      console.log('📊 Calculating occupancy from sensor data:', {
+        rawEntries: entries,
+        rawExits: exits,
+        rawCurrent: sensorData.occupancy.current,
+        calculatedCurrent
+      });
+      
+      // If the sensor's "current" value seems reasonable (< 500), use it
+      // Otherwise use our calculated value
+      const sensorCurrent = sensorData.occupancy.current ?? 0;
+      const current = sensorCurrent < 500 ? sensorCurrent : calculatedCurrent;
+      
       return {
-        current: sensorData.occupancy.current ?? 0,
-        todayEntries: 0, // Don't show cumulative as "today"
-        todayExits: 0,   // Don't show cumulative as "today"
-        peakOccupancy: sensorData.occupancy.current ?? 0,
+        current,
+        // For now show cumulative until bar day calc completes
+        // These will update once fetchOccupancy finishes
+        todayEntries: entries,
+        todayExits: exits,
+        peakOccupancy: current,
         peakTime: null,
       };
     }
