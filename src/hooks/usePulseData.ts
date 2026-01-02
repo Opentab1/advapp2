@@ -122,12 +122,15 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   }, [venueId]);
   
   const fetchOccupancy = useCallback(async () => {
+    console.log('🔢 fetchOccupancy called, venueId:', venueId);
     if (!venueId) return;
     
     try {
       // Calculate occupancy from the same sensor data used for everything else
       // Get 24h of historical data to calculate bar day (3am-3am) entries/exits
+      console.log('🔢 Fetching 24h data for occupancy calculation...');
       const historicalData = await apiService.getHistoricalData(venueId, '24h');
+      console.log('🔢 Got historical data:', historicalData?.data?.length || 0, 'items');
       
       if (historicalData?.data && historicalData.data.length > 0) {
         // Import bar day calculation utility
@@ -204,7 +207,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         }
       }
     } catch (err: any) {
-      console.error('Failed to calculate occupancy from sensor data:', err);
+      console.error('❌ Failed to calculate occupancy from sensor data:', err);
+      console.error('❌ Error details:', err?.message, err?.stack);
     }
   }, [venueId]);
   
