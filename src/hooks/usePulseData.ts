@@ -265,9 +265,6 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   const isConnected = dataAgeSeconds < DATA_FRESHNESS.disconnected;
   
   // ============ OCCUPANCY CALCULATION ============
-  // Current = entries - exits (people inside right now)
-  // Today's entries = current entries - entries at 3am
-  // Today's exits = current exits - exits at 3am
   const effectiveOccupancy = useMemo(() => {
     if (!sensorData?.occupancy) {
       return { current: 0, todayEntries: 0, todayExits: 0, peakOccupancy: 0, peakTime: null };
@@ -275,9 +272,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     const entries = sensorData.occupancy.entries ?? 0;
     const exits = sensorData.occupancy.exits ?? 0;
-    const current = Math.max(0, entries - exits);
     
-    // If we have the 3am baseline, calculate today's values
     let todayEntries = 0;
     let todayExits = 0;
     
@@ -286,7 +281,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       todayExits = Math.max(0, exits - baseline.exits);
     }
     
-    console.log('📊 Occupancy:', { current, todayEntries, todayExits, baseline });
+    // Currently inside = today's entries - today's exits
+    const current = Math.max(0, todayEntries - todayExits);
     
     return {
       current,
