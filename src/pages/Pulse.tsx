@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Zap, RefreshCw } from 'lucide-react';
+import { Zap, RefreshCw, FileText } from 'lucide-react';
 
 // Components
 import { PulseScoreHero } from '../components/pulse/PulseScoreHero';
@@ -33,6 +33,7 @@ import { DwellBreakdownModal } from '../components/pulse/DwellBreakdownModal';
 import { ReputationBreakdownModal } from '../components/pulse/ReputationBreakdownModal';
 import { CrowdBreakdownModal } from '../components/pulse/CrowdBreakdownModal';
 import { LiveStatsModal } from '../components/pulse/LiveStatsModal';
+import { NightReportModal } from '../components/pulse/NightReportModal';
 import { PulsePageSkeleton } from '../components/common/LoadingState';
 
 // Hooks & Services
@@ -69,10 +70,12 @@ interface CelebrationState {
 export function Pulse() {
   const user = authService.getStoredUser();
   const venueName = user?.venueName || 'Your Venue';
+  const venueId = user?.venueId || '';
   
   // Modal state
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [showGoalSetter, setShowGoalSetter] = useState(false);
+  const [showNightReport, setShowNightReport] = useState(false);
   
   // Celebration state
   const [celebration, setCelebration] = useState<CelebrationState>({
@@ -280,14 +283,24 @@ export function Pulse() {
             <Zap className="w-6 h-6 text-primary" />
             <h1 className="text-xl font-bold text-warm-800 dark:text-warm-100">Pulse</h1>
           </div>
-          <motion.button
-            onClick={() => { haptic('light'); pulseData.refresh(); }}
-            disabled={pulseData.loading}
-            className="p-2 rounded-xl bg-warm-100 dark:bg-warm-800 hover:bg-warm-200 dark:hover:bg-warm-700 transition-colors"
-            whileTap={{ scale: 0.95 }}
-          >
-            <RefreshCw className={`w-5 h-5 text-warm-600 dark:text-warm-400 ${pulseData.loading ? 'animate-spin' : ''}`} />
-          </motion.button>
+          <div className="flex items-center gap-2">
+            <motion.button
+              onClick={() => { haptic('light'); setShowNightReport(true); }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 dark:bg-primary/20 text-primary text-sm font-medium hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors"
+              whileTap={{ scale: 0.95 }}
+            >
+              <FileText className="w-4 h-4" />
+              <span className="hidden sm:inline">Report</span>
+            </motion.button>
+            <motion.button
+              onClick={() => { haptic('light'); pulseData.refresh(); }}
+              disabled={pulseData.loading}
+              className="p-2 rounded-xl bg-warm-100 dark:bg-warm-800 hover:bg-warm-200 dark:hover:bg-warm-700 transition-colors"
+              whileTap={{ scale: 0.95 }}
+            >
+              <RefreshCw className={`w-5 h-5 text-warm-600 dark:text-warm-400 ${pulseData.loading ? 'animate-spin' : ''}`} />
+            </motion.button>
+          </div>
         </motion.div>
       
       {/* Live Stats - Eagle's Eye View */}
@@ -496,6 +509,14 @@ export function Pulse() {
         albumArt={pulseData.sensorData?.albumArt ?? null}
         reviews={pulseData.reviews}
         lastUpdated={pulseData.lastUpdated}
+      />
+      
+      {/* Night Report */}
+      <NightReportModal
+        isOpen={showNightReport}
+        onClose={() => setShowNightReport(false)}
+        venueName={venueName}
+        venueId={venueId}
       />
       </div>
     </PullToRefresh>
