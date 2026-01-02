@@ -14,7 +14,7 @@
  */
 
 import { motion } from 'framer-motion';
-import { Volume2, Sun, Users, Music, Thermometer, ChevronRight } from 'lucide-react';
+import { Volume2, Sun, Users, Music, ChevronRight } from 'lucide-react';
 import { OPTIMAL_RANGES } from '../../utils/constants';
 import { SoundVisualizer } from '../common/SoundVisualizer';
 import { AnimatedNumber } from '../common/AnimatedNumber';
@@ -24,7 +24,6 @@ interface LiveStatsProps {
   decibels: number | null;
   light: number | null;
   occupancy: number;
-  temperature?: number | null;
   currentSong?: string | null;
   artist?: string | null;
   albumArt?: string | null;
@@ -36,7 +35,6 @@ export function LiveStats({
   decibels,
   light,
   occupancy,
-  temperature,
   currentSong,
   artist,
   albumArt,
@@ -82,7 +80,7 @@ export function LiveStats({
       </div>
       
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         {/* Sound with visualizer */}
         <StatChip
           icon={Volume2}
@@ -110,19 +108,6 @@ export function LiveStats({
           unit="people"
           status="neutral"
         />
-        
-        {/* Temperature (if available) */}
-        {temperature !== undefined && temperature !== null ? (
-          <StatChip
-            icon={Thermometer}
-            label="Temp"
-            value={temperature}
-            unit="°F"
-            status={getTemperatureStatus(temperature)}
-          />
-        ) : (
-          <div className="col-span-1" />
-        )}
       </div>
       
       {/* Now Playing */}
@@ -240,11 +225,5 @@ function getLightStatus(lux: number | null): Status {
   return 'optimal';
 }
 
-function getTemperatureStatus(temp: number | null): Status {
-  if (temp === null) return 'neutral';
-  if (temp >= OPTIMAL_RANGES.temperature.min && temp <= OPTIMAL_RANGES.temperature.max) return 'optimal';
-  if (temp > OPTIMAL_RANGES.temperature.max + 5 || temp < OPTIMAL_RANGES.temperature.min - 5) return 'critical';
-  return 'warning';
-}
 
 export default LiveStats;
