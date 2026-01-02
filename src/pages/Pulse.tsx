@@ -150,6 +150,7 @@ export function Pulse() {
           temperature={pulseData.sensorData?.indoorTemp}
           currentSong={pulseData.sensorData?.currentSong}
           artist={pulseData.sensorData?.artist}
+          albumArt={pulseData.sensorData?.albumArt}
           lastUpdated={pulseData.lastUpdated}
         />
       </motion.div>

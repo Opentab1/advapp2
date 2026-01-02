@@ -21,6 +21,7 @@ interface LiveStatsProps {
   temperature?: number | null;
   currentSong?: string | null;
   artist?: string | null;
+  albumArt?: string | null;
   lastUpdated: Date | null;
 }
 
@@ -31,6 +32,7 @@ export function LiveStats({
   temperature,
   currentSong,
   artist,
+  albumArt,
   lastUpdated,
 }: LiveStatsProps) {
   // Calculate freshness
@@ -108,19 +110,30 @@ export function LiveStats({
           animate={{ opacity: 1 }}
           transition={{ delay: 0.2 }}
         >
-          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-            <Music className="w-4 h-4 text-primary" />
-          </div>
+          {/* Album Art or Music Icon */}
+          {albumArt ? (
+            <img 
+              src={albumArt} 
+              alt="Album art"
+              className="w-12 h-12 rounded-lg object-cover flex-shrink-0 shadow-sm"
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center flex-shrink-0">
+              <Music className="w-5 h-5 text-primary" />
+            </div>
+          )}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-warm-800 truncate">{currentSong}</p>
             {artist && (
               <p className="text-xs text-warm-500 truncate">{artist}</p>
             )}
           </div>
-          <div className="flex items-center gap-1">
-            <span className="w-1 h-3 bg-primary rounded-full animate-pulse" />
-            <span className="w-1 h-4 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.2s' }} />
-            <span className="w-1 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.4s' }} />
+          {/* Animated equalizer bars */}
+          <div className="flex items-end gap-0.5 h-5">
+            <span className="w-1 bg-primary rounded-full animate-pulse" style={{ height: '12px' }} />
+            <span className="w-1 bg-primary rounded-full animate-pulse" style={{ height: '20px', animationDelay: '0.15s' }} />
+            <span className="w-1 bg-primary rounded-full animate-pulse" style={{ height: '8px', animationDelay: '0.3s' }} />
+            <span className="w-1 bg-primary rounded-full animate-pulse" style={{ height: '16px', animationDelay: '0.45s' }} />
           </div>
         </motion.div>
       )}

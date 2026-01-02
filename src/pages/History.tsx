@@ -13,6 +13,8 @@ import { motion } from 'framer-motion';
 import { BarChart2, Download, RefreshCw } from 'lucide-react';
 import { DataChart } from '../components/DataChart';
 import { CardSkeleton } from '../components/common/LoadingState';
+import { WeeklyComparison } from '../components/history/WeeklyComparison';
+import { useWeeklyComparison } from '../hooks/useWeeklyComparison';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import type { TimeRange, SensorData, HistoricalData } from '../types';
@@ -37,6 +39,9 @@ export function History() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<HistoricalData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Weekly comparison data
+  const weeklyComparison = useWeeklyComparison(venueId);
   
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -125,6 +130,21 @@ export function History() {
           </button>
         ))}
       </motion.div>
+      
+      {/* Weekly Comparison (show when 7d selected) */}
+      {timeRange === '7d' && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+        >
+          <WeeklyComparison
+            thisWeek={weeklyComparison.thisWeek}
+            lastWeek={weeklyComparison.lastWeek}
+            loading={weeklyComparison.loading}
+          />
+        </motion.div>
+      )}
       
       {/* Error State */}
       {error && (
