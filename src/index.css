@@ -7,19 +7,7 @@
 
 @layer base {
   :root {
-    --bg-primary: #FAFAFA;
-    --bg-secondary: #FFFFFF;
-    --bg-tertiary: #F5F5F4;
-    --text-primary: #1C1917;
-    --text-secondary: #57534E;
-    --text-muted: #78716C;
-    --border-color: #E7E5E4;
-    --accent: #0077B6;
-    --accent-light: #E6F4FA;
-  }
-
-  /* Dark mode colors */
-  .dark {
+    /* Dark theme only - matte black */
     --bg-primary: #1C1917;
     --bg-secondary: #292524;
     --bg-tertiary: #44403C;
@@ -27,8 +15,8 @@
     --text-secondary: #D6D3D1;
     --text-muted: #A8A29E;
     --border-color: #44403C;
-    --accent: #00A8E8;
-    --accent-light: rgba(0, 168, 232, 0.15);
+    --accent: #0077B6;
+    --accent-light: rgba(0, 119, 182, 0.15);
   }
 
   * {
@@ -38,7 +26,7 @@
   body {
     background-color: var(--bg-primary);
     color: var(--text-primary);
-    @apply font-sans antialiased transition-colors duration-200;
+    @apply font-sans antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     letter-spacing: -0.01em;
     overflow-x: hidden;
@@ -50,32 +38,27 @@
 }
 
 @layer components {
-  /* Custom Scrollbar - Subtle */
+  /* Custom Scrollbar - Dark theme */
   ::-webkit-scrollbar {
     @apply w-2 h-2;
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-warm-100;
+    @apply bg-warm-800;
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-warm-300 rounded-full;
+    @apply bg-warm-600 rounded-full;
     transition: background-color 0.2s;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-warm-400;
+    @apply bg-warm-500;
   }
 
-  /* Card Styles - Clean with subtle shadow */
+  /* Card Styles - Matte black */
   .glass-card {
-    @apply bg-white dark:bg-warm-800 rounded-2xl transition-colors;
-    border: 1px solid var(--border-color);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-  }
-
-  .dark .glass-card {
+    @apply bg-warm-800 rounded-2xl border border-warm-700;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.15);
   }
 
@@ -84,12 +67,8 @@
   }
 
   .glass-card-hover:hover {
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-    transform: translateY(-2px);
-  }
-
-  .dark .glass-card-hover:hover {
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    transform: translateY(-2px);
   }
 
   /* Primary Button - Ocean blue */
@@ -108,114 +87,60 @@
     transform: translateY(0);
   }
 
-  /* Secondary Button */
+  /* Secondary Button - Dark theme */
   .btn-secondary {
-    @apply px-6 py-3 bg-white dark:bg-warm-800 border border-warm-200 dark:border-warm-600 text-warm-700 dark:text-warm-200 font-semibold rounded-xl;
+    @apply px-6 py-3 bg-warm-800 border border-warm-600 text-warm-200 font-semibold rounded-xl;
     @apply transition-all duration-200;
   }
 
   .btn-secondary:hover {
-    @apply bg-warm-50 dark:bg-warm-700 border-warm-300 dark:border-warm-500;
+    @apply bg-warm-700 border-warm-500;
   }
 
-  /* Metric Cards */
-  .metric-value {
-    @apply text-4xl md:text-5xl font-bold text-warm-900;
-  }
-
-  /* Text Colors */
-  .text-white {
-    color: var(--text-primary) !important;
-  }
-
-  .text-gray-300 {
-    color: var(--text-secondary) !important;
-  }
-
-  .text-gray-400 {
-    color: var(--text-muted) !important;
-  }
-
-  .text-gray-500 {
-    color: #A8A29E !important;
-  }
-
-  /* Accent text (was cyan) */
-  .text-cyan {
-    color: var(--accent) !important;
-  }
-
-  /* Background overrides */
-  .bg-navy {
-    background-color: var(--bg-primary) !important;
-  }
-
-  .bg-navy-light {
-    background-color: var(--bg-secondary) !important;
-  }
-
-  /* Gradient Text */
-  .gradient-text {
-    @apply text-warm-900 font-bold;
-  }
-
-  /* Status Colors */
-  .text-green-400 {
-    @apply text-success;
-  }
-
-  .text-red-400 {
-    @apply text-error;
-  }
-
-  .text-yellow-400 {
-    @apply text-warning;
-  }
-
-  /* Form Elements */
+  /* Form Elements - Dark theme */
   input, select, textarea {
-    @apply bg-white dark:bg-warm-800 border border-warm-200 dark:border-warm-600 text-warm-800 dark:text-warm-100 rounded-xl;
+    @apply bg-warm-800 border border-warm-600 text-warm-100 rounded-xl;
     @apply transition-all duration-200;
   }
 
   input::placeholder,
   textarea::placeholder {
-    @apply text-warm-400 dark:text-warm-500;
+    @apply text-warm-500;
   }
 
   input:focus,
   select:focus,
   textarea:focus {
-    @apply border-primary outline-none ring-2 ring-primary-50 dark:ring-primary/30;
+    @apply border-primary outline-none ring-2 ring-primary/30;
   }
 
   select option {
-    @apply bg-white dark:bg-warm-800 text-warm-800 dark:text-warm-100;
+    @apply bg-warm-800 text-warm-100;
   }
 
   /* Focus Visible for Accessibility */
   *:focus-visible {
-    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-white;
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-warm-900;
   }
 
   /* Selection */
   ::selection {
-    @apply bg-primary-100 text-warm-900;
+    @apply bg-primary/30 text-white;
   }
 
   /* Spinner */
   .spinner {
-    @apply inline-block w-6 h-6 border-2 border-warm-200 border-t-primary rounded-full animate-spin;
+    @apply inline-block w-6 h-6 border-2 border-warm-700 border-t-primary rounded-full animate-spin;
   }
 
-  /* Charts - override any dark backgrounds */
+  /* Charts - Dark theme */
   .recharts-cartesian-grid-horizontal line,
   .recharts-cartesian-grid-vertical line {
-    stroke: #E7E5E4;
+    stroke: #44403C;
   }
 
   .recharts-text {
-    fill: #57534E;
+    fill: #A8A29E;
   }
 
   /* Remove orbs/glows for clean look */
@@ -227,84 +152,28 @@
     box-shadow: none;
   }
 
-  /* Sidebar adjustments */
-  .bg-navy-light\/50 {
-    background-color: rgba(255, 255, 255, 0.9) !important;
+  /* Gradient Text - Now just white bold */
+  .gradient-text {
+    @apply text-white font-bold;
   }
 
-  /* Modal overlays */
-  .bg-black\/60 {
-    background-color: rgba(28, 25, 23, 0.5) !important;
+  /* Custom scrollbar - Dark */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
   }
 
-  /* Dividers */
-  .border-white\/10 {
-    border-color: var(--border-color) !important;
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #292524;
+    border-radius: 3px;
   }
 
-  .bg-white\/5 {
-    background-color: var(--bg-tertiary) !important;
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #57534E;
+    border-radius: 3px;
   }
 
-  .bg-white\/10 {
-    background-color: var(--bg-tertiary) !important;
-  }
-
-  /* Hover states */
-  .hover\:bg-white\/10:hover {
-    background-color: #EEEEEC !important;
-  }
-
-  .hover\:bg-white\/5:hover {
-    background-color: #F0F0EE !important;
-  }
-
-  /* Status badges */
-  .bg-cyan\/20 {
-    background-color: var(--accent-light) !important;
-  }
-
-  .border-cyan\/50 {
-    border-color: rgba(0, 119, 182, 0.5) !important;
-  }
-
-  .bg-cyan\/10 {
-    background-color: rgba(0, 119, 182, 0.08) !important;
-  }
-
-  .border-cyan\/30 {
-    border-color: rgba(0, 119, 182, 0.3) !important;
-  }
-
-  /* Purple badges */
-  .bg-purple-500\/20 {
-    background-color: rgba(168, 85, 247, 0.1) !important;
-  }
-
-  .border-purple-500\/50 {
-    border-color: rgba(168, 85, 247, 0.3) !important;
-  }
-
-  .text-purple-300 {
-    color: #9333EA !important;
-  }
-
-  /* Score ring colors */
-  .text-purple-400 {
-    color: #A855F7 !important;
-  }
-
-  .text-blue-400 {
-    color: #3B82F6 !important;
-  }
-
-  /* Chart colors */
-  .fill-cyan {
-    fill: var(--accent) !important;
-  }
-
-  .stroke-cyan {
-    stroke: var(--accent) !important;
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #78716C;
   }
 }
 
@@ -324,25 +193,6 @@
 
   .grid-auto-fit {
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  }
-
-  /* Custom scrollbar */
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: #F5F5F4;
-    border-radius: 3px;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: #D6D3D1;
-    border-radius: 3px;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: #A8A29E;
   }
 
   /* ============ MOBILE UX UTILITIES ============ */
@@ -474,14 +324,5 @@
   /* Card with better mobile spacing */
   .card-mobile {
     @apply p-4 sm:p-6 rounded-xl;
-  }
-
-  /* Haptic-ready (works with Capacitor haptics plugin) */
-  .haptic-light {
-    /* Use with Capacitor Haptics.impact({ style: 'light' }) */
-  }
-
-  .haptic-medium {
-    /* Use with Capacitor Haptics.impact({ style: 'medium' }) */
   }
 }
