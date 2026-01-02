@@ -137,14 +137,11 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         barDayStart.setDate(barDayStart.getDate() - 1);
       }
       
-      // Fetch just 1 hour of data starting from 3am (to get the baseline)
+      // Fetch just the first record after 3am (limit 1)
       const barDayEnd = new Date(barDayStart);
-      barDayEnd.setHours(barDayStart.getHours() + 1);
+      barDayEnd.setMinutes(barDayStart.getMinutes() + 30); // 30 min window to find first reading
       
-      console.log('🔢 Fetching 3am baseline data:', {
-        barDayStart: barDayStart.toISOString(),
-        barDayEnd: barDayEnd.toISOString()
-      });
+      console.log('🔢 Fetching 3am baseline (single record):', barDayStart.toISOString());
       
       // Use the dynamodb service directly for a targeted time range query
       const dynamoDBService = (await import('../services/dynamodb.service')).default;
@@ -152,7 +149,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         venueId,
         barDayStart,
         barDayEnd,
-        100 // Just need a few records from 3am-4am
+        1 // Just need 1 record
       );
       
       console.log('🔢 Got baseline data:', baselineData?.length || 0, 'items');
