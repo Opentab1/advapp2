@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Mail, Lock, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Mail, Lock, AlertCircle, DollarSign, TrendingUp, Users, Sparkles } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { AnimatedBackground } from '../components/AnimatedBackground';
 import authService from '../services/auth.service';
@@ -8,6 +8,14 @@ import authService from '../services/auth.service';
 interface LoginProps {
   onLoginSuccess: () => void;
 }
+
+// Value prop stats (rotate through these)
+const VALUE_STATS = [
+  { value: '$2,847', label: 'avg extra revenue captured last night', icon: DollarSign },
+  { value: '23 min', label: 'longer guest dwell time on average', icon: TrendingUp },
+  { value: '247', label: 'venues crushing it with Pulse', icon: Users },
+  { value: '38%', label: 'increase in repeat customers', icon: Sparkles },
+];
 
 export function Login({ onLoginSuccess }: LoginProps) {
   const [email, setEmail] = useState('');
@@ -17,6 +25,15 @@ export function Login({ onLoginSuccess }: LoginProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [needsPasswordChange, setNeedsPasswordChange] = useState(false);
+  const [statIndex, setStatIndex] = useState(0);
+
+  // Rotate value stats
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStatIndex(prev => (prev + 1) % VALUE_STATS.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,8 +82,11 @@ export function Login({ onLoginSuccess }: LoginProps) {
     }
   };
 
+  const currentStat = VALUE_STATS[statIndex];
+  const StatIcon = currentStat.icon;
+
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden bg-warm-900">
       <AnimatedBackground />
 
       <motion.div
@@ -76,35 +96,79 @@ export function Login({ onLoginSuccess }: LoginProps) {
         transition={{ duration: 0.5 }}
       >
         {/* Logo & Branding */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
           >
-            <div className="flex items-center justify-center gap-3 mb-2">
-              <Logo className="scale-110" />
-              <h1 className="text-3xl font-bold gradient-text">Pulse 1.0</h1>
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <Logo className="scale-125" />
+              <h1 className="text-4xl font-bold text-white tracking-tight">Pulse</h1>
             </div>
-            <p className="text-gray-400 text-xs mt-3">By Advizia</p>
-            <p className="text-gray-500 text-sm mt-2 italic">leave nothing on the table</p>
+            <p className="text-2xl font-semibold text-warm-200 mb-2">
+              Stop leaving money
+            </p>
+            <p className="text-2xl font-semibold text-warm-200">
+              on the table.
+            </p>
           </motion.div>
         </div>
 
+        {/* Rotating Value Stat */}
+        <motion.div
+          className="mb-6"
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.4 }}
+        >
+          <div className="bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 rounded-xl p-4">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={statIndex}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="flex items-center gap-3"
+              >
+                <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                  <StatIcon className="w-6 h-6 text-emerald-400" />
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-emerald-400">{currentStat.value}</div>
+                  <div className="text-sm text-emerald-300/70">{currentStat.label}</div>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+            
+            {/* Stat indicators */}
+            <div className="flex justify-center gap-1.5 mt-3">
+              {VALUE_STATS.map((_, idx) => (
+                <div
+                  key={idx}
+                  className={`w-1.5 h-1.5 rounded-full transition-all ${
+                    idx === statIndex ? 'bg-emerald-400 w-4' : 'bg-emerald-600'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        </motion.div>
+
         {/* Login Card */}
         <motion.div
-          className="glass-card p-8"
+          className="glass-card p-6"
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2, duration: 0.5 }}
         >
-          <h1 className="text-2xl font-bold text-center mb-2 gradient-text">
-            {needsPasswordChange ? 'Set New Password' : 'Welcome Back'}
-          </h1>
-          <p className="text-gray-400 text-center mb-8">
+          <h2 className="text-xl font-semibold text-center mb-1 text-white">
+            {needsPasswordChange ? 'Set New Password' : 'Access Your Dashboard'}
+          </h2>
+          <p className="text-warm-400 text-center text-sm mb-6">
             {needsPasswordChange 
               ? 'Your temporary password has expired. Please set a new password.' 
-              : 'Sign in to access your dashboard'}
+              : 'Sign in to see your venue\'s revenue impact'}
           </p>
 
           {/* Error Message */}
@@ -224,17 +288,20 @@ export function Login({ onLoginSuccess }: LoginProps) {
               <motion.button
                 type="submit"
                 disabled={loading}
-                className="w-full btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full py-4 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-warm-900 font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-emerald-500/20"
                 whileHover={{ scale: loading ? 1 : 1.02 }}
                 whileTap={{ scale: loading ? 1 : 0.98 }}
               >
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
-                    <div className="w-5 h-5 border-2 border-navy/30 border-t-navy rounded-full animate-spin" />
+                    <div className="w-5 h-5 border-2 border-warm-900/30 border-t-warm-900 rounded-full animate-spin" />
                     Signing in...
                   </span>
                 ) : (
-                  'Sign In'
+                  <span className="flex items-center justify-center gap-2">
+                    <DollarSign className="w-5 h-5" />
+                    Access Your Revenue
+                  </span>
                 )}
               </motion.button>
             </form>
@@ -242,18 +309,34 @@ export function Login({ onLoginSuccess }: LoginProps) {
 
         </motion.div>
 
-        {/* Footer Info */}
+        {/* Social Proof */}
         <motion.div
-          className="mt-8 text-center"
+          className="mt-6 text-center"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.4 }}
+          transition={{ delay: 0.5 }}
         >
-          <p className="text-xs text-gray-500 mb-4">
-            Powered by Advizia © 2025
-          </p>
-          <p className="text-xs text-gray-600">
-            Secure authentication powered by <span className="text-cyan/70">AWS Cognito</span>
+          <div className="flex items-center justify-center gap-2 text-sm text-warm-400 mb-2">
+            <div className="flex -space-x-2">
+              {['🍺', '🍸', '🥂'].map((emoji, i) => (
+                <div key={i} className="w-6 h-6 rounded-full bg-warm-700 flex items-center justify-center text-xs border-2 border-warm-900">
+                  {emoji}
+                </div>
+              ))}
+            </div>
+            <span>Join 247 venues already winning</span>
+          </div>
+        </motion.div>
+
+        {/* Footer Info */}
+        <motion.div
+          className="mt-6 text-center"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.6 }}
+        >
+          <p className="text-xs text-warm-600">
+            <span className="text-warm-500">Pulse</span> by Advizia • Secure Login
           </p>
         </motion.div>
       </motion.div>

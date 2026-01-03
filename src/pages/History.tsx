@@ -12,7 +12,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Zap } from 'lucide-react';
 
 // Components
 import { HistoryHeader } from '../components/history/HistoryHeader';

@@ -32,15 +32,18 @@ import { PulsePageSkeleton } from '../components/common/LoadingState';
 
 // Phase A: Simplified components
 import { SmartHeader } from '../components/pulse/SmartHeader';
-import { UnifiedActions } from '../components/pulse/UnifiedActions';
 import { AchievementRow } from '../components/pulse/AchievementRow';
+
+// Revenue-focused components (Launch Ready)
+import { RevenueHero } from '../components/pulse/RevenueHero';
+import { TonightsPlaybook } from '../components/pulse/TonightsPlaybook';
+import { VenueRanking } from '../components/pulse/VenueRanking';
 
 // Hooks & Services
 import { usePulseData } from '../hooks/usePulseData';
 import { useActions } from '../hooks/useActions';
 import { useIntelligence } from '../hooks/useIntelligence';
 import sportsService from '../services/sports.service';
-import holidayService from '../services/holiday.service';
 import authService from '../services/auth.service';
 import achievementsService, { Streak, WeeklyGoal } from '../services/achievements.service';
 import staffService from '../services/staff.service';
@@ -49,7 +52,6 @@ import type { SportsGame } from '../types';
 
 // Intelligence Components
 import { TrendAlerts } from '../components/pulse/TrendAlerts';
-import { PredictionsCard } from '../components/pulse/PredictionsCard';
 import { FloatingActions } from '../components/pulse/FloatingActions';
 
 // Common components
@@ -116,8 +118,6 @@ export function Pulse() {
   // Generate actions based on current data
   const {
     heroAction,
-    remainingActions,
-    completedCount,
     completeAction,
   } = useActions({
     currentDecibels: pulseData.currentDecibels,
@@ -243,14 +243,6 @@ export function Pulse() {
     setWeeklyGoal(achievementsService.getWeeklyGoal());
   };
   
-  // Holiday data
-  const upcomingHolidays = holidayService.getUpcomingHolidays(7);
-  const nextHoliday = upcomingHolidays[0];
-  const holidayData = nextHoliday ? {
-    name: nextHoliday.name,
-    daysUntil: holidayService.getDaysUntil(nextHoliday),
-  } : null;
-  
   // Calculate occupancy score (for ring display)
   const estimatedCapacity = pulseData.peakOccupancy 
     ? Math.max(pulseData.peakOccupancy * 1.2, 50) 
@@ -358,18 +350,78 @@ export function Pulse() {
         </motion.div>
       </CollapsibleSection>
       
-      {/* Pulse Score Hero - Always visible */}
+      {/* Revenue Hero - THE MONEY MOMENT */}
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 0.1 }}
       >
-        <PulseScoreHero
-          score={pulseData.pulseScore}
-          statusLabel={pulseData.pulseStatusLabel}
+        <RevenueHero
+          currentOccupancy={pulseData.currentOccupancy}
+          dwellTimeMinutes={pulseData.dwellTimeMinutes || 45}
+          pulseScore={pulseData.pulseScore ?? 0}
+          todayEntries={pulseData.todayEntries || 0}
+          todayExits={pulseData.todayExits || 0}
           onTap={() => setActiveModal('pulse')}
         />
       </motion.div>
+      
+      {/* Venue Ranking - Competitive Edge */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+      >
+        <VenueRanking
+          pulseScore={pulseData.pulseScore ?? 0}
+          currentOccupancy={pulseData.currentOccupancy || 0}
+          city={user?.venueName?.split(' ')[0] || 'Your City'}
+        />
+      </motion.div>
+      
+      {/* Tonight's Playbook - Clear Actions */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+      >
+        <TonightsPlaybook
+          currentDecibels={pulseData.currentDecibels ?? 65}
+          currentLight={pulseData.currentLight ?? 50}
+          currentOccupancy={pulseData.currentOccupancy ?? 0}
+          peakPrediction={intelligence.peakPrediction ? {
+            hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
+            expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
+            minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
+          } : undefined}
+          smartActions={intelligence.smartActions.map(a => ({
+            id: a.id,
+            title: a.title,
+            description: a.description,
+            priority: a.priority === 'critical' ? 'high' : a.priority,
+          }))}
+        />
+      </motion.div>
+      
+      {/* Original Pulse Score Hero - Now Secondary */}
+      <CollapsibleSection
+        id="pulse-details"
+        title="Pulse Score Details"
+        collapsed={sections.isCollapsed('rings')}
+        onToggle={() => sections.toggle('rings')}
+        showHeader={true}
+      >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+        >
+          <PulseScoreHero
+            score={pulseData.pulseScore}
+            statusLabel={pulseData.pulseStatusLabel}
+            onTap={() => setActiveModal('pulse')}
+          />
+        </motion.div>
+      </CollapsibleSection>
       
       {/* Supporting Rings - Collapsible */}
       <CollapsibleSection
@@ -398,30 +450,6 @@ export function Pulse() {
         </motion.div>
       </CollapsibleSection>
       
-      {/* Actions - Collapsible (hidden in closed mode by default) */}
-      <CollapsibleSection
-        id="actions"
-        title="Actions"
-        collapsed={sections.isCollapsed('actions')}
-        onToggle={() => sections.toggle('actions')}
-        showHeader={false}
-      >
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <UnifiedActions
-            heroAction={heroAction}
-            remainingActions={remainingActions}
-            completedCount={completedCount}
-            onComplete={handleActionComplete}
-            onSeeWhy={() => { setActiveModal('action'); }}
-            smartActions={intelligence.smartActions}
-          />
-        </motion.div>
-      </CollapsibleSection>
-      
       {/* Achievements - Collapsible */}
       <CollapsibleSection
         id="achievements"
@@ -443,27 +471,6 @@ export function Pulse() {
         </motion.div>
       </CollapsibleSection>
       
-      {/* Predictions - Collapsible */}
-      {(intelligence.whatIfScenarios.length > 0 || intelligence.peakPrediction) && (
-        <CollapsibleSection
-          id="predictions"
-          title="Predictions"
-          collapsed={sections.isCollapsed('predictions')}
-          onToggle={() => sections.toggle('predictions')}
-          showHeader={false}
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-          >
-            <PredictionsCard
-              scenarios={intelligence.whatIfScenarios}
-              peakPrediction={intelligence.peakPrediction}
-            />
-          </motion.div>
-        </CollapsibleSection>
-      )}
       
       {/* Floating Action Button */}
       <FloatingActions
