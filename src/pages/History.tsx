@@ -1,35 +1,37 @@
 /**
- * History - Analytics and trends page
+ * History - Analytics and trends page (Redesigned)
  * 
- * Shows historical data:
- * - Time range selector
- * - Trend charts (Pulse Score, Occupancy, Sound)
- * - Weekly summary stats
- * - Export functionality
+ * Shows historical data with:
+ * - Smart header with date context
+ * - Modern time range selector
+ * - Summary stats at top
+ * - Collapsible chart cards
+ * - Period comparison
+ * - FAB for export/refresh
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { BarChart2, Download, RefreshCw } from 'lucide-react';
-import { DataChart } from '../components/DataChart';
+import { Zap } from 'lucide-react';
+
+// Components
+import { HistoryHeader } from '../components/history/HistoryHeader';
+import { TimeRangeSelector } from '../components/history/TimeRangeSelector';
+import { SummaryStats } from '../components/history/SummaryStats';
+import { ChartCard } from '../components/history/ChartCard';
+import { PeriodComparison } from '../components/history/PeriodComparison';
 import { CardSkeleton, EmptyHistoryState, ErrorState } from '../components/common/LoadingState';
 import { PullToRefresh } from '../components/common/PullToRefresh';
-import { PeriodComparison } from '../components/history/PeriodComparison';
+import { CollapsibleSection } from '../components/common/CollapsibleSection';
+import { FloatingActions } from '../components/pulse/FloatingActions';
+
+// Hooks & Services
 import { usePeriodComparison } from '../hooks/usePeriodComparison';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import { historicalCache } from '../services/dynamodb.service';
 import { haptic } from '../utils/haptics';
-import type { TimeRange, SensorData, HistoricalData } from '../types';
-
-// ============ TIME RANGES ============
-
-const TIME_RANGES: { value: TimeRange; label: string }[] = [
-  { value: '24h', label: '24h' },
-  { value: '7d', label: '7 Days' },
-  { value: '30d', label: '30 Days' },
-  { value: '90d', label: '90 Days' },
-];
+import type { TimeRange, HistoricalData } from '../types';
 
 // ============ MAIN COMPONENT ============
 
@@ -42,41 +44,29 @@ export function History() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<HistoricalData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fetchId, setFetchId] = useState(0); // Forces chart re-render on new fetch
+  const [fetchId, setFetchId] = useState(0);
+  const [comparisonCollapsed, setComparisonCollapsed] = useState(false);
   
-  // Period comparison data (adapts to selected time range)
+  // Period comparison
   const periodComparison = usePeriodComparison(venueId, timeRange);
   
   // Fetch data
   const fetchData = useCallback(async (forceRefresh = false) => {
     if (!venueId) return;
     
-    console.log(`📊 History: Fetching data for range: ${timeRange}${forceRefresh ? ' (force refresh)' : ''}`);
     setLoading(true);
     setError(null);
-    setData(null); // Clear old data to force re-render
-    setFetchId(prev => prev + 1); // Increment to force chart remount
+    setData(null);
+    setFetchId(prev => prev + 1);
     
     try {
-      // Always clear cache before fetching to ensure fresh data
       if (forceRefresh) {
         historicalCache.clearRange(venueId, timeRange);
       }
       
       const result = await apiService.getHistoricalData(venueId, timeRange);
-      console.log(`📊 History: Received ${result?.data?.length || 0} data points for ${timeRange}`);
-      
-      // Log date range of received data
-      if (result?.data?.length > 0) {
-        const sorted = [...result.data].sort((a, b) => 
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        );
-        console.log(`📊 History: Data range: ${sorted[0].timestamp} to ${sorted[sorted.length - 1].timestamp}`);
-      }
-      
       setData(result);
     } catch (err: any) {
-      console.error(`📊 History: Error fetching ${timeRange}:`, err);
       setError(err.message || 'Failed to load historical data');
     } finally {
       setLoading(false);
@@ -84,266 +74,146 @@ export function History() {
   }, [venueId, timeRange]);
   
   useEffect(() => {
-    fetchData(false); // Don't force refresh on initial load
+    fetchData(false);
   }, [fetchData]);
   
-  // Force refresh - clears cache first
-  const handleRefresh = () => {
-    fetchData(true); // Force refresh clears cache
+  const handleRefresh = async () => {
+    haptic('medium');
+    await fetchData(true);
   };
   
-  // Export handler
   const handleExport = () => {
+    haptic('medium');
     if (data?.data && data.data.length > 0) {
       apiService.exportToCSV(data.data, true, venueName);
     }
   };
   
-  // Calculate summary stats
-  const summary = data?.data ? calculateSummary(data.data) : null;
+  const handleTimeRangeChange = (range: TimeRange) => {
+    if (venueId) {
+      historicalCache.clearRange(venueId, range);
+    }
+    setTimeRange(range);
+  };
   
   return (
     <PullToRefresh onRefresh={handleRefresh} disabled={loading}>
-    <div className="space-y-6">
-      {/* Header */}
-      <motion.div
-        className="flex items-center justify-between"
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <div className="flex items-center gap-2">
-          <BarChart2 className="w-6 h-6 text-primary" />
-          <h1 className="text-xl font-bold text-warm-100">History</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <motion.button
-            onClick={() => { haptic('light'); handleExport(); }}
-            disabled={!data?.data?.length}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            whileTap={{ scale: 0.95 }}
-          >
-            <Download className="w-4 h-4" />
-            Export
-          </motion.button>
-          <motion.button
-            onClick={() => { haptic('light'); handleRefresh(); }}
-            disabled={loading}
-            className="p-2 rounded-xl bg-warm-800 hover:bg-warm-700 transition-colors"
-            whileTap={{ scale: 0.95 }}
-          >
-            <RefreshCw className={`w-5 h-5 text-warm-400 ${loading ? 'animate-spin' : ''}`} />
-          </motion.button>
-        </div>
-      </motion.div>
-      
-      {/* Time Range Selector */}
-      <motion.div
-        className="flex gap-2"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.1 }}
-      >
-        {TIME_RANGES.map((range) => (
-          <motion.button
-            key={range.value}
-            disabled={loading}
-            onClick={() => {
-              if (range.value !== timeRange) {
-                haptic('selection');
-                if (venueId) {
-                  historicalCache.clearRange(venueId, range.value);
-                }
-                console.log(`📊 History: Switching from ${timeRange} to ${range.value}`);
-                setTimeRange(range.value);
-              }
-            }}
-            className={`
-              px-4 py-2 rounded-xl text-sm font-medium transition-colors
-              ${loading ? 'opacity-50 cursor-wait' : ''}
-              ${timeRange === range.value
-                ? 'bg-primary text-white'
-                : 'bg-warm-800 text-warm-300 hover:bg-warm-700'
-              }
-            `}
-            whileTap={{ scale: 0.95 }}
-          >
-            {range.label}
-          </motion.button>
-        ))}
-      </motion.div>
-      
-      {/* Period Comparison (adapts to all time ranges) */}
-      <motion.div
-        key={`comparison-${timeRange}`}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-      >
-        <PeriodComparison
-          currentPeriod={periodComparison.currentPeriod}
-          previousPeriod={periodComparison.previousPeriod}
-          config={periodComparison.config}
-          loading={periodComparison.loading}
+      <div className="space-y-5 pb-20">
+        {/* Smart Header */}
+        <HistoryHeader
+          timeRange={timeRange}
+          dataPoints={data?.data?.length}
         />
-      </motion.div>
-      
-      {/* Error State */}
-      {error && (
-        <ErrorState
-          title="Couldn't load history"
-          message={error}
-          onRetry={handleRefresh}
-        />
-      )}
-      
-      {/* Loading State */}
-      {loading && !data && (
-        <div className="space-y-4">
-          <CardSkeleton height="h-64" />
-          <CardSkeleton height="h-64" />
-        </div>
-      )}
-      
-      {/* Charts */}
-      {data?.data && data.data.length > 0 && (
+        
+        {/* Time Range Selector */}
         <motion.div
-          key={`charts-${timeRange}-${fetchId}`}
-          className="space-y-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
+          transition={{ delay: 0.05 }}
         >
-          {/* Occupancy Chart */}
-          <div className="bg-warm-800 rounded-2xl border border-warm-700 p-4 transition-colors">
-            <h3 className="text-base font-semibold text-warm-100 mb-4">Occupancy</h3>
-            <DataChart
-              key={`occupancy-${timeRange}-${fetchId}`}
-              data={data.data}
-              metric="occupancy"
-              title=""
-              color="#22C55E"
-              timeRange={timeRange}
-            />
-          </div>
-          
-          {/* Sound Chart */}
-          <div className="bg-warm-800 rounded-2xl border border-warm-700 p-4 transition-colors">
-            <h3 className="text-base font-semibold text-warm-100 mb-4">Sound Level</h3>
-            <DataChart
-              key={`sound-${timeRange}-${fetchId}`}
-              data={data.data}
-              metric="decibels"
-              title=""
-              color="#0077B6"
-              timeRange={timeRange}
-            />
-          </div>
-          
-          {/* Light Chart */}
-          <div className="bg-warm-800 rounded-2xl border border-warm-700 p-4 transition-colors">
-            <h3 className="text-base font-semibold text-warm-100 mb-4">Light Level</h3>
-            <DataChart
-              key={`light-${timeRange}-${fetchId}`}
-              data={data.data}
-              metric="light"
-              title=""
-              color="#F59E0B"
-              timeRange={timeRange}
-            />
-          </div>
+          <TimeRangeSelector
+            value={timeRange}
+            onChange={handleTimeRangeChange}
+            disabled={loading}
+          />
         </motion.div>
-      )}
-      
-      {/* Summary Stats */}
-      {summary && (
-        <motion.div
-          key={`summary-${timeRange}-${fetchId}`}
-          className="bg-warm-800 rounded-2xl border border-warm-700 p-4 transition-colors"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-        >
-          <h3 className="text-base font-semibold text-warm-100 mb-4">
-            {timeRange === '24h' ? 'Today' : timeRange === '7d' ? 'This Week' : 'Period'} Summary
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <SummaryCard label="Total Visitors" value={summary.totalVisitors.toLocaleString()} />
-            <SummaryCard label="Peak Occupancy" value={summary.peakOccupancy.toString()} />
-            <SummaryCard label="Avg Sound" value={`${summary.avgSound.toFixed(0)} dB`} />
-            <SummaryCard label="Data Points" value={summary.dataPoints.toLocaleString()} />
+        
+        {/* Error State */}
+        {error && (
+          <ErrorState
+            title="Couldn't load history"
+            message={error}
+            onRetry={handleRefresh}
+          />
+        )}
+        
+        {/* Loading State */}
+        {loading && !data && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[1, 2, 3, 4].map(i => (
+                <CardSkeleton key={i} height="h-20" />
+              ))}
+            </div>
+            <CardSkeleton height="h-64" />
+            <CardSkeleton height="h-64" />
           </div>
-        </motion.div>
-      )}
-      
-      {/* No Data State */}
-      {!loading && (!data?.data || data.data.length === 0) && !error && (
-        <EmptyHistoryState onRetry={handleRefresh} />
-      )}
-    </div>
+        )}
+        
+        {/* Data Content */}
+        {data?.data && data.data.length > 0 && (
+          <>
+            {/* Summary Stats */}
+            <SummaryStats data={data.data} timeRange={timeRange} />
+            
+            {/* Period Comparison (Collapsible) */}
+            <CollapsibleSection
+              id="comparison"
+              title="Period Comparison"
+              collapsed={comparisonCollapsed}
+              onToggle={() => setComparisonCollapsed(!comparisonCollapsed)}
+              showHeader={true}
+            >
+              <motion.div
+                key={`comparison-${timeRange}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+              >
+                <PeriodComparison
+                  currentPeriod={periodComparison.currentPeriod}
+                  previousPeriod={periodComparison.previousPeriod}
+                  config={periodComparison.config}
+                  loading={periodComparison.loading}
+                />
+              </motion.div>
+            </CollapsibleSection>
+            
+            {/* Charts */}
+            <motion.div
+              key={`charts-${timeRange}-${fetchId}`}
+              className="space-y-4"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.15 }}
+            >
+              <ChartCard
+                data={data.data}
+                metric="occupancy"
+                timeRange={timeRange}
+                fetchId={fetchId}
+              />
+              
+              <ChartCard
+                data={data.data}
+                metric="decibels"
+                timeRange={timeRange}
+                fetchId={fetchId}
+              />
+              
+              <ChartCard
+                data={data.data}
+                metric="light"
+                timeRange={timeRange}
+                fetchId={fetchId}
+                defaultCollapsed={true}
+              />
+            </motion.div>
+          </>
+        )}
+        
+        {/* No Data State */}
+        {!loading && (!data?.data || data.data.length === 0) && !error && (
+          <EmptyHistoryState onRetry={handleRefresh} />
+        )}
+        
+        {/* Floating Action Button */}
+        <FloatingActions
+          onReport={handleExport}
+          onRefresh={handleRefresh}
+          isRefreshing={loading}
+        />
+      </div>
     </PullToRefresh>
-  );
-}
-
-// ============ SUMMARY CALCULATION ============
-
-interface Summary {
-  totalVisitors: number;
-  peakOccupancy: number;
-  avgSound: number;
-  dataPoints: number;
-}
-
-function calculateSummary(data: SensorData[]): Summary {
-  let totalVisitors = 0;
-  let peakOccupancy = 0;
-  let totalSound = 0;
-  let soundCount = 0;
-  
-  // Group by day to get max entries per day
-  const dailyEntries = new Map<string, number>();
-  
-  data.forEach((item) => {
-    const date = new Date(item.timestamp).toDateString();
-    
-    // Track max entries per day
-    if (item.occupancy?.entries) {
-      const current = dailyEntries.get(date) || 0;
-      dailyEntries.set(date, Math.max(current, item.occupancy.entries));
-    }
-    
-    // Track peak occupancy
-    if (item.occupancy?.current && item.occupancy.current > peakOccupancy) {
-      peakOccupancy = item.occupancy.current;
-    }
-    
-    // Track sound average
-    if (item.decibels) {
-      totalSound += item.decibels;
-      soundCount++;
-    }
-  });
-  
-  // Sum daily entries
-  dailyEntries.forEach((entries) => {
-    totalVisitors += entries;
-  });
-  
-  return {
-    totalVisitors,
-    peakOccupancy,
-    avgSound: soundCount > 0 ? totalSound / soundCount : 0,
-    dataPoints: data.length,
-  };
-}
-
-// ============ SUMMARY CARD ============
-
-function SummaryCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="p-3 rounded-xl bg-warm-700/50 transition-colors">
-      <p className="text-xs text-warm-400 mb-1">{label}</p>
-      <p className="text-lg font-bold text-warm-100">{value}</p>
-    </div>
   );
 }
 
