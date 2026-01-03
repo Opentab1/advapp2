@@ -55,7 +55,11 @@ import { FloatingActions } from '../components/pulse/FloatingActions';
 // Common components
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { OfflineState, ErrorState } from '../components/common/LoadingState';
+import { CollapsibleSection } from '../components/common/CollapsibleSection';
 import { haptic } from '../utils/haptics';
+
+// Phase C: Smart defaults
+import { useSectionVisibility } from '../hooks/useSectionVisibility';
 
 // ============ MODAL TYPES ============
 
@@ -121,6 +125,9 @@ export function Pulse() {
     occupancy: pulseData.occupancyMetrics,
     hasUpcomingGames: todayGames.length > 0,
   });
+  
+  // Section visibility (Phase C: Smart defaults)
+  const sections = useSectionVisibility();
   
   // Load external data (sports, holidays)
   useEffect(() => {
@@ -301,7 +308,7 @@ export function Pulse() {
   return (
     <PullToRefresh onRefresh={handleRefresh} disabled={pulseData.loading}>
       <div className="space-y-5">
-        {/* Smart Header - Greeting + Peak + Weather */}
+        {/* Smart Header - Greeting + Peak + Weather + Mode */}
         <SmartHeader
           briefing={intelligence.dailyBriefing}
           peakPrediction={intelligence.peakPrediction}
@@ -309,6 +316,7 @@ export function Pulse() {
             temperature: pulseData.weather.temperature,
             icon: pulseData.weather.icon,
           } : null}
+          mode={sections.mode}
         />
       
       {/* Offline Warning */}
@@ -316,7 +324,7 @@ export function Pulse() {
         <OfflineState lastUpdated={pulseData.lastUpdated} />
       )}
       
-      {/* Trend Alerts - Proactive notifications (priority) */}
+      {/* Trend Alerts - Always visible, can dismiss individually */}
       {intelligence.trendAlerts.length > 0 && (
         <TrendAlerts
           alerts={intelligence.trendAlerts}
@@ -324,25 +332,33 @@ export function Pulse() {
         />
       )}
       
-      {/* Live Stats - Eagle's Eye View */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.05 }}
+      {/* Live Stats - Collapsible */}
+      <CollapsibleSection
+        id="livestats"
+        title="Live Stats"
+        collapsed={sections.isCollapsed('livestats')}
+        onToggle={() => sections.toggle('livestats')}
+        showHeader={false}
       >
-        <LiveStats
-          decibels={pulseData.currentDecibels}
-          light={pulseData.currentLight}
-          occupancy={pulseData.currentOccupancy}
-          currentSong={pulseData.sensorData?.currentSong}
-          artist={pulseData.sensorData?.artist}
-          albumArt={pulseData.sensorData?.albumArt}
-          lastUpdated={pulseData.lastUpdated}
-          onTap={() => setActiveModal('livestats')}
-        />
-      </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+        >
+          <LiveStats
+            decibels={pulseData.currentDecibels}
+            light={pulseData.currentLight}
+            occupancy={pulseData.currentOccupancy}
+            currentSong={pulseData.sensorData?.currentSong}
+            artist={pulseData.sensorData?.artist}
+            albumArt={pulseData.sensorData?.albumArt}
+            lastUpdated={pulseData.lastUpdated}
+            onTap={() => setActiveModal('livestats')}
+          />
+        </motion.div>
+      </CollapsibleSection>
       
-      {/* Pulse Score Hero */}
+      {/* Pulse Score Hero - Always visible */}
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -355,66 +371,98 @@ export function Pulse() {
         />
       </motion.div>
       
-      {/* Supporting Rings */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
+      {/* Supporting Rings - Collapsible */}
+      <CollapsibleSection
+        id="rings"
+        title="Details"
+        collapsed={sections.isCollapsed('rings')}
+        onToggle={() => sections.toggle('rings')}
+        showHeader={false}
       >
-        <SupportingRings
-          dwellTimeFormatted={pulseData.dwellTimeFormatted}
-          dwellScore={pulseData.dwellScore}
-          onDwellTap={() => setActiveModal('dwell')}
-          rating={pulseData.reviews?.rating ?? null}
-          reputationScore={pulseData.reputationScore}
-          onReputationTap={() => setActiveModal('reputation')}
-          currentOccupancy={pulseData.currentOccupancy}
-          occupancyScore={occupancyScore}
-          onCrowdTap={() => setActiveModal('crowd')}
-        />
-      </motion.div>
-      
-      {/* Unified Actions - Single consolidated section */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-      >
-        <UnifiedActions
-          heroAction={heroAction}
-          remainingActions={remainingActions}
-          completedCount={completedCount}
-          onComplete={handleActionComplete}
-          onSeeWhy={(action) => { setActiveModal('action'); }}
-          smartActions={intelligence.smartActions}
-        />
-      </motion.div>
-      
-      {/* Achievement Row - Compact Streak + Goal */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.25 }}
-      >
-        <AchievementRow
-          streak={streak}
-          goal={weeklyGoal}
-          onSetGoal={() => setShowGoalSetter(true)}
-        />
-      </motion.div>
-      
-      {/* Predictions - Tabbed What-If + Peak */}
-      {(intelligence.whatIfScenarios.length > 0 || intelligence.peakPrediction) && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
+          transition={{ delay: 0.15 }}
         >
-          <PredictionsCard
-            scenarios={intelligence.whatIfScenarios}
-            peakPrediction={intelligence.peakPrediction}
+          <SupportingRings
+            dwellTimeFormatted={pulseData.dwellTimeFormatted}
+            dwellScore={pulseData.dwellScore}
+            onDwellTap={() => setActiveModal('dwell')}
+            rating={pulseData.reviews?.rating ?? null}
+            reputationScore={pulseData.reputationScore}
+            onReputationTap={() => setActiveModal('reputation')}
+            currentOccupancy={pulseData.currentOccupancy}
+            occupancyScore={occupancyScore}
+            onCrowdTap={() => setActiveModal('crowd')}
           />
         </motion.div>
+      </CollapsibleSection>
+      
+      {/* Actions - Collapsible (hidden in closed mode by default) */}
+      <CollapsibleSection
+        id="actions"
+        title="Actions"
+        collapsed={sections.isCollapsed('actions')}
+        onToggle={() => sections.toggle('actions')}
+        showHeader={false}
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          <UnifiedActions
+            heroAction={heroAction}
+            remainingActions={remainingActions}
+            completedCount={completedCount}
+            onComplete={handleActionComplete}
+            onSeeWhy={() => { setActiveModal('action'); }}
+            smartActions={intelligence.smartActions}
+          />
+        </motion.div>
+      </CollapsibleSection>
+      
+      {/* Achievements - Collapsible */}
+      <CollapsibleSection
+        id="achievements"
+        title="Achievements"
+        collapsed={sections.isCollapsed('achievements')}
+        onToggle={() => sections.toggle('achievements')}
+        showHeader={false}
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+        >
+          <AchievementRow
+            streak={streak}
+            goal={weeklyGoal}
+            onSetGoal={() => setShowGoalSetter(true)}
+          />
+        </motion.div>
+      </CollapsibleSection>
+      
+      {/* Predictions - Collapsible */}
+      {(intelligence.whatIfScenarios.length > 0 || intelligence.peakPrediction) && (
+        <CollapsibleSection
+          id="predictions"
+          title="Predictions"
+          collapsed={sections.isCollapsed('predictions')}
+          onToggle={() => sections.toggle('predictions')}
+          showHeader={false}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+          >
+            <PredictionsCard
+              scenarios={intelligence.whatIfScenarios}
+              peakPrediction={intelligence.peakPrediction}
+            />
+          </motion.div>
+        </CollapsibleSection>
       )}
       
       {/* Floating Action Button */}

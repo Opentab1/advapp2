@@ -2,6 +2,7 @@
  * SmartHeader - Context-aware page header
  * 
  * Replaces basic header with:
+ * - Mode indicator (Prep/Live/Closed)
  * - Time-based greeting
  * - Today's type (Friday Night, etc.)
  * - Peak countdown
@@ -13,17 +14,20 @@
 import { motion } from 'framer-motion';
 import { Zap, Clock, TrendingUp } from 'lucide-react';
 import type { DailyBriefing, PeakPrediction } from '../../services/intelligence.service';
+import { VenueMode, getModeIcon } from '../../utils/venueMode';
 
 interface SmartHeaderProps {
   briefing: DailyBriefing | null;
   peakPrediction: PeakPrediction | null;
   weather?: { temperature: number; icon: string } | null;
+  mode?: VenueMode;
 }
 
 export function SmartHeader({
   briefing,
   peakPrediction,
   weather,
+  mode = 'service',
 }: SmartHeaderProps) {
   const now = new Date();
   const currentHour = now.getHours();
@@ -38,18 +42,23 @@ export function SmartHeader({
   // Fallback greeting if no briefing
   const greeting = briefing?.greeting || getDefaultGreeting(currentHour);
   const todayType = briefing?.todayType || getDayType();
+  const modeIcon = getModeIcon(mode);
   
   return (
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      {/* Combined header: Title + Greeting + Context */}
+      {/* Combined header: Mode + Greeting + Context */}
       <div className="flex items-center justify-between p-3 rounded-xl bg-warm-800/50 border border-warm-700/50">
-        {/* Left: Logo + Greeting */}
+        {/* Left: Mode + Greeting */}
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
-            <Zap className="w-5 h-5 text-primary" />
+          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-lg">
+            {mode === 'service' ? (
+              <Zap className="w-5 h-5 text-primary" />
+            ) : (
+              <span>{modeIcon}</span>
+            )}
           </div>
           <div>
             <p className="text-xs text-warm-400">{greeting}</p>
@@ -58,20 +67,20 @@ export function SmartHeader({
         </div>
         
         {/* Right: Peak + Weather */}
-        <div className="flex items-center gap-3">
-          {/* Peak countdown */}
-          {peakPrediction && (
+        <div className="flex items-center gap-2">
+          {/* Peak countdown (service mode) */}
+          {mode === 'service' && peakPrediction && (
             <>
               {isPeakNow ? (
-                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500/20 border border-red-500/30">
-                  <TrendingUp className="w-4 h-4 text-red-400" />
-                  <span className="text-xs font-medium text-red-400">Peak NOW</span>
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-red-500/20 border border-red-500/30">
+                  <TrendingUp className="w-3.5 h-3.5 text-red-400" />
+                  <span className="text-xs font-medium text-red-400">Peak</span>
                 </div>
               ) : isPeakSoon ? (
-                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/30">
-                  <Clock className="w-4 h-4 text-amber-400" />
+                <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-500/30">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
                   <span className="text-xs font-medium text-amber-400">
-                    {hoursUntilPeak}h to peak
+                    {hoursUntilPeak}h
                   </span>
                 </div>
               ) : hoursUntilPeak !== null && hoursUntilPeak < 8 ? (
@@ -87,7 +96,7 @@ export function SmartHeader({
           
           {/* Weather */}
           {weather && (
-            <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-warm-700/50">
+            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-warm-700/50">
               <span className="text-sm">{weather.icon}</span>
               <span className="text-xs font-medium text-warm-200">
                 {Math.round(weather.temperature)}°
