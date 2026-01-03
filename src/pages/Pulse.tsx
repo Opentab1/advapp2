@@ -13,18 +13,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Zap, RefreshCw, FileText } from 'lucide-react';
 
 // Components
 import { PulseScoreHero } from '../components/pulse/PulseScoreHero';
 import { SupportingRings } from '../components/pulse/SupportingRings';
-import { ActionHero } from '../components/pulse/ActionHero';
-import { ActionQueue } from '../components/pulse/ActionQueue';
-import { ContextBar } from '../components/pulse/ContextBar';
 import { LiveStats } from '../components/pulse/LiveStats';
-import { StreakBadge } from '../components/pulse/StreakBadge';
-import { GoalProgress } from '../components/pulse/GoalProgress';
-import { InsightsPanel } from '../components/pulse/InsightsPanel';
 import { CelebrationModal, CelebrationType } from '../components/pulse/CelebrationModal';
 import { GoalSetterModal } from '../components/pulse/GoalSetterModal';
 import { ActionDetailModal } from '../components/pulse/ActionDetailModal';
@@ -36,6 +29,11 @@ import { LiveStatsModal } from '../components/pulse/LiveStatsModal';
 import { NightReportModal } from '../components/pulse/NightReportModal';
 import { PulsePageSkeleton } from '../components/common/LoadingState';
 
+// Phase A: Simplified components
+import { SmartHeader } from '../components/pulse/SmartHeader';
+import { UnifiedActions } from '../components/pulse/UnifiedActions';
+import { AchievementRow } from '../components/pulse/AchievementRow';
+
 // Hooks & Services
 import { usePulseData } from '../hooks/usePulseData';
 import { useActions } from '../hooks/useActions';
@@ -43,15 +41,13 @@ import { useIntelligence } from '../hooks/useIntelligence';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
 import authService from '../services/auth.service';
-import achievementsService, { Streak, WeeklyGoal, Insight } from '../services/achievements.service';
+import achievementsService, { Streak, WeeklyGoal } from '../services/achievements.service';
 import staffService from '../services/staff.service';
 import { pulseStore } from '../stores/pulseStore';
 import type { SportsGame } from '../types';
 
 // Intelligence Components
-import { DailyBriefing } from '../components/pulse/DailyBriefing';
 import { TrendAlerts } from '../components/pulse/TrendAlerts';
-import { SmartActionCard } from '../components/pulse/SmartActionCard';
 import { WhatIfScenarios } from '../components/pulse/WhatIfScenarios';
 import { PeakPredictionCard } from '../components/pulse/PeakPredictionCard';
 
@@ -98,7 +94,6 @@ export function Pulse() {
   // Achievement data
   const [streak, setStreak] = useState<Streak>(achievementsService.getStreak());
   const [weeklyGoal, setWeeklyGoal] = useState<WeeklyGoal | null>(achievementsService.getWeeklyGoal());
-  const [insights, setInsights] = useState<Insight[]>([]);
   
   // External data
   const [todayGames, setTodayGames] = useState<SportsGame[]>([]);
@@ -138,12 +133,6 @@ export function Pulse() {
       }
     }
     loadExternalData();
-  }, []);
-  
-  // Generate insights
-  useEffect(() => {
-    const generatedInsights = achievementsService.generateInsights();
-    setInsights(generatedInsights);
   }, []);
   
   // Share pulse score with header via store
@@ -310,47 +299,38 @@ export function Pulse() {
   
   return (
     <PullToRefresh onRefresh={handleRefresh} disabled={pulseData.loading}>
-      <div className="space-y-6">
-        {/* Header */}
-        <motion.div
-          className="flex items-center justify-between"
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <div className="flex items-center gap-2">
-            <Zap className="w-6 h-6 text-primary" />
-            <h1 className="text-xl font-bold text-warm-100">Pulse</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <motion.button
-              onClick={() => { haptic('light'); setShowNightReport(true); }}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/20 text-primary text-sm font-medium hover:bg-primary/30 transition-colors"
-              whileTap={{ scale: 0.95 }}
-            >
-              <FileText className="w-4 h-4" />
-              <span className="hidden sm:inline">Report</span>
-            </motion.button>
-            <motion.button
-              onClick={() => { haptic('light'); pulseData.refresh(); }}
-              disabled={pulseData.loading}
-              className="p-2 rounded-xl bg-warm-800 hover:bg-warm-700 transition-colors"
-              whileTap={{ scale: 0.95 }}
-            >
-              <RefreshCw className={`w-5 h-5 text-warm-400 ${pulseData.loading ? 'animate-spin' : ''}`} />
-            </motion.button>
-          </div>
-        </motion.div>
+      <div className="space-y-5">
+        {/* Smart Header - Greeting + Peak + Weather */}
+        <SmartHeader
+          briefing={intelligence.dailyBriefing}
+          peakPrediction={intelligence.peakPrediction}
+          weather={pulseData.weather ? {
+            temperature: pulseData.weather.temperature,
+            icon: pulseData.weather.icon,
+          } : null}
+          loading={pulseData.loading}
+          onRefresh={() => { haptic('light'); pulseData.refresh(); }}
+          onReportTap={() => { haptic('light'); setShowNightReport(true); }}
+        />
       
       {/* Offline Warning */}
       {!pulseData.isConnected && pulseData.sensorData && (
         <OfflineState lastUpdated={pulseData.lastUpdated} />
       )}
       
+      {/* Trend Alerts - Proactive notifications (priority) */}
+      {intelligence.trendAlerts.length > 0 && (
+        <TrendAlerts
+          alerts={intelligence.trendAlerts}
+          onDismiss={intelligence.dismissAlert}
+        />
+      )}
+      
       {/* Live Stats - Eagle's Eye View */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
+        transition={{ delay: 0.05 }}
       >
         <LiveStats
           decibels={pulseData.currentDecibels}
@@ -368,7 +348,7 @@ export function Pulse() {
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 0.15 }}
+        transition={{ delay: 0.1 }}
       >
         <PulseScoreHero
           score={pulseData.pulseScore}
@@ -381,7 +361,7 @@ export function Pulse() {
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
+        transition={{ delay: 0.15 }}
       >
         <SupportingRings
           dwellTimeFormatted={pulseData.dwellTimeFormatted}
@@ -396,139 +376,49 @@ export function Pulse() {
         />
       </motion.div>
       
-      {/* Trend Alerts - Proactive notifications */}
-      {intelligence.trendAlerts.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.22 }}
-        >
-          <TrendAlerts
-            alerts={intelligence.trendAlerts}
-            onDismiss={intelligence.dismissAlert}
-          />
-        </motion.div>
-      )}
-      
-      {/* Daily Briefing */}
-      {intelligence.dailyBriefing && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.24 }}
-        >
-          <DailyBriefing briefing={intelligence.dailyBriefing} compact />
-        </motion.div>
-      )}
-      
-      {/* Streak + Goal Row */}
+      {/* Unified Actions - Single consolidated section */}
       <motion.div
-        className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+      >
+        <UnifiedActions
+          heroAction={heroAction}
+          remainingActions={remainingActions}
+          completedCount={completedCount}
+          onComplete={handleActionComplete}
+          onSeeWhy={(action) => { setActiveModal('action'); }}
+          smartActions={intelligence.smartActions}
+        />
+      </motion.div>
+      
+      {/* Achievement Row - Compact Streak + Goal */}
+      <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.25 }}
       >
-        <StreakBadge streak={streak} />
-        <GoalProgress 
-          goal={weeklyGoal} 
-          onSetGoal={() => setShowGoalSetter(true)} 
+        <AchievementRow
+          streak={streak}
+          goal={weeklyGoal}
+          onSetGoal={() => setShowGoalSetter(true)}
         />
       </motion.div>
       
-      {/* Insights */}
-      {insights.length > 0 && (
+      {/* Predictions - What-If + Peak (only show one) */}
+      {(intelligence.whatIfScenarios.length > 0 || intelligence.peakPrediction) && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.28 }}
+          transition={{ delay: 0.3 }}
         >
-          <InsightsPanel insights={insights} />
+          {intelligence.whatIfScenarios.length > 0 ? (
+            <WhatIfScenarios scenarios={intelligence.whatIfScenarios.slice(0, 2)} />
+          ) : intelligence.peakPrediction ? (
+            <PeakPredictionCard prediction={intelligence.peakPrediction} />
+          ) : null}
         </motion.div>
       )}
-      
-      {/* Action Hero */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-      >
-        <ActionHero
-          action={heroAction}
-          onSeeWhy={() => setActiveModal('action')}
-          onComplete={() => handleActionComplete()}
-          completedCount={completedCount}
-        />
-      </motion.div>
-      
-      {/* Action Queue */}
-      {remainingActions.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-        >
-          <ActionQueue
-            actions={remainingActions}
-            onComplete={handleActionComplete}
-          />
-        </motion.div>
-      )}
-      
-      {/* Smart Actions with Historical Context */}
-      {intelligence.smartActions.length > 0 && (
-        <motion.div
-          className="space-y-3"
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.42 }}
-        >
-          <h3 className="text-sm font-semibold text-warm-400 px-1">AI-Powered Suggestions</h3>
-          {intelligence.smartActions.slice(0, 2).map((action) => (
-            <SmartActionCard
-              key={action.id}
-              action={action}
-            />
-          ))}
-        </motion.div>
-      )}
-      
-      {/* What-If Scenarios */}
-      {intelligence.whatIfScenarios.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.44 }}
-        >
-          <WhatIfScenarios scenarios={intelligence.whatIfScenarios} />
-        </motion.div>
-      )}
-      
-      {/* Peak Prediction */}
-      {intelligence.peakPrediction && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.46 }}
-        >
-          <PeakPredictionCard prediction={intelligence.peakPrediction} />
-        </motion.div>
-      )}
-      
-      {/* Context Bar */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-      >
-        <ContextBar
-          games={todayGames}
-          nextHoliday={holidayData}
-          weather={pulseData.weather ? {
-            temp: pulseData.weather.temperature,
-            icon: pulseData.weather.icon,
-          } : null}
-        />
-      </motion.div>
       
       {/* ============ MODALS ============ */}
       
