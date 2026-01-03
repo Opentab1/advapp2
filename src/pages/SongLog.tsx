@@ -13,6 +13,8 @@ import songLogService, {
   AnalyticsTimeRange 
 } from '../services/song-log.service';
 import authService from '../services/auth.service';
+import { PullToRefresh } from '../components/common/PullToRefresh';
+import { haptic } from '../utils/haptics';
 import type { SongLogEntry } from '../types';
 
 type ExportFormat = 'csv' | 'txt' | 'json';
@@ -128,6 +130,7 @@ export function SongLog() {
   );
 
   return (
+    <PullToRefresh onRefresh={handleRefresh} disabled={loading || analyticsLoading}>
     <div className="max-w-7xl mx-auto">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -146,22 +149,23 @@ export function SongLog() {
             {/* Time Range Selector */}
             <div className="flex items-center gap-1 bg-warm-800 rounded-lg p-1">
               {(['7d', '14d', '30d', '90d'] as AnalyticsTimeRange[]).map((range) => (
-                <button
+                <motion.button
                   key={range}
-                  onClick={() => handleTimeRangeChange(range)}
+                  onClick={() => { haptic('selection'); handleTimeRangeChange(range); }}
                   className={`px-3 py-1.5 text-sm rounded-md transition-all ${
                     timeRange === range
                       ? 'bg-primary/20 text-primary border border-cyan/30'
                       : 'text-warm-400 hover:text-white hover:bg-warm-800'
                   }`}
+                  whileTap={{ scale: 0.95 }}
                 >
                   {range}
-                </button>
+                </motion.button>
               ))}
             </div>
 
             <motion.button
-              onClick={handleRefresh}
+              onClick={() => { haptic('light'); handleRefresh(); }}
               disabled={loading || analyticsLoading}
               className="btn-secondary flex items-center gap-2"
               whileHover={{ scale: loading ? 1 : 1.05 }}
@@ -172,7 +176,7 @@ export function SongLog() {
             </motion.button>
             
             <motion.button
-              onClick={handleExport}
+              onClick={() => { haptic('light'); handleExport(); }}
               disabled={loading}
               className="btn-primary flex items-center gap-2"
               whileHover={{ scale: loading ? 1 : 1.05 }}
@@ -594,5 +598,6 @@ export function SongLog() {
         )}
       </motion.div>
     </div>
+    </PullToRefresh>
   );
 }

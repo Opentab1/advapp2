@@ -12,12 +12,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart2, Download, RefreshCw } from 'lucide-react';
 import { DataChart } from '../components/DataChart';
-import { CardSkeleton } from '../components/common/LoadingState';
+import { CardSkeleton, EmptyHistoryState, ErrorState } from '../components/common/LoadingState';
+import { PullToRefresh } from '../components/common/PullToRefresh';
 import { PeriodComparison } from '../components/history/PeriodComparison';
 import { usePeriodComparison } from '../hooks/usePeriodComparison';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import { historicalCache } from '../services/dynamodb.service';
+import { haptic } from '../utils/haptics';
 import type { TimeRange, SensorData, HistoricalData } from '../types';
 
 // ============ TIME RANGES ============
@@ -101,6 +103,7 @@ export function History() {
   const summary = data?.data ? calculateSummary(data.data) : null;
   
   return (
+    <PullToRefresh onRefresh={handleRefresh} disabled={loading}>
     <div className="space-y-6">
       {/* Header */}
       <motion.div
@@ -114,7 +117,7 @@ export function History() {
         </div>
         <div className="flex items-center gap-2">
           <motion.button
-            onClick={handleExport}
+            onClick={() => { haptic('light'); handleExport(); }}
             disabled={!data?.data?.length}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             whileTap={{ scale: 0.95 }}
@@ -123,7 +126,7 @@ export function History() {
             Export
           </motion.button>
           <motion.button
-            onClick={handleRefresh}
+            onClick={() => { haptic('light'); handleRefresh(); }}
             disabled={loading}
             className="p-2 rounded-xl bg-warm-800 hover:bg-warm-700 transition-colors"
             whileTap={{ scale: 0.95 }}
@@ -141,12 +144,12 @@ export function History() {
         transition={{ delay: 0.1 }}
       >
         {TIME_RANGES.map((range) => (
-          <button
+          <motion.button
             key={range.value}
             disabled={loading}
             onClick={() => {
               if (range.value !== timeRange) {
-                // Clear cache for the new range to ensure fresh data
+                haptic('selection');
                 if (venueId) {
                   historicalCache.clearRange(venueId, range.value);
                 }
@@ -162,9 +165,10 @@ export function History() {
                 : 'bg-warm-800 text-warm-300 hover:bg-warm-700'
               }
             `}
+            whileTap={{ scale: 0.95 }}
           >
             {range.label}
-          </button>
+          </motion.button>
         ))}
       </motion.div>
       
@@ -185,10 +189,11 @@ export function History() {
       
       {/* Error State */}
       {error && (
-        <div className="p-4 rounded-xl bg-red-900/20 border border-red-800 text-red-400">
-          <p className="font-medium">Error loading data</p>
-          <p className="text-sm mt-1">{error}</p>
-        </div>
+        <ErrorState
+          title="Couldn't load history"
+          message={error}
+          onRetry={handleRefresh}
+        />
       )}
       
       {/* Loading State */}
@@ -272,15 +277,10 @@ export function History() {
       
       {/* No Data State */}
       {!loading && (!data?.data || data.data.length === 0) && !error && (
-        <div className="text-center py-12">
-          <BarChart2 className="w-12 h-12 text-warm-600 mx-auto mb-3" />
-          <p className="text-warm-300 font-medium">No data for this period</p>
-          <p className="text-sm text-warm-400 mt-1">
-            Try selecting a different time range.
-          </p>
-        </div>
+        <EmptyHistoryState onRetry={handleRefresh} />
       )}
     </div>
+    </PullToRefresh>
   );
 }
 

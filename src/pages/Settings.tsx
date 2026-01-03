@@ -10,6 +10,7 @@ import weatherService from '../services/weather.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { AddressSettings } from '../components/AddressSettings';
+import { haptic } from '../utils/haptics';
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'about'>('account');
@@ -41,18 +42,19 @@ export function Settings() {
             { id: 'venue' as const, label: 'Venue', icon: MapPin },
             { id: 'about' as const, label: 'About', icon: Info },
           ].map((tab) => (
-            <button
+            <motion.button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => { haptic('selection'); setActiveTab(tab.id); }}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'bg-primary/20 border border-primary/50 text-white'
                   : 'bg-warm-800 border border-warm-700 text-warm-400 hover:text-white'
               }`}
+              whileTap={{ scale: 0.95 }}
             >
               <tab.icon className="w-4 h-4" />
               {tab.label}
-            </button>
+            </motion.button>
           ))}
         </div>
 

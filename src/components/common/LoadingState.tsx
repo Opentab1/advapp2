@@ -9,7 +9,7 @@
  */
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { WifiOff, AlertCircle, BarChart2, Zap } from 'lucide-react';
+import { WifiOff, AlertCircle, BarChart2, Zap, Music, Lightbulb, Check } from 'lucide-react';
 
 // ============ SHIMMER SKELETON ============
 
@@ -137,6 +137,7 @@ interface NoDataStateProps {
   description?: string;
   icon?: typeof BarChart2;
   onRetry?: () => void;
+  compact?: boolean;
 }
 
 export function NoDataState({ 
@@ -144,20 +145,21 @@ export function NoDataState({
   description = 'Connect your Pulse device to start seeing insights',
   icon: Icon = Zap,
   onRetry,
+  compact = false,
 }: NoDataStateProps) {
   return (
     <motion.div 
-      className="flex flex-col items-center justify-center py-12 px-4 text-center"
+      className={`flex flex-col items-center justify-center ${compact ? 'py-6' : 'py-12'} px-4 text-center`}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      <div className="w-16 h-16 rounded-full bg-warm-800 flex items-center justify-center mb-4">
-        <Icon className="w-8 h-8 text-warm-500" />
+      <div className={`${compact ? 'w-12 h-12 mb-3' : 'w-16 h-16 mb-4'} rounded-full bg-warm-800 flex items-center justify-center`}>
+        <Icon className={`${compact ? 'w-6 h-6' : 'w-8 h-8'} text-warm-500`} />
       </div>
-      <h3 className="text-lg font-semibold text-warm-200 mb-1">
+      <h3 className={`${compact ? 'text-base' : 'text-lg'} font-semibold text-warm-200 mb-1`}>
         {title}
       </h3>
-      <p className="text-sm text-warm-400 max-w-xs mb-4">
+      <p className={`${compact ? 'text-xs' : 'text-sm'} text-warm-400 max-w-xs ${onRetry ? 'mb-4' : ''}`}>
         {description}
       </p>
       {onRetry && (
@@ -170,6 +172,72 @@ export function NoDataState({
         </motion.button>
       )}
     </motion.div>
+  );
+}
+
+// ============ CONTEXTUAL EMPTY STATES ============
+
+export function EmptyHistoryState({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <NoDataState
+      icon={BarChart2}
+      title="No history yet"
+      description="Your venue data will appear here once your Pulse device starts collecting readings."
+      onRetry={onRetry}
+    />
+  );
+}
+
+export function EmptySongsState({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <NoDataState
+      icon={Music}
+      title="No songs detected"
+      description="Play music at your venue and your Pulse device will automatically identify tracks."
+      onRetry={onRetry}
+    />
+  );
+}
+
+export function EmptyInsightsState() {
+  return (
+    <NoDataState
+      icon={Lightbulb}
+      title="Insights coming soon"
+      description="Once we have a few days of data, personalized insights will appear here."
+      compact
+    />
+  );
+}
+
+export function EmptyActionsState() {
+  return (
+    <motion.div 
+      className="flex flex-col items-center justify-center py-6 px-4 text-center bg-green-900/20 border border-green-800 rounded-2xl"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+    >
+      <div className="w-12 h-12 rounded-full bg-green-900/30 flex items-center justify-center mb-3">
+        <Check className="w-6 h-6 text-green-400" />
+      </div>
+      <h3 className="text-base font-semibold text-green-300 mb-1">
+        All caught up!
+      </h3>
+      <p className="text-xs text-green-400/80">
+        No actions needed right now. Your venue is running great.
+      </p>
+    </motion.div>
+  );
+}
+
+export function EmptyComparisonState() {
+  return (
+    <NoDataState
+      icon={BarChart2}
+      title="Not enough data"
+      description="We need at least 2 periods of data to show comparisons."
+      compact
+    />
   );
 }
 
