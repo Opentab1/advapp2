@@ -1,7 +1,7 @@
 /**
- * Header - Premium top bar with mini score
+ * Header - Premium top bar with greeting and weather
  * 
- * Shows venue name, mini Pulse Score, live indicator, and logout.
+ * Shows greeting, day, weather, mini Pulse Score, and logout.
  * Clean and minimal with WHOOP-style touches.
  * Matte black theme with white text.
  */
@@ -15,19 +15,38 @@ interface HeaderProps {
   venueName: string;
   isConnected?: boolean;
   pulseScore?: number | null;
+  weather?: { temperature: number; icon: string } | null;
   onLogout: () => void;
+}
+
+// Get greeting based on time of day
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+// Get day name
+function getDayName(): string {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return days[new Date().getDay()];
 }
 
 export function Header({ 
   venueName, 
   isConnected = true, 
   pulseScore,
+  weather,
   onLogout 
 }: HeaderProps) {
   const handleLogout = () => {
     haptic('medium');
     onLogout();
   };
+  
+  const greeting = getGreeting();
+  const dayName = getDayName();
   
   return (
     <motion.header
@@ -37,12 +56,22 @@ export function Header({
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
     >
       <div className="flex items-center justify-between max-w-2xl mx-auto">
-        {/* Left: Venue name + connection status */}
+        {/* Left: Greeting + Day + Weather */}
         <div className="flex items-center gap-3">
           <div>
-            <h1 className="text-lg font-bold text-warm-100 leading-tight">
-              {venueName}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-warm-100 leading-tight">
+                {greeting}, {dayName}
+              </h1>
+              {weather && (
+                <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-warm-800">
+                  <span className="text-sm">{weather.icon}</span>
+                  <span className="text-xs font-medium text-warm-200">
+                    {Math.round(weather.temperature)}°
+                  </span>
+                </div>
+              )}
+            </div>
             <div className="flex items-center gap-1.5">
               {isConnected ? (
                 <>

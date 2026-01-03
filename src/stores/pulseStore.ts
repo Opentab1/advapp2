@@ -1,14 +1,24 @@
 /**
- * Pulse Store - Simple shared state for Pulse Score
+ * Pulse Store - Simple shared state for Pulse Score and Weather
  * 
- * Allows the Pulse page to share the current score with the Header.
+ * Allows the Pulse page to share the current score and weather with the Header.
  */
 
-type Listener = (score: number | null) => void;
+import { useState, useEffect } from 'react';
+
+export interface WeatherData {
+  temperature: number;
+  icon: string;
+}
+
+type ScoreListener = (score: number | null) => void;
+type WeatherListener = (weather: WeatherData | null) => void;
 
 class PulseStore {
   private score: number | null = null;
-  private listeners: Set<Listener> = new Set();
+  private weather: WeatherData | null = null;
+  private scoreListeners: Set<ScoreListener> = new Set();
+  private weatherListeners: Set<WeatherListener> = new Set();
   
   getScore(): number | null {
     return this.score;
@@ -17,27 +27,56 @@ class PulseStore {
   setScore(score: number | null): void {
     if (this.score !== score) {
       this.score = score;
-      this.listeners.forEach(listener => listener(score));
+      this.scoreListeners.forEach(listener => listener(score));
     }
   }
   
-  subscribe(listener: Listener): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+  subscribeScore(listener: ScoreListener): () => void {
+    this.scoreListeners.add(listener);
+    return () => this.scoreListeners.delete(listener);
+  }
+  
+  getWeather(): WeatherData | null {
+    return this.weather;
+  }
+  
+  setWeather(weather: WeatherData | null): void {
+    // Only update if values changed
+    if (
+      this.weather?.temperature !== weather?.temperature ||
+      this.weather?.icon !== weather?.icon
+    ) {
+      this.weather = weather;
+      this.weatherListeners.forEach(listener => listener(weather));
+    }
+  }
+  
+  subscribeWeather(listener: WeatherListener): () => void {
+    this.weatherListeners.add(listener);
+    return () => this.weatherListeners.delete(listener);
   }
 }
 
 export const pulseStore = new PulseStore();
 
-// React hook for using the store
-import { useState, useEffect } from 'react';
-
+// React hook for pulse score
 export function usePulseScore(): number | null {
   const [score, setScore] = useState<number | null>(pulseStore.getScore());
   
   useEffect(() => {
-    return pulseStore.subscribe(setScore);
+    return pulseStore.subscribeScore(setScore);
   }, []);
   
   return score;
+}
+
+// React hook for weather
+export function useWeather(): WeatherData | null {
+  const [weather, setWeather] = useState<WeatherData | null>(pulseStore.getWeather());
+  
+  useEffect(() => {
+    return pulseStore.subscribeWeather(setWeather);
+  }, []);
+  
+  return weather;
 }

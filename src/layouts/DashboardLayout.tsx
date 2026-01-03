@@ -19,6 +19,7 @@ interface DashboardLayoutProps {
   venueName: string;
   isConnected?: boolean;
   pulseScore?: number | null;
+  weather?: { temperature: number; icon: string } | null;
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
   onLogout: () => void;
@@ -29,17 +30,19 @@ export function DashboardLayout({
   venueName,
   isConnected = true,
   pulseScore,
+  weather,
   activeTab,
   onTabChange,
   onLogout,
 }: DashboardLayoutProps) {
   return (
     <div className="min-h-screen bg-warm-900 flex flex-col">
-      {/* Header with mini score */}
+      {/* Header with greeting and weather */}
       <Header 
         venueName={venueName} 
         isConnected={isConnected}
         pulseScore={pulseScore}
+        weather={weather}
         onLogout={onLogout}
       />
       

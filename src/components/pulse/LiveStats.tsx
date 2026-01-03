@@ -69,7 +69,7 @@ export function LiveStats({
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-warm-100">Live Stats</h3>
+        <h3 className="text-sm font-semibold text-warm-100">Owner's Live View</h3>
         <div className="flex items-center gap-1.5">
           <span className={`w-2 h-2 rounded-full ${isFresh ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
           <span className="text-xs text-warm-400">

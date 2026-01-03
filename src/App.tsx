@@ -29,15 +29,16 @@ import type { TabId } from './components/common/TabNav';
 
 // Services & Hooks
 import authService from './services/auth.service';
-import { usePulseScore } from './stores/pulseStore';
+import { usePulseScore, useWeather } from './stores/pulseStore';
 
 // ============ PROTECTED DASHBOARD ============
 
 function ProtectedDashboard() {
   const [activeTab, setActiveTab] = useState<TabId>('pulse');
   
-  // Get shared pulse score for header mini display
+  // Get shared pulse score and weather for header display
   const pulseScore = usePulseScore();
+  const weather = useWeather();
   
   // Simple connection check (could be enhanced)
   const [isConnected, setIsConnected] = useState(true);
@@ -93,6 +94,7 @@ function ProtectedDashboard() {
       venueName="Pulse"
       isConnected={isConnected}
       pulseScore={pulseScore}
+      weather={weather}
       activeTab={activeTab}
       onTabChange={setActiveTab}
       onLogout={handleLogout}

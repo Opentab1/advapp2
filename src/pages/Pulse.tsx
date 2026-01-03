@@ -31,13 +31,10 @@ import { NightReportModal } from '../components/pulse/NightReportModal';
 import { PulsePageSkeleton } from '../components/common/LoadingState';
 
 // Phase A: Simplified components
-import { SmartHeader } from '../components/pulse/SmartHeader';
 import { AchievementRow } from '../components/pulse/AchievementRow';
 
 // Revenue-focused components (Launch Ready)
-import { RevenueHero } from '../components/pulse/RevenueHero';
 import { TonightsPlaybook } from '../components/pulse/TonightsPlaybook';
-import { VenueRanking } from '../components/pulse/VenueRanking';
 
 // Hooks & Services
 import { usePulseData } from '../hooks/usePulseData';
@@ -142,10 +139,19 @@ export function Pulse() {
     loadExternalData();
   }, []);
   
-  // Share pulse score with header via store
+  // Share pulse score and weather with header via store
   useEffect(() => {
     pulseStore.setScore(pulseData.pulseScore);
   }, [pulseData.pulseScore]);
+  
+  useEffect(() => {
+    if (pulseData.weather) {
+      pulseStore.setWeather({
+        temperature: pulseData.weather.temperature,
+        icon: pulseData.weather.icon,
+      });
+    }
+  }, [pulseData.weather]);
   
   // Track achievements when pulse score changes
   const checkAchievements = useCallback(() => {
@@ -299,16 +305,6 @@ export function Pulse() {
   return (
     <PullToRefresh onRefresh={handleRefresh} disabled={pulseData.loading}>
       <div className="space-y-5">
-        {/* Smart Header - Greeting + Peak + Weather + Mode */}
-        <SmartHeader
-          briefing={intelligence.dailyBriefing}
-          peakPrediction={intelligence.peakPrediction}
-          weather={pulseData.weather ? {
-            temperature: pulseData.weather.temperature,
-            icon: pulseData.weather.icon,
-          } : null}
-          mode={sections.mode}
-        />
       
       {/* Offline Warning */}
       {!pulseData.isConnected && pulseData.sensorData && (
@@ -323,10 +319,10 @@ export function Pulse() {
         />
       )}
       
-      {/* Live Stats - Collapsible */}
+      {/* Owner's Live View - Main Stats */}
       <CollapsibleSection
         id="livestats"
-        title="Live Stats"
+        title="Owner's Live View"
         collapsed={sections.isCollapsed('livestats')}
         onToggle={() => sections.toggle('livestats')}
         showHeader={false}
@@ -348,35 +344,6 @@ export function Pulse() {
           />
         </motion.div>
       </CollapsibleSection>
-      
-      {/* Revenue Hero - THE MONEY MOMENT */}
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 0.1 }}
-      >
-        <RevenueHero
-          currentOccupancy={pulseData.currentOccupancy}
-          dwellTimeMinutes={pulseData.dwellTimeMinutes || 45}
-          pulseScore={pulseData.pulseScore ?? 0}
-          todayEntries={pulseData.todayEntries || 0}
-          todayExits={pulseData.todayExits || 0}
-          onTap={() => setActiveModal('pulse')}
-        />
-      </motion.div>
-      
-      {/* Venue Ranking - Competitive Edge */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.12 }}
-      >
-        <VenueRanking
-          pulseScore={pulseData.pulseScore ?? 0}
-          currentOccupancy={pulseData.currentOccupancy || 0}
-          city={user?.venueName?.split(' ')[0] || 'Your City'}
-        />
-      </motion.div>
       
       {/* Tonight's Playbook - Clear Actions */}
       <motion.div
