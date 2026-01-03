@@ -434,25 +434,28 @@ class DynamoDBService {
       // Wait for all chunks
       const chunkResults = await Promise.all(chunkPromises);
       
-      // Combine results
+      // Combine results and deduplicate by timestamp
+      const seenTimestamps = new Set<string>();
       for (let i = 0; i < chunkResults.length; i++) {
         const items = chunkResults[i];
-        allItems.push(...items);
-        if (items.length > 0) {
-          console.log(`📊 [${range}] Chunk ${i + 1}/${chunks}: ${items.length} items`);
+        for (const item of items) {
+          if (!seenTimestamps.has(item.timestamp)) {
+            seenTimestamps.add(item.timestamp);
+            allItems.push(item);
+          }
         }
       }
       
-      console.log(`📊 [${range}] Total fetched: ${allItems.length} items from ${chunks} chunks`);
+      console.log(`📊 [${range}] Total fetched: ${allItems.length} unique items from ${chunks} chunks`);
 
       const items = allItems;
       
-      // Sort items by timestamp (newest first) and log date range
-      items.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      // Sort items by timestamp (oldest first for chronological chart display)
+      items.sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
       
       if (items.length > 0) {
-        const newestItem = items[0];
-        const oldestItem = items[items.length - 1];
+        const oldestItem = items[0];
+        const newestItem = items[items.length - 1];
         console.log(`📊 [${range}] Data spans: ${oldestItem?.timestamp} to ${newestItem?.timestamp}`);
       }
       
