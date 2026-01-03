@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
+import { Zap } from 'lucide-react';
 
 // Components
 import { PulseScoreHero } from '../components/pulse/PulseScoreHero';
@@ -48,10 +49,10 @@ import type { SportsGame } from '../types';
 
 // Intelligence Components
 import { TrendAlerts } from '../components/pulse/TrendAlerts';
-import { WhatIfScenarios } from '../components/pulse/WhatIfScenarios';
-import { PeakPredictionCard } from '../components/pulse/PeakPredictionCard';
+import { PredictionsCard } from '../components/pulse/PredictionsCard';
+import { FloatingActions } from '../components/pulse/FloatingActions';
 
-// New components
+// Common components
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { OfflineState, ErrorState } from '../components/common/LoadingState';
 import { haptic } from '../utils/haptics';
@@ -308,9 +309,6 @@ export function Pulse() {
             temperature: pulseData.weather.temperature,
             icon: pulseData.weather.icon,
           } : null}
-          loading={pulseData.loading}
-          onRefresh={() => { haptic('light'); pulseData.refresh(); }}
-          onReportTap={() => { haptic('light'); setShowNightReport(true); }}
         />
       
       {/* Offline Warning */}
@@ -405,20 +403,26 @@ export function Pulse() {
         />
       </motion.div>
       
-      {/* Predictions - What-If + Peak (only show one) */}
+      {/* Predictions - Tabbed What-If + Peak */}
       {(intelligence.whatIfScenarios.length > 0 || intelligence.peakPrediction) && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
         >
-          {intelligence.whatIfScenarios.length > 0 ? (
-            <WhatIfScenarios scenarios={intelligence.whatIfScenarios.slice(0, 2)} />
-          ) : intelligence.peakPrediction ? (
-            <PeakPredictionCard prediction={intelligence.peakPrediction} />
-          ) : null}
+          <PredictionsCard
+            scenarios={intelligence.whatIfScenarios}
+            peakPrediction={intelligence.peakPrediction}
+          />
         </motion.div>
       )}
+      
+      {/* Floating Action Button */}
+      <FloatingActions
+        onReport={() => { haptic('medium'); setShowNightReport(true); }}
+        onRefresh={() => { haptic('medium'); pulseData.refresh(); }}
+        isRefreshing={pulseData.loading}
+      />
       
       {/* ============ MODALS ============ */}
       
