@@ -306,12 +306,43 @@ export function Pulse() {
     <PullToRefresh onRefresh={handleRefresh} disabled={pulseData.loading}>
       <div className="space-y-5">
       
+      {/* Pulse Score Hero - Always at top */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+      >
+        <PulseScoreHero
+          score={pulseData.pulseScore}
+          statusLabel={pulseData.pulseStatusLabel}
+          onTap={() => setActiveModal('pulse')}
+        />
+      </motion.div>
+      
+      {/* Supporting Rings - Dwell, Rating, Crowd */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 }}
+      >
+        <SupportingRings
+          dwellTimeFormatted={pulseData.dwellTimeFormatted}
+          dwellScore={pulseData.dwellScore}
+          onDwellTap={() => setActiveModal('dwell')}
+          rating={pulseData.reviews?.rating ?? null}
+          reputationScore={pulseData.reputationScore}
+          onReputationTap={() => setActiveModal('reputation')}
+          currentOccupancy={pulseData.currentOccupancy}
+          occupancyScore={occupancyScore}
+          onCrowdTap={() => setActiveModal('crowd')}
+        />
+      </motion.div>
+      
       {/* Offline Warning */}
       {!pulseData.isConnected && pulseData.sensorData && (
         <OfflineState lastUpdated={pulseData.lastUpdated} />
       )}
       
-      {/* Trend Alerts - Always visible, can dismiss individually */}
+      {/* Trend Alerts */}
       {intelligence.trendAlerts.length > 0 && (
         <TrendAlerts
           alerts={intelligence.trendAlerts}
@@ -319,7 +350,7 @@ export function Pulse() {
         />
       )}
       
-      {/* Owner's Live View - Main Stats */}
+      {/* Owner's Live View */}
       <CollapsibleSection
         id="livestats"
         title="Owner's Live View"
@@ -330,7 +361,7 @@ export function Pulse() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.05 }}
+          transition={{ delay: 0.1 }}
         >
           <LiveStats
             decibels={pulseData.currentDecibels}
@@ -345,7 +376,7 @@ export function Pulse() {
         </motion.div>
       </CollapsibleSection>
       
-      {/* Tonight's Playbook - Clear Actions */}
+      {/* Tonight's Playbook */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -369,54 +400,7 @@ export function Pulse() {
         />
       </motion.div>
       
-      {/* Original Pulse Score Hero - Now Secondary */}
-      <CollapsibleSection
-        id="pulse-details"
-        title="Pulse Score Details"
-        collapsed={sections.isCollapsed('rings')}
-        onToggle={() => sections.toggle('rings')}
-        showHeader={true}
-      >
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-        >
-          <PulseScoreHero
-            score={pulseData.pulseScore}
-            statusLabel={pulseData.pulseStatusLabel}
-            onTap={() => setActiveModal('pulse')}
-          />
-        </motion.div>
-      </CollapsibleSection>
-      
-      {/* Supporting Rings - Collapsible */}
-      <CollapsibleSection
-        id="rings"
-        title="Details"
-        collapsed={sections.isCollapsed('rings')}
-        onToggle={() => sections.toggle('rings')}
-        showHeader={false}
-      >
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-        >
-          <SupportingRings
-            dwellTimeFormatted={pulseData.dwellTimeFormatted}
-            dwellScore={pulseData.dwellScore}
-            onDwellTap={() => setActiveModal('dwell')}
-            rating={pulseData.reviews?.rating ?? null}
-            reputationScore={pulseData.reputationScore}
-            onReputationTap={() => setActiveModal('reputation')}
-            currentOccupancy={pulseData.currentOccupancy}
-            occupancyScore={occupancyScore}
-            onCrowdTap={() => setActiveModal('crowd')}
-          />
-        </motion.div>
-      </CollapsibleSection>
-      
-      {/* Achievements - Collapsible */}
+      {/* Achievements */}
       <CollapsibleSection
         id="achievements"
         title="Achievements"
