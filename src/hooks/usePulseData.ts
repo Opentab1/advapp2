@@ -266,10 +266,6 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     );
   }, [sensorData?.decibels, sensorData?.light, sensorData?.indoorTemp, sensorData?.outdoorTemp, sensorData?.currentSong, sensorData?.artist, weather?.temperature]);
   
-  const dwellTimeMinutes = null; // TODO: Calculate from baseline data
-  const dwellScore = getDwellTimeScore(dwellTimeMinutes);
-  const dwellTimeFormatted = formatDwellTime(dwellTimeMinutes);
-  
   const reputationScore = getReputationScore(reviews?.rating ?? null);
   
   // Data freshness
@@ -308,6 +304,46 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       peakTime: null,
     };
   }, [sensorData?.occupancy, baseline]);
+  
+  // ============ DWELL TIME CALCULATION ============
+  // Dwell = average time guests are staying based on current occupancy vs turnover
+  const dwellTimeMinutes = useMemo(() => {
+    const current = effectiveOccupancy.current;
+    const entries = effectiveOccupancy.todayEntries;
+    const exits = effectiveOccupancy.todayExits;
+    
+    // If no data yet, return default
+    if (entries === 0 || current === 0) {
+      return 45; // Default baseline dwell time
+    }
+    
+    // Calculate hours since bar day start (3 AM)
+    const now = new Date();
+    const barDayStart = new Date(now);
+    barDayStart.setHours(3, 0, 0, 0);
+    if (now.getHours() < 3) {
+      barDayStart.setDate(barDayStart.getDate() - 1);
+    }
+    const hoursSinceStart = Math.max(1, (now.getTime() - barDayStart.getTime()) / (1000 * 60 * 60));
+    
+    // Turnover rate = exits per hour
+    const turnoverRate = exits / hoursSinceStart;
+    
+    // If low turnover, people are staying longer
+    if (turnoverRate < 1) {
+      // Few exits = long dwell times
+      return Math.min(180, Math.round(60 + (current * 2))); // Cap at 3 hours
+    }
+    
+    // Dwell time ≈ current occupancy / turnover rate (in minutes)
+    const estimatedDwell = Math.round((current / turnoverRate) * 60);
+    
+    // Clamp to reasonable range (15 min to 3 hours)
+    return Math.max(15, Math.min(180, estimatedDwell));
+  }, [effectiveOccupancy]);
+  
+  const dwellScore = getDwellTimeScore(dwellTimeMinutes);
+  const dwellTimeFormatted = formatDwellTime(dwellTimeMinutes);
   
   // ============ RETURN ============
   

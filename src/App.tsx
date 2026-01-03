@@ -21,6 +21,7 @@ import { Pulse } from './pages/Pulse';
 import { History } from './pages/History';
 import { Settings } from './pages/Settings';
 import { SongLog } from './pages/SongLog';
+import { Reports } from './pages/Reports';
 
 // Layout
 import { DashboardLayout } from './layouts/DashboardLayout';
@@ -78,6 +79,8 @@ function ProtectedDashboard() {
         return <History />;
       case 'songs':
         return <SongLog />;
+      case 'reports':
+        return <Reports />;
       case 'settings':
         return <Settings />;
       default:

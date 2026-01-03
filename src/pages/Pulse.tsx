@@ -52,7 +52,6 @@ import type { SportsGame } from '../types';
 
 // Intelligence Components
 import { TrendAlerts } from '../components/pulse/TrendAlerts';
-import { FloatingActions } from '../components/pulse/FloatingActions';
 
 // Common components
 import { PullToRefresh } from '../components/common/PullToRefresh';
@@ -470,14 +469,6 @@ export function Pulse() {
           />
         </motion.div>
       </CollapsibleSection>
-      
-      
-      {/* Floating Action Button */}
-      <FloatingActions
-        onReport={() => { haptic('medium'); setShowNightReport(true); }}
-        onRefresh={() => { haptic('medium'); pulseData.refresh(); }}
-        isRefreshing={pulseData.loading}
-      />
       
       {/* ============ MODALS ============ */}
       

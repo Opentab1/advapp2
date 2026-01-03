@@ -22,7 +22,6 @@ import { PeriodComparison } from '../components/history/PeriodComparison';
 import { CardSkeleton, EmptyHistoryState, ErrorState } from '../components/common/LoadingState';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { CollapsibleSection } from '../components/common/CollapsibleSection';
-import { FloatingActions } from '../components/pulse/FloatingActions';
 
 // Hooks & Services
 import { usePeriodComparison } from '../hooks/usePeriodComparison';
@@ -204,13 +203,6 @@ export function History() {
         {!loading && (!data?.data || data.data.length === 0) && !error && (
           <EmptyHistoryState onRetry={handleRefresh} />
         )}
-        
-        {/* Floating Action Button */}
-        <FloatingActions
-          onReport={handleExport}
-          onRefresh={handleRefresh}
-          isRefreshing={loading}
-        />
       </div>
     </PullToRefresh>
   );
