@@ -39,6 +39,7 @@ import { PulsePageSkeleton } from '../components/common/LoadingState';
 // Hooks & Services
 import { usePulseData } from '../hooks/usePulseData';
 import { useActions } from '../hooks/useActions';
+import { useIntelligence } from '../hooks/useIntelligence';
 import sportsService from '../services/sports.service';
 import holidayService from '../services/holiday.service';
 import authService from '../services/auth.service';
@@ -46,6 +47,13 @@ import achievementsService, { Streak, WeeklyGoal, Insight } from '../services/ac
 import staffService from '../services/staff.service';
 import { pulseStore } from '../stores/pulseStore';
 import type { SportsGame } from '../types';
+
+// Intelligence Components
+import { DailyBriefing } from '../components/pulse/DailyBriefing';
+import { TrendAlerts } from '../components/pulse/TrendAlerts';
+import { SmartActionCard } from '../components/pulse/SmartActionCard';
+import { WhatIfScenarios } from '../components/pulse/WhatIfScenarios';
+import { PeakPredictionCard } from '../components/pulse/PeakPredictionCard';
 
 // New components
 import { PullToRefresh } from '../components/common/PullToRefresh';
@@ -97,6 +105,13 @@ export function Pulse() {
   
   // Fetch all pulse data
   const pulseData = usePulseData({ enabled: true });
+  
+  // Intelligence - AI-powered insights
+  const intelligence = useIntelligence({
+    enabled: true,
+    currentData: pulseData.sensorData || undefined,
+    weather: pulseData.weather,
+  });
   
   // Generate actions based on current data
   const {
@@ -381,6 +396,31 @@ export function Pulse() {
         />
       </motion.div>
       
+      {/* Trend Alerts - Proactive notifications */}
+      {intelligence.trendAlerts.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.22 }}
+        >
+          <TrendAlerts
+            alerts={intelligence.trendAlerts}
+            onDismiss={intelligence.dismissAlert}
+          />
+        </motion.div>
+      )}
+      
+      {/* Daily Briefing */}
+      {intelligence.dailyBriefing && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.24 }}
+        >
+          <DailyBriefing briefing={intelligence.dailyBriefing} compact />
+        </motion.div>
+      )}
+      
       {/* Streak + Goal Row */}
       <motion.div
         className="grid grid-cols-1 sm:grid-cols-2 gap-3"
@@ -431,6 +471,46 @@ export function Pulse() {
             actions={remainingActions}
             onComplete={handleActionComplete}
           />
+        </motion.div>
+      )}
+      
+      {/* Smart Actions with Historical Context */}
+      {intelligence.smartActions.length > 0 && (
+        <motion.div
+          className="space-y-3"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.42 }}
+        >
+          <h3 className="text-sm font-semibold text-warm-400 px-1">AI-Powered Suggestions</h3>
+          {intelligence.smartActions.slice(0, 2).map((action) => (
+            <SmartActionCard
+              key={action.id}
+              action={action}
+            />
+          ))}
+        </motion.div>
+      )}
+      
+      {/* What-If Scenarios */}
+      {intelligence.whatIfScenarios.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.44 }}
+        >
+          <WhatIfScenarios scenarios={intelligence.whatIfScenarios} />
+        </motion.div>
+      )}
+      
+      {/* Peak Prediction */}
+      {intelligence.peakPrediction && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.46 }}
+        >
+          <PeakPredictionCard prediction={intelligence.peakPrediction} />
         </motion.div>
       )}
       
