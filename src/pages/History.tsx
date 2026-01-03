@@ -13,8 +13,8 @@ import { motion } from 'framer-motion';
 import { BarChart2, Download, RefreshCw } from 'lucide-react';
 import { DataChart } from '../components/DataChart';
 import { CardSkeleton } from '../components/common/LoadingState';
-import { WeeklyComparison } from '../components/history/WeeklyComparison';
-import { useWeeklyComparison } from '../hooks/useWeeklyComparison';
+import { PeriodComparison } from '../components/history/PeriodComparison';
+import { usePeriodComparison } from '../hooks/usePeriodComparison';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import { historicalCache } from '../services/dynamodb.service';
@@ -42,8 +42,8 @@ export function History() {
   const [error, setError] = useState<string | null>(null);
   const [fetchId, setFetchId] = useState(0); // Forces chart re-render on new fetch
   
-  // Weekly comparison data
-  const weeklyComparison = useWeeklyComparison(venueId);
+  // Period comparison data (adapts to selected time range)
+  const periodComparison = usePeriodComparison(venueId, timeRange);
   
   // Fetch data
   const fetchData = useCallback(async (forceRefresh = false) => {
@@ -168,20 +168,20 @@ export function History() {
         ))}
       </motion.div>
       
-      {/* Weekly Comparison (show when 7d selected) */}
-      {timeRange === '7d' && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-        >
-          <WeeklyComparison
-            thisWeek={weeklyComparison.thisWeek}
-            lastWeek={weeklyComparison.lastWeek}
-            loading={weeklyComparison.loading}
-          />
-        </motion.div>
-      )}
+      {/* Period Comparison (adapts to all time ranges) */}
+      <motion.div
+        key={`comparison-${timeRange}`}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+      >
+        <PeriodComparison
+          currentPeriod={periodComparison.currentPeriod}
+          previousPeriod={periodComparison.previousPeriod}
+          config={periodComparison.config}
+          loading={periodComparison.loading}
+        />
+      </motion.div>
       
       {/* Error State */}
       {error && (
