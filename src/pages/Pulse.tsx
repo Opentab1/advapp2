@@ -20,7 +20,6 @@ import { PulseScoreHero } from '../components/pulse/PulseScoreHero';
 import { SupportingRings } from '../components/pulse/SupportingRings';
 import { LiveStats } from '../components/pulse/LiveStats';
 import { CelebrationModal, CelebrationType } from '../components/pulse/CelebrationModal';
-import { GoalSetterModal } from '../components/pulse/GoalSetterModal';
 import { ActionDetailModal } from '../components/pulse/ActionDetailModal';
 import { PulseBreakdownModal } from '../components/pulse/PulseBreakdownModal';
 import { DwellBreakdownModal } from '../components/pulse/DwellBreakdownModal';
@@ -30,8 +29,6 @@ import { LiveStatsModal } from '../components/pulse/LiveStatsModal';
 import { NightReportModal } from '../components/pulse/NightReportModal';
 import { PulsePageSkeleton } from '../components/common/LoadingState';
 
-// Phase A: Simplified components
-import { AchievementRow } from '../components/pulse/AchievementRow';
 
 // Revenue-focused components (Launch Ready)
 import { TonightsPlaybook } from '../components/pulse/TonightsPlaybook';
@@ -42,7 +39,6 @@ import { useActions } from '../hooks/useActions';
 import { useIntelligence } from '../hooks/useIntelligence';
 import sportsService from '../services/sports.service';
 import authService from '../services/auth.service';
-import achievementsService, { Streak, WeeklyGoal } from '../services/achievements.service';
 import staffService from '../services/staff.service';
 import { pulseStore } from '../stores/pulseStore';
 import type { SportsGame } from '../types';
@@ -82,7 +78,6 @@ export function Pulse() {
   
   // Modal state
   const [activeModal, setActiveModal] = useState<ModalType>(null);
-  const [showGoalSetter, setShowGoalSetter] = useState(false);
   const [showNightReport, setShowNightReport] = useState(false);
   
   // Celebration state
@@ -93,10 +88,6 @@ export function Pulse() {
     subtitle: '',
     value: '',
   });
-  
-  // Achievement data
-  const [streak, setStreak] = useState<Streak>(achievementsService.getStreak());
-  const [weeklyGoal, setWeeklyGoal] = useState<WeeklyGoal | null>(achievementsService.getWeeklyGoal());
   
   // External data
   const [todayGames, setTodayGames] = useState<SportsGame[]>([]);
@@ -153,100 +144,12 @@ export function Pulse() {
     }
   }, [pulseData.weather]);
   
-  // Track achievements when pulse score changes
-  const checkAchievements = useCallback(() => {
-    if (pulseData.pulseScore === null) return;
-    
-    // Check for new record
-    const recordResult = achievementsService.checkAndUpdateRecord(
-      'best-pulse',
-      'Best Pulse Score',
-      pulseData.pulseScore,
-      ''
-    );
-    
-    if (recordResult?.isNew && recordResult.improvement) {
-      setCelebration({
-        isOpen: true,
-        type: 'record',
-        title: 'Best Pulse Score!',
-        subtitle: 'You just set a new personal record',
-        value: recordResult.record.value,
-        previousValue: recordResult.record.previousValue,
-        detail: `+${recordResult.improvement} points improvement`,
-      });
-    }
-    
-    // Check occupancy record
-    if (pulseData.currentOccupancy > 0) {
-      const occupancyRecord = achievementsService.checkAndUpdateRecord(
-        'best-occupancy',
-        'Busiest Night',
-        pulseData.currentOccupancy,
-        ' guests'
-      );
-      
-      if (occupancyRecord?.isNew && occupancyRecord.improvement && occupancyRecord.improvement > 5) {
-        setCelebration({
-          isOpen: true,
-          type: 'record',
-          title: 'Busiest Night Ever!',
-          subtitle: 'New occupancy record',
-          value: `${occupancyRecord.record.value} guests`,
-          previousValue: occupancyRecord.record.previousValue ? `${occupancyRecord.record.previousValue} guests` : undefined,
-        });
-      }
-    }
-    
-    // Update streak
-    const streakResult = achievementsService.updateStreak(pulseData.pulseScore);
-    setStreak(achievementsService.getStreak());
-    
-    if (streakResult.newMilestone) {
-      setCelebration({
-        isOpen: true,
-        type: 'streak',
-        title: `${streakResult.newMilestone}-Night Streak!`,
-        subtitle: `Above ${streak.threshold} Pulse Score`,
-        value: `🔥 ${streakResult.newMilestone}`,
-        detail: 'Keep the momentum going!',
-      });
-    }
-    
-    // Update weekly goal
-    const goalResult = achievementsService.recordDailyScore(pulseData.pulseScore);
-    setWeeklyGoal(achievementsService.getWeeklyGoal());
-    
-    if (goalResult.goalAchieved) {
-      const goal = achievementsService.getWeeklyGoal();
-      setCelebration({
-        isOpen: true,
-        type: 'goal',
-        title: 'Weekly Goal Achieved!',
-        subtitle: `You hit your target of ${goal?.target}`,
-        value: `${goal?.currentAvg} avg`,
-        detail: `${goal?.daysTracked} days tracked this week`,
-      });
-    }
-    
-    // Record for staff tracking
-    if (pulseData.pulseScore > 0) {
+  // Record for staff tracking
+  useEffect(() => {
+    if (pulseData.pulseScore !== null && pulseData.pulseScore > 0) {
       staffService.recordPulseScore(pulseData.pulseScore, pulseData.currentOccupancy);
     }
-  }, [pulseData.pulseScore, pulseData.currentOccupancy, streak.threshold]);
-  
-  // Check achievements periodically (not on every render)
-  useEffect(() => {
-    if (pulseData.pulseScore !== null) {
-      checkAchievements();
-    }
-  }, [pulseData.pulseScore]); // Only when score changes
-  
-  // Handle setting a new goal
-  const handleSetGoal = (target: number) => {
-    achievementsService.setWeeklyGoalTarget(target);
-    setWeeklyGoal(achievementsService.getWeeklyGoal());
-  };
+  }, [pulseData.pulseScore, pulseData.currentOccupancy]);
   
   // Calculate occupancy score (for ring display)
   const estimatedCapacity = pulseData.peakOccupancy 
@@ -342,39 +245,36 @@ export function Pulse() {
         <OfflineState lastUpdated={pulseData.lastUpdated} />
       )}
       
-      {/* Trend Alerts */}
-      {intelligence.trendAlerts.length > 0 && (
-        <TrendAlerts
-          alerts={intelligence.trendAlerts}
-          onDismiss={intelligence.dismissAlert}
-        />
-      )}
-      
       {/* Owner's Live View */}
-      <CollapsibleSection
-        id="livestats"
-        title="Owner's Live View"
-        collapsed={sections.isCollapsed('livestats')}
-        onToggle={() => sections.toggle('livestats')}
-        showHeader={false}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
       >
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-        >
-          <LiveStats
-            decibels={pulseData.currentDecibels}
-            light={pulseData.currentLight}
-            occupancy={pulseData.currentOccupancy}
-            currentSong={pulseData.sensorData?.currentSong}
-            artist={pulseData.sensorData?.artist}
-            albumArt={pulseData.sensorData?.albumArt}
-            lastUpdated={pulseData.lastUpdated}
-            onTap={() => setActiveModal('livestats')}
-          />
-        </motion.div>
-      </CollapsibleSection>
+        <LiveStats
+          decibels={pulseData.currentDecibels}
+          light={pulseData.currentLight}
+          occupancy={pulseData.currentOccupancy}
+          currentSong={pulseData.sensorData?.currentSong}
+          artist={pulseData.sensorData?.artist}
+          albumArt={pulseData.sensorData?.albumArt}
+          lastUpdated={pulseData.lastUpdated}
+          onTap={() => setActiveModal('livestats')}
+        />
+      </motion.div>
+      
+      {/* MY DAY Section Divider */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.12 }}
+        className="pt-2"
+      >
+        <h2 className="text-sm font-semibold text-warm-400 uppercase tracking-wider">
+          My Day
+        </h2>
+        <div className="mt-2 border-b border-warm-700" />
+      </motion.div>
       
       {/* Tonight's Playbook */}
       <motion.div
@@ -400,26 +300,19 @@ export function Pulse() {
         />
       </motion.div>
       
-      {/* Achievements */}
-      <CollapsibleSection
-        id="achievements"
-        title="Achievements"
-        collapsed={sections.isCollapsed('achievements')}
-        onToggle={() => sections.toggle('achievements')}
-        showHeader={false}
-      >
+      {/* Trend Alerts - At bottom */}
+      {intelligence.trendAlerts.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
+          transition={{ delay: 0.2 }}
         >
-          <AchievementRow
-            streak={streak}
-            goal={weeklyGoal}
-            onSetGoal={() => setShowGoalSetter(true)}
+          <TrendAlerts
+            alerts={intelligence.trendAlerts}
+            onDismiss={intelligence.dismissAlert}
           />
         </motion.div>
-      </CollapsibleSection>
+      )}
       
       {/* ============ MODALS ============ */}
       
@@ -474,14 +367,6 @@ export function Pulse() {
         onClose={() => setActiveModal(null)}
         action={heroAction}
         onComplete={() => handleActionComplete()}
-      />
-      
-      {/* Goal Setter */}
-      <GoalSetterModal
-        isOpen={showGoalSetter}
-        onClose={() => setShowGoalSetter(false)}
-        onSetGoal={handleSetGoal}
-        currentTarget={weeklyGoal?.target}
       />
       
       {/* Celebration */}
