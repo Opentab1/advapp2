@@ -5,6 +5,8 @@
  * Uses localStorage for now (will migrate to DynamoDB when backend is ready)
  */
 
+import { isDemoAccount, DEMO_VENUE } from '../utils/demoData';
+
 export interface VenueAddress {
   street: string;
   city: string;
@@ -18,6 +20,15 @@ export interface VenueSettings {
   lastUpdated?: string;
 }
 
+// Demo account address
+const DEMO_ADDRESS: VenueAddress = {
+  street: '1521 S Howard Ave',
+  city: 'Tampa',
+  state: 'FL',
+  zipCode: '33606',
+  country: 'USA',
+};
+
 class VenueSettingsService {
   private readonly STORAGE_KEY = 'pulse_venue_settings';
 
@@ -25,6 +36,11 @@ class VenueSettingsService {
    * Get the full formatted address string for weather API
    */
   getFormattedAddress(venueId: string): string | null {
+    // Demo account - return Tampa address
+    if (isDemoAccount(venueId)) {
+      return DEMO_VENUE.address;
+    }
+    
     const settings = this.getSettings(venueId);
     if (!settings?.address) return null;
     
@@ -43,6 +59,14 @@ class VenueSettingsService {
    * Get venue settings from storage
    */
   getSettings(venueId: string): VenueSettings | null {
+    // Demo account - return preset settings
+    if (isDemoAccount(venueId)) {
+      return {
+        address: DEMO_ADDRESS,
+        lastUpdated: new Date().toISOString(),
+      };
+    }
+    
     try {
       const key = `${this.STORAGE_KEY}_${venueId}`;
       const stored = localStorage.getItem(key);

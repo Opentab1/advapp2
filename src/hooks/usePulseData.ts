@@ -187,7 +187,13 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     try {
       const address = venueSettingsService.getFormattedAddress(venueId);
       if (address && address !== 'No address provided') {
-        const data = await weatherService.getWeatherByAddress(address);
+        const data = await weatherService.getWeatherByAddress(address, venueId);
+        if (data) {
+          setWeather(data);
+        }
+      } else {
+        // Try with venueId anyway (for demo account)
+        const data = await weatherService.getWeatherByAddress('', venueId);
         if (data) {
           setWeather(data);
         }

@@ -6,6 +6,8 @@
  * We cache for 7 days to minimize API calls
  */
 
+import { isDemoAccount, generateDemoGoogleReviews } from '../utils/demoData';
+
 export interface GoogleReviewsData {
   name: string;
   rating: number;
@@ -114,6 +116,12 @@ class GoogleReviewsService {
    */
   async getReviews(venueName: string, venueAddress: string, venueId: string): Promise<GoogleReviewsData | null> {
     console.log('🔍 getReviews called with:', { venueName, venueAddress, venueId });
+    
+    // Demo account - return realistic demo data
+    if (isDemoAccount(venueId)) {
+      console.log('✅ Demo account - returning demo Google Reviews');
+      return generateDemoGoogleReviews();
+    }
     
     // Check cache first
     const cached = this.getCachedData(venueId);

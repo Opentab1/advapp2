@@ -5,6 +5,8 @@
  * Geocodes venue address to coordinates using Nominatim (OpenStreetMap)
  */
 
+import { isDemoAccount, generateDemoWeather, DEMO_VENUE } from '../utils/demoData';
+
 export interface WeatherData {
   temperature: number;      // °F
   feelsLike: number;        // °F
@@ -35,7 +37,13 @@ class WeatherService {
   /**
    * Get weather for a venue by address
    */
-  async getWeatherByAddress(address: string): Promise<WeatherData | null> {
+  async getWeatherByAddress(address: string, venueId?: string): Promise<WeatherData | null> {
+    // Demo account - return realistic Tampa weather
+    if (isDemoAccount(venueId) || address === DEMO_VENUE.address) {
+      console.log('⛅ Demo account - returning demo weather data');
+      return generateDemoWeather();
+    }
+    
     if (!address || address.trim() === '') {
       console.warn('⛅ No address provided for weather lookup');
       return null;

@@ -10,6 +10,20 @@ import type {
   VenueOptimalRanges,
   PulseScoreResult 
 } from '../types';
+import type { GoogleReviewsData } from '../services/google-reviews.service';
+import type { WeatherData } from '../services/weather.service';
+
+/**
+ * Demo Account Configuration
+ * The Showcase Lounge - A premium cocktail bar in Tampa's Hyde Park
+ */
+export const DEMO_VENUE = {
+  venueId: 'theshowcaselounge',
+  venueName: 'The Showcase Lounge',
+  address: '1521 S Howard Ave, Tampa, FL 33606',
+  timezone: 'America/New_York',
+  capacity: 200,
+};
 
 /**
  * Check if this is the demo account
@@ -19,132 +33,300 @@ export function isDemoAccount(venueId?: string): boolean {
 }
 
 /**
+ * Generate demo Google Reviews data
+ * Realistic 4.6 star rating with 847 reviews
+ */
+export function generateDemoGoogleReviews(): GoogleReviewsData {
+  return {
+    name: DEMO_VENUE.venueName,
+    rating: 4.6,
+    reviewCount: 847,
+    priceLevel: '$$',
+    address: DEMO_VENUE.address,
+    placeId: 'ChIJ_demo_showcase_lounge',
+    url: 'https://www.google.com/maps/place/The+Showcase+Lounge',
+    lastUpdated: new Date().toISOString(),
+    recentReviews: [
+      {
+        rating: 5,
+        text: 'Best cocktails in Tampa! The ambiance is perfect for date night. Staff is incredibly attentive.',
+        author: 'Sarah M.',
+        date: '2 days ago',
+      },
+      {
+        rating: 5,
+        text: 'Love the live jazz on Fridays. Great drink selection and the bartenders really know their craft.',
+        author: 'Mike R.',
+        date: '4 days ago',
+      },
+      {
+        rating: 4,
+        text: 'Solid spot. Can get crowded on weekends but worth the wait. Try the signature old fashioned!',
+        author: 'Jennifer K.',
+        date: '1 week ago',
+      },
+      {
+        rating: 5,
+        text: 'Hidden gem! The rooftop area is amazing. Perfect temperature and great music selection.',
+        author: 'David L.',
+        date: '1 week ago',
+      },
+    ],
+  };
+}
+
+/**
+ * Generate demo Weather data
+ * Tampa, FL weather patterns - matches WeatherData interface
+ */
+export function generateDemoWeather(): WeatherData {
+  const hour = new Date().getHours();
+  const isDay = hour >= 6 && hour < 20;
+  
+  // Tampa weather - warm and sometimes humid
+  const baseTemp = isDay ? 78 : 72;
+  const tempVariation = Math.random() * 4 - 2;
+  const temp = Math.round(baseTemp + tempVariation);
+  
+  // Random weather conditions weighted toward good weather (Tampa)
+  const roll = Math.random();
+  let conditions: string;
+  let icon: string;
+  
+  if (roll > 0.85) {
+    conditions = 'Partly Cloudy';
+    icon = '⛅';
+  } else if (roll > 0.95) {
+    conditions = 'Light Rain';
+    icon = '🌧️';
+  } else {
+    conditions = isDay ? 'Clear' : 'Clear';
+    icon = isDay ? '☀️' : '🌙';
+  }
+  
+  return {
+    temperature: temp,
+    feelsLike: temp + 2, // Feels warmer in Tampa humidity
+    humidity: Math.round(55 + Math.random() * 20),
+    conditions,
+    icon,
+    windSpeed: Math.round(5 + Math.random() * 8),
+    isDay,
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+/**
+ * Cumulative counters for realistic occupancy simulation
+ * Resets at 3 AM (bar day start)
+ */
+let cumulativeEntries = 0;
+let cumulativeExits = 0;
+let lastResetDate: string | null = null;
+
+function resetCountersIfNewDay() {
+  const now = new Date();
+  const today = now.toDateString();
+  const hour = now.getHours();
+  
+  // Reset at 3 AM
+  if (hour >= 3 && lastResetDate !== today) {
+    cumulativeEntries = Math.floor(Math.random() * 50); // Some baseline from late night
+    cumulativeExits = Math.floor(cumulativeEntries * 0.9);
+    lastResetDate = today;
+  }
+}
+
+/**
  * Generate realistic sensor data for a given timestamp
+ * Patterns based on real bar data from jimmyneutron venue
  */
 function generateSensorData(timestamp: Date): SensorData {
+  resetCountersIfNewDay();
+  
   const hour = timestamp.getHours();
+  const minute = timestamp.getMinutes();
   const dayOfWeek = timestamp.getDay();
   
-  // Busier on weekends (Friday=5, Saturday=6), peak hours 6pm-11pm
+  // Time periods for a cocktail lounge
+  const isClosedHours = hour >= 2 && hour < 16; // Closed 2am-4pm
+  const isHappyHour = hour >= 16 && hour < 19; // 4pm-7pm
+  const isPrimeTime = hour >= 19 && hour < 23; // 7pm-11pm (peak)
+  const isLateNight = hour >= 23 || hour < 2; // 11pm-2am
   const isWeekend = dayOfWeek === 5 || dayOfWeek === 6;
-  const isPeakHour = hour >= 18 && hour <= 23;
-  const isLunchRush = hour >= 11 && hour <= 14;
-  const isClosedHours = hour >= 2 && hour < 10; // Closed 2am-10am
+  const isThursday = dayOfWeek === 4;
   
-  // Base noise level with peaks
-  let baseNoise = isClosedHours ? 45 : 65;
-  if (isPeakHour) baseNoise += 15;
-  if (isLunchRush) baseNoise += 8;
-  if (isWeekend) baseNoise += 5;
+  // ============ SOUND LEVELS ============
+  // Realistic dB levels for upscale cocktail lounge
+  let baseDecibels: number;
+  if (isClosedHours) {
+    baseDecibels = 42 + Math.random() * 5; // Ambient noise only
+  } else if (isHappyHour) {
+    baseDecibels = 68 + Math.random() * 6; // Conversation + background music
+  } else if (isPrimeTime) {
+    baseDecibels = 74 + Math.random() * 8; // Energetic but conversational
+    if (isWeekend) baseDecibels += 4; // Louder on weekends
+  } else if (isLateNight) {
+    baseDecibels = 78 + Math.random() * 6; // Late night energy
+  } else {
+    baseDecibels = 65 + Math.random() * 5;
+  }
   
-  const decibels = baseNoise + (Math.random() * 10 - 5);
+  // ============ LIGHTING ============
+  // Cocktail lounges dim lights as evening progresses
+  let baseLight: number;
+  if (isClosedHours) {
+    baseLight = 50 + Math.random() * 30; // Security lights only
+  } else if (isHappyHour) {
+    baseLight = 280 + Math.random() * 40; // Still bright, transitioning
+  } else if (isPrimeTime) {
+    baseLight = 150 + Math.random() * 50; // Dim, intimate
+  } else if (isLateNight) {
+    baseLight = 120 + Math.random() * 40; // Very dim, club-like
+  } else {
+    baseLight = 200 + Math.random() * 50;
+  }
   
-  // Temperature (cooler at night)
-  const baseTemp = 72;
-  const tempVariation = hour < 6 ? -2 : (hour > 18 ? -1 : 0);
-  const indoorTemp = baseTemp + tempVariation + (Math.random() * 3 - 1.5);
-  const outdoorTemp = indoorTemp - 5 + (Math.random() * 4 - 2);
+  // ============ TEMPERATURE ============
+  // Indoor temp controlled, outdoor varies
+  const baseIndoorTemp = 71 + Math.random() * 2; // Well-controlled HVAC
+  if (isPrimeTime && isWeekend) {
+    // Slightly warmer when crowded
+  }
+  const baseOutdoorTemp = 75 + Math.random() * 8 - 4; // Tampa evening weather
   
-  // Humidity
-  const humidity = 45 + (Math.random() * 20 - 10);
+  // ============ HUMIDITY ============
+  const baseHumidity = 48 + Math.random() * 12;
   
-  // Light (brighter during day, dimmer at night)
-  const isDaytime = hour >= 10 && hour <= 20;
-  const light = isDaytime ? 350 + (Math.random() * 100 - 50) : 150 + (Math.random() * 50 - 25);
+  // ============ OCCUPANCY ============
+  // Simulate realistic foot traffic patterns
+  let entryRate = 0;
+  let exitRate = 0;
   
-  // Occupancy (more people during peak hours)
-  let occupancyBase = isClosedHours ? 0 : 30;
-  if (isPeakHour) occupancyBase = 120;
-  if (isLunchRush) occupancyBase = 80;
-  if (isWeekend) occupancyBase += 30;
+  if (!isClosedHours) {
+    if (isHappyHour) {
+      entryRate = 8 + Math.random() * 6; // 8-14 entries per 15 min
+      exitRate = 2 + Math.random() * 3; // Few leaving during happy hour
+    } else if (isPrimeTime) {
+      if (hour < 21) {
+        entryRate = 12 + Math.random() * 8; // Building up
+        exitRate = 4 + Math.random() * 4;
+      } else {
+        entryRate = 6 + Math.random() * 6; // Slower entries late
+        exitRate = 5 + Math.random() * 5; // Some leaving
+      }
+    } else if (isLateNight) {
+      entryRate = 2 + Math.random() * 3; // Few new arrivals
+      exitRate = 10 + Math.random() * 8; // People heading home
+    }
+    
+    // Weekend boost
+    if (isWeekend || isThursday) {
+      entryRate *= 1.4;
+    }
+  }
   
-  const current = Math.floor(Math.max(0, occupancyBase + (Math.random() * 20 - 10)));
-  const entries = Math.floor(current * 1.5 + Math.random() * 10);
-  const exits = Math.floor(entries * 0.9 + Math.random() * 5);
+  // Update cumulative counters
+  cumulativeEntries += Math.floor(entryRate);
+  cumulativeExits += Math.floor(exitRate);
+  
+  // Current = entries - exits (can't go negative)
+  const currentOccupancy = Math.max(0, cumulativeEntries - cumulativeExits);
+  
+  // Get song info
+  const songInfo = getRandomSongInfo(hour);
   
   return {
     timestamp: timestamp.toISOString(),
-    decibels: Math.round(decibels * 10) / 10,
-    light: Math.round(light * 10) / 10,
-    indoorTemp: Math.round(indoorTemp * 10) / 10,
-    outdoorTemp: Math.round(outdoorTemp * 10) / 10,
-    humidity: Math.round(humidity * 10) / 10,
-    currentSong: getRandomSong(hour),
-    artist: getRandomArtist(hour),
-    albumArt: getRandomAlbumArt(hour),
+    decibels: Math.round(baseDecibels * 10) / 10,
+    light: Math.round(baseLight * 10) / 10,
+    indoorTemp: Math.round(baseIndoorTemp * 10) / 10,
+    outdoorTemp: Math.round(baseOutdoorTemp * 10) / 10,
+    humidity: Math.round(baseHumidity * 10) / 10,
+    currentSong: songInfo.song,
+    artist: songInfo.artist,
+    albumArt: songInfo.art,
     occupancy: {
-      current,
-      entries,
-      exits,
-      capacity: 200
+      current: Math.min(currentOccupancy, DEMO_VENUE.capacity),
+      entries: cumulativeEntries,
+      exits: cumulativeExits,
+      capacity: DEMO_VENUE.capacity
     }
   };
 }
 
 /**
- * Song playlists based on time of day
+ * Curated song playlists for upscale cocktail lounge
+ * Time-appropriate music for different parts of the evening
  */
 const SONGS = {
-  daytime: [
-    { song: "Good Vibrations", artist: "The Beach Boys", art: "https://i.scdn.co/image/ab67616d0000b273e319baafd16e84f0408af2a0" },
-    { song: "Walking on Sunshine", artist: "Katrina and the Waves", art: "https://i.scdn.co/image/ab67616d0000b273a7e4654c5c4b6a8e4e7f6f1a" },
-    { song: "Don't Stop Believin'", artist: "Journey", art: "https://i.scdn.co/image/ab67616d0000b2731fe09a8e8e7f6f1ab67616d0" },
-    { song: "Sweet Caroline", artist: "Neil Diamond", art: "https://i.scdn.co/image/ab67616d0000b273e319baafd16e84f0408af2a0" },
-    { song: "Here Comes the Sun", artist: "The Beatles", art: "https://i.scdn.co/image/ab67616d0000b273dc30583ba717007b00cceb25" },
-    { song: "Three Little Birds", artist: "Bob Marley", art: "https://i.scdn.co/image/ab67616d0000b273fea0200445a1e05389e167b5" },
-    { song: "Lovely Day", artist: "Bill Withers", art: "https://i.scdn.co/image/ab67616d0000b273bd5ec58e02e60ccb7d0c971a" }
-  ],
-  evening: [
-    { song: "Uptown Funk", artist: "Mark Ronson ft. Bruno Mars", art: "https://i.scdn.co/image/ab67616d0000b2739e2f95ae77cf436017ada9cb" },
-    { song: "Shut Up and Dance", artist: "Walk the Moon", art: "https://i.scdn.co/image/ab67616d0000b2731e0c142f42a0e97d8a643a78" },
-    { song: "Can't Stop the Feeling", artist: "Justin Timberlake", art: "https://i.scdn.co/image/ab67616d0000b273ed317ec3fc4e18a0d5822a1e" },
-    { song: "Mr. Brightside", artist: "The Killers", art: "https://i.scdn.co/image/ab67616d0000b273ccdddd46119a4ff53eaf1f5d" },
-    { song: "24K Magic", artist: "Bruno Mars", art: "https://i.scdn.co/image/ab67616d0000b273232711f7d66a48bf9984e61f" },
-    { song: "Blinding Lights", artist: "The Weeknd", art: "https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36" },
-    { song: "Levitating", artist: "Dua Lipa", art: "https://i.scdn.co/image/ab67616d0000b273be841ba4bc24340152e3a79a" }
-  ],
-  lateNight: [
-    { song: "Closing Time", artist: "Semisonic", art: "https://i.scdn.co/image/ab67616d0000b273e319baafd16e84f0408af2a0" },
+  // Happy hour - chill, upbeat, conversational
+  happyHour: [
+    { song: "Superstition", artist: "Stevie Wonder", art: "https://i.scdn.co/image/ab67616d0000b273b0b60615b97e364e22a21d5f" },
+    { song: "Lovely Day", artist: "Bill Withers", art: "https://i.scdn.co/image/ab67616d0000b273bd5ec58e02e60ccb7d0c971a" },
+    { song: "Kiss", artist: "Prince", art: "https://i.scdn.co/image/ab67616d0000b273e319baafd16e84f0408af2a0" },
+    { song: "Got To Give It Up", artist: "Marvin Gaye", art: "https://i.scdn.co/image/ab67616d0000b273dc30583ba717007b00cceb25" },
+    { song: "Le Freak", artist: "Chic", art: "https://i.scdn.co/image/ab67616d0000b273fea0200445a1e05389e167b5" },
     { song: "September", artist: "Earth, Wind & Fire", art: "https://i.scdn.co/image/ab67616d0000b273b265a4c0c0085c0b047ac7dc" },
-    { song: "Livin' on a Prayer", artist: "Bon Jovi", art: "https://i.scdn.co/image/ab67616d0000b27395be3a346177524b62a6827f" },
-    { song: "Sweet Child O' Mine", artist: "Guns N' Roses", art: "https://i.scdn.co/image/ab67616d0000b27321ebf49b3292c3f0f575f0f5" },
-    { song: "Don't Stop Me Now", artist: "Queen", art: "https://i.scdn.co/image/ab67616d0000b273ce4f1737bc8a646c8c4bd25a" },
-    { song: "Bohemian Rhapsody", artist: "Queen", art: "https://i.scdn.co/image/ab67616d0000b273ce4f1737bc8a646c8c4bd25a" },
-    { song: "Hotel California", artist: "Eagles", art: "https://i.scdn.co/image/ab67616d0000b273b0b60615b97e364e22a21d5f" }
+    { song: "I Wanna Dance with Somebody", artist: "Whitney Houston", art: "https://i.scdn.co/image/ab67616d0000b2731e0c142f42a0e97d8a643a78" },
+    { song: "Valerie", artist: "Amy Winehouse", art: "https://i.scdn.co/image/ab67616d0000b273ccdddd46119a4ff53eaf1f5d" },
   ],
+  // Prime time - energetic, crowd-pleasers
+  primeTime: [
+    { song: "Uptown Funk", artist: "Bruno Mars", art: "https://i.scdn.co/image/ab67616d0000b2739e2f95ae77cf436017ada9cb" },
+    { song: "Blinding Lights", artist: "The Weeknd", art: "https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36" },
+    { song: "Levitating", artist: "Dua Lipa", art: "https://i.scdn.co/image/ab67616d0000b273be841ba4bc24340152e3a79a" },
+    { song: "Mr. Brightside", artist: "The Killers", art: "https://i.scdn.co/image/ab67616d0000b273ccdddd46119a4ff53eaf1f5d" },
+    { song: "Shut Up and Dance", artist: "Walk the Moon", art: "https://i.scdn.co/image/ab67616d0000b2731e0c142f42a0e97d8a643a78" },
+    { song: "Don't Start Now", artist: "Dua Lipa", art: "https://i.scdn.co/image/ab67616d0000b273232711f7d66a48bf9984e61f" },
+    { song: "Physical", artist: "Dua Lipa", art: "https://i.scdn.co/image/ab67616d0000b273be841ba4bc24340152e3a79a" },
+    { song: "Save Your Tears", artist: "The Weeknd", art: "https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36" },
+    { song: "Heat Waves", artist: "Glass Animals", art: "https://i.scdn.co/image/ab67616d0000b273ed317ec3fc4e18a0d5822a1e" },
+    { song: "As It Was", artist: "Harry Styles", art: "https://i.scdn.co/image/ab67616d0000b27395be3a346177524b62a6827f" },
+  ],
+  // Late night - classics, singalongs
+  lateNight: [
+    { song: "Don't Stop Believin'", artist: "Journey", art: "https://i.scdn.co/image/ab67616d0000b2731fe09a8e8e7f6f1ab67616d0" },
+    { song: "Livin' on a Prayer", artist: "Bon Jovi", art: "https://i.scdn.co/image/ab67616d0000b27395be3a346177524b62a6827f" },
+    { song: "Sweet Caroline", artist: "Neil Diamond", art: "https://i.scdn.co/image/ab67616d0000b273e319baafd16e84f0408af2a0" },
+    { song: "Bohemian Rhapsody", artist: "Queen", art: "https://i.scdn.co/image/ab67616d0000b273ce4f1737bc8a646c8c4bd25a" },
+    { song: "Don't Stop Me Now", artist: "Queen", art: "https://i.scdn.co/image/ab67616d0000b273ce4f1737bc8a646c8c4bd25a" },
+    { song: "Piano Man", artist: "Billy Joel", art: "https://i.scdn.co/image/ab67616d0000b27321ebf49b3292c3f0f575f0f5" },
+    { song: "Wonderwall", artist: "Oasis", art: "https://i.scdn.co/image/ab67616d0000b273b0b60615b97e364e22a21d5f" },
+    { song: "Come On Eileen", artist: "Dexys Midnight Runners", art: "https://i.scdn.co/image/ab67616d0000b273dc30583ba717007b00cceb25" },
+  ],
+  // Closed - no music
   closed: [
-    { song: "Ambient Lounge Music", artist: "After Hours", art: "https://i.scdn.co/image/ab67616d0000b273e319baafd16e84f0408af2a0" }
+    { song: null, artist: null, art: null }
   ]
 };
 
-function getRandomSong(hour: number): string {
-  const isClosedHours = hour >= 2 && hour < 10;
-  let playlist = isClosedHours ? SONGS.closed : 
-                 hour >= 10 && hour < 17 ? SONGS.daytime :
-                 hour >= 17 && hour < 22 ? SONGS.evening : SONGS.lateNight;
+/**
+ * Get song info appropriate for the time of day
+ */
+function getRandomSongInfo(hour: number): { song: string | null; artist: string | null; art: string | null } {
+  const isClosedHours = hour >= 2 && hour < 16;
+  const isHappyHour = hour >= 16 && hour < 19;
+  const isPrimeTime = hour >= 19 && hour < 23;
   
-  const random = playlist[Math.floor(Math.random() * playlist.length)];
-  return random.song;
+  let playlist = isClosedHours ? SONGS.closed :
+                 isHappyHour ? SONGS.happyHour :
+                 isPrimeTime ? SONGS.primeTime : SONGS.lateNight;
+  
+  return playlist[Math.floor(Math.random() * playlist.length)];
+}
+
+// Legacy functions for backward compatibility
+function getRandomSong(hour: number): string {
+  return getRandomSongInfo(hour).song || '';
 }
 
 function getRandomArtist(hour: number): string {
-  const isClosedHours = hour >= 2 && hour < 10;
-  let playlist = isClosedHours ? SONGS.closed :
-                 hour >= 10 && hour < 17 ? SONGS.daytime :
-                 hour >= 17 && hour < 22 ? SONGS.evening : SONGS.lateNight;
-  
-  const random = playlist[Math.floor(Math.random() * playlist.length)];
-  return random.artist;
+  return getRandomSongInfo(hour).artist || '';
 }
 
 function getRandomAlbumArt(hour: number): string {
-  const isClosedHours = hour >= 2 && hour < 10;
-  let playlist = isClosedHours ? SONGS.closed :
-                 hour >= 10 && hour < 17 ? SONGS.daytime :
-                 hour >= 17 && hour < 22 ? SONGS.evening : SONGS.lateNight;
-  
-  const random = playlist[Math.floor(Math.random() * playlist.length)];
-  return random.art;
+  return getRandomSongInfo(hour).art || '';
 }
 
 /**
