@@ -358,7 +358,7 @@ class DynamoDBService {
     }
     
     // ============================================
-    // CACHE CHECK - Option C: Return cached data if available
+    // CACHE CHECK - Return cached data if available
     // ============================================
     const cachedData = historicalCache.get(venueId, range as string);
     if (cachedData) {
@@ -375,24 +375,28 @@ class DynamoDBService {
         throw new Error('Not authenticated. Please log in again.');
       }
 
+      // ============================================
+      // 24H: FETCH ALL RAW DATA FOR 100% ACCURACY
+      // ============================================
+      if (range === '24h') {
+        return await this.fetch24hFullAccuracy(venueId);
+      }
+
       const { startTime, endTime } = this.getTimeRangeValues(range);
       const client = this.getClient();
       const startTimeMs = new Date(startTime).getTime();
       const endTimeMs = new Date(endTime).getTime();
 
       // ============================================
-      // CHUNKED FETCHING FOR FULL TIME RANGE COVERAGE
+      // OTHER RANGES: CHUNKED FETCHING WITH AGGREGATION
       // ============================================
-      // Split time range into chunks and fetch from each to ensure
-      // we get data distributed across the entire period
-      
       const chunkConfig: Record<string, { chunks: number; itemsPerChunk: number }> = {
-        '24h': { chunks: 1, itemsPerChunk: 2000 },    // Single fetch for 24h
-        '7d':  { chunks: 7, itemsPerChunk: 200 },     // 1 chunk per day
-        '30d': { chunks: 10, itemsPerChunk: 150 },    // 3 days per chunk
-        '90d': { chunks: 15, itemsPerChunk: 100 },    // 6 days per chunk
+        '7d':  { chunks: 7, itemsPerChunk: 500 },     // 1 chunk per day
+        '14d': { chunks: 14, itemsPerChunk: 500 },    // 1 chunk per day
+        '30d': { chunks: 30, itemsPerChunk: 300 },    // 1 chunk per day
+        '90d': { chunks: 45, itemsPerChunk: 200 },    // 2 days per chunk
       };
-      const config = chunkConfig[range as string] || { chunks: 7, itemsPerChunk: 200 };
+      const config = chunkConfig[range as string] || { chunks: 7, itemsPerChunk: 500 };
       const { chunks, itemsPerChunk } = config;
       
       const totalRangeMs = endTimeMs - startTimeMs;
@@ -699,6 +703,201 @@ class DynamoDBService {
       }
       throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
     }
+  }
+
+  /**
+   * Fetch ALL 24h data and calculate TRUE hourly averages
+   * This ensures 100% accuracy - every single data point contributes to the average
+   */
+  private async fetch24hFullAccuracy(venueId: string): Promise<HistoricalData> {
+    const client = this.getClient();
+    const endTime = new Date();
+    const startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
+    
+    console.log('📊 [24h] Fetching ALL raw data for 100% accuracy...');
+    console.log(`📊 [24h] Time range: ${startTime.toISOString()} to ${endTime.toISOString()}`);
+    
+    // Fetch ALL data using pagination
+    let allItems: any[] = [];
+    let nextToken: string | null = null;
+    let fetchCount = 0;
+    const maxFetches = 50; // Safety limit
+    
+    do {
+      fetchCount++;
+      console.log(`📊 [24h] Fetch #${fetchCount}${nextToken ? ' (continuing...)' : ''}`);
+      
+      const response = await client.graphql({
+        query: listSensorData,
+        variables: { 
+          venueId, 
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          limit: 1000, // Max per request
+          nextToken: nextToken
+        },
+        authMode: 'userPool'
+      }) as any;
+      
+      if (response?.errors?.length > 0) {
+        console.warn('⚠️ GraphQL errors:', response.errors);
+        break;
+      }
+      
+      const items = response?.data?.listSensorData?.items || [];
+      allItems = allItems.concat(items);
+      nextToken = response?.data?.listSensorData?.nextToken || null;
+      
+      console.log(`📊 [24h] Fetched ${items.length} items, total so far: ${allItems.length}`);
+      
+    } while (nextToken && fetchCount < maxFetches);
+    
+    console.log(`📊 [24h] TOTAL RAW DATA POINTS: ${allItems.length}`);
+    
+    if (allItems.length === 0) {
+      return {
+        data: [],
+        venueId,
+        range: '24h' as TimeRange,
+        message: 'No data found for the last 24 hours'
+      };
+    }
+    
+    // ============================================
+    // CALCULATE TRUE HOURLY AVERAGES
+    // Every single data point contributes to these averages
+    // ============================================
+    
+    // Group by hour
+    const hourlyBuckets = new Map<number, any[]>();
+    
+    for (const item of allItems) {
+      const timestamp = new Date(item.timestamp);
+      // Create bucket key: start of the hour
+      const hourKey = new Date(timestamp);
+      hourKey.setMinutes(0, 0, 0);
+      const bucketKey = hourKey.getTime();
+      
+      if (!hourlyBuckets.has(bucketKey)) {
+        hourlyBuckets.set(bucketKey, []);
+      }
+      hourlyBuckets.get(bucketKey)!.push(item);
+    }
+    
+    console.log(`📊 [24h] Grouped into ${hourlyBuckets.size} hourly buckets`);
+    
+    // Calculate TRUE averages for each hour
+    const aggregatedData: SensorData[] = [];
+    
+    const sortedBucketKeys = Array.from(hourlyBuckets.keys()).sort((a, b) => a - b);
+    
+    for (const bucketKey of sortedBucketKeys) {
+      const bucketData = hourlyBuckets.get(bucketKey)!;
+      const bucketTime = new Date(bucketKey);
+      
+      // Sum all values
+      let sumDecibels = 0, countDecibels = 0;
+      let sumLight = 0, countLight = 0;
+      let sumIndoorTemp = 0, countIndoorTemp = 0;
+      let sumOutdoorTemp = 0, countOutdoorTemp = 0;
+      let sumHumidity = 0, countHumidity = 0;
+      let maxOccupancy = 0;
+      let maxEntries = 0;
+      let maxExits = 0;
+      let latestSong: string | undefined;
+      let latestArtist: string | undefined;
+      let latestAlbumArt: string | undefined;
+      
+      for (const item of bucketData) {
+        // Decibels - only count valid readings
+        if (item.decibels !== undefined && item.decibels !== null && item.decibels > 0) {
+          sumDecibels += item.decibels;
+          countDecibels++;
+        }
+        // Light
+        if (item.light !== undefined && item.light !== null && item.light >= 0) {
+          sumLight += item.light;
+          countLight++;
+        }
+        // Indoor temp
+        if (item.indoorTemp !== undefined && item.indoorTemp !== null && item.indoorTemp > 0) {
+          sumIndoorTemp += item.indoorTemp;
+          countIndoorTemp++;
+        }
+        // Outdoor temp
+        if (item.outdoorTemp !== undefined && item.outdoorTemp !== null) {
+          sumOutdoorTemp += item.outdoorTemp;
+          countOutdoorTemp++;
+        }
+        // Humidity
+        if (item.humidity !== undefined && item.humidity !== null && item.humidity >= 0) {
+          sumHumidity += item.humidity;
+          countHumidity++;
+        }
+        // Occupancy - take max for the hour
+        if (item.occupancy) {
+          if (item.occupancy.current !== undefined && item.occupancy.current > maxOccupancy) {
+            maxOccupancy = item.occupancy.current;
+          }
+          if (item.occupancy.entries !== undefined && item.occupancy.entries > maxEntries) {
+            maxEntries = item.occupancy.entries;
+          }
+          if (item.occupancy.exits !== undefined && item.occupancy.exits > maxExits) {
+            maxExits = item.occupancy.exits;
+          }
+        }
+        // Song - keep latest
+        if (item.currentSong) {
+          latestSong = item.currentSong;
+          latestArtist = item.artist;
+          latestAlbumArt = item.albumArt;
+        }
+      }
+      
+      // Calculate TRUE averages
+      const avgDecibels = countDecibels > 0 ? Math.round((sumDecibels / countDecibels) * 10) / 10 : 0;
+      const avgLight = countLight > 0 ? Math.round(sumLight / countLight) : 0;
+      const avgIndoorTemp = countIndoorTemp > 0 ? Math.round((sumIndoorTemp / countIndoorTemp) * 10) / 10 : 0;
+      const avgOutdoorTemp = countOutdoorTemp > 0 ? Math.round((sumOutdoorTemp / countOutdoorTemp) * 10) / 10 : 0;
+      const avgHumidity = countHumidity > 0 ? Math.round(sumHumidity / countHumidity) : 0;
+      
+      // Log details for verification
+      console.log(`📊 Hour ${bucketTime.toLocaleTimeString('en-US', { hour: 'numeric' })}: ` +
+        `${bucketData.length} points → ` +
+        `dB: ${avgDecibels} (from ${countDecibels}), ` +
+        `occ: ${maxOccupancy}`
+      );
+      
+      aggregatedData.push({
+        timestamp: new Date(bucketKey + 30 * 60 * 1000).toISOString(), // Use middle of hour
+        decibels: avgDecibels,
+        light: avgLight,
+        indoorTemp: avgIndoorTemp,
+        outdoorTemp: avgOutdoorTemp,
+        humidity: avgHumidity,
+        currentSong: latestSong,
+        artist: latestArtist,
+        albumArt: latestAlbumArt,
+        occupancy: {
+          current: maxOccupancy,
+          entries: maxEntries,
+          exits: maxExits,
+        }
+      });
+    }
+    
+    console.log(`📊 [24h] Final output: ${aggregatedData.length} hourly data points (TRUE averages from ${allItems.length} raw readings)`);
+    
+    const result: HistoricalData = {
+      data: aggregatedData,
+      venueId,
+      range: '24h' as TimeRange
+    };
+    
+    // Cache the result
+    historicalCache.set(venueId, '24h', result);
+    
+    return result;
   }
 
   /**
