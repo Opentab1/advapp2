@@ -820,12 +820,12 @@ class DynamoDBService {
       return result;
       
     } catch (error: any) {
-      console.error('❌ Hourly data fetch failed:', {
-        message: error?.message,
-        name: error?.name,
-        errors: error?.errors,
-        fullError: error
-      });
+      // Stringify the full error to see all details
+      console.error('❌ Hourly data fetch failed - Full details:');
+      console.error('  Message:', error?.message || 'none');
+      console.error('  Name:', error?.name || 'none');
+      console.error('  Errors array:', JSON.stringify(error?.errors, null, 2));
+      console.error('  Full error stringified:', JSON.stringify(error, Object.getOwnPropertyNames(error || {}), 2));
       console.warn('⚠️ Falling back to raw data aggregation...');
       // Fallback to raw data aggregation
       return this.getHistoricalSensorData(venueId, range);
