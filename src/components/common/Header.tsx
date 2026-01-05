@@ -50,12 +50,12 @@ export function Header({
   
   return (
     <motion.header
-      className="bg-warm-900 border-b border-warm-700 px-4 py-3 sticky top-0 z-40"
+      className="bg-whoop-bg border-b border-whoop-divider px-4 py-3 lg:px-8 sticky top-0 z-40"
       initial={{ y: -60 }}
       animate={{ y: 0 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
     >
-      <div className="flex items-center justify-between max-w-2xl mx-auto">
+      <div className="flex items-center justify-between max-w-lg mx-auto lg:max-w-none">
         {/* Left: Greeting + Day + Weather */}
         <div className="flex items-center gap-3">
           <div>

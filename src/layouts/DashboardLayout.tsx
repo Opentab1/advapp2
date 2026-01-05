@@ -53,7 +53,8 @@ export function DashboardLayout({
         
         {/* Content with smooth transitions */}
         <main className="flex-1 overflow-auto pb-20 lg:pb-6">
-          <div className="max-w-2xl mx-auto px-4 py-6">
+          {/* Mobile: full width with padding, Desktop: centered with max-width */}
+          <div className="w-full max-w-lg mx-auto px-4 py-6 lg:max-w-4xl lg:px-8 xl:max-w-5xl">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeTab}

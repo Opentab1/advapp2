@@ -264,47 +264,50 @@ export function Pulse() {
         transition={{ delay: 0.12 }}
         className="pt-2"
       >
-        <h2 className="text-sm font-semibold text-warm-400 uppercase tracking-wider">
+        <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-whoop">
           My Day
         </h2>
-        <div className="mt-2 border-b border-warm-700" />
+        <div className="mt-2 border-b border-whoop-divider" />
       </motion.div>
       
-      {/* Quick Actions (formerly Tonight's Playbook) */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-      >
-        <TonightsPlaybook
-          currentDecibels={pulseData.currentDecibels ?? 65}
-          currentLight={pulseData.currentLight ?? 50}
-          currentOccupancy={pulseData.currentOccupancy ?? 0}
-          peakPrediction={intelligence.peakPrediction ? {
-            hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
-            expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
-            minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
-          } : undefined}
-          smartActions={intelligence.smartActions.map(a => ({
-            id: a.id,
-            title: a.title,
-            description: a.description,
-            priority: a.priority === 'critical' ? 'high' : a.priority,
-          }))}
-        />
-      </motion.div>
-      
-      {/* Today's Outlook - Holidays, Games, Weather */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.18 }}
-      >
-        <TodaysOutlook
-          weather={pulseData.weather}
-          todayGames={todayGames}
-        />
-      </motion.div>
+      {/* Desktop: Side-by-side layout for Quick Actions and Outlook */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Quick Actions (formerly Tonight's Playbook) */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+        >
+          <TonightsPlaybook
+            currentDecibels={pulseData.currentDecibels ?? 65}
+            currentLight={pulseData.currentLight ?? 50}
+            currentOccupancy={pulseData.currentOccupancy ?? 0}
+            peakPrediction={intelligence.peakPrediction ? {
+              hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
+              expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
+              minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
+            } : undefined}
+            smartActions={intelligence.smartActions.map(a => ({
+              id: a.id,
+              title: a.title,
+              description: a.description,
+              priority: a.priority === 'critical' ? 'high' : a.priority,
+            }))}
+          />
+        </motion.div>
+        
+        {/* Today's Outlook - Holidays, Games, Weather */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.18 }}
+        >
+          <TodaysOutlook
+            weather={pulseData.weather}
+            todayGames={todayGames}
+          />
+        </motion.div>
+      </div>
       
       {/* Trend Alerts - At bottom */}
       {intelligence.trendAlerts.length > 0 && (

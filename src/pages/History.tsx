@@ -166,10 +166,10 @@ export function History() {
               </motion.div>
             </CollapsibleSection>
             
-            {/* Charts */}
+            {/* Charts - Desktop: 2-column grid */}
             <motion.div
               key={`charts-${timeRange}-${fetchId}`}
-              className="space-y-4"
+              className="grid grid-cols-1 lg:grid-cols-2 gap-4"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.15 }}
