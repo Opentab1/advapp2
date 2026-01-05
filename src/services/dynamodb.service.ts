@@ -194,8 +194,6 @@ const listHourlySensorData = /* GraphQL */ `
         avgIndoorTemp
         avgOutdoorTemp
         avgHumidity
-        minDecibels
-        maxDecibels
         maxOccupancy
         totalEntries
         totalExits
