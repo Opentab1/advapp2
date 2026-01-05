@@ -11,7 +11,7 @@
  * All details accessed via tap → modal.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Zap } from 'lucide-react';
 
@@ -32,6 +32,7 @@ import { PulsePageSkeleton } from '../components/common/LoadingState';
 
 // Revenue-focused components (Launch Ready)
 import { TonightsPlaybook } from '../components/pulse/TonightsPlaybook';
+import { TodaysOutlook } from '../components/pulse/TodaysOutlook';
 
 // Hooks & Services
 import { usePulseData } from '../hooks/usePulseData';
@@ -49,11 +50,7 @@ import { TrendAlerts } from '../components/pulse/TrendAlerts';
 // Common components
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { OfflineState, ErrorState } from '../components/common/LoadingState';
-import { CollapsibleSection } from '../components/common/CollapsibleSection';
 import { haptic } from '../utils/haptics';
-
-// Phase C: Smart defaults
-import { useSectionVisibility } from '../hooks/useSectionVisibility';
 
 // ============ MODAL TYPES ============
 
@@ -112,9 +109,6 @@ export function Pulse() {
     occupancy: pulseData.occupancyMetrics,
     hasUpcomingGames: todayGames.length > 0,
   });
-  
-  // Section visibility (Phase C: Smart defaults)
-  const sections = useSectionVisibility();
   
   // Load external data (sports, holidays)
   useEffect(() => {
@@ -276,7 +270,7 @@ export function Pulse() {
         <div className="mt-2 border-b border-warm-700" />
       </motion.div>
       
-      {/* Tonight's Playbook */}
+      {/* Quick Actions (formerly Tonight's Playbook) */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -297,6 +291,18 @@ export function Pulse() {
             description: a.description,
             priority: a.priority === 'critical' ? 'high' : a.priority,
           }))}
+        />
+      </motion.div>
+      
+      {/* Today's Outlook - Holidays, Games, Weather */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.18 }}
+      >
+        <TodaysOutlook
+          weather={pulseData.weather}
+          todayGames={todayGames}
         />
       </motion.div>
       
