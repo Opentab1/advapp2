@@ -384,4 +384,113 @@ export function StatComparison({ label, current, previous, format = (v) => v.toS
   );
 }
 
-export default { AreaChart, BarChart, HorizontalBar, SparkLine, StatComparison };
+// ============ LEGACY MINICHART (backward compatibility) ============
+
+interface LegacyMiniChartProps {
+  data: number[];
+  color?: string;
+  threshold?: number;
+  thresholdLabel?: string;
+  height?: number;
+}
+
+export function MiniChart({ 
+  data, 
+  color = '#00F19F', 
+  threshold, 
+  thresholdLabel,
+  height = 60 
+}: LegacyMiniChartProps) {
+  if (!data || data.length < 2) return null;
+  
+  const max = Math.max(...data, threshold || 0);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const width = 100;
+  
+  // Generate path
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - ((v - min) / range) * (height - 10) - 5;
+    return { x, y };
+  });
+  
+  const linePath = points.reduce((path, point, i) => {
+    if (i === 0) return `M ${point.x} ${point.y}`;
+    const prev = points[i - 1];
+    const cpX = (prev.x + point.x) / 2;
+    return `${path} C ${cpX} ${prev.y}, ${cpX} ${point.y}, ${point.x} ${point.y}`;
+  }, '');
+  
+  const areaPath = `${linePath} L ${width} ${height} L 0 ${height} Z`;
+  
+  // Threshold line position
+  const thresholdY = threshold ? height - ((threshold - min) / range) * (height - 10) - 5 : null;
+  
+  return (
+    <div className="w-full">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        className="w-full"
+        style={{ height }}
+      >
+        <defs>
+          <linearGradient id={`mini-gradient-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.05" />
+          </linearGradient>
+        </defs>
+        
+        {/* Area fill */}
+        <path
+          d={areaPath}
+          fill={`url(#mini-gradient-${color.replace('#', '')})`}
+        />
+        
+        {/* Line */}
+        <path
+          d={linePath}
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+        
+        {/* Threshold line */}
+        {thresholdY !== null && (
+          <line
+            x1="0"
+            y1={thresholdY}
+            x2={width}
+            y2={thresholdY}
+            stroke={color}
+            strokeWidth="1"
+            strokeDasharray="4,2"
+            strokeOpacity="0.5"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+        
+        {/* Current point */}
+        <circle
+          cx={points[points.length - 1].x}
+          cy={points[points.length - 1].y}
+          r="3"
+          fill={color}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      
+      {thresholdLabel && (
+        <div className="flex justify-end mt-1">
+          <span className="text-xs text-warm-400">{thresholdLabel}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default { AreaChart, BarChart, HorizontalBar, SparkLine, StatComparison, MiniChart };
