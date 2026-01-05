@@ -163,10 +163,10 @@ export function DataChart({ data, metric, title, color = '#0077B6', timeRange = 
         display: false
       },
       tooltip: {
-        backgroundColor: '#1C1917',
-        titleColor: '#FAFAFA',
-        bodyColor: '#FAFAFA',
-        borderColor: '#44403C',
+        backgroundColor: '#000000',
+        titleColor: '#FFFFFF',
+        bodyColor: '#FFFFFF',
+        borderColor: '#262626',
         borderWidth: 1,
         padding: 12,
         cornerRadius: 8,

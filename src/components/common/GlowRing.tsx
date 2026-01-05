@@ -69,7 +69,7 @@ export function GlowRing({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#44403C"
+          stroke="#262626"
           strokeWidth={strokeWidth}
         />
         
