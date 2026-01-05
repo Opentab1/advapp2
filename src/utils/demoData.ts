@@ -15,14 +15,15 @@ import type { WeatherData } from '../services/weather.service';
 
 /**
  * Demo Account Configuration
- * The Showcase Lounge - A premium cocktail bar in Tampa's Hyde Park
+ * The Showcase Lounge - A premium multi-level venue in Tampa's Hyde Park
+ * Large capacity venue to show impressive numbers
  */
 export const DEMO_VENUE = {
   venueId: 'theshowcaselounge',
   venueName: 'The Showcase Lounge',
   address: '1521 S Howard Ave, Tampa, FL 33606',
   timezone: 'America/New_York',
-  capacity: 200,
+  capacity: 500, // Large venue - currently at 430/500 (86% capacity!)
 };
 
 /**
@@ -34,13 +35,13 @@ export function isDemoAccount(venueId?: string): boolean {
 
 /**
  * Generate demo Google Reviews data
- * Realistic 4.6 star rating with 847 reviews
+ * High-volume venue: 4.7 stars with 2,340 reviews
  */
 export function generateDemoGoogleReviews(): GoogleReviewsData {
   return {
     name: DEMO_VENUE.venueName,
-    rating: 4.6,
-    reviewCount: 847,
+    rating: 4.7,
+    reviewCount: 2340,
     priceLevel: '$$',
     address: DEMO_VENUE.address,
     placeId: 'ChIJ_demo_showcase_lounge',
@@ -49,25 +50,25 @@ export function generateDemoGoogleReviews(): GoogleReviewsData {
     recentReviews: [
       {
         rating: 5,
-        text: 'Best cocktails in Tampa! The ambiance is perfect for date night. Staff is incredibly attentive.',
+        text: 'THE place to be on weekends! Always packed but the energy is unmatched. VIP bottle service is worth it.',
         author: 'Sarah M.',
         date: '2 days ago',
       },
       {
         rating: 5,
-        text: 'Love the live jazz on Fridays. Great drink selection and the bartenders really know their craft.',
+        text: 'Best nightlife spot in Tampa hands down. Three floors, great DJs, and the rooftop views are incredible.',
         author: 'Mike R.',
         date: '4 days ago',
       },
       {
-        rating: 4,
-        text: 'Solid spot. Can get crowded on weekends but worth the wait. Try the signature old fashioned!',
+        rating: 5,
+        text: 'Celebrated my birthday here - they went above and beyond! Definitely the hottest spot in SoHo.',
         author: 'Jennifer K.',
         date: '1 week ago',
       },
       {
-        rating: 5,
-        text: 'Hidden gem! The rooftop area is amazing. Perfect temperature and great music selection.',
+        rating: 4,
+        text: 'Great venue, can get very crowded after 11pm. Get there early or get bottle service. Music is always on point.',
         author: 'David L.',
         date: '1 week ago',
       },
@@ -117,23 +118,39 @@ export function generateDemoWeather(): WeatherData {
 }
 
 /**
+ * Demo account target: 430 people in venue
+ * This creates a busy, successful bar impression
+ */
+const DEMO_TARGET_OCCUPANCY = 430;
+const DEMO_CAPACITY = 500; // Upgraded capacity for a larger venue
+
+/**
  * Cumulative counters for realistic occupancy simulation
- * Resets at 3 AM (bar day start)
+ * For demo: Always shows ~430 people with realistic entry/exit numbers
  */
 let cumulativeEntries = 0;
 let cumulativeExits = 0;
 let lastResetDate: string | null = null;
+let demoInitialized = false;
 
 function resetCountersIfNewDay() {
   const now = new Date();
   const today = now.toDateString();
   const hour = now.getHours();
   
-  // Reset at 3 AM
-  if (hour >= 3 && lastResetDate !== today) {
-    cumulativeEntries = Math.floor(Math.random() * 50); // Some baseline from late night
-    cumulativeExits = Math.floor(cumulativeEntries * 0.9);
+  // For demo account: Initialize to show 430 current occupancy
+  if (!demoInitialized || (hour >= 3 && lastResetDate !== today)) {
+    // Calculate entries/exits to result in ~430 current
+    // Realistic: ~850 total entries today, ~420 exits = 430 inside
+    const hoursSinceOpen = Math.max(1, hour >= 16 ? hour - 16 : (hour < 3 ? hour + 8 : 1));
+    const baseEntries = 650 + (hoursSinceOpen * 45); // ~850-1000+ by late evening
+    const variation = Math.floor(Math.random() * 50);
+    
+    cumulativeEntries = baseEntries + variation;
+    cumulativeExits = cumulativeEntries - DEMO_TARGET_OCCUPANCY - Math.floor(Math.random() * 20 - 10);
+    
     lastResetDate = today;
+    demoInitialized = true;
   }
 }
 
@@ -157,19 +174,19 @@ function generateSensorData(timestamp: Date): SensorData {
   const isThursday = dayOfWeek === 4;
   
   // ============ SOUND LEVELS ============
-  // Realistic dB levels for upscale cocktail lounge
+  // Sound levels for a packed venue with 430 people
   let baseDecibels: number;
   if (isClosedHours) {
     baseDecibels = 42 + Math.random() * 5; // Ambient noise only
   } else if (isHappyHour) {
-    baseDecibels = 68 + Math.random() * 6; // Conversation + background music
+    baseDecibels = 74 + Math.random() * 5; // Building crowd noise
   } else if (isPrimeTime) {
-    baseDecibels = 74 + Math.random() * 8; // Energetic but conversational
-    if (isWeekend) baseDecibels += 4; // Louder on weekends
+    baseDecibels = 82 + Math.random() * 6; // Packed house - energetic!
+    if (isWeekend) baseDecibels += 3; // Even louder on weekends
   } else if (isLateNight) {
-    baseDecibels = 78 + Math.random() * 6; // Late night energy
+    baseDecibels = 85 + Math.random() * 5; // Peak late night energy
   } else {
-    baseDecibels = 65 + Math.random() * 5;
+    baseDecibels = 72 + Math.random() * 5;
   }
   
   // ============ LIGHTING ============
@@ -199,39 +216,18 @@ function generateSensorData(timestamp: Date): SensorData {
   const baseHumidity = 48 + Math.random() * 12;
   
   // ============ OCCUPANCY ============
-  // Simulate realistic foot traffic patterns
-  let entryRate = 0;
-  let exitRate = 0;
+  // Demo account: Always show ~430 people with small fluctuations
+  // Add small random changes to make it feel live
+  const occupancyFluctuation = Math.floor(Math.random() * 20 - 10); // ±10
   
+  // Slowly increment entries/exits to show activity
   if (!isClosedHours) {
-    if (isHappyHour) {
-      entryRate = 8 + Math.random() * 6; // 8-14 entries per 15 min
-      exitRate = 2 + Math.random() * 3; // Few leaving during happy hour
-    } else if (isPrimeTime) {
-      if (hour < 21) {
-        entryRate = 12 + Math.random() * 8; // Building up
-        exitRate = 4 + Math.random() * 4;
-      } else {
-        entryRate = 6 + Math.random() * 6; // Slower entries late
-        exitRate = 5 + Math.random() * 5; // Some leaving
-      }
-    } else if (isLateNight) {
-      entryRate = 2 + Math.random() * 3; // Few new arrivals
-      exitRate = 10 + Math.random() * 8; // People heading home
-    }
-    
-    // Weekend boost
-    if (isWeekend || isThursday) {
-      entryRate *= 1.4;
-    }
+    cumulativeEntries += Math.floor(2 + Math.random() * 4); // 2-6 new entries
+    cumulativeExits += Math.floor(1 + Math.random() * 3); // 1-4 exits
   }
   
-  // Update cumulative counters
-  cumulativeEntries += Math.floor(entryRate);
-  cumulativeExits += Math.floor(exitRate);
-  
-  // Current = entries - exits (can't go negative)
-  const currentOccupancy = Math.max(0, cumulativeEntries - cumulativeExits);
+  // Always target ~430 current occupancy
+  const currentOccupancy = Math.max(400, Math.min(460, DEMO_TARGET_OCCUPANCY + occupancyFluctuation));
   
   // Get song info
   const songInfo = getRandomSongInfo(hour);
@@ -247,10 +243,10 @@ function generateSensorData(timestamp: Date): SensorData {
     artist: songInfo.artist,
     albumArt: songInfo.art,
     occupancy: {
-      current: Math.min(currentOccupancy, DEMO_VENUE.capacity),
+      current: currentOccupancy,
       entries: cumulativeEntries,
       exits: cumulativeExits,
-      capacity: DEMO_VENUE.capacity
+      capacity: DEMO_CAPACITY
     }
   };
 }
@@ -391,41 +387,32 @@ export function generateDemoHistoricalData(venueId: string, range: TimeRange): H
 
 /**
  * Generate demo occupancy metrics
+ * Target: 430 people currently in venue
  */
 export function generateDemoOccupancyMetrics(): OccupancyMetrics {
   const hour = new Date().getHours();
-  const isPeakHour = hour >= 18 && hour <= 23;
-  const isClosedHours = hour >= 2 && hour < 10;
+  const isClosedHours = hour >= 2 && hour < 16;
   
-  const currentBase = isClosedHours ? 0 : isPeakHour ? 120 : 45;
-  const current = Math.floor(Math.max(0, currentBase + (Math.random() * 20 - 10)));
-  const todayEntries = Math.floor(current * 8 + Math.random() * 50);
+  // Demo always shows ~430 current occupancy (busy venue!)
+  const current = isClosedHours ? 0 : DEMO_TARGET_OCCUPANCY + Math.floor(Math.random() * 20 - 10);
   
-  // Calculate realistic dwell time for a nightclub/lounge
-  // During peak hours: longer dwell time (2-3 hours)
-  // During off-peak: moderate dwell time (1-2 hours)
-  // Using Little's Law: W = L / λ
-  let avgDwellTimeMinutes: number | null = null;
-  if (todayEntries > 0 && current > 0) {
-    // Estimate hourly entry rate based on time of day
-    const hourlyEntries = isPeakHour ? todayEntries * 0.15 : todayEntries * 0.08;
-    if (hourlyEntries > 0) {
-      avgDwellTimeMinutes = Math.round((current / hourlyEntries) * 60);
-      // Clamp to reasonable values for a nightclub
-      avgDwellTimeMinutes = Math.max(45, Math.min(240, avgDwellTimeMinutes));
-    }
-  }
+  // Realistic numbers for a venue that's had 430 people
+  const todayEntries = 892 + Math.floor(Math.random() * 50); // ~900 entries today
+  const todayExits = todayEntries - current; // Math works out to ~430 inside
+  
+  // Dwell time for a packed venue - people staying ~2 hours
+  const avgDwellTimeMinutes = 115 + Math.floor(Math.random() * 20); // ~2 hours avg
   
   return {
     current,
     todayEntries,
-    todayExits: Math.floor(current * 7.5 + Math.random() * 40),
-    todayTotal: Math.floor(current * 8),
-    peakOccupancy: 156,
-    peakTime: '21:30',
-    sevenDayAvg: 85,
-    fourteenDayAvg: 82,
-    thirtyDayAvg: 78,
+    todayExits,
+    todayTotal: todayEntries,
+    peakOccupancy: 458, // Peak was even higher tonight!
+    peakTime: '22:15',
+    sevenDayAvg: 385,
+    fourteenDayAvg: 372,
+    thirtyDayAvg: 358,
     avgDwellTimeMinutes
   };
 }
@@ -454,22 +441,23 @@ export function generateDemoLocations(): Location[] {
 
 /**
  * Generate demo weekly metrics for AI reports
+ * Numbers reflect a high-volume venue with 430+ nightly guests
  */
 export function generateDemoWeeklyMetrics(): WeeklyMetrics {
   return {
-    avgComfort: 78.5,
-    avgTemperature: 71.2,
-    avgDecibels: 73.8,
-    avgHumidity: 48.5,
-    peakHours: ['6-7 PM', '8-9 PM', '9-10 PM'],
-    totalCustomers: 1847,
-    totalRevenue: 94250,
+    avgComfort: 76.2,
+    avgTemperature: 71.8,
+    avgDecibels: 81.4, // Louder with big crowds
+    avgHumidity: 52.3,
+    peakHours: ['9-10 PM', '10-11 PM', '11-12 AM'],
+    totalCustomers: 5847, // ~835/night average
+    totalRevenue: 312500, // ~$53/person average
     topSongs: [
-      { song: 'Uptown Funk', plays: 42 },
-      { song: 'Mr. Brightside', plays: 38 },
-      { song: 'Don\'t Stop Believin\'', plays: 35 },
-      { song: 'Shut Up and Dance', plays: 31 },
-      { song: 'September', plays: 28 }
+      { song: 'Blinding Lights', plays: 89 },
+      { song: 'Uptown Funk', plays: 76 },
+      { song: 'Mr. Brightside', plays: 71 },
+      { song: 'Levitating', plays: 68 },
+      { song: 'Don\'t Stop Believin\'', plays: 64 }
     ]
   };
 }
