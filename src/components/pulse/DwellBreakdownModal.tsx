@@ -1,5 +1,5 @@
 /**
- * DwellBreakdownModal - Deep dive into guest dwell time
+ * DwellBreakdownModal - Deep dive into average time spent
  * 
  * Shows:
  * - Average time guests stay
@@ -67,7 +67,7 @@ export function DwellBreakdownModal({
       bg: 'bg-warm-700/50 border-warm-700', 
       icon: '❓',
       label: 'No Data',
-      message: 'Not enough entry/exit data to calculate average dwell time.',
+      message: 'Not enough entry/exit data to calculate average time spent.',
       tip: 'Make sure your door sensors are connected and working.'
     },
   };
@@ -79,7 +79,7 @@ export function DwellBreakdownModal({
   const revenueImpact = dwellTimeMinutes !== null ? Math.round(dwellTimeMinutes * avgSpendPerMinute) : null;
   
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Dwell Time">
+    <Modal isOpen={isOpen} onClose={onClose} title="Avg Time Spent">
       <div className="space-y-6">
         {/* Hero Value */}
         <div className="text-center py-6 bg-warm-700/50 rounded-2xl -mx-2">
@@ -142,10 +142,10 @@ export function DwellBreakdownModal({
           </p>
         </div>
         
-        {/* What Affects Dwell Time */}
+        {/* What Affects Avg Time Spent */}
         <div>
           <h4 className="text-xs font-semibold text-warm-400 uppercase tracking-wide mb-3">
-            What Affects Dwell Time?
+            What Affects Time Spent?
           </h4>
           <div className="space-y-2">
             <FactorItem 

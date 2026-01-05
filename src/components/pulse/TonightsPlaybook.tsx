@@ -78,7 +78,7 @@ export function TonightsPlaybook({
         description: `${currentDecibels}dB may drive guests away. Lower by 10-15%.`,
         icon: 'alert',
         status: 'current',
-        impact: 'Could save 15+ min of dwell time',
+        impact: 'Could add 15+ min per guest',
       });
     } else {
       actions.push({

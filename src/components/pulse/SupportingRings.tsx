@@ -67,7 +67,7 @@ export function SupportingRings({
     {
       id: 'dwell',
       score: dwellScore,
-      label: 'Dwell',
+      label: 'Avg Stay',
       value: dwellTimeFormatted,
       color: RING_COLORS.dwell,
       onClick: onDwellTap,
