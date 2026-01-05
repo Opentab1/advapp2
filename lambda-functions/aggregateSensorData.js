@@ -169,7 +169,26 @@ async function fetchRawData(venueId, startTime, endTime) {
 }
 
 /**
+ * Helper to extract sensor value from either nested or flat structure
+ * Handles both formats:
+ *   - Nested: { sensors: { sound_level: 75 } }
+ *   - Flat: { decibels: 75 }
+ */
+function getSensorValue(item, nestedPath, flatKey) {
+  // Try nested structure first (new RPi publisher format)
+  if (item.sensors && item.sensors[nestedPath] !== undefined) {
+    return item.sensors[nestedPath];
+  }
+  // Fall back to flat structure (legacy format)
+  if (item[flatKey] !== undefined) {
+    return item[flatKey];
+  }
+  return null;
+}
+
+/**
  * Calculate TRUE aggregates from raw data
+ * Supports both nested (sensors.sound_level) and flat (decibels) data formats
  */
 function calculateAggregates(rawData, hourStart) {
   // Initialize accumulators
@@ -188,41 +207,46 @@ function calculateAggregates(rawData, hourStart) {
   const songCounts = new Map();
   
   for (const item of rawData) {
-    // Decibels
-    if (item.decibels !== undefined && item.decibels !== null && item.decibels > 0) {
-      sumDecibels += item.decibels;
+    // Decibels - check nested sensors.sound_level OR flat decibels
+    const decibels = getSensorValue(item, 'sound_level', 'decibels');
+    if (decibels !== null && decibels > 0) {
+      sumDecibels += decibels;
       countDecibels++;
-      if (item.decibels < minDecibels) minDecibels = item.decibels;
-      if (item.decibels > maxDecibels) maxDecibels = item.decibels;
+      if (decibels < minDecibels) minDecibels = decibels;
+      if (decibels > maxDecibels) maxDecibels = decibels;
     }
     
-    // Light
-    if (item.light !== undefined && item.light !== null && item.light >= 0) {
-      sumLight += item.light;
+    // Light - check nested sensors.light_level OR flat light
+    const light = getSensorValue(item, 'light_level', 'light');
+    if (light !== null && light >= 0) {
+      sumLight += light;
       countLight++;
-      if (item.light < minLight) minLight = item.light;
-      if (item.light > maxLight) maxLight = item.light;
+      if (light < minLight) minLight = light;
+      if (light > maxLight) maxLight = light;
     }
     
-    // Indoor temp
-    if (item.indoorTemp !== undefined && item.indoorTemp !== null && item.indoorTemp > 0) {
-      sumIndoorTemp += item.indoorTemp;
+    // Indoor temp - check nested sensors.indoor_temperature OR flat indoorTemp
+    const indoorTemp = getSensorValue(item, 'indoor_temperature', 'indoorTemp');
+    if (indoorTemp !== null && indoorTemp > 0) {
+      sumIndoorTemp += indoorTemp;
       countIndoorTemp++;
     }
     
-    // Outdoor temp
-    if (item.outdoorTemp !== undefined && item.outdoorTemp !== null) {
-      sumOutdoorTemp += item.outdoorTemp;
+    // Outdoor temp - check nested sensors.outdoor_temperature OR flat outdoorTemp
+    const outdoorTemp = getSensorValue(item, 'outdoor_temperature', 'outdoorTemp');
+    if (outdoorTemp !== null) {
+      sumOutdoorTemp += outdoorTemp;
       countOutdoorTemp++;
     }
     
-    // Humidity
-    if (item.humidity !== undefined && item.humidity !== null && item.humidity >= 0) {
-      sumHumidity += item.humidity;
+    // Humidity - check nested sensors.humidity OR flat humidity
+    const humidity = getSensorValue(item, 'humidity', 'humidity');
+    if (humidity !== null && humidity >= 0) {
+      sumHumidity += humidity;
       countHumidity++;
     }
     
-    // Occupancy
+    // Occupancy (already nested, works the same)
     if (item.occupancy) {
       if (item.occupancy.current > maxOccupancy) {
         maxOccupancy = item.occupancy.current;
@@ -232,9 +256,17 @@ function calculateAggregates(rawData, hourStart) {
       if (item.occupancy.exits) totalExits = Math.max(totalExits, item.occupancy.exits);
     }
     
-    // Track songs
-    if (item.currentSong && item.artist) {
-      const key = `${item.currentSong}|||${item.artist}`;
+    // Track songs - check nested spotify OR flat currentSong/artist
+    let songTitle = null, artistName = null;
+    if (item.spotify) {
+      songTitle = item.spotify.current_song;
+      artistName = item.spotify.artist;
+    } else if (item.currentSong && item.artist) {
+      songTitle = item.currentSong;
+      artistName = item.artist;
+    }
+    if (songTitle && artistName) {
+      const key = `${songTitle}|||${artistName}`;
       songCounts.set(key, (songCounts.get(key) || 0) + 1);
     }
   }

@@ -104,39 +104,78 @@ interface Summary {
 }
 
 function calculateSummary(data: SensorData[]): Summary {
-  let totalVisitors = 0;
   let peakOccupancy = 0;
   let peakTime: string | null = null;
   let totalSound = 0;
   let soundCount = 0;
   
-  const dailyEntries = new Map<string, number>();
+  // Group data by day to calculate ACTUAL visitors (not cumulative counters)
+  // For each day, we need: delta = (last entries value) - (first entries value)
+  const dailyData = new Map<string, { firstEntry: number | null; lastEntry: number | null; firstTs: number; lastTs: number }>();
   
-  data.forEach((item) => {
-    const date = new Date(item.timestamp).toDateString();
+  // Sort data by timestamp first
+  const sortedData = [...data].sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  
+  sortedData.forEach((item) => {
+    const ts = new Date(item.timestamp);
+    const date = ts.toDateString();
+    const timestamp = ts.getTime();
     
-    if (item.occupancy?.entries) {
-      const current = dailyEntries.get(date) || 0;
-      dailyEntries.set(date, Math.max(current, item.occupancy.entries));
+    // Track first and last entries value per day for delta calculation
+    if (item.occupancy?.entries !== undefined) {
+      const existing = dailyData.get(date);
+      if (!existing) {
+        dailyData.set(date, {
+          firstEntry: item.occupancy.entries,
+          lastEntry: item.occupancy.entries,
+          firstTs: timestamp,
+          lastTs: timestamp
+        });
+      } else {
+        // Update first if earlier
+        if (timestamp < existing.firstTs) {
+          existing.firstEntry = item.occupancy.entries;
+          existing.firstTs = timestamp;
+        }
+        // Update last if later
+        if (timestamp > existing.lastTs) {
+          existing.lastEntry = item.occupancy.entries;
+          existing.lastTs = timestamp;
+        }
+      }
     }
     
-    if (item.occupancy?.current && item.occupancy.current > peakOccupancy) {
-      peakOccupancy = item.occupancy.current;
-      peakTime = new Date(item.timestamp).toLocaleString('en-US', {
+    // Track peak occupancy
+    const currentOcc = item.occupancy?.current || 0;
+    if (currentOcc > peakOccupancy) {
+      peakOccupancy = currentOcc;
+      peakTime = ts.toLocaleString('en-US', {
         weekday: 'short',
         hour: 'numeric',
         minute: '2-digit',
       });
     }
     
-    if (item.decibels) {
+    // Track sound (skip 0 values as they indicate no data)
+    if (item.decibels && item.decibels > 0) {
       totalSound += item.decibels;
       soundCount++;
     }
   });
   
-  dailyEntries.forEach((entries) => {
-    totalVisitors += entries;
+  // Calculate total visitors as sum of daily deltas
+  // Delta = (last entries of day) - (first entries of day)
+  let totalVisitors = 0;
+  dailyData.forEach((dayStats) => {
+    if (dayStats.firstEntry !== null && dayStats.lastEntry !== null) {
+      const dailyDelta = dayStats.lastEntry - dayStats.firstEntry;
+      // Only count positive deltas (entries should increase)
+      if (dailyDelta > 0) {
+        totalVisitors += dailyDelta;
+      }
+    }
   });
   
   return {
