@@ -4,20 +4,22 @@ import { generateClient } from 'aws-amplify/api';
 
 class ApiService {
   async getHistoricalData(venueId: string, range: TimeRange | string): Promise<HistoricalData> {
-    console.log('🔍 Fetching historical data from DynamoDB for venue:', venueId, 'range:', range);
+    console.log('🔍 Fetching historical data for venue:', venueId, 'range:', range);
     
     try {
-      // Fetch directly from DynamoDB using the user's venueId
-      const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, range);
-      console.log('✅ Historical data received from DynamoDB');
+      // ============================================
+      // TRY HOURLY AGGREGATED DATA FIRST (FAST)
+      // Falls back to raw data if hourly not available
+      // ============================================
+      const historicalData = await dynamoDBService.getHourlySensorData(venueId, range);
+      console.log('✅ Historical data received');
       return historicalData;
     } catch (error: any) {
-      console.error('❌ Historical data DynamoDB fetch failed:', error);
-      // Avoid double-wrapping error messages
+      console.error('❌ Historical data fetch failed:', error);
       const errorMessage = error?.message || error?.toString() || 'Unknown error';
       if (errorMessage.startsWith('Failed to fetch historical data from DynamoDB') || 
           errorMessage.startsWith('Failed to fetch')) {
-        throw error; // Re-throw original error if already wrapped
+        throw error;
       }
       throw new Error(`Failed to fetch historical data from DynamoDB: ${errorMessage}`);
     }

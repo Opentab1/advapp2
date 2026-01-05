@@ -28,23 +28,41 @@ const HOURLY_TABLE = process.env.HOURLY_TABLE || 'SensorDataHourly';
 
 exports.handler = async (event) => {
   console.log('🚀 Starting hourly aggregation...');
+  console.log('📋 Event:', JSON.stringify(event, null, 2));
   
   try {
     // Get list of venues to process
-    // Option 1: Pass venues in event
-    // Option 2: Scan for unique venues (less efficient)
-    // Option 3: Hardcode venues (simplest for now)
-    
     const venues = event.venues || process.env.VENUES?.split(',') || ['jimmyneutron'];
     
-    // Determine time range
-    // Default: aggregate the previous complete hour
+    // ============================================
+    // BACKFILL MODE: Process multiple days at once
+    // ============================================
+    // Trigger with: { "backfill": true, "days": 90, "venues": ["jimmyneutron"] }
+    
+    if (event.backfill) {
+      const days = event.days || 7;
+      console.log(`🔄 BACKFILL MODE: Processing ${days} days for ${venues.length} venue(s)`);
+      const results = await backfillHistorical(venues, days);
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          message: `Backfill complete: ${days} days`,
+          venuesProcessed: venues.length,
+          hoursProcessed: results.length,
+          results: results.slice(0, 10) // Sample of results
+        })
+      };
+    }
+    
+    // ============================================
+    // NORMAL MODE: Process the previous hour
+    // ============================================
     const now = new Date();
     const hourEnd = new Date(now);
     hourEnd.setMinutes(0, 0, 0); // Start of current hour
     const hourStart = new Date(hourEnd.getTime() - 60 * 60 * 1000); // 1 hour before
     
-    // Allow override via event for backfilling
+    // Allow override via event for specific time ranges
     const startTime = event.startTime ? new Date(event.startTime) : hourStart;
     const endTime = event.endTime ? new Date(event.endTime) : hourEnd;
     
