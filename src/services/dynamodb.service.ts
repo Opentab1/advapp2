@@ -182,6 +182,32 @@ const getOccupancyMetricsQuery = /* GraphQL */ `
   }
 `;
 
+// Query for pre-aggregated hourly data (FAST - for charts)
+const listHourlySensorData = /* GraphQL */ `
+  query ListHourlySensorData($venueId: ID!, $startTime: String!, $endTime: String!, $limit: Int) {
+    listHourlySensorData(venueId: $venueId, startTime: $startTime, endTime: $endTime, limit: $limit) {
+      items {
+        venueId
+        timestamp
+        avgDecibels
+        avgLight
+        avgIndoorTemp
+        avgOutdoorTemp
+        avgHumidity
+        minDecibels
+        maxDecibels
+        maxOccupancy
+        totalEntries
+        totalExits
+        topSong
+        topArtist
+        dataPointCount
+      }
+      nextToken
+    }
+  }
+`;
+
 class DynamoDBService {
 
   private getClient() {
@@ -702,6 +728,102 @@ class DynamoDBService {
         throw error; // Re-throw original error if already wrapped
       }
       throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Fetch pre-aggregated hourly data (FAST)
+   * Falls back to raw data calculation if hourly table not available
+   */
+  async getHourlySensorData(venueId: string, range: TimeRange | string): Promise<HistoricalData> {
+    console.log('📊 Fetching pre-aggregated hourly data for:', venueId, range);
+    
+    // Demo mode
+    if (isDemoAccount(venueId)) {
+      return generateDemoHistoricalData(venueId, range as TimeRange);
+    }
+    
+    // Check cache
+    const cacheKey = `hourly_${range}`;
+    const cachedData = historicalCache.get(venueId, cacheKey);
+    if (cachedData) {
+      return cachedData;
+    }
+    
+    try {
+      this.checkGraphQLEndpoint();
+      
+      const session = await fetchAuthSession();
+      if (!session.tokens) {
+        throw new Error('Not authenticated');
+      }
+      
+      const { startTime, endTime } = this.getTimeRangeValues(range);
+      const client = this.getClient();
+      
+      console.log(`📊 [Hourly] Querying: ${startTime} to ${endTime}`);
+      
+      const response = await client.graphql({
+        query: listHourlySensorData,
+        variables: {
+          venueId,
+          startTime,
+          endTime,
+          limit: 2500 // More than enough for 90 days
+        },
+        authMode: 'userPool'
+      }) as any;
+      
+      if (response?.errors?.length > 0) {
+        console.warn('⚠️ Hourly query errors:', response.errors);
+        throw new Error('Hourly data query failed');
+      }
+      
+      const items = response?.data?.listHourlySensorData?.items || [];
+      
+      if (items.length === 0) {
+        console.log('⚠️ No hourly data found, falling back to raw data...');
+        return this.getHistoricalSensorData(venueId, range);
+      }
+      
+      console.log(`📊 [Hourly] Retrieved ${items.length} hourly aggregates`);
+      
+      // Transform hourly data to SensorData format for charts
+      const transformedData: SensorData[] = items
+        .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        .map((item: any) => ({
+          timestamp: item.timestamp,
+          decibels: item.avgDecibels || 0,
+          light: item.avgLight || 0,
+          indoorTemp: item.avgIndoorTemp || 0,
+          outdoorTemp: item.avgOutdoorTemp || 0,
+          humidity: item.avgHumidity || 0,
+          currentSong: item.topSong,
+          artist: item.topArtist,
+          occupancy: {
+            current: item.maxOccupancy || 0,
+            entries: item.totalEntries || 0,
+            exits: item.totalExits || 0,
+          },
+          _hourlyAggregate: true,
+          _dataPointCount: item.dataPointCount
+        }));
+      
+      const result: HistoricalData = {
+        data: transformedData,
+        venueId,
+        range: range as TimeRange
+      };
+      
+      // Cache the result
+      historicalCache.set(venueId, cacheKey, result);
+      
+      return result;
+      
+    } catch (error: any) {
+      console.warn('⚠️ Hourly data fetch failed, falling back to raw data:', error.message);
+      // Fallback to raw data aggregation
+      return this.getHistoricalSensorData(venueId, range);
     }
   }
 
