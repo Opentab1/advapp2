@@ -775,10 +775,11 @@ class DynamoDBService {
       }) as any;
       
       if (response?.errors?.length > 0) {
-        console.warn('⚠️ Hourly query errors:', response.errors);
-        throw new Error('Hourly data query failed');
+        console.error('❌ Hourly query GraphQL errors:', JSON.stringify(response.errors, null, 2));
+        throw new Error(`Hourly data query failed: ${response.errors[0]?.message || 'Unknown GraphQL error'}`);
       }
       
+      console.log('📊 [Hourly] Response received:', response?.data?.listHourlySensorData ? 'has data' : 'NO DATA');
       const items = response?.data?.listHourlySensorData?.items || [];
       
       if (items.length === 0) {
@@ -821,7 +822,13 @@ class DynamoDBService {
       return result;
       
     } catch (error: any) {
-      console.warn('⚠️ Hourly data fetch failed, falling back to raw data:', error.message);
+      console.error('❌ Hourly data fetch failed:', {
+        message: error?.message,
+        name: error?.name,
+        errors: error?.errors,
+        fullError: error
+      });
+      console.warn('⚠️ Falling back to raw data aggregation...');
       // Fallback to raw data aggregation
       return this.getHistoricalSensorData(venueId, range);
     }
