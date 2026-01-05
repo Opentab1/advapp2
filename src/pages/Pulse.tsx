@@ -341,6 +341,7 @@ export function Pulse() {
         indoorTemp={pulseData.sensorData?.indoorTemp}
         outdoorTemp={pulseData.weather?.temperature}
         currentSong={pulseData.sensorData?.currentSong}
+        artist={pulseData.sensorData?.artist}
         timeSlot={pulseData.timeSlot}
       />
       

@@ -1,19 +1,24 @@
 /**
  * PulseBreakdownModal - Deep dive into Pulse Score
  * 
+ * Level 2: Overview with all factors
+ * Level 3: Tap any factor for deep dive (FactorDeepDiveModal)
+ * 
  * Shows:
  * - Overall score with clear status
- * - Factor breakdown: Sound, Light, Temp, Genre, Vibe
+ * - Factor breakdown: Sound, Light, Temp, Genre, Vibe (TAPPABLE!)
  * - Context-aware based on time/day
  * - How to improve
  */
 
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Thermometer, Music, Clock } from 'lucide-react';
+import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Thermometer, Music, Clock, ChevronRight, Sparkles } from 'lucide-react';
 import { OPTIMAL_RANGES, FACTOR_WEIGHTS, SCORE_THRESHOLDS, TIME_SLOT_RANGES, type TimeSlot } from '../../utils/constants';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import { getCurrentTimeSlot } from '../../utils/scoring';
+import { FactorDeepDiveModal, type FactorType } from './FactorDeepDiveModal';
 
 interface PulseBreakdownModalProps {
   isOpen: boolean;
@@ -30,6 +35,7 @@ interface PulseBreakdownModalProps {
   indoorTemp?: number | null;
   outdoorTemp?: number | null;
   currentSong?: string | null;
+  artist?: string | null;
   timeSlot?: string;
 }
 
@@ -48,8 +54,12 @@ export function PulseBreakdownModal({
   indoorTemp,
   outdoorTemp,
   currentSong,
+  artist,
   timeSlot: timeSlotProp,
 }: PulseBreakdownModalProps) {
+  // State for factor deep dive
+  const [selectedFactor, setSelectedFactor] = useState<FactorType | null>(null);
+  
   // Get time slot
   const timeSlot = (timeSlotProp as TimeSlot) || getCurrentTimeSlot();
   const ranges = TIME_SLOT_RANGES[timeSlot];
@@ -91,6 +101,7 @@ export function PulseBreakdownModal({
   const vibeInsight = getVibeInsight(vibeScore, timeSlot);
   
   return (
+    <>
     <Modal isOpen={isOpen} onClose={onClose} title="Pulse Score">
       <div className="space-y-6">
         {/* Main Score Hero */}
@@ -133,6 +144,8 @@ export function PulseBreakdownModal({
             Score Breakdown
           </h4>
           
+          <p className="text-xs text-warm-500 mb-3">Tap any factor for deeper insights →</p>
+          
           <div className="space-y-3">
             {/* Sound Factor */}
             <FactorCard
@@ -143,6 +156,7 @@ export function PulseBreakdownModal({
               currentValue={currentDecibels !== null ? `${currentDecibels.toFixed(0)} dB` : '--'}
               optimalRange={`${ranges.sound.min}-${ranges.sound.max} dB`}
               insight={soundInsight}
+              onTap={() => setSelectedFactor('sound')}
             />
             
             {/* Light Factor */}
@@ -154,6 +168,7 @@ export function PulseBreakdownModal({
               currentValue={currentLight !== null ? `${currentLight.toFixed(0)} lux` : '--'}
               optimalRange={`${ranges.light.min}-${ranges.light.max} lux`}
               insight={lightInsight}
+              onTap={() => setSelectedFactor('light')}
             />
             
             {/* Temperature Factor */}
@@ -165,6 +180,7 @@ export function PulseBreakdownModal({
               currentValue={indoorTemp !== null && indoorTemp !== undefined ? `${indoorTemp.toFixed(0)}°F` : '--'}
               optimalRange={outdoorTemp && outdoorTemp > 80 ? '68-72°F' : '68-74°F'}
               insight={tempInsight}
+              onTap={() => setSelectedFactor('comfort')}
             />
             
             {/* Genre Factor */}
@@ -176,17 +192,19 @@ export function PulseBreakdownModal({
               currentValue={currentSong ? (currentSong.length > 20 ? currentSong.slice(0, 20) + '...' : currentSong) : 'No music'}
               optimalRange={ranges.genres.slice(0, 3).join(', ')}
               insight={genreInsight}
+              onTap={() => setSelectedFactor('music')}
             />
             
             {/* Vibe Factor */}
             <FactorCard
-              icon={Clock}
+              icon={Sparkles}
               label="Vibe Match"
               weight={Math.round(FACTOR_WEIGHTS.vibe * 100)}
               score={vibeScore}
               currentValue={slotLabels[timeSlot]}
               optimalRange="All factors aligned"
               insight={vibeInsight}
+              onTap={() => setSelectedFactor('vibe')}
             />
           </div>
         </div>
@@ -245,6 +263,31 @@ export function PulseBreakdownModal({
         </div>
       </div>
     </Modal>
+    
+    {/* Factor Deep Dive Modal (Level 3) */}
+    <FactorDeepDiveModal
+      isOpen={selectedFactor !== null}
+      onClose={() => setSelectedFactor(null)}
+      factor={selectedFactor || 'sound'}
+      currentValue={
+        selectedFactor === 'sound' ? currentDecibels :
+        selectedFactor === 'light' ? currentLight :
+        selectedFactor === 'comfort' ? (indoorTemp ?? null) :
+        null
+      }
+      score={
+        selectedFactor === 'sound' ? soundScore :
+        selectedFactor === 'light' ? lightScore :
+        selectedFactor === 'comfort' ? tempScore :
+        selectedFactor === 'music' ? genreScore :
+        vibeScore
+      }
+      timeSlot={timeSlot}
+      currentSong={currentSong}
+      artist={artist}
+      outdoorTemp={outdoorTemp}
+    />
+    </>
   );
 }
 
@@ -258,9 +301,10 @@ interface FactorCardProps {
   currentValue: string;
   optimalRange: string;
   insight: { status: 'optimal' | 'warning' | 'critical'; message: string; action?: string };
+  onTap?: () => void;
 }
 
-function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRange, insight }: FactorCardProps) {
+function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRange, insight, onTap }: FactorCardProps) {
   const statusColors = {
     optimal: 'bg-green-500',
     warning: 'bg-amber-500',
@@ -268,9 +312,9 @@ function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRan
   };
   
   const statusBg = {
-    optimal: 'bg-green-900/20 border-green-900/30',
-    warning: 'bg-amber-900/20 border-amber-900/30',
-    critical: 'bg-red-900/20 border-red-900/30',
+    optimal: 'bg-green-900/20 border-green-900/30 hover:bg-green-900/30',
+    warning: 'bg-amber-900/20 border-amber-900/30 hover:bg-amber-900/30',
+    critical: 'bg-red-900/20 border-red-900/30 hover:bg-red-900/30',
   };
   
   const textColors = {
@@ -280,7 +324,10 @@ function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRan
   };
   
   return (
-    <div className={`rounded-xl border p-4 ${statusBg[insight.status]} transition-colors`}>
+    <button 
+      onClick={onTap}
+      className={`w-full text-left rounded-xl border p-4 ${statusBg[insight.status]} transition-all active:scale-[0.98] cursor-pointer`}
+    >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className={`w-9 h-9 rounded-lg ${
@@ -323,14 +370,17 @@ function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRan
         </div>
       </div>
       
-      {/* Insight */}
-      <div className={`text-sm ${textColors[insight.status]}`}>
-        <p className="font-medium">{insight.message}</p>
-        {insight.action && (
-          <p className="text-xs mt-1 opacity-80">→ {insight.action}</p>
-        )}
+      {/* Insight + Tap indicator */}
+      <div className="flex items-start justify-between">
+        <div className={`text-sm ${textColors[insight.status]} flex-1`}>
+          <p className="font-medium">{insight.message}</p>
+          {insight.action && (
+            <p className="text-xs mt-1 opacity-80">→ {insight.action}</p>
+          )}
+        </div>
+        <ChevronRight className="w-4 h-4 text-warm-500 mt-0.5 flex-shrink-0" />
       </div>
-    </div>
+    </button>
   );
 }
 
