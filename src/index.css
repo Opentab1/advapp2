@@ -1,5 +1,8 @@
-/* Inter Font Import */
+/* WHOOP Typography - Proxima Nova & DIN Pro */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* Note: Proxima Nova and DIN Pro are commercial fonts
+   Using Inter as primary fallback, SF Pro for system */
 
 @tailwind base;
 @tailwind components;
@@ -7,16 +10,40 @@
 
 @layer base {
   :root {
-    /* WHOOP-style pure black theme */
+    /* WHOOP Exact Color Palette */
+    
+    /* Base / Structural */
     --bg-primary: #000000;
-    --bg-secondary: #171717;
-    --bg-tertiary: #262626;
+    --bg-panel: #0B0F14;
+    --bg-panel-secondary: #101518;
+    --border-color: #1C222B;
+    
+    /* Text */
     --text-primary: #FFFFFF;
-    --text-secondary: #E5E5E5;
-    --text-muted: #A3A3A3;
-    --border-color: #262626;
-    --accent: #0077B6;
-    --accent-light: rgba(0, 119, 182, 0.15);
+    --text-secondary: #A6B0BF;
+    --text-muted: #6C7684;
+    
+    /* Semantic - Recovery */
+    --recovery-high: #16EC06;
+    --recovery-medium: #FFDE00;
+    --recovery-low: #FF0026;
+    
+    /* Strain */
+    --strain: #0093E7;
+    --strain-light: #2FB8FF;
+    
+    /* Sleep */
+    --sleep: #7BA1BB;
+    --sleep-accent: #9FC3DA;
+    
+    /* CTA */
+    --teal: #00F19F;
+    --teal-dark: #00C884;
+    
+    /* Charts */
+    --chart-baseline: #1F2630;
+    --chart-grid: #2A3441;
+    --chart-tooltip: #0E131A;
   }
 
   * {
@@ -35,31 +62,51 @@
   html {
     scroll-behavior: smooth;
   }
+
+  /* WHOOP Typography styles */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-sans font-semibold;
+    color: var(--text-primary);
+  }
+
+  /* Section headers - ALL CAPS with tracking */
+  .section-header {
+    @apply uppercase text-xs font-semibold tracking-whoop;
+    color: var(--text-secondary);
+  }
+
+  /* Metric numbers - tabular for alignment */
+  .metric-value {
+    @apply font-metric font-bold tabular-nums;
+    color: var(--text-primary);
+  }
 }
 
 @layer components {
-  /* Custom Scrollbar - Pure black theme */
+  /* Custom Scrollbar - WHOOP dark */
   ::-webkit-scrollbar {
     @apply w-2 h-2;
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-warm-900;
+    background: var(--bg-primary);
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-warm-600 rounded-full;
+    background: var(--border-color);
+    border-radius: 4px;
     transition: background-color 0.2s;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-warm-500;
+    background: var(--chart-grid);
   }
 
-  /* Card Styles - Pure black WHOOP style */
+  /* Card Styles - WHOOP elevated panel */
   .glass-card {
-    @apply bg-warm-800 rounded-2xl border border-warm-700;
-    box-shadow: none;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    @apply rounded-2xl;
   }
 
   .glass-card-hover {
@@ -67,80 +114,94 @@
   }
 
   .glass-card-hover:hover {
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    transform: translateY(-2px);
+    background: var(--bg-panel-secondary);
   }
 
-  /* Primary Button - Ocean blue */
+  /* Primary Button - WHOOP Teal */
   .btn-primary {
-    @apply px-6 py-3 bg-primary text-white font-semibold rounded-xl;
-    @apply transition-all duration-200 hover:bg-primary-dark;
-    box-shadow: 0 2px 8px rgba(0, 119, 182, 0.25);
+    @apply px-6 py-3 font-semibold rounded-xl;
+    @apply transition-all duration-200;
+    background: var(--teal);
+    color: #000000;
   }
 
   .btn-primary:hover {
-    box-shadow: 0 4px 16px rgba(0, 119, 182, 0.35);
-    transform: translateY(-1px);
+    background: var(--teal-dark);
+    box-shadow: 0 0 20px rgba(0, 241, 159, 0.3);
   }
 
   .btn-primary:active {
-    transform: translateY(0);
+    transform: scale(0.98);
   }
 
-  /* Secondary Button - Dark theme */
+  /* Secondary Button - WHOOP panel */
   .btn-secondary {
-    @apply px-6 py-3 bg-warm-800 border border-warm-600 text-warm-200 font-semibold rounded-xl;
+    @apply px-6 py-3 font-semibold rounded-xl;
     @apply transition-all duration-200;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
   }
 
   .btn-secondary:hover {
-    @apply bg-warm-700 border-warm-500;
+    background: var(--bg-panel-secondary);
+    border-color: var(--chart-grid);
   }
 
-  /* Form Elements - Dark theme */
+  /* Form Elements - WHOOP style */
   input, select, textarea {
-    @apply bg-warm-800 border border-warm-600 text-warm-100 rounded-xl;
-    @apply transition-all duration-200;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    @apply rounded-xl transition-all duration-200;
   }
 
   input::placeholder,
   textarea::placeholder {
-    @apply text-warm-500;
+    color: var(--text-muted);
   }
 
   input:focus,
   select:focus,
   textarea:focus {
-    @apply border-primary outline-none ring-2 ring-primary/30;
+    border-color: var(--teal);
+    @apply outline-none ring-2;
+    --tw-ring-color: rgba(0, 241, 159, 0.3);
   }
 
   select option {
-    @apply bg-warm-800 text-warm-100;
+    background: var(--bg-panel);
+    color: var(--text-primary);
   }
 
   /* Focus Visible for Accessibility */
   *:focus-visible {
-    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-black;
+    @apply outline-none ring-2 ring-offset-2;
+    --tw-ring-color: var(--teal);
+    --tw-ring-offset-color: var(--bg-primary);
   }
 
   /* Selection */
   ::selection {
-    @apply bg-primary/30 text-white;
+    background: rgba(0, 241, 159, 0.3);
+    color: white;
   }
 
   /* Spinner */
   .spinner {
-    @apply inline-block w-6 h-6 border-2 border-warm-700 border-t-primary rounded-full animate-spin;
+    @apply inline-block w-6 h-6 border-2 rounded-full animate-spin;
+    border-color: var(--border-color);
+    border-top-color: var(--teal);
   }
 
-  /* Charts - Pure black theme */
+  /* Charts - WHOOP palette */
   .recharts-cartesian-grid-horizontal line,
   .recharts-cartesian-grid-vertical line {
-    stroke: #262626;
+    stroke: var(--chart-grid);
   }
 
   .recharts-text {
-    fill: #A3A3A3;
+    fill: var(--text-muted);
   }
 
   /* Remove orbs/glows for clean look */
@@ -152,29 +213,54 @@
     box-shadow: none;
   }
 
-  /* Gradient Text - Now just white bold */
+  /* Gradient Text - Teal gradient */
   .gradient-text {
-    @apply text-white font-bold;
+    background: linear-gradient(135deg, var(--teal) 0%, var(--strain-light) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    @apply font-bold;
   }
 
-  /* Custom scrollbar - Pure black */
+  /* Custom scrollbar - WHOOP */
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
   }
 
   .custom-scrollbar::-webkit-scrollbar-track {
-    background: #000000;
+    background: var(--bg-primary);
     border-radius: 3px;
   }
 
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: #525252;
+    background: var(--border-color);
     border-radius: 3px;
   }
 
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: #737373;
+    background: var(--chart-grid);
   }
+
+  /* Recovery score colors */
+  .recovery-high { color: var(--recovery-high); }
+  .recovery-medium { color: var(--recovery-medium); }
+  .recovery-low { color: var(--recovery-low); }
+
+  .bg-recovery-high { background-color: var(--recovery-high); }
+  .bg-recovery-medium { background-color: var(--recovery-medium); }
+  .bg-recovery-low { background-color: var(--recovery-low); }
+
+  /* Strain colors */
+  .text-strain { color: var(--strain); }
+  .bg-strain { background-color: var(--strain); }
+
+  /* Sleep colors */
+  .text-sleep { color: var(--sleep); }
+  .bg-sleep { background-color: var(--sleep); }
+
+  /* Teal CTA */
+  .text-teal { color: var(--teal); }
+  .bg-teal { background-color: var(--teal); }
 }
 
 @layer utilities {
@@ -324,5 +410,11 @@
   /* Card with better mobile spacing */
   .card-mobile {
     @apply p-4 sm:p-6 rounded-xl;
+  }
+
+  /* WHOOP-style uppercase labels */
+  .label-whoop {
+    @apply uppercase text-xs font-semibold tracking-whoop;
+    color: var(--text-secondary);
   }
 }

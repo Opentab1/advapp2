@@ -33,30 +33,30 @@ const METRIC_CONFIG: Record<MetricType, {
 }> = {
   occupancy: {
     title: 'Occupancy',
-    color: '#22C55E',
-    bgColor: 'bg-green-500/10',
-    borderColor: 'border-green-500/30',
+    color: '#00F19F',     // WHOOP Teal
+    bgColor: 'bg-teal-500/10',
+    borderColor: 'border-teal-500/30',
     icon: Users,
   },
   decibels: {
     title: 'Sound Level',
-    color: '#0077B6',
+    color: '#0093E7',     // WHOOP Strain Blue
     bgColor: 'bg-blue-500/10',
     borderColor: 'border-blue-500/30',
     icon: Volume2,
   },
   light: {
     title: 'Light Level',
-    color: '#F59E0B',
-    bgColor: 'bg-amber-500/10',
-    borderColor: 'border-amber-500/30',
+    color: '#FFDE00',     // WHOOP Medium Yellow
+    bgColor: 'bg-yellow-500/10',
+    borderColor: 'border-yellow-500/30',
     icon: Sun,
   },
   pulse: {
     title: 'Pulse Score',
-    color: '#8B5CF6',
-    bgColor: 'bg-purple-500/10',
-    borderColor: 'border-purple-500/30',
+    color: '#16EC06',     // WHOOP High Green
+    bgColor: 'bg-green-500/10',
+    borderColor: 'border-green-500/30',
     icon: TrendingUp,
   },
 };

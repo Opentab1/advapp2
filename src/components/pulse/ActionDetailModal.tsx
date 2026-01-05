@@ -100,7 +100,7 @@ export function ActionDetailModal({
             </h4>
             <MiniChart
               data={recentValues}
-              color={action.category === 'sound' ? '#0077B6' : '#F59E0B'}
+              color={action.category === 'sound' ? '#0093E7' : '#FFDE00'}
               threshold={chartThreshold}
               thresholdLabel={chartThreshold ? `${chartThreshold} optimal` : undefined}
             />

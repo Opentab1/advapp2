@@ -17,7 +17,7 @@ interface SoundVisualizerProps {
 export function SoundVisualizer({
   level,
   barCount = 5,
-  color = '#0077B6',
+  color = '#0093E7',
   height = 20,
 }: SoundVisualizerProps) {
   const bars = useMemo(() => {

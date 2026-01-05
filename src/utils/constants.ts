@@ -178,20 +178,20 @@ export const POLLING_INTERVALS = {
   weather: 5400000,  // 90 minutes for weather
 } as const;
 
-// ============ COLORS ============
+// ============ COLORS (WHOOP Palette) ============
 
 export const SCORE_COLORS = {
-  optimal: '#22C55E',  // Green
-  good: '#F59E0B',     // Amber
-  poor: '#EF4444',     // Red
-  neutral: '#9CA3AF',  // Gray (no data)
+  optimal: '#16EC06',  // WHOOP High Recovery Green
+  good: '#FFDE00',     // WHOOP Medium Recovery Yellow
+  poor: '#FF0026',     // WHOOP Low Recovery Red
+  neutral: '#6C7684',  // WHOOP Muted Text
 } as const;
 
 export const RING_COLORS = {
-  pulse: '#22C55E',      // Dynamic based on score
-  dwell: '#0077B6',      // Primary blue
-  reputation: '#F59E0B', // Amber
-  crowd: '#22C55E',      // Green
+  pulse: '#16EC06',      // WHOOP High Recovery Green
+  dwell: '#0093E7',      // WHOOP Strain Blue
+  reputation: '#FFDE00', // WHOOP Medium Recovery Yellow
+  crowd: '#00F19F',      // WHOOP Teal
 } as const;
 
 // ============ ACTION PRIORITIES ============

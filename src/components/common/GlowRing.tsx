@@ -27,12 +27,12 @@ export function GlowRing({
     ? circumference - (score / 100) * circumference
     : circumference;
   
-  // Determine color based on score
+  // Determine color based on score - WHOOP Recovery palette
   const getColor = () => {
-    if (score === null) return { main: '#9CA3AF', glow: 'transparent' };
-    if (score >= SCORE_THRESHOLDS.optimal) return { main: '#22C55E', glow: 'rgba(34, 197, 94, 0.4)' };
-    if (score >= SCORE_THRESHOLDS.good) return { main: '#F59E0B', glow: 'rgba(245, 158, 11, 0.4)' };
-    return { main: '#EF4444', glow: 'rgba(239, 68, 68, 0.4)' };
+    if (score === null) return { main: '#6C7684', glow: 'transparent' };
+    if (score >= SCORE_THRESHOLDS.optimal) return { main: '#16EC06', glow: 'rgba(22, 236, 6, 0.4)' };
+    if (score >= SCORE_THRESHOLDS.good) return { main: '#FFDE00', glow: 'rgba(255, 222, 0, 0.4)' };
+    return { main: '#FF0026', glow: 'rgba(255, 0, 38, 0.4)' };
   };
   
   const colors = getColor();
@@ -69,7 +69,7 @@ export function GlowRing({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#262626"
+          stroke="#1C222B"
           strokeWidth={strokeWidth}
         />
         

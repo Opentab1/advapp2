@@ -25,7 +25,7 @@ interface MiniChartProps {
 export function MiniChart({
   data,
   height = 60,
-  color = '#0077B6',
+  color = '#0093E7',
   threshold,
   thresholdColor = '#E7E5E4',
   thresholdLabel,

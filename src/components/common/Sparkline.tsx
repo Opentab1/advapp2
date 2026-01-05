@@ -19,7 +19,7 @@ export function Sparkline({
   data,
   width = 80,
   height = 24,
-  color = '#0077B6',
+  color = '#0093E7',
   showDot = true,
 }: SparklineProps) {
   const pathData = useMemo(() => {

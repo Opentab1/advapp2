@@ -154,7 +154,7 @@ export function Ring({
             cy={ringSize / 2}
             r={radius}
             fill="none"
-            stroke="#262626"
+            stroke="#1C222B"
             strokeWidth={strokeWidth}
           />
           {/* Animated progress ring */}

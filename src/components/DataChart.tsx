@@ -43,7 +43,7 @@ interface DataChartProps {
   timeRange?: TimeRange;
 }
 
-export function DataChart({ data, metric, title, color = '#0077B6', timeRange = '7d' }: DataChartProps) {
+export function DataChart({ data, metric, title, color = '#0093E7', timeRange = '7d' }: DataChartProps) {
   const chartRef = useRef<ChartJS<'line'>>(null);
 
   // Sort data by timestamp to ensure proper chart rendering
@@ -163,10 +163,10 @@ export function DataChart({ data, metric, title, color = '#0077B6', timeRange = 
         display: false
       },
       tooltip: {
-        backgroundColor: '#000000',
+        backgroundColor: '#0E131A',
         titleColor: '#FFFFFF',
-        bodyColor: '#FFFFFF',
-        borderColor: '#262626',
+        bodyColor: '#A6B0BF',
+        borderColor: '#1C222B',
         borderWidth: 1,
         padding: 12,
         cornerRadius: 8,
