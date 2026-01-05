@@ -514,22 +514,19 @@ class DynamoDBService {
       console.log(`✅ Retrieved ${items.length} historical data points from DynamoDB`);
       
       // Transform data
-      let transformedData: SensorData[] = items.map((item: any) => this.transformDynamoDBData(item));
+      const transformedData: SensorData[] = items.map((item: any) => this.transformDynamoDBData(item));
       
-      // DOWNSAMPLE for chart performance: Keep max ~800 points for smooth rendering
-      const maxChartPoints = 800;
-      if (transformedData.length > maxChartPoints) {
-        const step = Math.ceil(transformedData.length / maxChartPoints);
-        const sampled: SensorData[] = [];
-        for (let i = 0; i < transformedData.length; i += step) {
-          sampled.push(transformedData[i]);
-        }
-        console.log(`📊 [${range}] Downsampled: ${transformedData.length} → ${sampled.length} points for chart`);
-        transformedData = sampled;
-      }
+      // ============================================
+      // PROPER TIME-BASED AGGREGATION (NOT DOWNSAMPLING)
+      // ============================================
+      // Instead of skipping data points, we aggregate into time buckets
+      // This preserves accuracy while reducing chart points
+      
+      const aggregatedData = this.aggregateByTimeBucket(transformedData, range as string);
+      console.log(`📊 [${range}] Aggregated: ${transformedData.length} → ${aggregatedData.length} time buckets`);
       
       const result: HistoricalData = {
-        data: transformedData,
+        data: aggregatedData,
         venueId,
         range: range as TimeRange
       };
@@ -702,6 +699,132 @@ class DynamoDBService {
       }
       throw new Error(`Failed to fetch occupancy metrics from DynamoDB: ${errorMessage}`);
     }
+  }
+
+  /**
+   * Aggregate data into time buckets for accurate chart display
+   * Instead of downsampling (which loses data), we calculate proper averages
+   */
+  private aggregateByTimeBucket(data: SensorData[], range: string): SensorData[] {
+    if (data.length === 0) return [];
+    
+    // Determine bucket size based on range
+    // Goal: ~100-200 data points for smooth charts with accurate representation
+    const bucketConfig: Record<string, number> = {
+      '24h': 15 * 60 * 1000,        // 15-minute buckets = 96 points
+      '7d':  60 * 60 * 1000,         // 1-hour buckets = 168 points
+      '14d': 2 * 60 * 60 * 1000,     // 2-hour buckets = 168 points
+      '30d': 4 * 60 * 60 * 1000,     // 4-hour buckets = 180 points
+      '90d': 24 * 60 * 60 * 1000,    // 24-hour (daily) buckets = 90 points
+    };
+    
+    const bucketSize = bucketConfig[range] || 60 * 60 * 1000; // Default 1 hour
+    
+    // Group data into buckets
+    const buckets = new Map<number, SensorData[]>();
+    
+    for (const item of data) {
+      const timestamp = new Date(item.timestamp).getTime();
+      const bucketKey = Math.floor(timestamp / bucketSize) * bucketSize;
+      
+      if (!buckets.has(bucketKey)) {
+        buckets.set(bucketKey, []);
+      }
+      buckets.get(bucketKey)!.push(item);
+    }
+    
+    // Calculate aggregates for each bucket
+    const aggregated: SensorData[] = [];
+    
+    // Sort bucket keys chronologically
+    const sortedBucketKeys = Array.from(buckets.keys()).sort((a, b) => a - b);
+    
+    for (const bucketKey of sortedBucketKeys) {
+      const bucketData = buckets.get(bucketKey)!;
+      
+      // Calculate averages
+      let sumDecibels = 0, countDecibels = 0;
+      let sumLight = 0, countLight = 0;
+      let sumIndoorTemp = 0, countIndoorTemp = 0;
+      let sumOutdoorTemp = 0, countOutdoorTemp = 0;
+      let sumHumidity = 0, countHumidity = 0;
+      let maxOccupancy = 0;
+      let maxEntries = 0;
+      let maxExits = 0;
+      let latestSong: string | undefined;
+      let latestArtist: string | undefined;
+      let latestAlbumArt: string | undefined;
+      
+      for (const item of bucketData) {
+        if (item.decibels !== undefined && item.decibels !== null && item.decibels > 0) {
+          sumDecibels += item.decibels;
+          countDecibels++;
+        }
+        if (item.light !== undefined && item.light !== null) {
+          sumLight += item.light;
+          countLight++;
+        }
+        if (item.indoorTemp !== undefined && item.indoorTemp !== null && item.indoorTemp > 0) {
+          sumIndoorTemp += item.indoorTemp;
+          countIndoorTemp++;
+        }
+        if (item.outdoorTemp !== undefined && item.outdoorTemp !== null) {
+          sumOutdoorTemp += item.outdoorTemp;
+          countOutdoorTemp++;
+        }
+        if (item.humidity !== undefined && item.humidity !== null) {
+          sumHumidity += item.humidity;
+          countHumidity++;
+        }
+        if (item.occupancy) {
+          if (item.occupancy.current > maxOccupancy) {
+            maxOccupancy = item.occupancy.current;
+          }
+          if (item.occupancy.entries && item.occupancy.entries > maxEntries) {
+            maxEntries = item.occupancy.entries;
+          }
+          if (item.occupancy.exits && item.occupancy.exits > maxExits) {
+            maxExits = item.occupancy.exits;
+          }
+        }
+        // Keep the latest song info
+        if (item.currentSong) {
+          latestSong = item.currentSong;
+          latestArtist = item.artist;
+          latestAlbumArt = item.albumArt;
+        }
+      }
+      
+      // Use the bucket's midpoint as the timestamp for better representation
+      const bucketMidpoint = new Date(bucketKey + bucketSize / 2);
+      
+      aggregated.push({
+        timestamp: bucketMidpoint.toISOString(),
+        decibels: countDecibels > 0 ? Math.round((sumDecibels / countDecibels) * 10) / 10 : 0,
+        light: countLight > 0 ? Math.round(sumLight / countLight) : 0,
+        indoorTemp: countIndoorTemp > 0 ? Math.round((sumIndoorTemp / countIndoorTemp) * 10) / 10 : 0,
+        outdoorTemp: countOutdoorTemp > 0 ? Math.round((sumOutdoorTemp / countOutdoorTemp) * 10) / 10 : 0,
+        humidity: countHumidity > 0 ? Math.round(sumHumidity / countHumidity) : 0,
+        currentSong: latestSong,
+        artist: latestArtist,
+        albumArt: latestAlbumArt,
+        occupancy: {
+          current: maxOccupancy,
+          entries: maxEntries,
+          exits: maxExits,
+        },
+        // Store metadata about the aggregation for debugging
+        _aggregation: {
+          dataPoints: bucketData.length,
+          bucketStart: new Date(bucketKey).toISOString(),
+          bucketEnd: new Date(bucketKey + bucketSize).toISOString(),
+        }
+      } as SensorData);
+    }
+    
+    console.log(`📊 Aggregation complete: ${data.length} raw → ${aggregated.length} buckets (${bucketSize / 60000} min each)`);
+    
+    return aggregated;
   }
 
   /**

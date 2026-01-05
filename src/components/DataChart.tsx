@@ -201,11 +201,11 @@ export function DataChart({ data, metric, title, color = '#0093E7', timeRange = 
           displayFormats: timeSettings.displayFormats
         },
         grid: {
-          color: '#E7E5E4',
+          color: '#2A3441',  // WHOOP chart grid
           drawBorder: false
         },
         ticks: {
-          color: '#78716C',
+          color: '#6C7684',  // WHOOP muted text
           font: {
             size: 11,
             family: 'Inter'
@@ -216,11 +216,11 @@ export function DataChart({ data, metric, title, color = '#0093E7', timeRange = 
       },
       y: {
         grid: {
-          color: '#E7E5E4',
+          color: '#2A3441',  // WHOOP chart grid
           drawBorder: false
         },
         ticks: {
-          color: '#78716C',
+          color: '#6C7684',  // WHOOP muted text
           font: {
             size: 11,
             family: 'Inter'
@@ -238,7 +238,7 @@ export function DataChart({ data, metric, title, color = '#0093E7', timeRange = 
   // No data state
   if (!data || data.length === 0) {
     return (
-      <div className="h-[200px] flex items-center justify-center text-warm-500">
+      <div className="h-[200px] flex items-center justify-center text-text-muted">
         No data available
       </div>
     );
@@ -265,9 +265,9 @@ export function DataChart({ data, metric, title, color = '#0093E7', timeRange = 
     >
       {/* Data range info */}
       {dataInfo && (
-        <div className="flex justify-between text-xs text-warm-500">
+        <div className="flex justify-between text-xs text-text-muted">
           <span>{dataInfo.from} – {dataInfo.to}</span>
-          <span>{dataInfo.points.toLocaleString()} readings</span>
+          <span>{dataInfo.points.toLocaleString()} data points</span>
         </div>
       )}
       <div className="h-[200px]">
