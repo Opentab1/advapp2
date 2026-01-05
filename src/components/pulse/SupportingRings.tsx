@@ -94,7 +94,7 @@ export function SupportingRings({
     <div className="relative -mx-4 sm:mx-0">
       {/* Scroll container */}
       <motion.div 
-        className="flex gap-6 sm:gap-8 px-4 sm:px-0 sm:justify-center overflow-x-auto scrollbar-hide snap-x snap-mandatory"
+        className="flex gap-8 sm:gap-12 px-4 sm:px-0 sm:justify-center overflow-x-auto scrollbar-hide snap-x snap-mandatory"
         variants={containerVariants}
         initial="initial"
         animate="animate"
