@@ -22,6 +22,7 @@ import authService from '../services/auth.service';
 import googleReviewsService, { GoogleReviewsData } from '../services/google-reviews.service';
 import venueSettingsService from '../services/venue-settings.service';
 import weatherService, { WeatherData } from '../services/weather.service';
+import { isDemoAccount } from '../utils/demoData';
 import type { SensorData, OccupancyMetrics } from '../types';
 
 // ============ TYPES ============
@@ -291,6 +292,19 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     const entries = sensorData.occupancy.entries ?? 0;
     const exits = sensorData.occupancy.exits ?? 0;
     
+    // Demo account: Use the values directly from generated data
+    if (isDemoAccount(venueId)) {
+      const current = sensorData.occupancy.current ?? 0;
+      return {
+        current,
+        todayEntries: entries,
+        todayExits: exits,
+        peakOccupancy: Math.max(current, 458), // Demo peak
+        peakTime: '22:15',
+      };
+    }
+    
+    // Real accounts: Calculate from baseline
     let todayEntries = 0;
     let todayExits = 0;
     
@@ -309,7 +323,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       peakOccupancy: current,
       peakTime: null,
     };
-  }, [sensorData?.occupancy, baseline]);
+  }, [sensorData?.occupancy, baseline, venueId]);
   
   // ============ DWELL TIME CALCULATION ============
   // Dwell = average time guests are staying based on current occupancy vs turnover
