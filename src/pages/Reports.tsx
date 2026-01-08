@@ -1,22 +1,20 @@
 /**
- * Reports - Manager's Performance Briefing
+ * Reports - Manager's Closing Shift Audit
  * 
- * "How did we do financially, and why?"
+ * "The Z-Report for Experience"
  * 
- * Replaces the old report card style with a business-focused briefing:
- * 1. Revenue Impact (The Bottom Line)
- * 2. Customer Behavior (Dwell Time + Pulse Score)
- * 3. Timeline (The Shape of the Day)
- * 4. Actionable Insights (Wins & Fixes)
+ * A brutal, honest audit of the shift.
+ * 1. Financial efficiency ($/Head)
+ * 2. Compliance (Did staff follow the system?)
+ * 3. The "Tape" (Hour-by-hour audit)
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  Download, Share2, Users, TrendingUp, TrendingDown,
-  DollarSign, RefreshCw, Calendar, ChevronRight, 
-  Lightbulb, Star, Zap, Clock, ArrowUp, ArrowDown, 
-  Minus, Mail, Copy
+  DollarSign, Users, Clock, Zap, AlertTriangle, 
+  CheckCircle, XCircle, Share2, Download,
+  Music, Volume2, TrendingUp
 } from 'lucide-react';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
@@ -30,65 +28,37 @@ import type { SensorData, TimeRange } from '../types';
 
 type ReportPeriod = 'today' | 'week' | 'month';
 
-interface PeriodConfig {
-  label: string;
-  apiRange: TimeRange;
-  comparisonLabel: string;
-}
-
-interface ReportSummary {
+interface ShiftAudit {
   period: ReportPeriod;
   dateRange: string;
   
-  // Hero Metrics
+  // The Money Table
+  totalGuests: number;
+  peakCrowd: number;
+  peakTime: string;
+  revenuePerHead: number; // The efficiency metric
   estimatedRevenue: number;
-  revenuePerVisitor: number;
-  avgDwellTimeMinutes: number | null;
-  avgPulseScore: number | null;
   
-  // Traffic
-  totalVisitors: number;
-  peakOccupancy: number;
-  peakOccupancyTime: string | null;
+  // The Grades
+  shiftScore: number; // Overall pulse score
+  staffCompliance: number; // % time in optimal range
   
-  // Timeline Data for Chart
-  timelineData: Array<{ 
-    label: string; 
-    score: number | null; 
-    occupancy: number; 
-    isPeak: boolean;
-  }>;
+  // The Tape (Hour by Hour)
+  tape: TapeEntry[];
   
-  // Wins & Fixes
-  wins: Array<{ icon: any; title: string; subtitle: string }>;
-  fixes: Array<{ icon: any; title: string; subtitle: string }>;
-  
-  // Comparison
-  comparison: {
-    revenue: number;
-    dwellTime: number; // minutes difference
-    pulseScore: number;
-    visitors: number;
-  } | null;
+  // The Fix List
+  issues: string[];
 }
 
-const PERIOD_CONFIG: Record<ReportPeriod, PeriodConfig> = {
-  today: {
-    label: 'Daily Briefing',
-    apiRange: '24h',
-    comparisonLabel: 'vs Yesterday',
-  },
-  week: {
-    label: 'Weekly Review',
-    apiRange: '7d',
-    comparisonLabel: 'vs Last Week',
-  },
-  month: {
-    label: 'Monthly Summary',
-    apiRange: '30d',
-    comparisonLabel: 'vs Last Month',
-  },
-};
+interface TapeEntry {
+  time: string;
+  score: number;
+  occupancy: number;
+  decibels: number;
+  song?: string;
+  status: 'optimal' | 'warning' | 'critical';
+  insight?: string; // "Too loud (92dB)"
+}
 
 // ============ MAIN COMPONENT ============
 
@@ -98,357 +68,191 @@ export function Reports() {
   const venueName = user?.venueName || 'Venue';
   
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState<ReportPeriod>('today');
-  const [summary, setSummary] = useState<ReportSummary | null>(null);
-  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [audit, setAudit] = useState<ShiftAudit | null>(null);
 
-  const fetchReportData = useCallback(async () => {
+  const fetchAudit = useCallback(async () => {
     if (!venueId) return;
-    
     setLoading(true);
+    
     try {
-      const config = PERIOD_CONFIG[period];
-      
-      // Fetch current period data
-      const result = await apiService.getHistoricalData(venueId, config.apiRange);
-      
-      // Fetch previous period for comparison
-      let previousResult = null;
-      try {
-        const prevRange = period === 'today' ? '24h' : period === 'week' ? '14d' : '90d';
-        previousResult = await apiService.getHistoricalData(venueId, prevRange as TimeRange);
-      } catch {
-        // Comparison data optional
-      }
+      // Always fetch 24h for the shift report (today)
+      const result = await apiService.getHistoricalData(venueId, '24h');
       
       if (result?.data && result.data.length > 0) {
-        const processed = processReportData(result.data, previousResult?.data || [], period);
-        setSummary(processed);
+        setAudit(processShiftAudit(result.data));
       } else {
-        setSummary(null);
+        setAudit(null);
       }
     } catch (err) {
-      console.error('Failed to fetch report data:', err);
-      setSummary(null);
+      console.error('Failed to fetch audit:', err);
+      setAudit(null);
     } finally {
       setLoading(false);
     }
-  }, [venueId, period]);
+  }, [venueId]);
 
   useEffect(() => {
-    fetchReportData();
-  }, [fetchReportData]);
-
-  const handlePeriodChange = (newPeriod: ReportPeriod) => {
-    haptic('selection');
-    setPeriod(newPeriod);
-  };
+    fetchAudit();
+  }, [fetchAudit]);
 
   const handleRefresh = async () => {
     haptic('medium');
-    await fetchReportData();
+    await fetchAudit();
   };
   
-  // ============ SHARE FUNCTIONS (Simplified) ============
-  // ... (keeping implementation details similar but updated text)
-  
-  const handleShareReport = async () => {
-    if (!summary) return;
+  // Share Handler
+  const handleShare = async () => {
+    if (!audit) return;
     haptic('medium');
-    
-    const text = `
-${venueName.toUpperCase()} - ${PERIOD_CONFIG[period].label}
-${summary.dateRange}
-
-💰 Est. Revenue: $${summary.estimatedRevenue.toLocaleString()}
-⏱ Avg Stay: ${formatDwellTime(summary.avgDwellTimeMinutes)}
-⚡ Pulse Score: ${summary.avgPulseScore}/100
-
-Visitors: ${summary.totalVisitors}
-Peak: ${summary.peakOccupancy} people
-
-Powered by Advizia Pulse
-    `.trim();
-
-    if (navigator.share) {
-      try {
-        await navigator.share({ 
-          title: `${venueName} Performance`,
-          text 
-        });
-      } catch {
-        await navigator.clipboard.writeText(text);
-      }
-    } else {
-      await navigator.clipboard.writeText(text);
-      alert('Copied to clipboard!');
-    }
-    setShowShareMenu(false);
+    const text = `SHIFT AUDIT: ${audit.dateRange}\nScore: ${audit.shiftScore}/100\nRev/Head: $${audit.revenuePerHead}\nGuests: ${audit.totalGuests}`;
+    try {
+      if (navigator.share) await navigator.share({ title: 'Shift Audit', text });
+      else await navigator.clipboard.writeText(text);
+    } catch (e) { console.error(e); }
   };
-
-  // ============ RENDER ============
 
   return (
     <PullToRefresh onRefresh={handleRefresh} disabled={loading}>
-      <div className="space-y-6">
-        {/* Header - Moved Title into Body for "Calm" feel */}
-        <motion.div
-          className="flex items-center justify-between"
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
+      <div className="space-y-6 pb-12">
+        {/* Header */}
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-warm-100">Performance Briefing</h1>
-            <p className="text-sm text-warm-400 mt-0.5">
-              {summary ? summary.dateRange : 'Loading insights...'}
+            <h1 className="text-xl font-bold text-warm-100 tracking-tight">SHIFT AUDIT</h1>
+            <p className="text-xs font-mono text-warm-400 mt-1">
+              {audit ? audit.dateRange : 'SYNCING...'}
             </p>
           </div>
-          
-          <div className="flex bg-warm-800 rounded-lg p-1">
-            {(Object.keys(PERIOD_CONFIG) as ReportPeriod[]).map((p) => (
-              <button
-                key={p}
-                onClick={() => handlePeriodChange(p)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                  period === p
-                    ? 'bg-warm-700 text-primary shadow-sm'
-                    : 'text-warm-400 hover:text-warm-200'
-                }`}
-              >
-                {p === 'today' ? 'Daily' : p === 'week' ? 'Weekly' : 'Monthly'}
-              </button>
-            ))}
-          </div>
-        </motion.div>
+          <button 
+            onClick={handleShare}
+            className="p-2 bg-warm-800 rounded-lg text-warm-300 hover:text-white transition-colors"
+          >
+            <Share2 className="w-5 h-5" />
+          </button>
+        </div>
 
         {/* Loading */}
         {loading && (
-          <div className="flex items-center justify-center py-20">
-            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <div className="py-20 flex justify-center">
+            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
         )}
 
-        {/* Empty State */}
-        {!loading && !summary && (
-          <div className="text-center py-20">
-            <p className="text-warm-400">No data available for this period.</p>
-          </div>
-        )}
-
-        {/* Content */}
-        {!loading && summary && (
+        {/* The Audit Content */}
+        {!loading && audit && (
           <>
-            {/* 1. HERO: The Money & The Metrics */}
-            <motion.div
-              className="grid grid-cols-1 md:grid-cols-2 gap-4"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-            >
-              {/* Revenue Card (Primary) */}
-              <div className="bg-gradient-to-br from-warm-800 to-warm-900 border border-warm-700 p-5 rounded-2xl relative overflow-hidden">
-                <div className="relative z-10">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center">
-                      <DollarSign className="w-4 h-4 text-green-400" />
-                    </div>
-                    <span className="text-sm font-medium text-warm-300">Est. Revenue</span>
+            {/* 1. The Grade Card */}
+            <div className="grid grid-cols-2 gap-4">
+              <AuditMetric 
+                label="SHIFT SCORE" 
+                value={audit.shiftScore.toString()} 
+                subtext="/ 100"
+                color={getScoreColor(audit.shiftScore)}
+                isMain
+              />
+              <AuditMetric 
+                label="REV / HEAD" 
+                value={`$${audit.revenuePerHead}`} 
+                subtext="Efficiency"
+                color="text-warm-100"
+                isMain
+              />
+            </div>
+
+            {/* 2. The Money Table */}
+            <div className="bg-warm-800 border border-warm-700 rounded-none sm:rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-warm-700 bg-warm-900/50 flex justify-between items-center">
+                <span className="text-xs font-mono text-warm-400 uppercase">Financials</span>
+                <span className="text-xs font-mono text-green-400">EST. ${audit.estimatedRevenue.toLocaleString()}</span>
+              </div>
+              <div className="grid grid-cols-3 divide-x divide-warm-700">
+                <div className="p-4 text-center">
+                  <div className="text-xs text-warm-500 mb-1">GUESTS</div>
+                  <div className="text-lg font-bold text-warm-100">{audit.totalGuests}</div>
+                </div>
+                <div className="p-4 text-center">
+                  <div className="text-xs text-warm-500 mb-1">PEAK</div>
+                  <div className="text-lg font-bold text-warm-100">{audit.peakCrowd}</div>
+                  <div className="text-[10px] text-warm-500">{audit.peakTime}</div>
+                </div>
+                <div className="p-4 text-center">
+                  <div className="text-xs text-warm-500 mb-1">COMPLIANCE</div>
+                  <div className={`text-lg font-bold ${audit.staffCompliance >= 80 ? 'text-green-400' : 'text-amber-400'}`}>
+                    {audit.staffCompliance}%
                   </div>
-                  
-                  <div className="flex items-baseline gap-2">
-                    <h2 className="text-3xl font-bold text-white">
-                      ${summary.estimatedRevenue.toLocaleString()}
-                    </h2>
-                    {summary.comparison && (
-                      <ComparisonBadge 
-                        value={summary.comparison.revenue} 
-                        suffix="%" 
-                        isNeutral={false}
-                      />
+                </div>
+              </div>
+            </div>
+
+            {/* 3. The Fix List (Issues) */}
+            {audit.issues.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-xs font-mono text-warm-400 uppercase px-1">Missed Opportunities</h3>
+                {audit.issues.map((issue, i) => (
+                  <div key={i} className="flex items-start gap-3 p-3 bg-red-900/10 border border-red-900/30 rounded-lg">
+                    <XCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm text-red-200 font-mono leading-tight">{issue}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 4. The Tape (Hour by Hour) */}
+            <div>
+              <div className="flex justify-between items-end px-1 mb-3">
+                <h3 className="text-xs font-mono text-warm-400 uppercase">Hourly Tape</h3>
+                <span className="text-[10px] text-warm-500 font-mono">LATEST FIRST</span>
+              </div>
+              
+              <div className="border-l-2 border-warm-800 ml-3 space-y-6">
+                {audit.tape.map((entry, i) => (
+                  <div key={i} className="relative pl-6">
+                    {/* Timeline Node */}
+                    <div className={`absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full border-2 border-warm-900 ${
+                      entry.status === 'optimal' ? 'bg-green-500' : 
+                      entry.status === 'warning' ? 'bg-amber-500' : 'bg-red-500'
+                    }`} />
+                    
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="text-sm font-bold text-warm-200 font-mono">{entry.time}</span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className={`text-xs font-bold ${getScoreColor(entry.score)}`}>
+                            {entry.score} Score
+                          </span>
+                          <span className="text-xs text-warm-500">•</span>
+                          <span className="text-xs text-warm-400 font-mono">{entry.occupancy} ppl</span>
+                        </div>
+                      </div>
+                      
+                      <div className="text-right">
+                        <div className={`text-xs font-mono ${
+                          entry.decibels > 90 ? 'text-red-400 font-bold' : 'text-warm-400'
+                        }`}>
+                          {entry.decibels}dB
+                        </div>
+                        {entry.song && (
+                          <div className="flex items-center justify-end gap-1 mt-0.5 text-[10px] text-warm-500 max-w-[120px] truncate">
+                            <Music className="w-3 h-3" />
+                            {entry.song}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Alert / Insight */}
+                    {entry.insight && (
+                      <div className="mt-2 text-xs text-red-300 bg-red-900/20 px-2 py-1 rounded border-l-2 border-red-500/50 font-mono">
+                        ⚠️ {entry.insight}
+                      </div>
                     )}
                   </div>
-                  
-                  <div className="mt-2 text-xs text-warm-400">
-                    ${summary.revenuePerVisitor.toFixed(2)} per guest avg
-                  </div>
-                </div>
-                
-                {/* Decorative background glow */}
-                <div className="absolute top-0 right-0 w-32 h-32 bg-green-500/5 rounded-full blur-3xl -mr-10 -mt-10" />
+                ))}
               </div>
-              
-              {/* Secondary Metrics (Dwell + Score) */}
-              <div className="grid grid-cols-2 gap-4">
-                {/* Dwell Time */}
-                <div className="bg-warm-800 border border-warm-700 p-4 rounded-2xl">
-                  <div className="flex items-center gap-1.5 mb-2 text-warm-400">
-                    <Clock className="w-3.5 h-3.5" />
-                    <span className="text-xs font-medium">Avg Stay</span>
-                  </div>
-                  <div className="text-2xl font-bold text-white">
-                    {formatDwellTime(summary.avgDwellTimeMinutes)}
-                  </div>
-                  {summary.comparison && (
-                    <div className="mt-1">
-                      <ComparisonBadge 
-                        value={summary.comparison.dwellTime} 
-                        suffix="m" 
-                        isNeutral={true} // More dwell isn't always better (table turnover)
-                      />
-                    </div>
-                  )}
-                </div>
-                
-                {/* Pulse Score */}
-                <div className="bg-warm-800 border border-warm-700 p-4 rounded-2xl">
-                  <div className="flex items-center gap-1.5 mb-2 text-warm-400">
-                    <Zap className="w-3.5 h-3.5" />
-                    <span className="text-xs font-medium">Avg Score</span>
-                  </div>
-                  <div className={`text-2xl font-bold ${getScoreColor(summary.avgPulseScore)}`}>
-                    {summary.avgPulseScore}
-                  </div>
-                   {summary.comparison && (
-                    <div className="mt-1">
-                      <ComparisonBadge 
-                        value={summary.comparison.pulseScore} 
-                        suffix="" 
-                        isNeutral={false}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-
-            {/* 2. TIMELINE: The Shape of the Day */}
-            <motion.div
-              className="bg-warm-800/50 border border-warm-700/50 p-5 rounded-2xl"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-warm-200">
-                  {period === 'today' ? "Today's Shape" : "Trend"}
-                </h3>
-                <div className="flex items-center gap-3 text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-primary" />
-                    <span className="text-warm-400">Score</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-warm-600" />
-                    <span className="text-warm-400">Crowd</span>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Custom CSS Bar Chart */}
-              <div className="h-32 flex items-end justify-between gap-1">
-                {summary.timelineData.map((d, i) => {
-                  // Normalize heights (max score 100, max crowd relative)
-                  const scoreHeight = d.score || 0; 
-                  const maxCrowd = Math.max(...summary.timelineData.map(t => t.occupancy), 1);
-                  const crowdHeight = (d.occupancy / maxCrowd) * 60; // Max 60% height
-                  
-                  return (
-                    <div key={i} className="flex-1 flex flex-col justify-end items-center group relative h-full">
-                      {/* Tooltip on hover/tap could go here */}
-                      
-                      {/* Score Bar */}
-                      <div 
-                        className={`w-full max-w-[12px] min-w-[4px] rounded-t-sm transition-all relative z-10 ${
-                          d.isPeak ? 'bg-primary' : 'bg-primary/40'
-                        }`}
-                        style={{ height: `${scoreHeight}%` }}
-                      />
-                      
-                      {/* Crowd Underlay (Ghost) */}
-                      <div 
-                        className="absolute bottom-0 w-full max-w-[16px] bg-warm-700/30 rounded-t-md z-0"
-                        style={{ height: `${crowdHeight}%` }}
-                      />
-                      
-                      {/* Label */}
-                      {i % Math.ceil(summary.timelineData.length / 6) === 0 && (
-                        <div className="absolute -bottom-6 text-[10px] text-warm-500 whitespace-nowrap">
-                          {d.label}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="h-6" /> {/* Spacer for labels */}
-            </motion.div>
-
-            {/* 3. WINS & FIXES: Actionable Brief */}
-            <motion.div
-              className="grid grid-cols-1 md:grid-cols-2 gap-5"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-            >
-              {/* Wins */}
-              <div className="space-y-3">
-                <h3 className="text-xs font-bold text-warm-400 uppercase tracking-wider">What Worked</h3>
-                {summary.wins.length > 0 ? (
-                  summary.wins.map((win, i) => (
-                    <div key={i} className="flex gap-3 p-3 rounded-xl bg-warm-800/50 border border-warm-700/50">
-                      <div className="mt-0.5">{win.icon}</div>
-                      <div>
-                        <p className="text-sm font-medium text-warm-100">{win.title}</p>
-                        <p className="text-xs text-warm-400">{win.subtitle}</p>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="p-3 text-sm text-warm-500 italic">No major highlights this period.</div>
-                )}
-              </div>
-              
-              {/* Fixes */}
-              <div className="space-y-3">
-                <h3 className="text-xs font-bold text-warm-400 uppercase tracking-wider">Needs Attention</h3>
-                {summary.fixes.length > 0 ? (
-                  summary.fixes.map((fix, i) => (
-                    <div key={i} className="flex gap-3 p-3 rounded-xl bg-warm-800/50 border border-warm-700/50">
-                      <div className="mt-0.5">{fix.icon}</div>
-                      <div>
-                        <p className="text-sm font-medium text-warm-100">{fix.title}</p>
-                        <p className="text-xs text-warm-400">{fix.subtitle}</p>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="p-3 text-sm text-warm-500 italic">Everything looked good!</div>
-                )}
-              </div>
-            </motion.div>
-
-            {/* 4. TRAFFIC & SHARE */}
-            <motion.div
-              className="pt-4 border-t border-warm-800 flex items-center justify-between"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.3 }}
-            >
-              <div className="text-xs text-warm-400">
-                <span className="block text-warm-200 font-medium text-sm">{summary.totalVisitors} Visitors</span>
-                Peak: {summary.peakOccupancy} @ {summary.peakOccupancyTime}
-              </div>
-              
-              <div className="flex gap-3">
-                <motion.button
-                  onClick={() => setShowShareMenu(!showShareMenu)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-warm-800 text-warm-100 hover:bg-warm-700 border border-warm-700 transition-colors"
-                  whileTap={{ scale: 0.95 }}
-                >
-                  <Share2 className="w-4 h-4" />
-                  <span className="text-sm font-medium">Share Brief</span>
-                </motion.button>
-              </div>
-            </motion.div>
+            </div>
+            
+            <div className="text-center pt-8 pb-4">
+              <p className="text-[10px] font-mono text-warm-600 uppercase">End of Report</p>
+            </div>
           </>
         )}
       </div>
@@ -458,217 +262,118 @@ Powered by Advizia Pulse
 
 // ============ HELPER COMPONENTS ============
 
-function ComparisonBadge({ 
-  value, 
-  suffix = '', 
-  isNeutral 
-}: { 
-  value: number; 
-  suffix?: string;
-  isNeutral: boolean;
-}) {
-  const isPositive = value > 0;
-  const isNegative = value < 0;
-  
-  if (value === 0) return <span className="text-xs text-warm-500 font-medium">-</span>;
-  
-  let color = 'text-warm-400';
-  if (!isNeutral) {
-    color = isPositive ? 'text-green-400' : 'text-red-400';
-  } else {
-    color = 'text-warm-300';
-  }
-  
-  const Icon = isPositive ? ArrowUp : ArrowDown;
-  
+function AuditMetric({ label, value, subtext, color, isMain }: any) {
   return (
-    <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${color}`}>
-      <Icon className="w-3 h-3" />
-      {Math.abs(value)}{suffix}
-    </span>
+    <div className="bg-warm-800 p-4 rounded-xl border border-warm-700">
+      <div className="text-[10px] font-mono text-warm-500 mb-1">{label}</div>
+      <div className={`font-bold ${isMain ? 'text-3xl' : 'text-xl'} ${color} tracking-tight`}>
+        {value}
+      </div>
+      <div className="text-[10px] text-warm-400 mt-0.5">{subtext}</div>
+    </div>
   );
 }
 
-// ============ DATA PROCESSING ============
+// ============ LOGIC ============
 
-function processReportData(
-  data: SensorData[],
-  previousData: SensorData[],
-  period: ReportPeriod
-): ReportSummary {
+function processShiftAudit(data: SensorData[]): ShiftAudit {
   const now = new Date();
   
-  // 1. Group Data & Timeline
-  const isDaily = period === 'today';
-  const timeMap = new Map<string, { data: SensorData[], score: number | null, occupancy: number }>();
-  
-  // Helper to get key
-  const getKey = (d: SensorData) => {
-    const date = new Date(d.timestamp);
-    if (isDaily) return date.getHours(); // 0-23
-    if (period === 'week') return date.getDay(); // 0-6
-    return Math.floor(date.getDate() / 7); // Week 0-4
-  };
-  
-  // Process current data
-  data.forEach(d => {
-    const rawKey = getKey(d);
-    // Format label
-    let label = '';
-    if (isDaily) {
-      label = rawKey === 0 ? '12am' : rawKey === 12 ? '12pm' : rawKey > 12 ? `${rawKey-12}pm` : `${rawKey}am`;
-    } else if (period === 'week') {
-      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      label = days[rawKey];
-    } else {
-      label = `W${rawKey + 1}`;
-    }
-    
-    if (!timeMap.has(label)) {
-      timeMap.set(label, { data: [], score: 0, occupancy: 0 });
-    }
-    const entry = timeMap.get(label)!;
-    entry.data.push(d);
-    
-    // Update max occupancy for this slot
-    if (d.occupancy?.current && d.occupancy.current > entry.occupancy) {
-      entry.occupancy = d.occupancy.current;
-    }
-  });
-  
-  // Calculate slot scores and build timeline
-  let timelineData: ReportSummary['timelineData'] = [];
-  let peakPulse = 0;
-  
-  timeMap.forEach((val, label) => {
-    let totalScore = 0;
-    let count = 0;
-    val.data.forEach(d => {
-      if (d.decibels && d.light) {
-        const { score } = calculatePulseScore(d.decibels, d.light);
-        if (score !== null) {
-          totalScore += score;
-          count++;
-        }
-      }
-    });
-    const avg = count > 0 ? Math.round(totalScore / count) : null;
-    val.score = avg;
-    if (avg && avg > peakPulse) peakPulse = avg;
-    
-    timelineData.push({
-      label,
-      score: avg,
-      occupancy: val.occupancy,
-      isPeak: false // Set later
-    });
-  });
-  
-  // Mark peaks
-  timelineData = timelineData.map(t => ({
-    ...t,
-    isPeak: t.score === peakPulse && peakPulse > 0
-  }));
-  
-  // Sort timeline if daily (by hour index not label string)
-  // Simple hack: if daily, labels are Am/Pm, we assume they were inserted in order if data was sorted.
-  // Actually API returns sorted data usually. Let's rely on insertion order for now.
-  
-  // 2. Global Metrics
+  // 1. Calculate Shift Totals
   const totalEntries = new Set<number>();
-  let peakOccupancy = 0;
-  let peakOccupancyTime: string | null = null;
-  let totalScoreSum = 0;
-  let totalScoreCount = 0;
+  let peakCrowd = 0;
+  let peakTime = '--:--';
+  let totalScore = 0, scoreCount = 0;
+  let optimalHours = 0, totalHours = 0;
+  
+  // Group by hour for Tape
+  const hourlyData = new Map<string, TapeEntry>();
   
   data.forEach(d => {
+    // Totals
     if (d.occupancy?.entries) totalEntries.add(d.occupancy.entries);
-    if (d.occupancy?.current && d.occupancy.current > peakOccupancy) {
-      peakOccupancy = d.occupancy.current;
-      peakOccupancyTime = new Date(d.timestamp).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'});
+    if (d.occupancy?.current && d.occupancy.current > peakCrowd) {
+      peakCrowd = d.occupancy.current;
+      peakTime = new Date(d.timestamp).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
     }
     
+    // Scores
     const { score } = calculatePulseScore(d.decibels, d.light);
     if (score) {
-      totalScoreSum += score;
-      totalScoreCount++;
+      totalScore += score;
+      scoreCount++;
+    }
+    
+    // Hourly Aggregation (Simple: last reading of hour overrides)
+    const hourKey = new Date(d.timestamp).getHours();
+    const timeLabel = formatHour(hourKey);
+    
+    if (!hourlyData.has(timeLabel)) {
+      hourlyData.set(timeLabel, {
+        time: timeLabel,
+        score: score || 0,
+        occupancy: d.occupancy?.current || 0,
+        decibels: Math.round(d.decibels),
+        song: d.currentSong,
+        status: 'optimal' // will refine
+      });
+      totalHours++;
+      if (score && score >= 70) optimalHours++;
     }
   });
   
-  const totalVisitors = totalEntries.size > 0 ? Math.max(...totalEntries) : Math.max(peakOccupancy * 2, 0); // Fallback estimate
-  const avgPulseScore = totalScoreCount > 0 ? Math.round(totalScoreSum / totalScoreCount) : null;
-  
-  // 3. Dwell Time & Revenue
-  const timeRangeHours = period === 'today' ? 24 : period === 'week' ? 168 : 720;
-  const avgDwellTimeMinutes = calculateDwellTimeFromHistory(data, timeRangeHours);
+  // Tape Refining
+  const tape = Array.from(hourlyData.values()).reverse(); // Latest first
+  tape.forEach(entry => {
+    if (entry.score < 60) {
+      entry.status = 'critical';
+      entry.insight = 'Score dropped below 60';
+    } else if (entry.decibels > 92) {
+      entry.status = 'warning';
+      entry.insight = 'Volume unsafe (>92dB)';
+    } else if (entry.score >= 80) {
+      entry.status = 'optimal';
+    } else {
+      entry.status = 'warning';
+    }
+  });
+
+  // Financials
+  const totalGuests = totalEntries.size > 0 ? Math.max(...totalEntries) : Math.max(peakCrowd * 2.5, 0);
+  const shiftScore = scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0;
   
   const baseSpend = 25;
-  const pulseMultiplier = avgPulseScore ? 1 + ((avgPulseScore - 50) / 200) : 1; // More conservative multiplier
-  const revenuePerVisitor = baseSpend * pulseMultiplier;
-  const estimatedRevenue = Math.round(totalVisitors * revenuePerVisitor);
-  
-  // 4. Comparison
-  let comparison = null;
-  if (previousData.length > 0) {
-    // Simplified comparison logic (similar to before but just essentials)
-    // ... (Use existing logic or placeholder for brevity)
-    // For this rewrite, let's assume we implement full comparison properly or return 0s
-    comparison = {
-       revenue: 12, // +12%
-       dwellTime: 5, // +5 min
-       pulseScore: 4, // +4 pts
-       visitors: 8 // +8%
-    };
-  }
-  
-  // 5. Wins & Fixes (Highlights)
-  const wins: ReportSummary['wins'] = [];
-  const fixes: ReportSummary['fixes'] = [];
-  
-  if (avgPulseScore && avgPulseScore >= 80) {
-    wins.push({
-      icon: <Star className="w-5 h-5 text-green-400" />,
-      title: "Excellent Vibe",
-      subtitle: `Maintained ${avgPulseScore} avg score`
-    });
-  }
-  
-  if (peakOccupancy > 50 && peakPulse > 70) {
-    wins.push({
-      icon: <Users className="w-5 h-5 text-primary" />,
-      title: "Peak Performance",
-      subtitle: "Handled rush hour perfectly"
-    });
-  }
-  
-  if (avgPulseScore && avgPulseScore < 60) {
-    fixes.push({
-      icon: <Zap className="w-5 h-5 text-amber-400" />,
-      title: "Energy Dip",
-      subtitle: "Score dropped during key hours"
-    });
-  }
-  
-  // Date Range
-  const dateRange = isDaily 
-    ? now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
-    : "This Period";
+  const efficiency = shiftScore >= 80 ? 1.2 : shiftScore >= 60 ? 1.0 : 0.8;
+  const revenuePerHead = Math.round(baseSpend * efficiency);
+  const estimatedRevenue = totalGuests * revenuePerHead;
+  const staffCompliance = totalHours > 0 ? Math.round((optimalHours / totalHours) * 100) : 100;
+
+  // Issues
+  const issues: string[] = [];
+  if (staffCompliance < 70) issues.push('Staff compliance below 70%');
+  if (tape.some(t => t.decibels > 95)) issues.push('Volume peaked above 95dB (Risk)');
+  if (peakCrowd > 0 && peakCrowd < 50 && shiftScore > 90) issues.push('Great vibe but low traffic');
 
   return {
-    period,
-    dateRange,
+    period: 'today',
+    dateRange: now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase(),
+    totalGuests,
+    peakCrowd,
+    peakTime,
+    revenuePerHead,
     estimatedRevenue,
-    revenuePerVisitor,
-    avgDwellTimeMinutes,
-    avgPulseScore,
-    totalVisitors,
-    peakOccupancy,
-    peakOccupancyTime,
-    timelineData,
-    wins,
-    fixes,
-    comparison
+    shiftScore,
+    staffCompliance,
+    tape,
+    issues
   };
+}
+
+function formatHour(hour: number) {
+  if (hour === 0) return '12AM';
+  if (hour === 12) return '12PM';
+  if (hour > 12) return `${hour - 12}PM`;
+  return `${hour}AM`;
 }
 
 export default Reports;
