@@ -15,46 +15,20 @@ import {
   Calendar, RefreshCw, ChevronDown, CheckCircle, 
   TrendingUp, TrendingDown, DollarSign, Users, 
   Zap, Volume2, Sun, Thermometer, Music, 
-  Download, Share2, Mail, FileText
+  Download, Share2, Mail, FileText, Clock
 } from 'lucide-react';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import { AreaChart, BarChart } from '../components/common/MiniChart';
 import { haptic } from '../utils/haptics';
 import type { SensorData, TimeRange } from '../types';
+import { processReportData, type ProcessedReportData } from '../utils/reportProcessing';
+import { exportReportToCSV, exportReportToPDF, emailReport } from '../utils/exportUtils';
 
 // ============ TYPES ============
 
 type ViewType = 'performance' | 'env_sales' | 'time_insights' | 'export';
 type TimeFilter = 'today' | 'yesterday' | '7d' | '30d' | 'custom';
-
-// ============ MOCK DATA GENERATORS (Temporary until real backend logic matches spec) ============
-// In a real implementation, these would be calculated on the backend or in a dedicated service
-const generateMockEnvironmentSales = () => {
-  return [
-    { range: '65-70dB', revenue: 12.5, samples: 45 },
-    { range: '71-76dB', revenue: 18.2, samples: 120 },
-    { range: '77-82dB', revenue: 24.5, samples: 85, isOptimal: true },
-    { range: '83-88dB', revenue: 16.8, samples: 30 },
-    { range: '89+dB', revenue: 11.2, samples: 15 },
-  ];
-};
-
-const generateMockHeatmap = () => {
-  // 7 days x 24 hours
-  const data = [];
-  for (let day = 0; day < 7; day++) {
-    for (let hour = 0; hour < 24; hour++) {
-      // Simulate peak hours (Fri/Sat 8pm-2am)
-      const isWeekend = day >= 5;
-      const isNight = hour >= 20 || hour <= 2;
-      let score = 60 + Math.random() * 20;
-      if (isWeekend && isNight) score += 15;
-      data.push({ day, hour, score: Math.min(100, Math.round(score)) });
-    }
-  }
-  return data;
-};
 
 // ============ MAIN COMPONENT ============
 
@@ -68,7 +42,8 @@ export function Reports() {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
-  const [data, setData] = useState<SensorData[]>([]);
+  const [rawData, setRawData] = useState<SensorData[]>([]);
+  const [reportData, setReportData] = useState<ProcessedReportData | null>(null);
 
   // Fetch Data
   const fetchData = useCallback(async () => {
@@ -82,7 +57,11 @@ export function Reports() {
         : '30d';
         
       const result = await apiService.getHistoricalData(venueId, apiRange);
-      if (result?.data) setData(result.data);
+      if (result?.data) {
+        setRawData(result.data);
+        const processed = processReportData(result.data);
+        setReportData(processed);
+      }
       setLastUpdated(new Date());
     } catch (err) {
       console.error(err);
@@ -146,16 +125,16 @@ export function Reports() {
       <div className="flex-1 p-4">
         <AnimatePresence mode="wait">
           {activeView === 'performance' && (
-            <PerformanceView key="performance" data={data} loading={loading} />
+            <PerformanceView key="performance" data={reportData} loading={loading} />
           )}
           {activeView === 'env_sales' && (
-            <EnvSalesView key="env_sales" />
+            <EnvSalesView key="env_sales" data={reportData} />
           )}
           {activeView === 'time_insights' && (
-            <TimeInsightsView key="time_insights" />
+            <TimeInsightsView key="time_insights" data={reportData} />
           )}
           {activeView === 'export' && (
-            <ExportView key="export" />
+            <ExportView key="export" data={reportData} rawData={rawData} venueName={venueName} />
           )}
         </AnimatePresence>
       </div>
@@ -166,13 +145,8 @@ export function Reports() {
 // ============ SUB-VIEWS ============
 
 // 1. PERFORMANCE SUMMARY
-function PerformanceView({ data, loading }: { data: SensorData[], loading: boolean }) {
-  if (loading) return <LoadingState />;
-  
-  // Calculate basic metrics from data
-  // (In production, these come from backend pre-calculated)
-  const avgScore = 78;
-  const revenueTrend = 12; // +12%
+function PerformanceView({ data, loading }: { data: ProcessedReportData | null, loading: boolean }) {
+  if (loading || !data) return <LoadingState />;
   
   return (
     <motion.div 
@@ -184,28 +158,28 @@ function PerformanceView({ data, loading }: { data: SensorData[], loading: boole
       <div className="grid grid-cols-2 gap-3">
         <MetricTile 
           label="Avg Pulse Score" 
-          value={avgScore.toString()} 
+          value={data.avgScore.toString()} 
           subtext="/ 100" 
           color="text-green-400" 
           trend={0}
         />
         <MetricTile 
           label="Revenue / Hour" 
-          value="$840" 
+          value={`$${Math.round(data.revenuePerHour)}`} 
           subtext="Avg" 
           color="text-white" 
-          trend={revenueTrend}
+          trend={data.revenueTrend}
         />
         <MetricTile 
           label="Peak Window" 
-          value="Fri 10PM" 
+          value={data.peakWindow} 
           subtext="Best Performance" 
           color="text-primary" 
           icon={<TrendingUp className="w-4 h-4" />}
         />
         <MetricTile 
           label="Upside Opportunity" 
-          value="+18%" 
+          value={data.upsideOpportunity} 
           subtext="Est. Growth" 
           color="text-amber-400" 
           icon={<Zap className="w-4 h-4" />}
@@ -215,7 +189,7 @@ function PerformanceView({ data, loading }: { data: SensorData[], loading: boole
       {/* B. The Verdict */}
       <div className="py-2">
         <h2 className="text-xl font-medium text-warm-100 leading-relaxed">
-          "Your venue performs best when Pulse Score is above <span className="text-green-400 font-bold">80</span>, but only maintains this during <span className="text-amber-400 font-bold">42%</span> of peak hours."
+          "Your venue performs best when Pulse Score is above <span className="text-green-400 font-bold">{data.verdict.scoreThreshold}</span>, but only maintains this during <span className="text-amber-400 font-bold">{data.verdict.peakPercentage}%</span> of peak hours."
         </h2>
       </div>
 
@@ -223,32 +197,28 @@ function PerformanceView({ data, loading }: { data: SensorData[], loading: boole
       <div className="space-y-3">
         <h3 className="text-xs font-bold text-warm-500 uppercase tracking-wider">Impact Analysis</h3>
         
-        <ImpactCard 
-          icon={<Volume2 className="w-5 h-5 text-amber-400" />}
-          condition="Sound > 85dB"
-          outcome="Revenue/min ↓ 12%"
-          type="negative"
-        />
-        <ImpactCard 
-          icon={<Users className="w-5 h-5 text-green-400" />}
-          condition="Crowd 80-90% Cap"
-          outcome="Dwell Time ↑ 15m"
-          type="positive"
-        />
+        {data.impacts.map((impact, i) => (
+          <ImpactCard 
+            key={i}
+            icon={getIcon(impact.icon)}
+            condition={impact.condition}
+            outcome={impact.outcome}
+            type={impact.type}
+          />
+        ))}
+        {data.impacts.length === 0 && (
+          <div className="text-sm text-warm-500 italic">No significant impact patterns detected yet.</div>
+        )}
       </div>
 
       {/* D. Mini Timeline */}
       <div className="bg-warm-800 p-4 rounded-xl border border-warm-700">
         <div className="flex justify-between items-center mb-4">
-          <span className="text-xs font-medium text-warm-300">Score vs Revenue Trend</span>
+          <span className="text-xs font-medium text-warm-300">Score Trend (Last 5 Hrs)</span>
         </div>
         <div className="h-32 w-full">
            <AreaChart 
-             data={[
-               { label: '8pm', value: 65 }, { label: '9pm', value: 72 }, 
-               { label: '10pm', value: 85, isCurrent: true }, { label: '11pm', value: 82 },
-               { label: '12am', value: 78 }
-             ]} 
+             data={data.scoreTrend} 
              height={128}
              color="#00F19F"
            />
@@ -259,9 +229,10 @@ function PerformanceView({ data, loading }: { data: SensorData[], loading: boole
 }
 
 // 2. ENVIRONMENT VS SALES
-function EnvSalesView() {
+function EnvSalesView({ data }: { data: ProcessedReportData | null }) {
   const [variable, setVariable] = useState('sound');
-  const mockData = generateMockEnvironmentSales();
+  
+  if (!data) return <LoadingState />;
   
   return (
     <motion.div 
@@ -280,19 +251,19 @@ function EnvSalesView() {
       {/* Main Chart Area */}
       <div className="flex-1 space-y-6">
         <div className="bg-warm-800 p-5 rounded-2xl border border-warm-700 min-h-[300px]">
-          <h3 className="text-sm font-medium text-warm-300 mb-6">Revenue per Minute by Sound Level</h3>
+          <h3 className="text-sm font-medium text-warm-300 mb-6">Revenue per Minute by {variable === 'sound' ? 'Sound Level' : variable}</h3>
           
           <div className="space-y-4">
-            {mockData.map((bucket, i) => (
+            {data.envSales.map((bucket, i) => (
               <div key={i} className="relative">
                 <div className="flex justify-between text-xs mb-1">
                   <span className="text-warm-200 font-medium">{bucket.range}</span>
-                  <span className="text-warm-400">{bucket.samples} hrs data</span>
+                  <span className="text-warm-400">{bucket.samples} samples</span>
                 </div>
                 <div className="h-8 bg-warm-900 rounded-lg overflow-hidden flex items-center relative">
                   <motion.div 
                     initial={{ width: 0 }}
-                    animate={{ width: `${(bucket.revenue / 30) * 100}%` }}
+                    animate={{ width: `${Math.min(100, (bucket.revenue / 50) * 100)}%` }} // Normalized to 50
                     className={`h-full ${bucket.isOptimal ? 'bg-primary' : 'bg-warm-600'}`}
                   />
                   <span className="absolute left-3 text-xs font-bold text-white mix-blend-difference">
@@ -315,7 +286,7 @@ function EnvSalesView() {
           <div>
             <p className="text-sm font-bold text-primary">Optimal Range: 77–82 dB</p>
             <p className="text-xs text-warm-300 mt-1">
-              Maintaining this volume correlates with a <span className="text-white font-bold">+14%</span> increase in revenue per minute.
+              Maintaining this volume correlates with higher revenue efficiency.
             </p>
           </div>
         </div>
@@ -325,7 +296,9 @@ function EnvSalesView() {
 }
 
 // 3. TIME-BASED INSIGHTS
-function TimeInsightsView() {
+function TimeInsightsView({ data }: { data: ProcessedReportData | null }) {
+  if (!data) return <LoadingState />;
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -343,7 +316,7 @@ function TimeInsightsView() {
           </div>
         </div>
         
-        {/* Mock Heatmap Grid */}
+        {/* Mock Heatmap Grid (Placeholder visualization until real heatmap logic refined) */}
         <div className="grid grid-cols-[auto_1fr] gap-2">
           {/* Y-Axis Labels */}
           <div className="flex flex-col justify-between text-[10px] text-warm-500 py-1">
@@ -355,16 +328,22 @@ function TimeInsightsView() {
           
           {/* Grid */}
           <div className="grid grid-cols-24 gap-[1px] bg-warm-900 p-[1px]">
-            {generateMockHeatmap().map((cell, i) => (
-              <div 
-                key={i}
-                className={`w-full h-3 rounded-[1px] ${
-                  cell.score > 80 ? 'bg-green-500' : 
-                  cell.score > 60 ? 'bg-amber-500' : 'bg-red-900'
-                }`}
-                style={{ opacity: cell.score / 100 }}
-              />
-            ))}
+            {data.heatmap.length > 0 ? (
+              data.heatmap.map((cell, i) => (
+                <div 
+                  key={i}
+                  className={`w-full h-3 rounded-[1px] ${
+                    cell.score > 80 ? 'bg-green-500' : 
+                    cell.score > 60 ? 'bg-amber-500' : 'bg-red-900'
+                  }`}
+                  style={{ opacity: cell.score / 100 }}
+                />
+              ))
+            ) : (
+              <div className="col-span-24 text-center py-10 text-warm-500 text-xs">
+                Not enough data for heatmap yet.
+              </div>
+            )}
           </div>
         </div>
         <div className="flex justify-between text-[10px] text-warm-500 pl-8 mt-1">
@@ -380,32 +359,24 @@ function TimeInsightsView() {
       <div className="space-y-3">
         <h3 className="text-xs font-bold text-warm-500 uppercase tracking-wider">Key Patterns</h3>
         
-        <div className="p-4 bg-warm-800/50 border border-warm-700 rounded-xl">
-          <div className="flex gap-3 mb-2">
-            <TrendingDown className="w-5 h-5 text-red-400" />
-            <span className="font-bold text-warm-100">Drop-off at 6-7 PM</span>
+        {data.insights.map((insight, i) => (
+          <div key={i} className="p-4 bg-warm-800/50 border border-warm-700 rounded-xl">
+            <div className="flex gap-3 mb-2">
+              <TrendingDown className="w-5 h-5 text-red-400" />
+              <span className="font-bold text-warm-100">{insight.title}</span>
+            </div>
+            <p className="text-sm text-warm-300">{insight.desc}</p>
           </div>
-          <p className="text-sm text-warm-300">
-            Pulse Score drops consistently during shift change. Crowd density remains high, but environment quality degrades.
-          </p>
-        </div>
-
-        <div className="p-4 bg-warm-800/50 border border-warm-700 rounded-xl">
-          <div className="flex gap-3 mb-2">
-            <Clock className="w-5 h-5 text-amber-400" />
-            <span className="font-bold text-warm-100">Early Peak Fridays</span>
-          </div>
-          <p className="text-sm text-warm-300">
-            Friday peak begins 45m earlier than scheduled staffing ramp-up.
-          </p>
-        </div>
+        ))}
       </div>
     </motion.div>
   );
 }
 
 // 4. EXPORT
-function ExportView() {
+function ExportView({ data, rawData, venueName }: { data: ProcessedReportData | null, rawData: SensorData[], venueName: string }) {
+  if (!data) return <LoadingState />;
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -417,28 +388,46 @@ function ExportView() {
           icon={<FileText className="w-6 h-6 text-primary" />} 
           label="Weekly Summary" 
           sub="PDF Report"
+          onClick={() => exportReportToPDF('Weekly Report')}
         />
         <ExportOption 
           icon={<Calendar className="w-6 h-6 text-teal-400" />} 
           label="Monthly Perf." 
           sub="PDF Report"
+          onClick={() => exportReportToPDF('Monthly Report')}
         />
       </div>
 
       <div className="space-y-3 pt-4">
         <h3 className="text-xs font-bold text-warm-500 uppercase tracking-wider">Quick Actions</h3>
-        <ActionButton icon={<Download />} label="Download CSV (Raw Data)" />
-        <ActionButton icon={<Mail />} label="Email Report to Owner" />
-        <ActionButton icon={<Share2 />} label="Share Link" />
+        <ActionButton 
+          icon={<Download />} 
+          label="Download CSV (Raw Data)" 
+          onClick={() => exportReportToCSV(rawData, venueName)}
+        />
+        <ActionButton 
+          icon={<Mail />} 
+          label="Email Report to Owner" 
+          onClick={() => emailReport(venueName, { score: data.avgScore, revenue: data.revenuePerHour })}
+        />
+        <ActionButton 
+          icon={<Share2 />} 
+          label="Share Link" 
+          onClick={() => {
+            haptic('medium');
+            navigator.clipboard.writeText(window.location.href);
+            alert('Link copied to clipboard');
+          }}
+        />
       </div>
 
       <div className="pt-6">
         <h3 className="text-xs font-bold text-warm-500 uppercase tracking-wider mb-3">Archive</h3>
         <div className="space-y-2">
-          {['Oct 1-7', 'Sep 24-30', 'Sep 17-23'].map((week, i) => (
+          {data.archive.map((item, i) => (
             <div key={i} className="flex justify-between items-center p-3 bg-warm-800/30 rounded-lg border border-warm-800">
-              <span className="text-sm text-warm-300">Weekly Report: {week}</span>
-              <Download className="w-4 h-4 text-warm-500" />
+              <span className="text-sm text-warm-300">{item.label}: {item.date}</span>
+              <Download className="w-4 h-4 text-warm-500 cursor-pointer hover:text-white" />
             </div>
           ))}
         </div>
@@ -448,6 +437,16 @@ function ExportView() {
 }
 
 // ============ HELPER COMPONENTS ============
+
+function getIcon(name: string) {
+  switch (name) {
+    case 'volume': return <Volume2 className="w-5 h-5 text-amber-400" />;
+    case 'users': return <Users className="w-5 h-5 text-green-400" />;
+    case 'light': return <Sun className="w-5 h-5 text-amber-400" />;
+    case 'temp': return <Thermometer className="w-5 h-5 text-red-400" />;
+    default: return <Zap className="w-5 h-5 text-primary" />;
+  }
+}
 
 function NavTab({ label, isActive, onClick }: { label: string, isActive: boolean, onClick: () => void }) {
   return (
@@ -522,9 +521,15 @@ function VariableButton({ icon, active, onClick }: any) {
   );
 }
 
-function ExportOption({ icon, label, sub }: any) {
+function ExportOption({ icon, label, sub, onClick }: any) {
   return (
-    <button className="flex flex-col items-center justify-center p-6 bg-warm-800 rounded-xl border border-warm-700 hover:border-primary/50 transition-colors">
+    <button 
+      onClick={() => {
+        haptic('medium');
+        onClick && onClick();
+      }}
+      className="flex flex-col items-center justify-center p-6 bg-warm-800 rounded-xl border border-warm-700 hover:border-primary/50 transition-colors"
+    >
       <div className="mb-3">{icon}</div>
       <span className="text-sm font-bold text-warm-100">{label}</span>
       <span className="text-xs text-warm-500">{sub}</span>
@@ -532,9 +537,15 @@ function ExportOption({ icon, label, sub }: any) {
   );
 }
 
-function ActionButton({ icon, label }: any) {
+function ActionButton({ icon, label, onClick }: any) {
   return (
-    <button className="w-full flex items-center gap-3 p-3 bg-warm-800 rounded-lg hover:bg-warm-700 transition-colors">
+    <button 
+      onClick={() => {
+        haptic('light');
+        onClick && onClick();
+      }}
+      className="w-full flex items-center gap-3 p-3 bg-warm-800 rounded-lg hover:bg-warm-700 transition-colors"
+    >
       <div className="text-warm-400">{icon}</div>
       <span className="text-sm font-medium text-warm-200">{label}</span>
     </button>
