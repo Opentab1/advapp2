@@ -19,6 +19,7 @@ import { Zap } from 'lucide-react';
 import { PulseScoreHero } from '../components/pulse/PulseScoreHero';
 import { SupportingRings } from '../components/pulse/SupportingRings';
 import { LiveStats } from '../components/pulse/LiveStats';
+import { DailyContext } from '../components/pulse/DailyContext';
 import { CelebrationModal, CelebrationType } from '../components/pulse/CelebrationModal';
 import { ActionDetailModal } from '../components/pulse/ActionDetailModal';
 import { PulseBreakdownModal } from '../components/pulse/PulseBreakdownModal';
@@ -203,6 +204,16 @@ export function Pulse() {
     <PullToRefresh onRefresh={handleRefresh} disabled={pulseData.loading}>
       <div className="space-y-5">
       
+      {/* Daily Context (Greeting, Date, Weather) */}
+      <DailyContext 
+        weather={pulseData.weather}
+        peakPrediction={intelligence.peakPrediction ? {
+          hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
+          expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
+          minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
+        } : undefined}
+      />
+
       {/* Pulse Score Hero - Always at top */}
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}

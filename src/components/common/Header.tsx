@@ -1,127 +1,77 @@
 /**
- * Header - Premium top bar with greeting and weather
+ * Header - Minimal Calm Header
  * 
- * Shows greeting, day, weather, mini Pulse Score, and logout.
- * Clean and minimal with WHOOP-style touches.
- * Matte black theme with white text.
+ * Extremely sparse. Just the logo and profile.
+ * Context (Greeting, Weather, etc.) moved to page content.
  */
 
 import { motion } from 'framer-motion';
-import { LogOut, Wifi, WifiOff } from 'lucide-react';
-import { AnimatedNumber } from './AnimatedNumber';
+import { User as UserIcon, Wifi, WifiOff } from 'lucide-react';
+import { Logo } from '../Logo';
 import { haptic } from '../../utils/haptics';
+import authService from '../../services/auth.service';
 
 interface HeaderProps {
-  venueName: string;
   isConnected?: boolean;
-  pulseScore?: number | null;
-  weather?: { temperature: number; icon: string } | null;
   onLogout: () => void;
 }
 
-// Get greeting based on time of day
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-}
-
-// Get day name
-function getDayName(): string {
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return days[new Date().getDay()];
-}
-
 export function Header({ 
-  venueName, 
   isConnected = true, 
-  pulseScore,
-  weather,
   onLogout 
 }: HeaderProps) {
+  const user = authService.getStoredUser();
+  
+  // Get initials from venue name or email
+  const getInitials = () => {
+    if (user?.venueName) {
+      return user.venueName.substring(0, 2).toUpperCase();
+    }
+    return user?.email?.substring(0, 2).toUpperCase() || '??';
+  };
+  
   const handleLogout = () => {
     haptic('medium');
     onLogout();
   };
   
-  const greeting = getGreeting();
-  const dayName = getDayName();
-  
   return (
     <motion.header
-      className="bg-whoop-bg border-b border-whoop-divider px-4 py-3 lg:px-8 sticky top-0 z-40"
+      className="bg-whoop-bg/90 backdrop-blur-md sticky top-0 z-40 border-b border-transparent transition-colors duration-300"
       initial={{ y: -60 }}
       animate={{ y: 0 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
     >
-      <div className="flex items-center justify-between max-w-lg mx-auto lg:max-w-none">
-        {/* Left: Greeting + Day + Weather */}
+      <div className="flex items-center justify-between px-4 py-3 lg:px-8 max-w-lg mx-auto lg:max-w-none">
+        {/* Left: Brand Mark */}
         <div className="flex items-center gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-warm-100 leading-tight">
-                {greeting}, {dayName}
-              </h1>
-              {weather && (
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-warm-800">
-                  <span className="text-sm">{weather.icon}</span>
-                  <span className="text-xs font-medium text-warm-200">
-                    {Math.round(weather.temperature)}°
-                  </span>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-1.5">
-              {isConnected ? (
-                <>
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-xs text-warm-400">Live</span>
-                </>
-              ) : (
-                <>
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                  <span className="text-xs text-amber-400">Reconnecting...</span>
-                </>
-              )}
-            </div>
+          <div className="w-8 h-8 text-primary">
+             {/* Static logo for calm feel */}
+            <Logo className="text-primary" />
           </div>
         </div>
 
-        {/* Right: Mini Score + Connection + Logout */}
-        <div className="flex items-center gap-2">
-          {/* Mini Pulse Score */}
-          {pulseScore !== undefined && (
-            <motion.div
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary/20"
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-            >
-              <div className="w-2 h-2 rounded-full bg-primary" />
-              <AnimatedNumber 
-                value={pulseScore} 
-                className="text-sm font-bold text-primary"
-              />
-            </motion.div>
-          )}
-          
-          {/* Connection indicator */}
-          <div className="p-2 rounded-lg bg-warm-800">
-            {isConnected ? (
-              <Wifi className="w-4 h-4 text-green-500" />
-            ) : (
-              <WifiOff className="w-4 h-4 text-amber-500" />
-            )}
-          </div>
-          
-          {/* Logout */}
+        {/* Right: Profile & Status */}
+        <div className="flex items-center gap-3">
           <motion.button
             onClick={handleLogout}
-            className="p-2 rounded-lg bg-warm-800 hover:bg-warm-700 transition-colors"
+            className="relative"
             whileTap={{ scale: 0.95 }}
-            aria-label="Logout"
+            aria-label="Profile & Settings"
           >
-            <LogOut className="w-4 h-4 text-warm-400" />
+            {/* Profile Circle */}
+            <div className="w-9 h-9 rounded-full bg-warm-800 border border-warm-700 flex items-center justify-center overflow-hidden">
+               <span className="text-xs font-bold text-warm-200 tracking-wider">
+                 {getInitials()}
+               </span>
+            </div>
+            
+            {/* Status Dot (Connection) */}
+            <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-whoop-bg flex items-center justify-center ${
+              isConnected ? 'bg-green-500' : 'bg-amber-500'
+            }`}>
+              {!isConnected && <span className="w-1.5 h-1.5 rounded-full bg-whoop-bg" />}
+            </div>
           </motion.button>
         </div>
       </div>

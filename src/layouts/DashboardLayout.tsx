@@ -2,11 +2,9 @@
  * DashboardLayout - Main app shell
  * 
  * Provides:
- * - Header with venue name and mini score
+ * - Minimal Header (Logo + Profile)
  * - Tab navigation (bottom on mobile, side on desktop)
- * - Content area with proper padding for nav
- * - Smooth page transitions
- * - Matte black theme
+ * - Content area with proper padding
  */
 
 import { ReactNode } from 'react';
@@ -27,22 +25,19 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({
   children,
-  venueName,
+  venueName, // kept for prop compatibility but unused in Header
   isConnected = true,
-  pulseScore,
-  weather,
+  pulseScore, // kept for prop compatibility but unused in Header
+  weather, // kept for prop compatibility but unused in Header
   activeTab,
   onTabChange,
   onLogout,
 }: DashboardLayoutProps) {
   return (
     <div className="min-h-screen bg-warm-900 flex flex-col">
-      {/* Header with greeting and weather */}
+      {/* Minimal Header */}
       <Header 
-        venueName={venueName} 
         isConnected={isConnected}
-        pulseScore={pulseScore}
-        weather={weather}
         onLogout={onLogout}
       />
       
