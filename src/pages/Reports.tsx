@@ -28,7 +28,7 @@ import { exportReportToCSV, exportReportToPDF, emailReport } from '../utils/expo
 // ============ TYPES ============
 
 type ViewType = 'performance' | 'env_sales' | 'time_insights' | 'export';
-type TimeFilter = 'today' | 'yesterday' | '7d' | '30d' | 'custom';
+type TimeFilter = 'today' | '7d' | '30d';
 
 // ============ MAIN COMPONENT ============
 
@@ -44,6 +44,7 @@ export function Reports() {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [rawData, setRawData] = useState<SensorData[]>([]);
   const [reportData, setReportData] = useState<ProcessedReportData | null>(null);
+  const [showTimeMenu, setShowTimeMenu] = useState(false);
 
   // Fetch Data
   const fetchData = useCallback(async () => {
@@ -52,7 +53,6 @@ export function Reports() {
     try {
       // Map filter to API range
       const apiRange: TimeRange = timeFilter === 'today' ? '24h' 
-        : timeFilter === 'yesterday' ? '24h' // Handle offset logic in real app
         : timeFilter === '7d' ? '7d' 
         : '30d';
         
@@ -87,11 +87,48 @@ export function Reports() {
           {/* Row 1: Controls */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <button className="flex items-center gap-2 px-3 py-1.5 bg-warm-800 rounded-lg text-sm font-medium text-warm-100 border border-warm-700">
-                <Calendar className="w-4 h-4 text-warm-400" />
-                <span>{getTimeLabel(timeFilter)}</span>
-                <ChevronDown className="w-3 h-3 text-warm-500" />
-              </button>
+              
+              {/* Date Selector with Dropdown */}
+              <div className="relative">
+                <button 
+                  onClick={() => {
+                    haptic('light');
+                    setShowTimeMenu(!showTimeMenu);
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-warm-800 rounded-lg text-sm font-medium text-warm-100 border border-warm-700 hover:bg-warm-700 transition-colors"
+                >
+                  <Calendar className="w-4 h-4 text-warm-400" />
+                  <span>{getTimeLabel(timeFilter)}</span>
+                  <ChevronDown className="w-3 h-3 text-warm-500" />
+                </button>
+                
+                <AnimatePresence>
+                  {showTimeMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 5 }}
+                      className="absolute top-full left-0 mt-2 w-48 bg-whoop-panel border border-whoop-divider rounded-xl shadow-xl z-50 overflow-hidden"
+                    >
+                      {(['today', '7d', '30d'] as TimeFilter[]).map((tf) => (
+                        <button
+                          key={tf}
+                          onClick={() => {
+                            haptic('selection');
+                            setTimeFilter(tf);
+                            setShowTimeMenu(false);
+                          }}
+                          className={`w-full text-left px-4 py-3 text-sm hover:bg-warm-800 transition-colors ${
+                            timeFilter === tf ? 'text-teal font-medium bg-teal/10' : 'text-warm-200'
+                          }`}
+                        >
+                          {getTimeLabel(tf)}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
               
               {/* Venue Selector (Mock) */}
               <button className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-warm-800/50 rounded-lg text-sm font-medium text-warm-300 border border-transparent">
@@ -563,7 +600,6 @@ function LoadingState() {
 function getTimeLabel(filter: TimeFilter): string {
   switch (filter) {
     case 'today': return 'Today';
-    case 'yesterday': return 'Yesterday';
     case '7d': return 'Last 7 Days';
     case '30d': return 'Last 30 Days';
     default: return 'Custom';
