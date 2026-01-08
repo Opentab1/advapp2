@@ -174,6 +174,21 @@ export function History() {
               animate={{ opacity: 1 }}
               transition={{ delay: 0.15 }}
             >
+              {/* Primary Charts (Full Width on Mobile) */}
+              <ChartCard
+                data={data.data}
+                metric="pulse"
+                timeRange={timeRange}
+                fetchId={fetchId}
+              />
+
+              <ChartCard
+                data={data.data}
+                metric="dwell"
+                timeRange={timeRange}
+                fetchId={fetchId}
+              />
+
               <ChartCard
                 data={data.data}
                 metric="occupancy"

@@ -9,12 +9,12 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Volume2, Sun, Users, TrendingUp } from 'lucide-react';
+import { ChevronDown, Volume2, Sun, Users, TrendingUp, Clock } from 'lucide-react';
 import { DataChart } from '../DataChart';
 import { haptic } from '../../utils/haptics';
 import type { SensorData, TimeRange } from '../../types';
 
-type MetricType = 'occupancy' | 'decibels' | 'light' | 'pulse';
+type MetricType = 'occupancy' | 'decibels' | 'light' | 'pulse' | 'dwell';
 
 interface ChartCardProps {
   data: SensorData[];
@@ -58,6 +58,13 @@ const METRIC_CONFIG: Record<MetricType, {
     bgColor: 'bg-green-500/10',
     borderColor: 'border-green-500/30',
     icon: TrendingUp,
+  },
+  dwell: {
+    title: 'Avg Stay (Dwell)',
+    color: '#7BA1BB',     // WHOOP Sleep Blue
+    bgColor: 'bg-blue-500/10',
+    borderColor: 'border-blue-500/30',
+    icon: Clock,
   },
 };
 
@@ -144,6 +151,8 @@ function getQuickStat(data: SensorData[], metric: MetricType): string | null {
         case 'occupancy': return d.occupancy?.current || 0;
         case 'decibels': return d.decibels || 0;
         case 'light': return d.light || 0;
+        case 'pulse': return 0; // Handled by DataChart internally
+        case 'dwell': return 0; // Handled by DataChart internally
         default: return 0;
       }
     })
@@ -161,6 +170,10 @@ function getQuickStat(data: SensorData[], metric: MetricType): string | null {
       return `Avg: ${avg.toFixed(0)} dB`;
     case 'light':
       return `Avg: ${avg.toFixed(0)} lux`;
+    case 'pulse':
+      return null; // Calculated elsewhere
+    case 'dwell':
+      return null; // Calculated elsewhere
     default:
       return null;
   }
