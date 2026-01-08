@@ -2,16 +2,14 @@
  * DailyContext - The "Header" content moved into the page flow
  * 
  * Shows:
- * - Greeting ("Good Evening")
- * - Date ("Friday, Jan 8")
  * - Weather (Icon + Temp)
  * - Peak Prediction (Text only)
  * 
- * Designed to be clean text, sitting just above the main content.
+ * Removed Greeting/Date since that is now in the main Header.
  */
 
 import { motion } from 'framer-motion';
-import { Cloud, TrendingUp } from 'lucide-react';
+import { TrendingUp } from 'lucide-react';
 
 interface DailyContextProps {
   weather?: { temperature: number; icon: string } | null;
@@ -23,53 +21,30 @@ interface DailyContextProps {
 }
 
 export function DailyContext({ weather, peakPrediction }: DailyContextProps) {
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
-    return 'Good evening';
-  };
-
-  const getDate = () => {
-    return new Date().toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      month: 'short', 
-      day: 'numeric' 
-    });
-  };
+  // If no weather/peak info, don't render anything to save space
+  if (!weather && !peakPrediction) return null;
 
   return (
     <motion.div 
-      className="mb-6 flex items-end justify-between"
+      className="mb-6 flex items-center justify-end gap-3"
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      <div>
-        <h2 className="text-xl font-bold text-warm-100 leading-tight">
-          {getGreeting()}
-        </h2>
-        <p className="text-sm font-medium text-warm-400 mt-0.5">
-          {getDate()}
-        </p>
-      </div>
-
-      <div className="flex flex-col items-end gap-1">
-        {/* Weather */}
-        {weather && (
-          <div className="flex items-center gap-1.5 text-warm-300">
-            <span className="text-base">{weather.icon}</span>
-            <span className="text-sm font-medium">{Math.round(weather.temperature)}°</span>
-          </div>
-        )}
-        
-        {/* Peak Info (Subtle) */}
-        {peakPrediction && peakPrediction.minutesUntil > 0 && peakPrediction.minutesUntil < 180 && (
-          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-400/90">
-            <TrendingUp className="w-3 h-3" />
-            <span>Peak in {Math.ceil(peakPrediction.minutesUntil / 60)}h</span>
-          </div>
-        )}
-      </div>
+      {/* Weather */}
+      {weather && (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-warm-800/50 border border-warm-700/50">
+          <span className="text-base leading-none">{weather.icon}</span>
+          <span className="text-xs font-medium text-warm-200">{Math.round(weather.temperature)}°</span>
+        </div>
+      )}
+      
+      {/* Peak Info */}
+      {peakPrediction && peakPrediction.minutesUntil > 0 && peakPrediction.minutesUntil < 180 && (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-900/20 border border-amber-500/20">
+          <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
+          <span className="text-xs font-medium text-amber-400">Peak in {Math.ceil(peakPrediction.minutesUntil / 60)}h</span>
+        </div>
+      )}
     </motion.div>
   );
 }

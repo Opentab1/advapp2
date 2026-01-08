@@ -1,15 +1,14 @@
 /**
- * Header - Minimal Calm Header
+ * Header - Shift Anchor Style
  * 
- * Extremely sparse. Just the logo and profile.
- * Context (Greeting, Weather, etc.) moved to page content.
+ * Left: Bold Date (The Anchor)
+ * Right: Live Status + Logout
+ * BG: Matches sidebar (warm-900 / whoop-panel)
  */
 
 import { motion } from 'framer-motion';
-import { User as UserIcon, Wifi, WifiOff } from 'lucide-react';
-import { Logo } from '../Logo';
+import { LogOut } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
-import authService from '../../services/auth.service';
 
 interface HeaderProps {
   isConnected?: boolean;
@@ -20,58 +19,67 @@ export function Header({
   isConnected = true, 
   onLogout 
 }: HeaderProps) {
-  const user = authService.getStoredUser();
-  
-  // Get initials from venue name or email
-  const getInitials = () => {
-    if (user?.venueName) {
-      return user.venueName.substring(0, 2).toUpperCase();
-    }
-    return user?.email?.substring(0, 2).toUpperCase() || '??';
-  };
   
   const handleLogout = () => {
     haptic('medium');
     onLogout();
   };
   
+  // Format: "FRIDAY 8"
+  const getShiftDate = () => {
+    const now = new Date();
+    const day = now.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
+    const date = now.getDate();
+    return { day, date };
+  };
+  
+  const { day, date } = getShiftDate();
+  
   return (
     <motion.header
-      className="bg-whoop-bg/90 backdrop-blur-md sticky top-0 z-40 border-b border-transparent transition-colors duration-300"
+      // Match the DashboardLayout bg (warm-900) and border color (divider)
+      // Removed backdrop blur to ensure solid color match
+      className="bg-warm-900 border-b border-whoop-divider sticky top-0 z-40"
       initial={{ y: -60 }}
       animate={{ y: 0 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
     >
-      <div className="flex items-center justify-between px-4 py-3 lg:px-8 max-w-lg mx-auto lg:max-w-none">
-        {/* Left: Brand Mark */}
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 text-primary">
-             {/* Static logo for calm feel */}
-            <Logo className="text-primary" />
-          </div>
+      <div className="flex items-center justify-between px-4 py-3 lg:px-6">
+        {/* Left: Shift Anchor (Date) */}
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-lg font-bold text-warm-100 tracking-wider">
+            {day}
+          </span>
+          <span className="text-lg font-light text-warm-400">
+            {date}
+          </span>
         </div>
 
-        {/* Right: Profile & Status */}
-        <div className="flex items-center gap-3">
+        {/* Right: Live Status + Logout */}
+        <div className="flex items-center gap-4">
+          {/* Live Indicator */}
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${
+              isConnected ? 'bg-green-500 animate-pulse' : 'bg-amber-500'
+            }`} />
+            <span className={`text-xs font-medium tracking-wide ${
+              isConnected ? 'text-green-500' : 'text-amber-500'
+            }`}>
+              {isConnected ? 'LIVE' : 'OFFLINE'}
+            </span>
+          </div>
+          
+          {/* Divider */}
+          <div className="w-px h-4 bg-whoop-divider" />
+          
+          {/* Logout Button */}
           <motion.button
             onClick={handleLogout}
-            className="relative"
+            className="p-1.5 rounded-lg text-warm-400 hover:text-warm-100 hover:bg-warm-800 transition-colors"
             whileTap={{ scale: 0.95 }}
-            aria-label="Profile & Settings"
+            aria-label="Logout"
           >
-            {/* Profile Circle */}
-            <div className="w-9 h-9 rounded-full bg-warm-800 border border-warm-700 flex items-center justify-center overflow-hidden">
-               <span className="text-xs font-bold text-warm-200 tracking-wider">
-                 {getInitials()}
-               </span>
-            </div>
-            
-            {/* Status Dot (Connection) */}
-            <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-whoop-bg flex items-center justify-center ${
-              isConnected ? 'bg-green-500' : 'bg-amber-500'
-            }`}>
-              {!isConnected && <span className="w-1.5 h-1.5 rounded-full bg-whoop-bg" />}
-            </div>
+            <LogOut className="w-5 h-5" />
           </motion.button>
         </div>
       </div>
