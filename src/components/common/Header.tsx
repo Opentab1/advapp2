@@ -34,8 +34,8 @@ export function Header({
   
   return (
     <motion.header
-      // Match the DashboardLayout bg (warm-900) and border color (divider)
-      className="bg-warm-900 border-b border-whoop-divider sticky top-0 z-40"
+      // Match the Sidebar bg (whoop-panel) for seamless look
+      className="bg-whoop-panel border-b border-whoop-divider sticky top-0 z-40"
       initial={{ y: -60 }}
       animate={{ y: 0 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
