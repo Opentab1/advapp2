@@ -1,7 +1,7 @@
 /**
- * Header - Shift Anchor Style
+ * Header - Greeting Anchor Style
  * 
- * Left: Bold Date (The Anchor)
+ * Left: "Good Morning" etc.
  * Right: Live Status + Logout
  * BG: Matches sidebar (warm-900 / whoop-panel)
  */
@@ -25,35 +25,26 @@ export function Header({
     onLogout();
   };
   
-  // Format: "FRIDAY 8"
-  const getShiftDate = () => {
-    const now = new Date();
-    const day = now.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
-    const date = now.getDate();
-    return { day, date };
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good Morning';
+    if (hour < 17) return 'Good Afternoon';
+    return 'Good Evening';
   };
-  
-  const { day, date } = getShiftDate();
   
   return (
     <motion.header
       // Match the DashboardLayout bg (warm-900) and border color (divider)
-      // Removed backdrop blur to ensure solid color match
       className="bg-warm-900 border-b border-whoop-divider sticky top-0 z-40"
       initial={{ y: -60 }}
       animate={{ y: 0 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
     >
       <div className="flex items-center justify-between px-4 py-3 lg:px-6">
-        {/* Left: Shift Anchor (Date) */}
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-lg font-bold text-warm-100 tracking-wider">
-            {day}
-          </span>
-          <span className="text-lg font-light text-warm-400">
-            {date}
-          </span>
-        </div>
+        {/* Left: Greeting */}
+        <span className="text-lg font-bold text-warm-100 tracking-wide">
+          {getGreeting()}
+        </span>
 
         {/* Right: Live Status + Logout */}
         <div className="flex items-center gap-4">
@@ -75,11 +66,12 @@ export function Header({
           {/* Logout Button */}
           <motion.button
             onClick={handleLogout}
-            className="p-1.5 rounded-lg text-warm-400 hover:text-warm-100 hover:bg-warm-800 transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-warm-400 hover:text-warm-100 hover:bg-warm-800 transition-colors"
             whileTap={{ scale: 0.95 }}
             aria-label="Logout"
           >
-            <LogOut className="w-5 h-5" />
+            <LogOut className="w-4 h-4" />
+            <span className="text-xs font-medium uppercase tracking-wide">Logout</span>
           </motion.button>
         </div>
       </div>
