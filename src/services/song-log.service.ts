@@ -1,6 +1,14 @@
 import type { SongLogEntry, SensorData } from '../types';
 import dynamoDBService from './dynamodb.service';
 import authService from './auth.service';
+import { 
+  isDemoAccount, 
+  generateDemoSongLog, 
+  getDemoTopSongs, 
+  getDemoGenreStats,
+  getDemoHighestPerformingSongs,
+  getDemoTopPerformersPlaylist 
+} from '../utils/demoData';
 
 // Types for enhanced analytics
 export interface PerformingSong {
@@ -456,8 +464,24 @@ class SongLogService {
   /**
    * Get all songs - combines DynamoDB and localStorage
    * DynamoDB is the primary source, localStorage is supplementary
+   * Returns demo data for demo accounts
    */
   async getAllSongs(limit?: number): Promise<SongLogEntry[]> {
+    // Check for demo account
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId)) {
+      const demoSongs = generateDemoSongLog();
+      const entries: SongLogEntry[] = demoSongs.map(s => ({
+        id: s.id,
+        songName: s.songName,
+        artist: s.artist,
+        timestamp: s.timestamp,
+        albumArt: s.albumArt,
+        source: s.source as 'shazam' | 'spotify' | 'manual',
+      }));
+      return limit ? entries.slice(0, limit) : entries;
+    }
+    
     // Fetch from DynamoDB
     const dynamoSongs = await this.fetchSongsFromDynamoDB(90);
     
@@ -489,8 +513,15 @@ class SongLogService {
   
   /**
    * Get top songs from all sources
+   * Returns demo data for demo accounts
    */
   async getTopSongsFromAll(limit: number = 10): Promise<Array<{ song: string; artist: string; plays: number }>> {
+    // Check for demo account
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId)) {
+      return getDemoTopSongs(limit);
+    }
+    
     const allSongs = await this.getAllSongs();
     const songCounts = new Map<string, { artist: string; plays: number }>();
 
@@ -541,8 +572,15 @@ class SongLogService {
   /**
    * Get highest performing songs based on occupancy/dwell time correlation
    * "Best performing" = songs that correlate with stable/growing occupancy and longer dwell
+   * Returns demo data for demo accounts
    */
   async getHighestPerformingSongs(limit: number = 10, timeRange: AnalyticsTimeRange = '30d'): Promise<PerformingSong[]> {
+    // Check for demo account first
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId)) {
+      return getDemoHighestPerformingSongs(limit);
+    }
+    
     const now = Date.now();
     
     // Check analytics cache
@@ -552,7 +590,6 @@ class SongLogService {
     }
     
     try {
-      const user = authService.getStoredUser();
       const venueId = user?.venueId;
       
       if (!venueId) {
@@ -823,9 +860,16 @@ class SongLogService {
   
   /**
    * Get genre statistics for the specified time range
+   * Returns demo data for demo accounts
    */
   async getGenreStats(limit: number = 10, timeRange: AnalyticsTimeRange = '30d'): Promise<GenreStats[]> {
-    // Ensure we have computed the analytics
+    // Check for demo account first
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId)) {
+      return getDemoGenreStats().slice(0, limit);
+    }
+
+    // Check analytics cache
     const cached = this.analyticsCache.get(timeRange);
     if (cached && (Date.now() - cached.timestamp) < this.PERFORMANCE_CACHE_TTL && cached.genreStats.length > 0) {
       return cached.genreStats.slice(0, limit);
@@ -894,8 +938,15 @@ class SongLogService {
   /**
    * Generate a "Top Performers" playlist data
    * Returns songs formatted for playlist display/export
+   * Returns demo data for demo accounts
    */
   async getTopPerformersPlaylist(limit: number = 20, timeRange: AnalyticsTimeRange = '30d'): Promise<PlaylistSong[]> {
+    // Check for demo account first
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId)) {
+      return getDemoTopPerformersPlaylist(limit);
+    }
+
     const topSongs = await this.getHighestPerformingSongs(limit, timeRange);
     
     return topSongs.map((song, index) => ({

@@ -937,3 +937,221 @@ function scoreFactorDemo(value: number, range: { min: number; max: number }): nu
   const deviation = value - range.max;
   return Math.max(0, Math.round(100 - (deviation / tolerance) * 100));
 }
+
+// ============ DEMO SONG DATA ============
+
+/**
+ * Demo songs for The Showcase Lounge
+ * Mix of genres fitting a premium nightlife venue
+ */
+const DEMO_SONGS = [
+  // Country hits
+  { song: 'Last Night', artist: 'Morgan Wallen', genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b27396380cb6f87f7d18f6e91f55' },
+  { song: 'Fast Car', artist: 'Luke Combs', genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b2738f00dd753ee9f5abf2d7e7f0' },
+  { song: 'Something in the Orange', artist: 'Zach Bryan', genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b27328b1441836a1a43d3c05a7e7' },
+  { song: 'Tennessee Whiskey', artist: 'Chris Stapleton', genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b273e2e2bdd1b4d03c25ccb7e67b' },
+  { song: 'Thinkin Bout Me', artist: 'Morgan Wallen', genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b27396380cb6f87f7d18f6e91f55' },
+  
+  // Hip Hop / Rap
+  { song: 'Rich Flex', artist: 'Drake & 21 Savage', genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273a68e1c59d4fb4d32c26ea8ef' },
+  { song: 'All My Life', artist: 'Lil Durk ft. J. Cole', genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b27378e25fd5dab3d3f4ec0e3d5f' },
+  { song: 'HUMBLE.', artist: 'Kendrick Lamar', genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273db02243db6b16a0e6aae9cba' },
+  { song: 'goosebumps', artist: 'Travis Scott', genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2739087f00e8e0e3f7c28c1c0fd' },
+  { song: 'First Class', artist: 'Jack Harlow', genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2735c66dbf60e9cb8fa9e9c2c22' },
+  
+  // Pop
+  { song: 'Anti-Hero', artist: 'Taylor Swift', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2735076e4160d018e378f488c33' },
+  { song: 'Flowers', artist: 'Miley Cyrus', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2739e01a5c5b0c6b4feaecb41f2' },
+  { song: 'Cruel Summer', artist: 'Taylor Swift', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273e787cffec20aa2a396a61647' },
+  { song: 'Levitating', artist: 'Dua Lipa', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b27367e4c5ad4e3c5c5c5c5c5c5c' },
+  { song: 'Blinding Lights', artist: 'The Weeknd', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36' },
+  
+  // Electronic / Dance
+  { song: 'Alone', artist: 'Marshmello', genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273a3b1a52a09d1b4f8b4b4b4b4' },
+  { song: 'Titanium', artist: 'David Guetta ft. Sia', genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273b6b6b6b6b6b6b6b6b6b6b6b6' },
+  { song: 'Clarity', artist: 'Zedd ft. Foxes', genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273c7c7c7c7c7c7c7c7c7c7c7c7' },
+  { song: 'Wake Me Up', artist: 'Avicii', genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273d8d8d8d8d8d8d8d8d8d8d8d8' },
+  { song: "Don't You Worry Child", artist: 'Swedish House Mafia', genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273e9e9e9e9e9e9e9e9e9e9e9e9' },
+  
+  // R&B / Soul
+  { song: 'Snooze', artist: 'SZA', genre: 'R&B', albumArt: 'https://i.scdn.co/image/ab67616d0000b2730c471c36970b9406233842a5' },
+  { song: 'Kill Bill', artist: 'SZA', genre: 'R&B', albumArt: 'https://i.scdn.co/image/ab67616d0000b2730c471c36970b9406233842a5' },
+  { song: 'Earned It', artist: 'The Weeknd', genre: 'R&B', albumArt: 'https://i.scdn.co/image/ab67616d0000b273f4f4f4f4f4f4f4f4f4f4f4f4' },
+  { song: 'Love Galore', artist: 'SZA ft. Travis Scott', genre: 'R&B', albumArt: 'https://i.scdn.co/image/ab67616d0000b273g5g5g5g5g5g5g5g5g5g5g5g5' },
+  
+  // Rock / Alternative
+  { song: 'Heat Waves', artist: 'Glass Animals', genre: 'Alternative', albumArt: 'https://i.scdn.co/image/ab67616d0000b273712dc99f1f0e32d94a314e13' },
+  { song: 'Believer', artist: 'Imagine Dragons', genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273h6h6h6h6h6h6h6h6h6h6h6h6' },
+  { song: 'Thunder', artist: 'Imagine Dragons', genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273i7i7i7i7i7i7i7i7i7i7i7i7' },
+  { song: 'Mr. Brightside', artist: 'The Killers', genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273j8j8j8j8j8j8j8j8j8j8j8j8' },
+  
+  // Latin
+  { song: 'Titi Me Pregunto', artist: 'Bad Bunny', genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b2734e4c7c7c7c7c7c7c7c7c7c7c' },
+  { song: 'Despacito', artist: 'Luis Fonsi ft. Daddy Yankee', genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b273k9k9k9k9k9k9k9k9k9k9k9k9' },
+];
+
+/**
+ * Generate demo song log entries
+ * Creates realistic play history for the demo venue
+ */
+export interface DemoSongEntry {
+  id: string;
+  songName: string;
+  artist: string;
+  timestamp: string;
+  albumArt?: string;
+  source: string;
+}
+
+export function generateDemoSongLog(): DemoSongEntry[] {
+  const entries: DemoSongEntry[] = [];
+  const now = new Date();
+  
+  // Generate songs for the past 30 days
+  for (let daysAgo = 0; daysAgo < 30; daysAgo++) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - daysAgo);
+    const dayOfWeek = date.getDay();
+    
+    // More songs on weekends
+    const songsPerDay = dayOfWeek === 5 || dayOfWeek === 6 ? 40 : dayOfWeek === 0 ? 25 : 15;
+    
+    // Peak hours: 9pm - 2am
+    for (let i = 0; i < songsPerDay; i++) {
+      const song = DEMO_SONGS[Math.floor(Math.random() * DEMO_SONGS.length)];
+      const hour = 21 + Math.floor(Math.random() * 5); // 9pm to 2am
+      const minute = Math.floor(Math.random() * 60);
+      
+      const timestamp = new Date(date);
+      timestamp.setHours(hour % 24, minute, 0, 0);
+      
+      entries.push({
+        id: `demo-${daysAgo}-${i}`,
+        songName: song.song,
+        artist: song.artist,
+        timestamp: timestamp.toISOString(),
+        albumArt: song.albumArt,
+        source: 'shazam',
+      });
+    }
+  }
+  
+  // Sort by timestamp descending (most recent first)
+  entries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  
+  return entries;
+}
+
+/**
+ * Get top songs from demo data
+ */
+export function getDemoTopSongs(limit: number = 10): Array<{ song: string; artist: string; plays: number; albumArt?: string }> {
+  const songCounts = new Map<string, { artist: string; plays: number; albumArt?: string }>();
+  
+  // Count plays per song
+  DEMO_SONGS.forEach(song => {
+    const key = `${song.song}::${song.artist}`;
+    // Vary play counts - some songs are more popular
+    const basePlays = 15 + Math.floor(Math.random() * 25);
+    songCounts.set(key, {
+      artist: song.artist,
+      plays: basePlays,
+      albumArt: song.albumArt,
+    });
+  });
+  
+  // Convert to array and sort by plays
+  return Array.from(songCounts.entries())
+    .map(([key, value]) => ({
+      song: key.split('::')[0],
+      artist: value.artist,
+      plays: value.plays,
+      albumArt: value.albumArt,
+    }))
+    .sort((a, b) => b.plays - a.plays)
+    .slice(0, limit);
+}
+
+/**
+ * Get demo genre stats
+ */
+export function getDemoGenreStats(): Array<{
+  genre: string;
+  plays: number;
+  avgDwellTime: number;
+  avgOccupancy: number;
+  totalMinutes: number;
+  performanceScore: number;
+}> {
+  return [
+    { genre: 'Country', plays: 145, avgDwellTime: 68, avgOccupancy: 285, totalMinutes: 435, performanceScore: 92 },
+    { genre: 'Hip Hop', plays: 132, avgDwellTime: 62, avgOccupancy: 310, totalMinutes: 396, performanceScore: 88 },
+    { genre: 'Pop', plays: 98, avgDwellTime: 55, avgOccupancy: 275, totalMinutes: 294, performanceScore: 82 },
+    { genre: 'Electronic', plays: 87, avgDwellTime: 72, avgOccupancy: 340, totalMinutes: 261, performanceScore: 90 },
+    { genre: 'R&B', plays: 65, avgDwellTime: 58, avgOccupancy: 245, totalMinutes: 195, performanceScore: 78 },
+    { genre: 'Rock', plays: 45, avgDwellTime: 52, avgOccupancy: 220, totalMinutes: 135, performanceScore: 72 },
+    { genre: 'Latin', plays: 38, avgDwellTime: 65, avgOccupancy: 295, totalMinutes: 114, performanceScore: 85 },
+  ];
+}
+
+/**
+ * Get demo highest performing songs
+ */
+export function getDemoHighestPerformingSongs(limit: number = 10): Array<{
+  song: string;
+  artist: string;
+  plays: number;
+  avgOccupancy: number;
+  avgOccupancyChange: number;
+  avgDwellExtension: number;
+  performanceScore: number;
+  albumArt?: string;
+  genre?: string;
+}> {
+  const topSongs = [
+    { song: 'Last Night', artist: 'Morgan Wallen', plays: 42, avgOccupancy: 315, avgOccupancyChange: 12, avgDwellExtension: 8, performanceScore: 95, genre: 'Country' },
+    { song: 'Rich Flex', artist: 'Drake & 21 Savage', plays: 38, avgOccupancy: 340, avgOccupancyChange: 18, avgDwellExtension: 6, performanceScore: 92, genre: 'Hip Hop' },
+    { song: 'Anti-Hero', artist: 'Taylor Swift', plays: 35, avgOccupancy: 295, avgOccupancyChange: 8, avgDwellExtension: 5, performanceScore: 88, genre: 'Pop' },
+    { song: 'Tennessee Whiskey', artist: 'Chris Stapleton', plays: 32, avgOccupancy: 280, avgOccupancyChange: 5, avgDwellExtension: 12, performanceScore: 91, genre: 'Country' },
+    { song: 'Alone', artist: 'Marshmello', plays: 29, avgOccupancy: 355, avgOccupancyChange: 22, avgDwellExtension: 4, performanceScore: 87, genre: 'Electronic' },
+    { song: 'Snooze', artist: 'SZA', plays: 27, avgOccupancy: 265, avgOccupancyChange: 6, avgDwellExtension: 7, performanceScore: 84, genre: 'R&B' },
+    { song: 'Something in the Orange', artist: 'Zach Bryan', plays: 25, avgOccupancy: 275, avgOccupancyChange: 4, avgDwellExtension: 10, performanceScore: 86, genre: 'Country' },
+    { song: 'Heat Waves', artist: 'Glass Animals', plays: 24, avgOccupancy: 290, avgOccupancyChange: 7, avgDwellExtension: 6, performanceScore: 83, genre: 'Alternative' },
+    { song: 'HUMBLE.', artist: 'Kendrick Lamar', plays: 22, avgOccupancy: 325, avgOccupancyChange: 15, avgDwellExtension: 3, performanceScore: 85, genre: 'Hip Hop' },
+    { song: 'Titi Me Pregunto', artist: 'Bad Bunny', plays: 20, avgOccupancy: 310, avgOccupancyChange: 12, avgDwellExtension: 5, performanceScore: 82, genre: 'Latin' },
+  ];
+  
+  // Add album art from DEMO_SONGS
+  return topSongs.slice(0, limit).map(s => {
+    const match = DEMO_SONGS.find(d => d.song === s.song && d.artist === s.artist);
+    return { ...s, albumArt: match?.albumArt };
+  });
+}
+
+/**
+ * Get demo top performers playlist
+ */
+export function getDemoTopPerformersPlaylist(limit: number = 20): Array<{
+  position: number;
+  song: string;
+  artist: string;
+  plays: number;
+  performanceScore: number;
+  albumArt?: string;
+  reason: string;
+  genre?: string;
+}> {
+  const reasons = ['Peak crowds', 'Long stays', 'High energy', 'Crowd favorite', 'Dwell boost'];
+  const topPerformers = getDemoHighestPerformingSongs(limit);
+  
+  return topPerformers.map((s, i) => ({
+    position: i + 1,
+    song: s.song,
+    artist: s.artist,
+    plays: s.plays,
+    performanceScore: s.performanceScore,
+    albumArt: s.albumArt,
+    reason: reasons[i % reasons.length],
+    genre: s.genre,
+  }));
+}
