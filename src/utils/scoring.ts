@@ -22,6 +22,7 @@ import {
   type TimeSlot,
 } from './constants';
 import venueCalibrationService from '../services/venue-calibration.service';
+import venueLearningService from '../services/venue-learning.service';
 
 // ============ TYPES ============
 
@@ -201,8 +202,14 @@ export function calculateVibeScore(
 
 /**
  * Calculate the complete Pulse Score from sensor data.
- * Context-aware based on time of day and day of week.
- * Uses venue calibration if available, otherwise falls back to time-slot defaults.
+ * 
+ * Priority for optimal ranges:
+ * 1. Learned ranges (from historical data analysis - what actually works)
+ * 2. Manual calibration (owner-set preferences)
+ * 3. Time-slot defaults (industry assumptions)
+ * 
+ * The goal: Score how close current conditions are to YOUR historically-proven
+ * optimal conditions for this specific day/time.
  */
 export function calculatePulseScore(
   decibels: number | null | undefined,
@@ -221,35 +228,65 @@ export function calculatePulseScore(
   const timeSlot = getCurrentTimeSlot();
   const defaultRanges = TIME_SLOT_RANGES[timeSlot];
   
-  // Check for venue-specific calibration
+  // Priority 1: Check for learned ranges (from historical data)
   let ranges = defaultRanges;
+  let weights = FACTOR_WEIGHTS;
+  let isLearned = false;
+  
   if (venueId) {
-    const effectiveRanges = venueCalibrationService.getEffectiveRanges(venueId, {
-      sound: defaultRanges.sound,
-      light: defaultRanges.light,
-    });
-    if (effectiveRanges.isCustom) {
+    // First try learned ranges (most accurate, based on actual dwell time data)
+    const learnedRanges = venueLearningService.getCurrentOptimalRanges(venueId);
+    
+    if (learnedRanges.isLearned && learnedRanges.confidence >= 30) {
+      // Use learned ranges where available
+      isLearned = true;
       ranges = {
         ...defaultRanges,
-        sound: effectiveRanges.sound,
-        light: effectiveRanges.light,
+        sound: learnedRanges.sound || defaultRanges.sound,
+        light: learnedRanges.light || defaultRanges.light,
       };
+      
+      // Use learned weights (which factors matter most for this venue)
+      weights = {
+        sound: learnedRanges.weights.sound,
+        light: learnedRanges.weights.light,
+        temperature: learnedRanges.weights.temperature,
+        vibe: 0.10, // Keep vibe constant
+      };
+    } else {
+      // Fall back to manual calibration if no learned data
+      const calibration = venueCalibrationService.getEffectiveRanges(venueId, {
+        sound: defaultRanges.sound,
+        light: defaultRanges.light,
+      });
+      if (calibration.isCustom) {
+        ranges = {
+          ...defaultRanges,
+          sound: calibration.sound,
+          light: calibration.light,
+        };
+      }
     }
   }
   
-  // Calculate individual factor scores using venue-calibrated or time-appropriate ranges
+  // Calculate individual factor scores using the best available ranges
   const soundScore = calculateFactorScore(decibels, ranges.sound);
   const lightScore = calculateFactorScore(light, ranges.light);
   const tempScore = calculateTempScore(indoorTemp, outdoorTemp);
   const vibeScore = calculateVibeScore(soundScore, lightScore, tempScore);
   
-  // Weighted average (without genre - weights now sum to 1.0)
+  // Weighted average using dynamic or default weights
   const pulseScore = Math.round(
-    (soundScore * FACTOR_WEIGHTS.sound) + 
-    (lightScore * FACTOR_WEIGHTS.light) +
-    (tempScore * FACTOR_WEIGHTS.temperature) +
-    (vibeScore * FACTOR_WEIGHTS.vibe)
+    (soundScore * weights.sound) + 
+    (lightScore * weights.light) +
+    (tempScore * weights.temperature) +
+    (vibeScore * weights.vibe)
   );
+  
+  // Log if using learned data (for debugging)
+  if (isLearned) {
+    console.log(`🧠 Using learned optimal ranges for ${timeSlot}`);
+  }
   
   // Determine status
   const status = getScoreStatus(pulseScore);

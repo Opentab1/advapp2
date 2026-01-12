@@ -34,11 +34,13 @@ import { PulsePageSkeleton } from '../components/common/LoadingState';
 // Revenue-focused components (Launch Ready)
 import { TonightsPlaybook } from '../components/pulse/TonightsPlaybook';
 import { TodaysOutlook } from '../components/pulse/TodaysOutlook';
+import { LearningProgress } from '../components/pulse/LearningProgress';
 
 // Hooks & Services
 import { usePulseData } from '../hooks/usePulseData';
 import { useActions } from '../hooks/useActions';
 import { useIntelligence } from '../hooks/useIntelligence';
+import { useVenueLearning } from '../hooks/useVenueLearning';
 import sportsService from '../services/sports.service';
 import authService from '../services/auth.service';
 import staffService from '../services/staff.service';
@@ -99,6 +101,9 @@ export function Live() {
     currentData: pulseData.sensorData || undefined,
     weather: pulseData.weather,
   });
+  
+  // Venue learning - personalized scoring based on historical data
+  const venueLearning = useVenueLearning();
   
   // Generate actions based on current data
   const {
@@ -204,15 +209,24 @@ export function Live() {
     <PullToRefresh onRefresh={handleRefresh} disabled={pulseData.loading}>
       <div className="space-y-5">
       
-      {/* Daily Context (Greeting, Date, Weather) */}
-      <DailyContext 
-        weather={pulseData.weather}
-        peakPrediction={intelligence.peakPrediction ? {
-          hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
-          expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
-          minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
-        } : undefined}
-      />
+      {/* Daily Context + Learning Indicator */}
+      <div className="flex items-start justify-between gap-3">
+        <DailyContext 
+          weather={pulseData.weather}
+          peakPrediction={intelligence.peakPrediction ? {
+            hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
+            expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
+            minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
+          } : undefined}
+        />
+        <LearningProgress
+          learningProgress={venueLearning.learningProgress}
+          status={venueLearning.status}
+          patterns={venueLearning.patterns}
+          weeksOfData={venueLearning.learning?.weeksOfData || 0}
+          isAnalyzing={venueLearning.isAnalyzing}
+        />
+      </div>
 
       {/* Pulse Score Hero - Always at top */}
       <motion.div
