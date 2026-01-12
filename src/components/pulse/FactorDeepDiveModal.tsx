@@ -14,11 +14,11 @@ import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
 import { 
   Volume2, Sun, Thermometer, Music, Sparkles,
-  TrendingUp, TrendingDown, Target, Clock, Info,
+  TrendingUp, Target, Clock,
   CheckCircle, AlertTriangle, Lightbulb
 } from 'lucide-react';
 import { AreaChart, HorizontalBar } from '../common/MiniChart';
-import { OPTIMAL_RANGES, TIME_SLOT_RANGES, FACTOR_WEIGHTS, type TimeSlot } from '../../utils/constants';
+import { TIME_SLOT_RANGES, FACTOR_WEIGHTS, type TimeSlot } from '../../utils/constants';
 import { getCurrentTimeSlot } from '../../utils/scoring';
 
 // ============ TYPES ============
@@ -183,7 +183,7 @@ export function FactorDeepDiveModal({
           
           {/* Weight info */}
           <p className="text-xs text-warm-500 mt-2">
-            {Math.round(FACTOR_WEIGHTS[factor === 'comfort' ? 'temperature' : factor] * 100)}% of your Pulse Score
+            {Math.round(FACTOR_WEIGHTS[factor === 'comfort' ? 'temperature' : factor === 'music' ? 'vibe' : factor as keyof typeof FACTOR_WEIGHTS] * 100)}% of your Pulse Score
           </p>
         </div>
         
@@ -388,7 +388,7 @@ function getSoundContent(
   db: number | null, 
   score: number, 
   range: { min: number; max: number },
-  timeSlot: TimeSlot
+  _timeSlot: TimeSlot
 ): FactorContent {
   const insights: FactorContent['insights'] = [];
   let recommendation: string | null = null;
@@ -477,7 +477,7 @@ function getMusicContent(
   score: number,
   timeSlot: TimeSlot,
   currentSong?: string | null,
-  artist?: string | null
+  _artist?: string | null
 ): FactorContent {
   const insights: FactorContent['insights'] = [];
   let recommendation: string | null = null;
@@ -570,7 +570,7 @@ function getTimeSlotLabel(timeSlot: TimeSlot): string {
 function generateMockTrendData(
   currentValue: number | null,
   factor: FactorType,
-  timeSlot: TimeSlot
+  _timeSlot: TimeSlot
 ): Array<{ label: string; value: number; isCurrent?: boolean }> {
   const now = new Date();
   const currentHour = now.getHours();

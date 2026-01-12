@@ -101,12 +101,12 @@ export const OPTIMAL_RANGES = {
 
 // ============ FACTOR WEIGHTS ============
 // How much each factor contributes to Pulse Score (must sum to 1.0)
+// Note: Genre removed - music metadata detection is unreliable
 
 export const FACTOR_WEIGHTS = {
-  sound: 0.40,      // 40% - Most impactful for bar atmosphere
-  light: 0.25,      // 25% - Sets the mood
+  sound: 0.45,      // 45% - Most impactful for bar atmosphere
+  light: 0.30,      // 30% - Sets the mood
   temperature: 0.15, // 15% - Comfort factor
-  genre: 0.10,      // 10% - Right music for the moment
   vibe: 0.10,       // 10% - Overall time/day fit
 } as const;
 

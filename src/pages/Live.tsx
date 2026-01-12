@@ -260,8 +260,6 @@ export function Live() {
           decibels={pulseData.currentDecibels}
           light={pulseData.currentLight}
           occupancy={pulseData.currentOccupancy}
-          currentSong={pulseData.sensorData?.currentSong}
-          artist={pulseData.sensorData?.artist}
           albumArt={pulseData.sensorData?.albumArt}
           lastUpdated={pulseData.lastUpdated}
           onTap={() => setActiveModal('livestats')}
@@ -345,14 +343,11 @@ export function Live() {
         soundScore={pulseData.soundScore}
         lightScore={pulseData.lightScore}
         tempScore={pulseData.tempScore}
-        genreScore={pulseData.genreScore}
         vibeScore={pulseData.vibeScore}
         currentDecibels={pulseData.currentDecibels}
         currentLight={pulseData.currentLight}
         indoorTemp={pulseData.sensorData?.indoorTemp}
         outdoorTemp={pulseData.weather?.temperature}
-        currentSong={pulseData.sensorData?.currentSong}
-        artist={pulseData.sensorData?.artist}
         timeSlot={pulseData.timeSlot}
       />
       
@@ -413,8 +408,6 @@ export function Live() {
         todayEntries={pulseData.todayEntries}
         todayExits={pulseData.todayExits}
         peakOccupancy={pulseData.peakOccupancy}
-        currentSong={pulseData.sensorData?.currentSong ?? null}
-        artist={pulseData.sensorData?.artist ?? null}
         albumArt={pulseData.sensorData?.albumArt ?? null}
         reviews={pulseData.reviews}
         lastUpdated={pulseData.lastUpdated}

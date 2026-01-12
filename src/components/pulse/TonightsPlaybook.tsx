@@ -13,6 +13,8 @@ import {
   TrendingUp, Sparkles
 } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
+import { getCurrentTimeSlot } from '../../utils/scoring';
+import { TIME_SLOT_RANGES } from '../../utils/constants';
 
 interface PlaybookAction {
   id: string;
@@ -54,11 +56,25 @@ export function TonightsPlaybook({
   const generateActions = (): PlaybookAction[] => {
     const actions: PlaybookAction[] = [];
     
-    // Current state assessment
-    const soundStatus = currentDecibels >= 65 && currentDecibels <= 80 ? 'good' : 
-                        currentDecibels > 80 ? 'high' : 'low';
-    const lightStatus = currentLight >= 30 && currentLight <= 70 ? 'good' : 
-                        currentLight > 70 ? 'bright' : 'dim';
+    // Get time-aware optimal ranges
+    const timeSlot = getCurrentTimeSlot();
+    const ranges = TIME_SLOT_RANGES[timeSlot];
+    
+    // Current state assessment using time-appropriate ranges
+    const soundStatus = currentDecibels >= ranges.sound.min && currentDecibels <= ranges.sound.max ? 'good' : 
+                        currentDecibels > ranges.sound.max ? 'high' : 'low';
+    const lightStatus = currentLight >= ranges.light.min && currentLight <= ranges.light.max ? 'good' : 
+                        currentLight > ranges.light.max ? 'bright' : 'dim';
+    
+    // Context-aware labels
+    const isWeekendPeak = timeSlot === 'friday_peak' || timeSlot === 'saturday_peak';
+    const isHappyHour = timeSlot === 'weekday_happy_hour';
+    const isDaytime = timeSlot === 'daytime';
+    
+    // Context label for messaging
+    const contextLabel = isWeekendPeak ? 'for weekend peak' : 
+                         isHappyHour ? 'for happy hour' : 
+                         isDaytime ? 'for daytime crowd' : 'for this time';
     
     // RIGHT NOW actions
     if (soundStatus === 'good') {
@@ -66,58 +82,71 @@ export function TonightsPlaybook({
         id: 'sound-good',
         timeLabel: 'RIGHT NOW',
         title: 'Sound is perfect',
-        description: `${currentDecibels}dB is in the sweet spot. Keep it here.`,
+        description: `${currentDecibels}dB is ideal ${contextLabel}. Keep it here.`,
         icon: 'sound',
         status: 'current',
       });
     } else if (soundStatus === 'high') {
+      const overBy = Math.round(currentDecibels - ranges.sound.max);
       actions.push({
         id: 'sound-high',
         timeLabel: 'RIGHT NOW',
         title: 'Sound too loud',
-        description: `${currentDecibels}dB may drive guests away. Lower by 10-15%.`,
+        description: `${currentDecibels}dB is ${overBy}dB over optimal ${contextLabel}. Lower volume.`,
         icon: 'alert',
         status: 'current',
         impact: 'Could add 15+ min per guest',
       });
     } else {
+      const underBy = Math.round(ranges.sound.min - currentDecibels);
       actions.push({
         id: 'sound-low',
         timeLabel: 'RIGHT NOW',
         title: 'Boost the energy',
-        description: `${currentDecibels}dB feels quiet. Raise volume 10-20%.`,
+        description: `${currentDecibels}dB is ${underBy}dB under optimal ${contextLabel}. Raise volume.`,
         icon: 'sound',
         status: 'current',
         impact: 'Higher energy = longer stays',
       });
     }
     
-    // Light suggestions
-    if (lightStatus === 'bright' && new Date().getHours() >= 19) {
+    // Light suggestions - time aware
+    if (lightStatus === 'bright' && !isDaytime) {
       actions.push({
         id: 'light-dim',
         timeLabel: 'RIGHT NOW',
         title: 'Dim the lights',
-        description: `Evening vibe needs lower lighting (currently ${currentLight}%).`,
+        description: `${currentLight}% is too bright ${contextLabel}. Target ${ranges.light.min}-${ranges.light.max}%.`,
+        icon: 'light',
+        status: 'current',
+      });
+    } else if (lightStatus === 'dim' && isDaytime) {
+      actions.push({
+        id: 'light-bright',
+        timeLabel: 'RIGHT NOW',
+        title: 'Brighten up',
+        description: `${currentLight}% is too dim for daytime. Target ${ranges.light.min}-${ranges.light.max}%.`,
         icon: 'light',
         status: 'current',
       });
     }
     
-    // Peak prediction action
+    // Peak prediction action (based on historical same-day averages)
     if (peakPrediction && peakPrediction.minutesUntil > 0 && peakPrediction.minutesUntil < 120) {
       const timeLabel = peakPrediction.minutesUntil <= 30 
         ? 'SOON' 
         : `IN ${peakPrediction.minutesUntil} MIN`;
       
+      const expectedIncrease = peakPrediction.expectedOccupancy - currentOccupancy;
+      
       actions.push({
         id: 'peak-prep',
         timeLabel,
         title: 'Peak hour approaching',
-        description: `${peakPrediction.hour} rush coming. Queue high-energy songs.`,
+        description: `Based on past weeks, ${peakPrediction.hour} is typically your busiest.`,
         icon: 'opportunity',
         status: 'upcoming',
-        impact: `+${peakPrediction.expectedOccupancy - currentOccupancy} guests expected`,
+        impact: expectedIncrease > 0 ? `~${expectedIncrease} more guests expected` : undefined,
       });
     }
     

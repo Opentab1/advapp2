@@ -47,7 +47,6 @@ export interface PulseData {
   soundScore: number;
   lightScore: number;
   tempScore: number;
-  genreScore: number;
   vibeScore: number;
   
   // Time slot
@@ -269,9 +268,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       sensorData?.indoorTemp,
       outdoorTemp,
       sensorData?.currentSong,
-      sensorData?.artist
+      sensorData?.artist,
+      venueId // Pass venueId for custom calibration support
     );
-  }, [sensorData?.decibels, sensorData?.light, sensorData?.indoorTemp, sensorData?.outdoorTemp, sensorData?.currentSong, sensorData?.artist, weather?.temperature]);
+  }, [sensorData?.decibels, sensorData?.light, sensorData?.indoorTemp, sensorData?.outdoorTemp, sensorData?.currentSong, sensorData?.artist, weather?.temperature, venueId]);
   
   const reputationScore = getReputationScore(reviews?.rating ?? null);
   
@@ -387,7 +387,6 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     soundScore: pulseScoreResult.factors.sound.score,
     lightScore: pulseScoreResult.factors.light.score,
     tempScore: pulseScoreResult.factors.temperature.score,
-    genreScore: pulseScoreResult.factors.genre.score,
     vibeScore: pulseScoreResult.factors.vibe.score,
     
     // Time slot

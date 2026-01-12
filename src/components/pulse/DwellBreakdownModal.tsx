@@ -138,7 +138,7 @@ export function DwellBreakdownModal({
   };
   
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Dwell Time Intelligence">
+    <Modal isOpen={isOpen} onClose={onClose} title="Avg Stay (Estimate)">
       <div className="space-y-5">
         
         {/* ============ HERO ============ */}
@@ -147,7 +147,7 @@ export function DwellBreakdownModal({
             <Clock className="w-7 h-7 text-primary" />
             <span className="text-4xl font-bold text-warm-100">{formatted}</span>
           </div>
-          <p className="text-sm text-warm-400">average guest stay</p>
+          <p className="text-sm text-warm-400">estimated avg stay</p>
           
           {/* Score bar */}
           {dwellTimeMinutes !== null && (
@@ -389,7 +389,7 @@ export function DwellBreakdownModal({
         
         {/* Footer */}
         <p className="text-xs text-warm-600 text-center">
-          Based on entry/exit sensor data • Updates every 15 seconds
+          ⚠️ Estimate based on occupancy ÷ turnover • Not a direct measurement
         </p>
       </div>
     </Modal>

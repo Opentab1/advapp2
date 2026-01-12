@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Key, MapPin, Check, Building2,
-  User, Info, CloudSun
+  User, Info, CloudSun, Sliders
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
@@ -10,10 +10,11 @@ import weatherService from '../services/weather.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { AddressSettings } from '../components/AddressSettings';
+import { CalibrationSettings } from '../components/CalibrationSettings';
 import { haptic } from '../utils/haptics';
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'about'>('account');
+  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'calibration' | 'about'>('account');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [savedAddress, setSavedAddress] = useState<VenueAddress | null>(null);
   const user = authService.getStoredUser();
@@ -40,6 +41,7 @@ export function Settings() {
           {[
             { id: 'account' as const, label: 'Account', icon: User },
             { id: 'venue' as const, label: 'Venue', icon: MapPin },
+            { id: 'calibration' as const, label: 'Calibration', icon: Sliders },
             { id: 'about' as const, label: 'About', icon: Info },
           ].map((tab) => (
             <motion.button
@@ -198,6 +200,34 @@ export function Settings() {
                   </p>
                 </div>
               </div>
+            </motion.div>
+          )}
+
+          {/* Calibration Tab */}
+          {activeTab === 'calibration' && (
+            <motion.div
+              className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <Sliders className="w-5 h-5 text-primary" />
+                <h3 className="text-xl font-semibold text-white">Venue Calibration</h3>
+              </div>
+              <p className="text-sm text-warm-400 mb-6">
+                Customize optimal sound and light ranges for your specific venue type.
+                These settings affect how Pulse Score and recommendations are calculated.
+              </p>
+              
+              {user?.venueId ? (
+                <CalibrationSettings venueId={user.venueId} />
+              ) : (
+                <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                  <p className="text-sm text-yellow-300">
+                    Venue ID not configured. Please contact your administrator.
+                  </p>
+                </div>
+              )}
             </motion.div>
           )}
 

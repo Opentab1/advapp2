@@ -6,7 +6,7 @@
  * 
  * Shows:
  * - Overall score with clear status
- * - Factor breakdown: Sound, Light, Temp, Genre, Vibe (TAPPABLE!)
+ * - Factor breakdown: Sound, Light, Temp, Vibe (TAPPABLE!)
  * - Context-aware based on time/day
  * - How to improve
  */
@@ -14,8 +14,8 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Thermometer, Music, Clock, ChevronRight, Sparkles } from 'lucide-react';
-import { OPTIMAL_RANGES, FACTOR_WEIGHTS, SCORE_THRESHOLDS, TIME_SLOT_RANGES, type TimeSlot } from '../../utils/constants';
+import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Thermometer, Clock, ChevronRight, Sparkles } from 'lucide-react';
+import { FACTOR_WEIGHTS, SCORE_THRESHOLDS, TIME_SLOT_RANGES, type TimeSlot } from '../../utils/constants';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import { getCurrentTimeSlot } from '../../utils/scoring';
 import { FactorDeepDiveModal, type FactorType } from './FactorDeepDiveModal';
@@ -28,14 +28,11 @@ interface PulseBreakdownModalProps {
   soundScore: number;
   lightScore: number;
   tempScore: number;
-  genreScore: number;
   vibeScore: number;
   currentDecibels: number | null;
   currentLight: number | null;
   indoorTemp?: number | null;
   outdoorTemp?: number | null;
-  currentSong?: string | null;
-  artist?: string | null;
   timeSlot?: string;
 }
 
@@ -47,14 +44,11 @@ export function PulseBreakdownModal({
   soundScore,
   lightScore,
   tempScore,
-  genreScore,
   vibeScore,
   currentDecibels,
   currentLight,
   indoorTemp,
   outdoorTemp,
-  currentSong,
-  artist,
   timeSlot: timeSlotProp,
 }: PulseBreakdownModalProps) {
   // State for factor deep dive
@@ -97,7 +91,6 @@ export function PulseBreakdownModal({
   const soundInsight = getSoundInsight(currentDecibels, soundScore, ranges.sound);
   const lightInsight = getLightInsight(currentLight, lightScore, ranges.light);
   const tempInsight = getTempInsight(indoorTemp, tempScore, outdoorTemp);
-  const genreInsight = getGenreInsight(currentSong, genreScore, timeSlot);
   const vibeInsight = getVibeInsight(vibeScore, timeSlot);
   
   return (
@@ -183,18 +176,6 @@ export function PulseBreakdownModal({
               onTap={() => setSelectedFactor('comfort')}
             />
             
-            {/* Genre Factor */}
-            <FactorCard
-              icon={Music}
-              label="Music Fit"
-              weight={Math.round(FACTOR_WEIGHTS.genre * 100)}
-              score={genreScore}
-              currentValue={currentSong ? (currentSong.length > 20 ? currentSong.slice(0, 20) + '...' : currentSong) : 'No music'}
-              optimalRange={ranges.genres.slice(0, 3).join(', ')}
-              insight={genreInsight}
-              onTap={() => setSelectedFactor('music')}
-            />
-            
             {/* Vibe Factor */}
             <FactorCard
               icon={Sparkles}
@@ -230,10 +211,6 @@ export function PulseBreakdownModal({
             <div className="flex justify-between text-warm-300">
               <span>Comfort × {Math.round(FACTOR_WEIGHTS.temperature * 100)}%</span>
               <span className="font-medium text-warm-100">{(tempScore * FACTOR_WEIGHTS.temperature).toFixed(0)}</span>
-            </div>
-            <div className="flex justify-between text-warm-300">
-              <span>Music × {Math.round(FACTOR_WEIGHTS.genre * 100)}%</span>
-              <span className="font-medium text-warm-100">{(genreScore * FACTOR_WEIGHTS.genre).toFixed(0)}</span>
             </div>
             <div className="flex justify-between text-warm-300">
               <span>Vibe × {Math.round(FACTOR_WEIGHTS.vibe * 100)}%</span>
@@ -279,12 +256,9 @@ export function PulseBreakdownModal({
         selectedFactor === 'sound' ? soundScore :
         selectedFactor === 'light' ? lightScore :
         selectedFactor === 'comfort' ? tempScore :
-        selectedFactor === 'music' ? genreScore :
         vibeScore
       }
       timeSlot={timeSlot}
-      currentSong={currentSong}
-      artist={artist}
       outdoorTemp={outdoorTemp}
     />
     </>
@@ -432,7 +406,7 @@ function getLightInsight(lux: number | null, score: number, range: { min: number
   return { status: 'optimal', message: 'Lighting is good' };
 }
 
-function getTempInsight(indoor: number | null | undefined, score: number, outdoor: number | null | undefined): InsightResult {
+function getTempInsight(indoor: number | null | undefined, score: number, _outdoor: number | null | undefined): InsightResult {
   if (indoor === null || indoor === undefined) {
     return { status: 'warning', message: 'No temp data', action: 'Neutral score applied' };
   }
@@ -450,28 +424,6 @@ function getTempInsight(indoor: number | null | undefined, score: number, outdoo
   }
   
   return { status: 'optimal', message: 'Temp is okay' };
-}
-
-function getGenreInsight(song: string | null | undefined, score: number, timeSlot: TimeSlot): InsightResult {
-  const ranges = TIME_SLOT_RANGES[timeSlot];
-  
-  if (!song) {
-    return { status: 'warning', message: 'No music playing', action: 'Neutral score applied' };
-  }
-  
-  if (score >= 80) {
-    return { status: 'optimal', message: 'Music fits the vibe' };
-  }
-  
-  if (score < 50) {
-    return { 
-      status: 'warning', 
-      message: 'Music mismatch', 
-      action: `Try ${ranges.genres[0]} or ${ranges.genres[1]}`
-    };
-  }
-  
-  return { status: 'optimal', message: 'Music is okay' };
 }
 
 function getVibeInsight(score: number, timeSlot: TimeSlot): InsightResult {

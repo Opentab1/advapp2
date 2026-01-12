@@ -4,15 +4,15 @@
  * Context-aware scoring that adapts to time of day and day of week.
  * 
  * Factors:
- * - Sound (40%): Decibel level vs optimal for current time slot
- * - Light (25%): Lux level vs optimal for current time slot  
+ * - Sound (45%): Decibel level vs optimal for current time slot
+ * - Light (30%): Lux level vs optimal for current time slot  
  * - Temperature (15%): Indoor comfort based on outdoor temp
- * - Genre (10%): Is the music right for this time slot?
  * - Vibe (10%): Overall conditions matching expectations
+ * 
+ * Note: Genre scoring removed - music metadata detection is unreliable
  */
 
 import { 
-  OPTIMAL_RANGES, 
   FACTOR_WEIGHTS, 
   SCORE_THRESHOLDS,
   SCORE_COLORS,
@@ -21,6 +21,7 @@ import {
   TEMP_COMFORT,
   type TimeSlot,
 } from './constants';
+import venueCalibrationService from '../services/venue-calibration.service';
 
 // ============ TYPES ============
 
@@ -34,7 +35,6 @@ export interface PulseScoreResult {
     sound: FactorScore;
     light: FactorScore;
     temperature: FactorScore;
-    genre: FactorScore;
     vibe: FactorScore;
   };
 }
@@ -186,15 +186,14 @@ export function calculateGenreScore(
 export function calculateVibeScore(
   soundScore: number,
   lightScore: number,
-  tempScore: number,
-  genreScore: number
+  tempScore: number
 ): number {
   // Vibe is good when everything is in sync
-  const avgScore = (soundScore + lightScore + tempScore + genreScore) / 4;
+  const avgScore = (soundScore + lightScore + tempScore) / 3;
   
   // Bonus for consistency (all factors similar)
-  const scores = [soundScore, lightScore, tempScore, genreScore];
-  const variance = scores.reduce((sum, s) => sum + Math.abs(s - avgScore), 0) / 4;
+  const scores = [soundScore, lightScore, tempScore];
+  const variance = scores.reduce((sum, s) => sum + Math.abs(s - avgScore), 0) / 3;
   const consistencyBonus = Math.max(0, 10 - variance / 5);
   
   return Math.min(100, Math.round(avgScore + consistencyBonus));
@@ -203,32 +202,52 @@ export function calculateVibeScore(
 /**
  * Calculate the complete Pulse Score from sensor data.
  * Context-aware based on time of day and day of week.
+ * Uses venue calibration if available, otherwise falls back to time-slot defaults.
  */
 export function calculatePulseScore(
   decibels: number | null | undefined,
   light: number | null | undefined,
   indoorTemp?: number | null,
   outdoorTemp?: number | null,
-  currentSong?: string | null,
-  artist?: string | null
+  _currentSong?: string | null,
+  _artist?: string | null,
+  venueId?: string | null
 ): PulseScoreResult {
+  // Note: _currentSong and _artist kept for API compatibility but not used in scoring
+  void _currentSong;
+  void _artist;
+  
   // Get current time slot
   const timeSlot = getCurrentTimeSlot();
-  const ranges = TIME_SLOT_RANGES[timeSlot];
+  const defaultRanges = TIME_SLOT_RANGES[timeSlot];
   
-  // Calculate individual factor scores using time-appropriate ranges
+  // Check for venue-specific calibration
+  let ranges = defaultRanges;
+  if (venueId) {
+    const effectiveRanges = venueCalibrationService.getEffectiveRanges(venueId, {
+      sound: defaultRanges.sound,
+      light: defaultRanges.light,
+    });
+    if (effectiveRanges.isCustom) {
+      ranges = {
+        ...defaultRanges,
+        sound: effectiveRanges.sound,
+        light: effectiveRanges.light,
+      };
+    }
+  }
+  
+  // Calculate individual factor scores using venue-calibrated or time-appropriate ranges
   const soundScore = calculateFactorScore(decibels, ranges.sound);
   const lightScore = calculateFactorScore(light, ranges.light);
   const tempScore = calculateTempScore(indoorTemp, outdoorTemp);
-  const { score: genreScore, detectedGenre } = calculateGenreScore(currentSong, artist, timeSlot);
-  const vibeScore = calculateVibeScore(soundScore, lightScore, tempScore, genreScore);
+  const vibeScore = calculateVibeScore(soundScore, lightScore, tempScore);
   
-  // Weighted average
+  // Weighted average (without genre - weights now sum to 1.0)
   const pulseScore = Math.round(
     (soundScore * FACTOR_WEIGHTS.sound) + 
     (lightScore * FACTOR_WEIGHTS.light) +
     (tempScore * FACTOR_WEIGHTS.temperature) +
-    (genreScore * FACTOR_WEIGHTS.genre) +
     (vibeScore * FACTOR_WEIGHTS.vibe)
   );
   
@@ -263,12 +282,6 @@ export function calculatePulseScore(
         value: indoorTemp ?? null,
         inRange: tempScore >= 80,
         message: getTempMessage(indoorTemp, tempScore),
-      },
-      genre: {
-        score: genreScore,
-        value: detectedGenre,
-        inRange: genreScore >= 80,
-        message: getGenreMessage(detectedGenre, genreScore, timeSlot),
       },
       vibe: {
         score: vibeScore,
