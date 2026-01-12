@@ -17,11 +17,10 @@ import { Login } from './pages/Login';
 import { AdminPortal } from './pages/admin/AdminPortal';
 import { Error404 } from './pages/Error404';
 import { Offline } from './pages/Offline';
-import { Pulse } from './pages/Pulse';
-import { History } from './pages/History';
+import { Live } from './pages/Live';
+import { Analytics } from './pages/Analytics';
 import { Settings } from './pages/Settings';
 import { SongLog } from './pages/SongLog';
-import { Reports } from './pages/Reports';
 
 // Layout
 import { DashboardLayout } from './layouts/DashboardLayout';
@@ -34,7 +33,7 @@ import { usePulseScore, useWeather } from './stores/pulseStore';
 // ============ PROTECTED DASHBOARD ============
 
 function ProtectedDashboard() {
-  const [activeTab, setActiveTab] = useState<TabId>('pulse');
+  const [activeTab, setActiveTab] = useState<TabId>('live');
   
   // Get shared pulse score and weather for header display
   const pulseScore = usePulseScore();
@@ -45,7 +44,7 @@ function ProtectedDashboard() {
   
   // Set browser tab title
   useEffect(() => {
-    document.title = 'Pulse';
+    document.title = 'Advizia Pulse';
   }, []);
   
   useEffect(() => {
@@ -74,18 +73,16 @@ function ProtectedDashboard() {
   // Render active tab content
   const renderTabContent = () => {
     switch (activeTab) {
-      case 'pulse':
-        return <Pulse />;
-      case 'history':
-        return <History />;
+      case 'live':
+        return <Live />;
+      case 'analytics':
+        return <Analytics />;
       case 'songs':
         return <SongLog />;
-      case 'reports':
-        return <Reports />;
       case 'settings':
         return <Settings />;
       default:
-        return <Pulse />;
+        return <Live />;
     }
   };
   

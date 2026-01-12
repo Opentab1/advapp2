@@ -69,7 +69,7 @@ interface CelebrationState {
 
 // ============ MAIN COMPONENT ============
 
-export function Pulse() {
+export function Live() {
   const user = authService.getStoredUser();
   const venueName = user?.venueName || 'Your Venue';
   const venueId = user?.venueId || '';
@@ -432,4 +432,4 @@ export function Pulse() {
   );
 }
 
-export default Pulse;
+export default Live;

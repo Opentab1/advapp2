@@ -1,7 +1,7 @@
 /**
  * TabNav - Bottom navigation for mobile + side nav for desktop
  * 
- * 4 tabs: Pulse, History, Songs, Settings
+ * 4 tabs: Live, Analytics, Songs, Settings
  * Mobile: Fixed bottom bar
  * Desktop: Left sidebar
  * 
@@ -9,10 +9,10 @@
  */
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, BarChart2, Music, Settings, FileText, LucideIcon } from 'lucide-react';
+import { Zap, BarChart2, Music, Settings, LucideIcon } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 
-export type TabId = 'pulse' | 'history' | 'songs' | 'reports' | 'settings';
+export type TabId = 'live' | 'analytics' | 'songs' | 'settings';
 
 interface Tab {
   id: TabId;
@@ -21,10 +21,9 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
-  { id: 'pulse', label: 'Pulse', icon: Zap },
-  { id: 'history', label: 'History', icon: BarChart2 },
+  { id: 'live', label: 'Live', icon: Zap },
+  { id: 'analytics', label: 'Analytics', icon: BarChart2 },
   { id: 'songs', label: 'Songs', icon: Music },
-  { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
