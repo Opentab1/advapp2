@@ -1,4 +1,15 @@
-import { useState, useEffect } from 'react';
+/**
+ * VenuesManagement - Admin venue management page
+ * 
+ * Features:
+ * - List all venues with status
+ * - Create new venue
+ * - Edit venue details
+ * - Suspend/activate venues
+ * - Generate RPi config
+ */
+
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Building2, 
@@ -10,72 +21,100 @@ import {
   Wifi,
   Edit,
   FileDown,
-  Eye
+  Eye,
+  RefreshCw,
+  CheckCircle,
+  XCircle,
+  Clock,
+  AlertTriangle,
+  Ban,
+  Settings
 } from 'lucide-react';
 import { CreateVenueModal, VenueFormData } from '../../components/admin/CreateVenueModal';
 import { RPiConfigGenerator } from '../../components/admin/RPiConfigGenerator';
-import apiService from '../../services/api.service';
-
-interface Venue {
-  id: string;
-  name: string;
-  venueId: string;
-  createdDate: string;
-  locations: number;
-  users: number;
-  devices: number;
-  status: 'active' | 'inactive' | 'suspended';
-  plan: string;
-  lastData: string;
-}
+import adminService, { AdminVenue, CreateVenueInput } from '../../services/admin.service';
 
 export function VenuesManagement() {
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'suspended'>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name'>('newest');
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showConfigGenerator, setShowConfigGenerator] = useState<Venue | null>(null);
+  const [showConfigGenerator, setShowConfigGenerator] = useState<AdminVenue | null>(null);
   const [, setIsCreating] = useState(false);
-  const [venues, setVenues] = useState<Venue[]>([]);
-  const [, setLoadingVenues] = useState(true);
+  const [venues, setVenues] = useState<AdminVenue[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+  // Fetch venues
+  const fetchVenues = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const venueList = await adminService.listVenues();
+      setVenues(venueList);
+    } catch (err: any) {
+      console.error('Failed to fetch venues:', err);
+      setError(err.message || 'Failed to load venues');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchVenues();
+  }, [fetchVenues]);
+
+  // Filter and sort venues
+  const filteredVenues = venues
+    .filter(venue => {
+      // Status filter
+      if (statusFilter !== 'all' && venue.status !== statusFilter) return false;
+      
+      // Search filter
+      if (searchTerm) {
+        const search = searchTerm.toLowerCase();
+        return (
+          venue.venueName.toLowerCase().includes(search) ||
+          venue.venueId.toLowerCase().includes(search) ||
+          (venue.locationName?.toLowerCase().includes(search))
+        );
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'newest':
+          return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+        case 'oldest':
+          return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+        case 'name':
+          return a.venueName.localeCompare(b.venueName);
+        default:
+          return 0;
+      }
+    });
+
+  // Handle venue creation
   const handleCreateVenue = async (venueData: VenueFormData) => {
     setIsCreating(true);
     try {
-      // Call API to create venue with auto password generation
-      // Password must have: uppercase, lowercase, numbers, special chars
-      const randomStr = Math.random().toString(36).slice(2, 10);
-      const randomNum = Math.floor(Math.random() * 900) + 100; // 3-digit number
-      const tempPassword = `Temp${randomNum}${randomStr}!`;
-      
-      const result = await apiService.createVenue({
+      const input: CreateVenueInput = {
         venueName: venueData.venueName,
         venueId: venueData.venueId,
         locationName: venueData.locationName,
         locationId: venueData.locationId,
         ownerEmail: venueData.ownerEmail,
         ownerName: venueData.ownerName,
-        tempPassword: tempPassword
-      });
+      };
 
-      console.log('🔍 API Result:', result);
-      console.log('🔍 tempPassword from result:', result.tempPassword);
-      console.log('🔍 deviceData from result:', result.deviceData);
+      const result = await adminService.createVenue(input);
 
       if (result.success) {
-        // Download certificates if available
-        if (result.deviceData?.credentials) {
-          downloadCertificatesZip(result);
-        }
-        
-        alert(`✅ Venue "${venueData.venueName}" created successfully!\n\nOwner: ${venueData.ownerEmail}\nTemporary Password: ${tempPassword}\n\n⚠️ Save this password! The owner will need it to login.\n\n📥 Certificate package has been downloaded!`);
-        
-        // Close modal
+        alert(`✅ Venue "${venueData.venueName}" created successfully!\n\nOwner: ${venueData.ownerEmail}\nTemporary Password: ${result.tempPassword}\n\n⚠️ Save this password! The owner will need it to login.`);
         setShowCreateModal(false);
-        
-        // Refresh venues list (when API is connected)
-        // TODO: Fetch real venues from DynamoDB/API
-        console.log('✅ Venue created, list should refresh here');
+        fetchVenues(); // Refresh list
       } else {
-        alert(`❌ Error: ${result.message || 'Failed to create venue'}`);
+        alert(`❌ Error: ${result.message}`);
       }
     } catch (error: any) {
       console.error('Failed to create venue:', error);
@@ -85,123 +124,61 @@ export function VenuesManagement() {
     }
   };
 
-  const downloadCertificatesZip = (venueResult: any) => {
-    try {
-      const { venueId, deviceData } = venueResult;
-      const { credentials, deviceId, iotEndpoint, mqttTopic } = deviceData;
-      
-      // Create certificate files content
-      const files = {
-        'certificates/certificate.pem.crt': credentials.certificatePem,
-        'certificates/private.pem.key': credentials.privateKey,
-        'certificates/public.pem.key': credentials.publicKey,
-        'certificates/root-CA.crt': credentials.rootCA,
-        'config.json': JSON.stringify({
-          venueId,
-          deviceId,
-          iotEndpoint,
-          mqttTopic,
-          publishInterval: 15,
-          version: '2.0.0'
-        }, null, 2),
-        'venue-info.json': JSON.stringify({
-          venueId,
-          venueName: venueResult.venueName || venueId,
-          deviceId,
-          iotEndpoint,
-          mqttTopic,
-          createdAt: new Date().toISOString()
-        }, null, 2),
-        'INSTRUCTIONS.txt': `Pulse Dashboard - Raspberry Pi Setup Instructions
-
-Venue: ${venueId}
-Device: ${deviceId}
-
-SETUP STEPS:
-============
-
-1. Extract this ZIP to your Raspberry Pi
-
-2. Move certificates to the correct location:
-   mkdir -p /home/pi/certs
-   mv certificates/* /home/pi/certs/
-
-3. Update your Python script with these values:
-   VENUE_ID = "${venueId}"
-   DEVICE_ID = "${deviceId}"
-   IOT_ENDPOINT = "${iotEndpoint}"
-   MQTT_TOPIC = "${mqttTopic}"
-   CERT_PATH = "/home/pi/certs/certificate.pem.crt"
-   PRIVATE_KEY_PATH = "/home/pi/certs/private.pem.key"
-   ROOT_CA_PATH = "/home/pi/certs/root-CA.crt"
-
-4. Run your sensor publisher script
-
-For support: support@advizia.ai
-`
-      };
-      
-      // Create a simple text-based "ZIP" (actually a tar-like bundle)
-      // For a real ZIP, you'd need JSZip library
-      // For now, let's download individual files or use a JSON bundle
-      
-      // Create a combined JSON bundle for now
-      const bundle = {
-        venueId,
-        deviceId,
-        files: files,
-        metadata: {
-          createdAt: new Date().toISOString(),
-          venueId,
-          deviceId,
-          iotEndpoint,
-          mqttTopic
-        }
-      };
-      
-      const bundleJson = JSON.stringify(bundle, null, 2);
-      const blob = new Blob([bundleJson], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `pulse-${venueId}-certificates.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      
-      console.log('✅ Certificate bundle downloaded');
-    } catch (error) {
-      console.error('Failed to download certificates:', error);
-      alert('⚠️ Venue created but failed to download certificates. Please contact support.');
+  // Handle venue status update
+  const handleStatusChange = async (venueId: string, newStatus: 'active' | 'suspended') => {
+    const success = await adminService.updateVenueStatus(venueId, newStatus);
+    if (success) {
+      fetchVenues();
+    } else {
+      alert('Failed to update venue status. This action requires the updateVenueStatus resolver.');
     }
   };
 
-  const handleGenerateConfig = (venue: Venue) => {
+  // Generate config
+  const handleGenerateConfig = (venue: AdminVenue) => {
     setShowConfigGenerator(venue);
   };
 
-  // Fetch real venues from DynamoDB
-  const fetchVenues = async () => {
-    setLoadingVenues(true);
+  // Format date
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return 'Unknown';
     try {
-      // For now, we need to implement a GraphQL query or use DynamoDB scan
-      // Temporarily show empty list - will be implemented properly next
-      // TODO: Add proper GraphQL query to list all venues from VenueConfig
-      console.log('TODO: Fetch real venues from DynamoDB VenueConfig table');
-      setVenues([]);
-    } catch (error) {
-      console.error('Failed to fetch venues:', error);
-      setVenues([]);
-    } finally {
-      setLoadingVenues(false);
+      return new Date(dateStr).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      });
+    } catch {
+      return dateStr;
     }
   };
 
-  // Load venues on mount
-  useEffect(() => {
-    fetchVenues();
-  }, []);
+  // Get status icon
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'active':
+        return (
+          <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-500/20 text-green-400">
+            <CheckCircle className="w-3 h-3" />
+            Active
+          </span>
+        );
+      case 'suspended':
+        return (
+          <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-red-500/20 text-red-400">
+            <Ban className="w-3 h-3" />
+            Suspended
+          </span>
+        );
+      default:
+        return (
+          <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-gray-500/20 text-gray-400">
+            <XCircle className="w-3 h-3" />
+            Inactive
+          </span>
+        );
+    }
+  };
 
   return (
     <div className="min-h-screen p-4 md:p-6 lg:p-8">
@@ -209,25 +186,40 @@ For support: support@advizia.ai
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
       >
+        {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold gradient-text mb-2">🏢 Venues Management</h1>
-            <p className="text-gray-400">Manage all client venues and locations</p>
+            <p className="text-gray-400">
+              {loading ? 'Loading...' : `${venues.length} venue${venues.length !== 1 ? 's' : ''} total`}
+            </p>
           </div>
-          <motion.button
-            onClick={() => setShowCreateModal(true)}
-            className="btn-primary flex items-center gap-2"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <Plus className="w-4 h-4" />
-            Create New Venue
-          </motion.button>
+          <div className="flex items-center gap-3">
+            <motion.button
+              onClick={fetchVenues}
+              disabled={loading}
+              className="btn-secondary flex items-center gap-2"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </motion.button>
+            <motion.button
+              onClick={() => setShowCreateModal(true)}
+              className="btn-primary flex items-center gap-2"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <Plus className="w-4 h-4" />
+              Create New Venue
+            </motion.button>
+          </div>
         </div>
 
         {/* Search & Filters */}
-        <div className="flex gap-4 mb-6">
-          <div className="flex-1 relative">
+        <div className="flex flex-wrap gap-4 mb-6">
+          <div className="flex-1 min-w-[200px] relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
@@ -237,62 +229,112 @@ For support: support@advizia.ai
               className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 text-white"
             />
           </div>
-          <select className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-purple-500/50">
-            <option>All Statuses</option>
-            <option>Active</option>
-            <option>Inactive</option>
-            <option>Suspended</option>
+          <select 
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as any)}
+            className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-purple-500/50"
+          >
+            <option value="all">All Statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="suspended">Suspended</option>
           </select>
-          <select className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-purple-500/50">
-            <option>Sort: Newest</option>
-            <option>Sort: Oldest</option>
-            <option>Sort: Name A-Z</option>
-            <option>Sort: Name Z-A</option>
+          <select 
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as any)}
+            className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-purple-500/50"
+          >
+            <option value="newest">Sort: Newest</option>
+            <option value="oldest">Sort: Oldest</option>
+            <option value="name">Sort: Name A-Z</option>
           </select>
         </div>
 
+        {/* Error State */}
+        {error && (
+          <motion.div
+            className="glass-card p-6 mb-6 border-red-500/30"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
+            <div className="flex items-center gap-3 text-red-400">
+              <AlertTriangle className="w-5 h-5" />
+              <span>{error}</span>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Loading State */}
+        {loading && (
+          <div className="flex items-center justify-center py-12">
+            <RefreshCw className="w-8 h-8 text-purple-400 animate-spin" />
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!loading && venues.length === 0 && (
+          <motion.div
+            className="glass-card p-12 text-center"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+          >
+            <Building2 className="w-16 h-16 mx-auto mb-4 text-gray-600" />
+            <h3 className="text-xl font-bold text-white mb-2">No Venues Found</h3>
+            <p className="text-gray-400 mb-4">
+              {searchTerm || statusFilter !== 'all' 
+                ? 'No venues match your filters' 
+                : 'Create your first venue to get started'}
+            </p>
+            {!searchTerm && statusFilter === 'all' && (
+              <>
+                <button onClick={() => setShowCreateModal(true)} className="btn-primary mb-4">
+                  <Plus className="w-4 h-4 inline mr-2" />
+                  Create First Venue
+                </button>
+                <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-left max-w-md mx-auto">
+                  <div className="flex items-start gap-2">
+                    <Settings className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-yellow-300">
+                      If venues exist but aren't showing, the <code className="text-yellow-400">listAllVenues</code> GraphQL resolver needs to be deployed.
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
+          </motion.div>
+        )}
+
         {/* Venues List */}
-        <div className="space-y-4">
-          {venues.length === 0 ? (
-            <motion.div
-              className="glass-card p-12 text-center"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-            >
-              <Building2 className="w-16 h-16 mx-auto mb-4 text-gray-600" />
-              <h3 className="text-xl font-bold text-white mb-2">No Venues Yet</h3>
-              <p className="text-gray-400 mb-6">Create your first venue to get started</p>
-              <button onClick={() => setShowCreateModal(true)} className="btn-primary">
-                <Plus className="w-4 h-4 inline mr-2" />
-                Create First Venue
-              </button>
-            </motion.div>
-          ) : (
-            venues.map((venue, index) => (
+        {!loading && filteredVenues.length > 0 && (
+          <div className="space-y-4">
+            {filteredVenues.map((venue, index) => (
               <motion.div
-                key={venue.id}
+                key={venue.venueId}
                 className="glass-card p-6 hover:border-purple-500/30 transition-all"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
+                transition={{ delay: index * 0.05 }}
               >
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-xl font-bold text-white">{venue.name}</h3>
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${
-                        venue.status === 'active' 
-                          ? 'bg-green-500/20 text-green-400' 
-                          : venue.status === 'inactive'
-                          ? 'bg-gray-500/20 text-gray-400'
-                          : 'bg-red-500/20 text-red-400'
-                      }`}>
-                        {venue.status === 'active' ? '✅ Active' : venue.status === 'inactive' ? '⚪ Inactive' : '⛔ Suspended'}
-                      </span>
+                      <h3 className="text-xl font-bold text-white">{venue.venueName}</h3>
+                      {getStatusBadge(venue.status)}
                     </div>
-                    <div className="text-sm text-gray-400 mb-3">
-                      ID: <span className="text-purple-400 font-mono">{venue.venueId}</span> · 
-                      Created: {venue.createdDate}
+                    <div className="text-sm text-gray-400 mb-1">
+                      ID: <span className="text-purple-400 font-mono">{venue.venueId}</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-gray-500">
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        Created: {formatDate(venue.createdAt)}
+                      </span>
+                      {venue.lastDataTimestamp && (
+                        <span className="flex items-center gap-1">
+                          <Wifi className="w-3 h-3" />
+                          Last data: {formatDate(venue.lastDataTimestamp)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <button className="p-2 hover:bg-white/5 rounded transition-colors">
@@ -305,60 +347,65 @@ For support: support@advizia.ai
                   <div className="flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-cyan-400" />
                     <div>
-                      <div className="text-white font-semibold">{venue.locations}</div>
-                      <div className="text-xs text-gray-400">Locations</div>
+                      <div className="text-white font-semibold">{venue.locationName || 'Main'}</div>
+                      <div className="text-xs text-gray-400">Location</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <Users className="w-4 h-4 text-green-400" />
                     <div>
-                      <div className="text-white font-semibold">{venue.users}</div>
+                      <div className="text-white font-semibold">{venue.userCount || 0}</div>
                       <div className="text-xs text-gray-400">Users</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <Wifi className="w-4 h-4 text-purple-400" />
                     <div>
-                      <div className="text-white font-semibold">{venue.devices}</div>
+                      <div className="text-white font-semibold">{venue.deviceCount || 0}</div>
                       <div className="text-xs text-gray-400">Devices</div>
                     </div>
                   </div>
                 </div>
 
-                {/* Info */}
-                <div className="flex items-center justify-between mb-4 pb-4 border-b border-white/10">
-                  <div>
-                    <div className="text-sm text-gray-400">Plan</div>
-                    <div className="text-white font-medium">{venue.plan}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm text-gray-400">Last Data</div>
-                    <div className="text-white font-medium">{venue.lastData}</div>
-                  </div>
-                </div>
-
                 {/* Actions */}
-                <div className="flex gap-2">
-                  <button className="btn-secondary text-sm flex-1">
-                    <Eye className="w-4 h-4 inline mr-2" />
-                    View Details
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn-secondary text-sm flex items-center gap-1">
+                    <Eye className="w-4 h-4" />
+                    View
                   </button>
-                  <button className="btn-secondary text-sm flex-1">
-                    <Edit className="w-4 h-4 inline mr-2" />
+                  <button className="btn-secondary text-sm flex items-center gap-1">
+                    <Edit className="w-4 h-4" />
                     Edit
                   </button>
                   <button 
                     onClick={() => handleGenerateConfig(venue)}
-                    className="btn-primary text-sm flex-1"
+                    className="btn-primary text-sm flex items-center gap-1"
                   >
-                    <FileDown className="w-4 h-4 inline mr-2" />
+                    <FileDown className="w-4 h-4" />
                     RPi Config
                   </button>
+                  {venue.status === 'active' ? (
+                    <button 
+                      onClick={() => handleStatusChange(venue.venueId, 'suspended')}
+                      className="btn-secondary text-sm flex items-center gap-1 text-red-400 border-red-500/30 hover:bg-red-500/10"
+                    >
+                      <Ban className="w-4 h-4" />
+                      Suspend
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={() => handleStatusChange(venue.venueId, 'active')}
+                      className="btn-secondary text-sm flex items-center gap-1 text-green-400 border-green-500/30 hover:bg-green-500/10"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      Activate
+                    </button>
+                  )}
                 </div>
               </motion.div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </motion.div>
 
       {/* Create Venue Modal */}
@@ -374,11 +421,11 @@ For support: support@advizia.ai
         <RPiConfigGenerator
           onClose={() => setShowConfigGenerator(null)}
           venueId={showConfigGenerator.venueId}
-          venueName={showConfigGenerator.name}
-          locationId="mainfloor"
-          locationName="Main Floor"
+          venueName={showConfigGenerator.venueName}
+          locationId={showConfigGenerator.locationId || 'mainfloor'}
+          locationName={showConfigGenerator.locationName || 'Main Floor'}
           deviceId={`rpi-${showConfigGenerator.venueId}-001`}
-          mqttTopic={`pulse/sensors/${showConfigGenerator.venueId}`}
+          mqttTopic={showConfigGenerator.mqttTopic || `pulse/sensors/${showConfigGenerator.venueId}`}
         />
       )}
     </div>
