@@ -1,4 +1,10 @@
-import { useState } from 'react';
+/**
+ * AuditLog - Admin audit log viewer
+ * 
+ * Track all admin actions: venue creation, user management, config changes
+ */
+
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Search, 
@@ -8,8 +14,13 @@ import {
   Trash2,
   Edit,
   Key,
-  FileDown
+  FileDown,
+  RefreshCw,
+  Settings,
+  Calendar,
+  Filter
 } from 'lucide-react';
+import adminService from '../../services/admin.service';
 
 interface AuditEntry {
   id: string;
@@ -27,71 +38,72 @@ interface AuditEntry {
 export function AuditLog() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'venue' | 'user' | 'device' | 'system'>('all');
-  const [dateRange, setDateRange] = useState('7d');
+  const [dateRange, setDateRange] = useState<'24h' | '7d' | '30d' | '90d' | 'all'>('7d');
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // TODO: Replace with real data from API
-  const auditEntries: AuditEntry[] = [
-    {
-      id: '1',
-      timestamp: 'Nov 6, 2025 2:45 PM',
-      action: 'CREATE_VENUE',
-      actionType: 'create',
-      targetType: 'venue',
-      targetName: 'Downtown Lounge',
-      performedBy: 'sarah@advizia.com',
-      performedByRole: 'Sales',
-      details: 'Created new venue with 1 location',
-      ipAddress: '192.168.1.100'
-    },
-    {
-      id: '2',
-      timestamp: 'Nov 6, 2025 2:30 PM',
-      action: 'PASSWORD_RESET',
-      actionType: 'update',
-      targetType: 'user',
-      targetName: 'john@fergsbar.com',
-      performedBy: 'support@advizia.com',
-      performedByRole: 'Support',
-      details: 'User requested password reset',
-      ipAddress: '192.168.1.105'
-    },
-    {
-      id: '3',
-      timestamp: 'Nov 6, 2025 1:15 PM',
-      action: 'UPDATE_PERMISSIONS',
-      actionType: 'update',
-      targetType: 'user',
-      targetName: 'sarah@advizia.com',
-      performedBy: 'you@advizia.com',
-      performedByRole: 'Super Admin',
-      details: 'Added "Delete venues" permission',
-      ipAddress: '192.168.1.50'
-    },
-    {
-      id: '4',
-      timestamp: 'Nov 6, 2025 12:00 PM',
-      action: 'GENERATE_CONFIG',
-      actionType: 'config',
-      targetType: 'device',
-      targetName: 'rpi-downtown-001',
-      performedBy: 'sarah@advizia.com',
-      performedByRole: 'Sales',
-      details: 'Generated RPi configuration for new venue',
-      ipAddress: '192.168.1.100'
-    },
-    {
-      id: '5',
-      timestamp: 'Nov 5, 2025 4:30 PM',
-      action: 'DELETE_USER',
-      actionType: 'delete',
-      targetType: 'user',
-      targetName: 'old@venue.com',
-      performedBy: 'you@advizia.com',
-      performedByRole: 'Super Admin',
-      details: 'User account closed at client request',
-      ipAddress: '192.168.1.50'
+  // Fetch audit log
+  const fetchAuditLog = useCallback(async () => {
+    setLoading(true);
+    try {
+      const entries = await adminService.getAuditLog({
+        filterType,
+        dateRange,
+        searchTerm,
+        limit: 100
+      });
+      setAuditEntries(entries);
+    } catch (error) {
+      console.error('Failed to fetch audit log:', error);
+    } finally {
+      setLoading(false);
     }
-  ];
+  }, [filterType, dateRange, searchTerm]);
+
+  useEffect(() => {
+    fetchAuditLog();
+  }, [fetchAuditLog]);
+
+  // Export to CSV
+  const handleExport = () => {
+    if (auditEntries.length === 0) {
+      alert('No entries to export');
+      return;
+    }
+
+    const headers = ['Timestamp', 'Action', 'Type', 'Target', 'Performed By', 'Role', 'Details', 'IP Address'];
+    const rows = auditEntries.map(e => [
+      e.timestamp,
+      e.action,
+      e.targetType,
+      e.targetName,
+      e.performedBy,
+      e.performedByRole,
+      e.details,
+      e.ipAddress
+    ]);
+
+    const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit-log-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Filter entries by search
+  const filteredEntries = auditEntries.filter(entry => {
+    if (!searchTerm) return true;
+    const search = searchTerm.toLowerCase();
+    return (
+      entry.action.toLowerCase().includes(search) ||
+      entry.targetName.toLowerCase().includes(search) ||
+      entry.performedBy.toLowerCase().includes(search) ||
+      entry.details.toLowerCase().includes(search)
+    );
+  });
 
   const getActionIcon = (type: AuditEntry['actionType']) => {
     switch (type) {
@@ -122,16 +134,31 @@ export function AuditLog() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold gradient-text mb-2">📜 Audit Log</h1>
-            <p className="text-gray-400">Track all system actions and changes</p>
+            <p className="text-gray-400">
+              {loading ? 'Loading...' : `${auditEntries.length} entries`}
+            </p>
           </div>
-          <motion.button
-            className="btn-secondary flex items-center gap-2"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <Download className="w-4 h-4" />
-            Export CSV
-          </motion.button>
+          <div className="flex items-center gap-3">
+            <motion.button
+              onClick={fetchAuditLog}
+              disabled={loading}
+              className="btn-secondary flex items-center gap-2"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </motion.button>
+            <motion.button
+              onClick={handleExport}
+              className="btn-secondary flex items-center gap-2"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <Download className="w-4 h-4" />
+              Export CSV
+            </motion.button>
+          </div>
         </div>
 
         {/* Filters */}
@@ -143,31 +170,37 @@ export function AuditLog() {
               placeholder="Search actions..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-purple-500/50 text-white"
+              className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white"
             />
           </div>
-          <select 
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value as any)}
-            className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white"
-          >
-            <option value="all">All Types</option>
-            <option value="venue">Venues</option>
-            <option value="user">Users</option>
-            <option value="device">Devices</option>
-            <option value="system">System</option>
-          </select>
-          <select 
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value)}
-            className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white"
-          >
-            <option value="24h">Last 24 Hours</option>
-            <option value="7d">Last 7 Days</option>
-            <option value="30d">Last 30 Days</option>
-            <option value="90d">Last 90 Days</option>
-            <option value="all">All Time</option>
-          </select>
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <select 
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value as any)}
+              className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white appearance-none"
+            >
+              <option value="all">All Types</option>
+              <option value="venue">Venues</option>
+              <option value="user">Users</option>
+              <option value="device">Devices</option>
+              <option value="system">System</option>
+            </select>
+          </div>
+          <div className="relative">
+            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <select 
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value as any)}
+              className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white appearance-none"
+            >
+              <option value="24h">Last 24 Hours</option>
+              <option value="7d">Last 7 Days</option>
+              <option value="30d">Last 30 Days</option>
+              <option value="90d">Last 90 Days</option>
+              <option value="all">All Time</option>
+            </select>
+          </div>
           <select className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white">
             <option>All Actions</option>
             <option>Create</option>
@@ -178,58 +211,88 @@ export function AuditLog() {
           </select>
         </div>
 
-        {/* Audit Entries */}
-        <div className="space-y-3">
-          {auditEntries.map((entry, index) => (
-            <motion.div
-              key={entry.id}
-              className={`glass-card p-5 border ${getActionColor(entry.actionType)}`}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.05 }}
-            >
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 mt-1">
-                  {getActionIcon(entry.actionType)}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-white font-semibold">{entry.action}</span>
-                        <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-gray-400">
-                          {entry.targetType}
-                        </span>
-                      </div>
-                      <div className="text-sm text-gray-300 mb-1">{entry.targetName}</div>
-                      <div className="text-sm text-gray-400">{entry.details}</div>
-                    </div>
-                    <div className="text-right text-sm text-gray-400">
-                      {entry.timestamp}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 text-xs text-gray-500 mt-3 pt-3 border-t border-white/10">
-                    <div className="flex items-center gap-1">
-                      <User className="w-3 h-3" />
-                      {entry.performedBy} ({entry.performedByRole})
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-gray-500"></span>
-                      {entry.ipAddress}
-                    </div>
-                  </div>
-                </div>
+        {/* Loading */}
+        {loading && (
+          <div className="flex justify-center py-12">
+            <RefreshCw className="w-8 h-8 text-purple-400 animate-spin" />
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!loading && auditEntries.length === 0 && (
+          <div className="glass-card p-12 text-center">
+            <FileDown className="w-16 h-16 mx-auto mb-4 text-gray-600" />
+            <h3 className="text-xl font-bold text-white mb-2">No Audit Entries</h3>
+            <p className="text-gray-400 mb-4">
+              Audit entries will appear once the getAuditLog resolver is deployed
+            </p>
+            <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg max-w-md mx-auto">
+              <div className="flex items-start gap-2">
+                <Settings className="w-5 h-5 text-yellow-400 mt-0.5" />
+                <p className="text-sm text-yellow-300 text-left">
+                  Audit logging requires a DynamoDB table <code className="text-yellow-400">AdminAuditLog</code> and all admin mutations to log their actions.
+                </p>
               </div>
-            </motion.div>
-          ))}
-        </div>
+            </div>
+          </div>
+        )}
+
+        {/* Audit Entries */}
+        {!loading && filteredEntries.length > 0 && (
+          <div className="space-y-3">
+            {filteredEntries.map((entry, index) => (
+              <motion.div
+                key={entry.id}
+                className={`glass-card p-5 border ${getActionColor(entry.actionType)}`}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: index * 0.03 }}
+              >
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 mt-1">
+                    {getActionIcon(entry.actionType)}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-white font-semibold">{entry.action}</span>
+                          <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-gray-400">
+                            {entry.targetType}
+                          </span>
+                        </div>
+                        <div className="text-sm text-gray-300 mb-1">{entry.targetName}</div>
+                        <div className="text-sm text-gray-400">{entry.details}</div>
+                      </div>
+                      <div className="text-right text-sm text-gray-400">
+                        {entry.timestamp}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-gray-500 mt-3 pt-3 border-t border-white/10">
+                      <div className="flex items-center gap-1">
+                        <User className="w-3 h-3" />
+                        {entry.performedBy} ({entry.performedByRole})
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-gray-500"></span>
+                        {entry.ipAddress}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
 
         {/* Load More */}
-        <div className="mt-6 text-center">
-          <button className="btn-secondary">
-            Load More Entries
-          </button>
-        </div>
+        {!loading && filteredEntries.length >= 50 && (
+          <div className="mt-6 text-center">
+            <button className="btn-secondary">
+              Load More Entries
+            </button>
+          </div>
+        )}
       </motion.div>
     </div>
   );

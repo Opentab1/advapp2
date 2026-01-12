@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useAdminData } from '../../hooks/useAdminData';
 import adminService from '../../services/admin.service';
+import { VenueHealthDashboard } from '../../components/admin/VenueHealthDashboard';
 
 export function AdminDashboard() {
   const { stats, venues, users, devices, loading, refresh } = useAdminData();
@@ -219,6 +220,24 @@ export function AdminDashboard() {
           </div>
         </motion.div>
       </div>
+
+      {/* Venue Health Dashboard */}
+      <motion.div
+        className="mb-8"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.45 }}
+      >
+        <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 text-yellow-400" />
+          Venue Health
+        </h2>
+        <VenueHealthDashboard 
+          venues={venues} 
+          devices={devices} 
+          loading={loading}
+        />
+      </motion.div>
 
       {/* Alerts & Activity Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">

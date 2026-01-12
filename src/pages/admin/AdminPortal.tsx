@@ -8,6 +8,7 @@ import { TeamManagement } from './TeamManagement';
 import { DevicesManagement } from './DevicesManagement';
 import { AuditLog } from './AuditLog';
 import { SystemAnalytics } from './SystemAnalytics';
+import { AdminSettings } from './AdminSettings';
 import authService from '../../services/auth.service';
 
 export function AdminPortal() {
@@ -59,14 +60,7 @@ export function AdminPortal() {
           {activeTab === 'devices' && <DevicesManagement />}
           {activeTab === 'audit' && <AuditLog />}
           {activeTab === 'analytics' && <SystemAnalytics />}
-          {activeTab === 'settings' && (
-            <div className="min-h-screen p-8 flex items-center justify-center">
-              <div className="text-center">
-                <h2 className="text-2xl font-bold gradient-text mb-2">Admin Settings</h2>
-                <p className="text-gray-400">System configuration settings coming soon...</p>
-              </div>
-            </div>
-          )}
+          {activeTab === 'settings' && <AdminSettings />}
         </div>
       </div>
     </div>

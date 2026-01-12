@@ -539,6 +539,383 @@ class AdminService {
 
     return [];
   }
+
+  // ============ TEAM MANAGEMENT ============
+
+  /**
+   * List internal admin team members
+   */
+  async listTeamMembers(): Promise<Array<{
+    id: string;
+    email: string;
+    name: string;
+    role: 'admin' | 'sales' | 'support' | 'installer';
+    status: 'active' | 'inactive';
+    permissions: string[];
+    assignedVenues: number;
+    createdAt: string;
+    lastActivity: string;
+  }>> {
+    console.log('👥 Fetching team members...');
+    
+    try {
+      const query = `
+        query ListAdminTeam($limit: Int) {
+          listAdminTeam(limit: $limit) {
+            items {
+              id
+              email
+              name
+              role
+              status
+              permissions
+              assignedVenues
+              createdAt
+              lastActivity
+            }
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({
+        query,
+        variables: { limit: 50 }
+      }) as any;
+
+      if (result.data?.listAdminTeam?.items) {
+        return result.data.listAdminTeam.items;
+      }
+    } catch (error: any) {
+      console.warn('⚠️ listAdminTeam query not available');
+    }
+
+    return [];
+  }
+
+  /**
+   * Create a new team member
+   */
+  async createTeamMember(input: {
+    email: string;
+    name: string;
+    role: 'admin' | 'sales' | 'support' | 'installer';
+    permissions: string[];
+  }): Promise<{ success: boolean; message: string }> {
+    console.log('👤 Creating team member:', input.email);
+    
+    try {
+      const mutation = `
+        mutation CreateAdminTeamMember(
+          $email: String!
+          $name: String!
+          $role: String!
+          $permissions: [String!]!
+        ) {
+          createAdminTeamMember(
+            email: $email
+            name: $name
+            role: $role
+            permissions: $permissions
+          ) {
+            success
+            message
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({
+        query: mutation,
+        variables: input
+      }) as any;
+
+      if (result.data?.createAdminTeamMember?.success) {
+        return { success: true, message: 'Team member created' };
+      }
+
+      return { success: false, message: result.data?.createAdminTeamMember?.message || 'Failed to create team member' };
+    } catch (error: any) {
+      console.error('❌ Create team member failed:', error);
+      return { success: false, message: error.message || 'Failed to create team member' };
+    }
+  }
+
+  /**
+   * Update team member permissions
+   */
+  async updateTeamMemberPermissions(email: string, permissions: string[]): Promise<boolean> {
+    console.log('🔐 Updating permissions for:', email);
+    
+    try {
+      const mutation = `
+        mutation UpdateAdminPermissions($email: String!, $permissions: [String!]!) {
+          updateAdminPermissions(email: $email, permissions: $permissions) {
+            success
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({
+        query: mutation,
+        variables: { email, permissions }
+      }) as any;
+
+      return result.data?.updateAdminPermissions?.success || false;
+    } catch (error) {
+      console.error('❌ Update permissions failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Deactivate a team member
+   */
+  async deactivateTeamMember(email: string): Promise<boolean> {
+    console.log('🚫 Deactivating team member:', email);
+    
+    try {
+      const mutation = `
+        mutation DeactivateAdminTeamMember($email: String!) {
+          deactivateAdminTeamMember(email: $email) {
+            success
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({
+        query: mutation,
+        variables: { email }
+      }) as any;
+
+      return result.data?.deactivateAdminTeamMember?.success || false;
+    } catch (error) {
+      console.error('❌ Deactivate team member failed:', error);
+      return false;
+    }
+  }
+
+  // ============ AUDIT LOG ============
+
+  /**
+   * Get audit log entries with filters
+   */
+  async getAuditLog(options: {
+    limit?: number;
+    filterType?: 'all' | 'venue' | 'user' | 'device' | 'system';
+    dateRange?: '24h' | '7d' | '30d' | '90d' | 'all';
+    searchTerm?: string;
+  } = {}): Promise<Array<{
+    id: string;
+    timestamp: string;
+    action: string;
+    actionType: 'create' | 'update' | 'delete' | 'access' | 'config';
+    targetType: 'venue' | 'user' | 'device' | 'system';
+    targetName: string;
+    performedBy: string;
+    performedByRole: string;
+    details: string;
+    ipAddress: string;
+  }>> {
+    console.log('📜 Fetching audit log...');
+    
+    try {
+      const query = `
+        query GetAuditLog($limit: Int, $filterType: String, $dateRange: String) {
+          getAuditLog(limit: $limit, filterType: $filterType, dateRange: $dateRange) {
+            items {
+              id
+              timestamp
+              action
+              actionType
+              targetType
+              targetName
+              performedBy
+              performedByRole
+              details
+              ipAddress
+            }
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({
+        query,
+        variables: {
+          limit: options.limit || 50,
+          filterType: options.filterType || 'all',
+          dateRange: options.dateRange || '7d'
+        }
+      }) as any;
+
+      if (result.data?.getAuditLog?.items) {
+        return result.data.getAuditLog.items;
+      }
+    } catch (error: any) {
+      console.warn('⚠️ getAuditLog query not available');
+    }
+
+    return [];
+  }
+
+  // ============ SYSTEM ANALYTICS ============
+
+  /**
+   * Get system analytics data
+   */
+  async getSystemAnalytics(): Promise<{
+    venueGrowth: Array<{ month: string; count: number }>;
+    userGrowth: Array<{ month: string; count: number }>;
+    deviceStatus: { online: number; offline: number; error: number };
+    dataVolume: Array<{ venueId: string; venueName: string; dataPoints: number }>;
+    issuesByType: Array<{ type: string; count: number; trend: 'up' | 'down' | 'stable' }>;
+    mrr: number;
+    projectedAnnual: number;
+    avgRevenuePerVenue: number;
+  }> {
+    console.log('📊 Fetching system analytics...');
+    
+    try {
+      const query = `
+        query GetSystemAnalytics {
+          getSystemAnalytics {
+            venueGrowth { month count }
+            userGrowth { month count }
+            deviceStatus { online offline error }
+            dataVolume { venueId venueName dataPoints }
+            issuesByType { type count trend }
+            mrr
+            projectedAnnual
+            avgRevenuePerVenue
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({ query }) as any;
+
+      if (result.data?.getSystemAnalytics) {
+        return result.data.getSystemAnalytics;
+      }
+    } catch (error: any) {
+      console.warn('⚠️ getSystemAnalytics query not available');
+    }
+
+    // Return placeholder data
+    return {
+      venueGrowth: [],
+      userGrowth: [],
+      deviceStatus: { online: 0, offline: 0, error: 0 },
+      dataVolume: [],
+      issuesByType: [],
+      mrr: 0,
+      projectedAnnual: 0,
+      avgRevenuePerVenue: 0
+    };
+  }
+
+  // ============ ADMIN SETTINGS ============
+
+  /**
+   * Get admin settings
+   */
+  async getAdminSettings(): Promise<{
+    alertThresholds: {
+      offlineMinutes: number;
+      dataGapHours: number;
+      tempAnomalyDegrees: number;
+    };
+    notifications: {
+      emailOnCritical: boolean;
+      emailOnNewVenue: boolean;
+      slackWebhook?: string;
+    };
+    defaults: {
+      defaultPlan: string;
+      defaultTimezone: string;
+      autoProvisionDevice: boolean;
+    };
+  }> {
+    console.log('⚙️ Fetching admin settings...');
+    
+    try {
+      const query = `
+        query GetAdminSettings {
+          getAdminSettings {
+            alertThresholds { offlineMinutes dataGapHours tempAnomalyDegrees }
+            notifications { emailOnCritical emailOnNewVenue slackWebhook }
+            defaults { defaultPlan defaultTimezone autoProvisionDevice }
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({ query }) as any;
+
+      if (result.data?.getAdminSettings) {
+        return result.data.getAdminSettings;
+      }
+    } catch (error: any) {
+      console.warn('⚠️ getAdminSettings query not available');
+    }
+
+    // Return defaults
+    return {
+      alertThresholds: {
+        offlineMinutes: 30,
+        dataGapHours: 4,
+        tempAnomalyDegrees: 20
+      },
+      notifications: {
+        emailOnCritical: true,
+        emailOnNewVenue: true
+      },
+      defaults: {
+        defaultPlan: 'Standard',
+        defaultTimezone: 'America/New_York',
+        autoProvisionDevice: true
+      }
+    };
+  }
+
+  /**
+   * Save admin settings
+   */
+  async saveAdminSettings(settings: {
+    alertThresholds?: {
+      offlineMinutes?: number;
+      dataGapHours?: number;
+      tempAnomalyDegrees?: number;
+    };
+    notifications?: {
+      emailOnCritical?: boolean;
+      emailOnNewVenue?: boolean;
+      slackWebhook?: string;
+    };
+    defaults?: {
+      defaultPlan?: string;
+      defaultTimezone?: string;
+      autoProvisionDevice?: boolean;
+    };
+  }): Promise<boolean> {
+    console.log('💾 Saving admin settings...');
+    
+    try {
+      const mutation = `
+        mutation SaveAdminSettings($input: AdminSettingsInput!) {
+          saveAdminSettings(input: $input) {
+            success
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({
+        query: mutation,
+        variables: { input: settings }
+      }) as any;
+
+      return result.data?.saveAdminSettings?.success || false;
+    } catch (error) {
+      console.error('❌ Save admin settings failed:', error);
+      return false;
+    }
+  }
 }
 
 export const adminService = new AdminService();
