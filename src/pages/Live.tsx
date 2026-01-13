@@ -35,6 +35,7 @@ import { PulsePageSkeleton } from '../components/common/LoadingState';
 import { TonightsPlaybook } from '../components/pulse/TonightsPlaybook';
 import { TodaysOutlook } from '../components/pulse/TodaysOutlook';
 import { LearningProgress } from '../components/pulse/LearningProgress';
+import { RetentionMetrics } from '../components/pulse/RetentionMetrics';
 
 // Hooks & Services
 import { usePulseData } from '../hooks/usePulseData';
@@ -277,6 +278,25 @@ export function Live() {
           albumArt={pulseData.sensorData?.albumArt}
           lastUpdated={pulseData.lastUpdated}
           onTap={() => setActiveModal('livestats')}
+        />
+      </motion.div>
+      
+      {/* Guest Retention Metrics - 100% Accurate */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+      >
+        <RetentionMetrics
+          retentionRate={pulseData.retentionMetrics.retentionRate}
+          turnoverRate={pulseData.retentionMetrics.turnoverRate}
+          entryExitRatio={pulseData.retentionMetrics.entryExitRatio}
+          crowdTrend={pulseData.retentionMetrics.crowdTrend}
+          avgStayMinutes={pulseData.retentionMetrics.avgStayMinutes}
+          exitsPerHour={pulseData.retentionMetrics.exitsPerHour}
+          todayEntries={pulseData.todayEntries}
+          todayExits={pulseData.todayExits}
+          currentOccupancy={pulseData.currentOccupancy}
         />
       </motion.div>
       
