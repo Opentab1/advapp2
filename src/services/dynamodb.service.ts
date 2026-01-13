@@ -1208,6 +1208,9 @@ class DynamoDBService {
       case '7d':
         startTime = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
         break;
+      case '14d':
+        startTime = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+        break;
       case '30d':
         startTime = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
         break;
