@@ -239,23 +239,62 @@ function processSummary(
     }
   });
   
-  // Calculate total guests correctly: difference between first and last entry counts
-  // (entries is cumulative, so we need the delta, not the max)
+  // Calculate total guests from cumulative entry counters
+  // 
+  // The hourly aggregator stores MAX cumulative entries per hour.
+  // Example: Hour1 max=110, Hour2 max=130, Hour3 max=145
+  // 
+  // Simple delta (lastEntries - firstEntries) = 145 - 110 = 35
+  // But this MISSES entries from Hour1 (before our first reading's max)
+  // 
+  // To compensate: we extrapolate the first interval's entries
+  // using the average entry rate from subsequent intervals.
   const calculateGuestCount = (periodData: SensorData[]): number => {
     const withEntries = periodData
-      .filter(d => d.occupancy?.entries !== undefined)
+      .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     
-    if (withEntries.length < 2) {
-      // Not enough data points, fall back to max entries if available
-      return withEntries[0]?.occupancy?.entries || 0;
+    if (withEntries.length === 0) {
+      return 0;
+    }
+    
+    if (withEntries.length === 1) {
+      // Single data point - can't calculate trend
+      // Return 0 since we can't determine entries for just this period
+      return 0;
     }
     
     const firstEntries = withEntries[0].occupancy!.entries;
     const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
     
-    // Total guests = entries at end - entries at start of period
-    return Math.max(0, lastEntries - firstEntries);
+    // Base calculation: entries accumulated from first to last reading
+    let measuredEntries = Math.max(0, lastEntries - firstEntries);
+    
+    // Handle counter resets: sum positive deltas
+    if (measuredEntries === 0 || lastEntries < firstEntries) {
+      measuredEntries = 0;
+      for (let i = 1; i < withEntries.length; i++) {
+        const prev = withEntries[i - 1].occupancy!.entries;
+        const curr = withEntries[i].occupancy!.entries;
+        if (curr > prev) {
+          measuredEntries += (curr - prev);
+        } else if (curr < prev) {
+          // Counter reset - add current value as new entries since reset
+          measuredEntries += curr;
+        }
+      }
+    }
+    
+    // Extrapolate first interval: we have N data points spanning N-1 intervals
+    // but our period actually has N intervals (including before first reading)
+    // Scale up by N/(N-1) to account for the missing first interval
+    const intervals = withEntries.length - 1;
+    if (intervals > 0 && measuredEntries > 0) {
+      const scaleFactor = (intervals + 1) / intervals;
+      return Math.round(measuredEntries * scaleFactor);
+    }
+    
+    return measuredEntries;
   };
   
   const totalGuests = calculateGuestCount(data);
@@ -486,17 +525,42 @@ function processTrend(
   previousData: SensorData[],
   timeRange: InsightsTimeRange
 ): TrendData {
-  // Helper to calculate guest count correctly
+  // Helper to calculate guest count correctly (same logic as processSummary)
   const calcGuestCount = (periodData: SensorData[]): number => {
     const withEntries = periodData
-      .filter(d => d.occupancy?.entries !== undefined)
+      .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     
-    if (withEntries.length < 2) return withEntries[0]?.occupancy?.entries || 0;
+    if (withEntries.length === 0) return 0;
+    if (withEntries.length === 1) return 0; // Can't calculate delta with single point
     
     const firstEntries = withEntries[0].occupancy!.entries;
     const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    return Math.max(0, lastEntries - firstEntries);
+    
+    let measuredEntries = Math.max(0, lastEntries - firstEntries);
+    
+    // Handle counter resets
+    if (measuredEntries === 0 || lastEntries < firstEntries) {
+      measuredEntries = 0;
+      for (let i = 1; i < withEntries.length; i++) {
+        const prev = withEntries[i - 1].occupancy!.entries;
+        const curr = withEntries[i].occupancy!.entries;
+        if (curr > prev) {
+          measuredEntries += (curr - prev);
+        } else if (curr < prev) {
+          measuredEntries += curr;
+        }
+      }
+    }
+    
+    // Scale to account for missing first interval
+    const intervals = withEntries.length - 1;
+    if (intervals > 0 && measuredEntries > 0) {
+      const scaleFactor = (intervals + 1) / intervals;
+      return Math.round(measuredEntries * scaleFactor);
+    }
+    
+    return measuredEntries;
   };
 
   // Helper to calculate avg stay from exit velocity
@@ -733,17 +797,42 @@ function processComparison(
     return Math.min(180, Math.round((avgOccupancy / exitsPerHour) * 60));
   };
 
-  // Helper to calculate guest count correctly
+  // Helper to calculate guest count correctly (same logic as processSummary)
   const calcGuestCount = (periodData: SensorData[]): number => {
     const withEntries = periodData
-      .filter(d => d.occupancy?.entries !== undefined)
+      .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     
-    if (withEntries.length < 2) return withEntries[0]?.occupancy?.entries || 0;
+    if (withEntries.length === 0) return 0;
+    if (withEntries.length === 1) return 0; // Can't calculate delta with single point
     
     const firstEntries = withEntries[0].occupancy!.entries;
     const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    return Math.max(0, lastEntries - firstEntries);
+    
+    let measuredEntries = Math.max(0, lastEntries - firstEntries);
+    
+    // Handle counter resets
+    if (measuredEntries === 0 || lastEntries < firstEntries) {
+      measuredEntries = 0;
+      for (let i = 1; i < withEntries.length; i++) {
+        const prev = withEntries[i - 1].occupancy!.entries;
+        const curr = withEntries[i].occupancy!.entries;
+        if (curr > prev) {
+          measuredEntries += (curr - prev);
+        } else if (curr < prev) {
+          measuredEntries += curr;
+        }
+      }
+    }
+    
+    // Scale to account for missing first interval
+    const intervals = withEntries.length - 1;
+    if (intervals > 0 && measuredEntries > 0) {
+      const scaleFactor = (intervals + 1) / intervals;
+      return Math.round(measuredEntries * scaleFactor);
+    }
+    
+    return measuredEntries;
   };
 
   // Current period
