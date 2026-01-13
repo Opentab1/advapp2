@@ -142,39 +142,63 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     if (!venueId) return;
     
     try {
-      // Calculate 3am today (or yesterday if before 3am now)
       const now = new Date();
+      
+      // Calculate 3am today (or yesterday if we're before 3am)
+      // "Bar day" runs 3am to 3am, not midnight to midnight
+      // This is because bars have people at 1am/2am - that's still "tonight"
       const barDayStart = new Date(now);
       barDayStart.setHours(3, 0, 0, 0);
       if (now.getHours() < 3) {
         barDayStart.setDate(barDayStart.getDate() - 1);
       }
       
-      // Query window: 3am to 4am
-      const barDayEnd = new Date(barDayStart);
-      barDayEnd.setHours(4, 0, 0, 0);
-      
-      console.log('🔢 Querying 3am data:', barDayStart.toLocaleString());
-      
       const dynamoDBService = (await import('../services/dynamodb.service')).default;
-      const data = await dynamoDBService.getSensorDataByDateRange(venueId, barDayStart, barDayEnd, 10);
       
-      // Find first record with occupancy
+      // Search from 3AM to NOW - find the earliest data point AFTER 3am
+      // This handles cases where sensor was offline at exactly 3am
+      console.log(`🔢 Searching for baseline from ${barDayStart.toLocaleString()} to now...`);
+      
+      const data = await dynamoDBService.getSensorDataByDateRange(
+        venueId, 
+        barDayStart,  // Start: 3am today (bar day start)
+        now,          // End: right now
+        50            // Get enough data points to find the earliest
+      );
+      
       const withOccupancy = data?.filter(d => d.occupancy) || [];
       
       if (withOccupancy.length > 0) {
-        const first = withOccupancy[0];
+        // Sort ascending by timestamp - get EARLIEST point after 3am
+        withOccupancy.sort((a, b) => 
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+        
+        const earliest = withOccupancy[0];
+        const baselineTime = new Date(earliest.timestamp);
+        
         const baselineValue = {
-          entries: first.occupancy!.entries,
-          exits: first.occupancy!.exits
+          entries: earliest.occupancy!.entries,
+          exits: earliest.occupancy!.exits
         };
+        
         setBaseline(baselineValue);
-        console.log('✅ 3am baseline:', baselineValue);
+        
+        // Log when we found baseline
+        const hourFound = baselineTime.getHours();
+        if (hourFound <= 4) {
+          console.log('✅ Ideal baseline (3-4am):', baselineValue);
+        } else {
+          console.log(`⚠️ Late baseline (${hourFound}:00) - sensor may have been offline earlier:`, baselineValue);
+        }
       } else {
-        console.warn('⚠️ No 3am data found');
+        // No data at all today - this is a true "no data" scenario
+        console.warn('⚠️ No sensor data found since 3am today');
+        // baseline stays null, which will show 0s - correct behavior
+        // because we genuinely have no data for today's bar day
       }
     } catch (err: any) {
-      console.error('❌ Error fetching 3am data:', err?.message);
+      console.error('❌ Error fetching baseline data:', err?.message);
     }
   }, [venueId]);
   

@@ -367,43 +367,91 @@ export function predictPeakHour(
 ): PeakPrediction {
   const now = new Date();
   const targetDay = dayOfWeek ?? now.getDay();
-  const patterns = analyzeHistoricalPatterns(historicalData);
-  
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   
-  // Find peak hour from historical data for this day
-  let peakHour = 21;
+  // FILTER: Only use data from the same day of week
+  // This prevents Friday peaks from being averaged with Tuesday peaks
+  const sameDayData = historicalData.filter(d => {
+    const dataDay = new Date(d.timestamp).getDay();
+    return dataDay === targetDay;
+  });
+  
+  console.log(`📊 Peak prediction: ${sameDayData.length} data points from ${dayNames[targetDay]}s`);
+  
+  // If not enough same-day data, include similar days as fallback
+  let dataToAnalyze = sameDayData;
+  let dataSource = `past ${dayNames[targetDay]}s`;
+  
+  if (sameDayData.length < 20) {
+    // Weekend fallback: Fri/Sat/Sun grouped together
+    // Weekday fallback: Mon-Thu grouped together
+    const isWeekend = targetDay === 0 || targetDay === 5 || targetDay === 6;
+    
+    const similarDayData = historicalData.filter(d => {
+      const dataDay = new Date(d.timestamp).getDay();
+      const dataIsWeekend = dataDay === 0 || dataDay === 5 || dataDay === 6;
+      return isWeekend === dataIsWeekend;
+    });
+    
+    if (similarDayData.length > sameDayData.length) {
+      dataToAnalyze = similarDayData;
+      dataSource = isWeekend ? 'weekend days' : 'weekday evenings';
+      console.log(`📊 Expanded to ${dataSource}: ${dataToAnalyze.length} points`);
+    }
+  }
+  
+  // Calculate hourly averages from filtered data
+  const hourlyData = new Map<number, { crowds: number[]; count: number }>();
+  
+  dataToAnalyze.forEach(d => {
+    const hour = new Date(d.timestamp).getHours();
+    const crowd = d.occupancy?.current || 0;
+    
+    if (!hourlyData.has(hour)) {
+      hourlyData.set(hour, { crowds: [], count: 0 });
+    }
+    const entry = hourlyData.get(hour)!;
+    entry.crowds.push(crowd);
+    entry.count++;
+  });
+  
+  // Find the peak hour from day-specific data
+  let peakHour = 21; // Default fallback
   let peakOccupancy = 0;
   
-  patterns.hourlyAverages.forEach((avg, hour) => {
-    if (avg.crowd > peakOccupancy) {
-      peakOccupancy = avg.crowd;
-      peakHour = hour;
+  hourlyData.forEach((data, hour) => {
+    if (data.crowds.length > 0) {
+      const avgCrowd = data.crowds.reduce((a, b) => a + b, 0) / data.crowds.length;
+      if (avgCrowd > peakOccupancy) {
+        peakOccupancy = avgCrowd;
+        peakHour = hour;
+      }
     }
   });
   
-  // Get last week's data for comparison
+  // Calculate confidence based on data quality
+  const dataQuality = dataToAnalyze.length >= 100 ? 'high' : 
+                      dataToAnalyze.length >= 50 ? 'medium' : 'low';
+  const confidence = dataQuality === 'high' ? 85 : 
+                     dataQuality === 'medium' ? 65 : 45;
+  
+  // Get last week's same-day comparison
   const oneWeekAgo = new Date(now);
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-  const lastWeekData = historicalData.filter(d => {
-    const date = new Date(d.timestamp);
-    return date.getDay() === targetDay && date >= oneWeekAgo;
-  });
+  const lastWeekSameDay = sameDayData.filter(d => new Date(d.timestamp) >= oneWeekAgo);
   
   let lastWeekPeak = 0;
-  lastWeekData.forEach(d => {
+  lastWeekSameDay.forEach(d => {
     if (d.occupancy?.current && d.occupancy.current > lastWeekPeak) {
       lastWeekPeak = d.occupancy.current;
     }
   });
   
-  const confidence = historicalData.length > 100 ? 85 : historicalData.length > 50 ? 70 : 50;
-  
   return {
     predictedPeakHour: peakHour,
     predictedPeakOccupancy: Math.round(peakOccupancy),
     confidence,
-    basedOn: `${historicalData.length} readings over past weeks`,
+    basedOn: `${dataToAnalyze.length} readings from ${dataSource}`,
     comparisonToLastWeek: lastWeekPeak > 0 ? {
       lastWeekPeak,
       difference: peakOccupancy > lastWeekPeak 

@@ -81,8 +81,17 @@ export interface VenueLearning {
 
 // ============ CONSTANTS ============
 
+// Time requirements
 const WEEKS_FOR_CONFIDENT = 4;
 const WEEKS_FOR_HIGHLY_CONFIDENT = 8;
+
+// Data density requirements - must have BOTH time AND data volume
+const MIN_POINTS_FOR_LEARNING = 50;           // Need 50+ data points to start learning
+const MIN_POINTS_FOR_CONFIDENT = 200;         // Need 200+ points for "confident"
+const MIN_POINTS_FOR_HIGHLY_CONFIDENT = 500;  // Need 500+ points for "highly confident"
+const MIN_TIMESLOTS_FOR_CONFIDENT = 3;        // Need data in at least 3 different time slots
+const MIN_TIMESLOTS_FOR_HIGHLY_CONFIDENT = 5; // Need data in at least 5 time slots
+
 const MIN_DATA_POINTS_PER_BUCKET = 5;
 const STORAGE_KEY = 'venue_learning';
 
@@ -164,13 +173,36 @@ class VenueLearningService {
     const venueProfile = this.buildVenueProfile(dataWithDwell);
     
     // Calculate learning progress
-    const learningProgress = this.calculateLearningProgress(weeksOfData, historicalData.length, Object.keys(timeSlots).length);
+    const timeSlotsWithData = Object.keys(timeSlots).length;
+    const learningProgress = this.calculateLearningProgress(weeksOfData, historicalData.length, timeSlotsWithData);
     
-    // Determine status
+    // Determine status - requires BOTH time AND data density
+    // This prevents showing "Personalized" when we have 8 weeks but only 10 data points
     let status: VenueLearning['status'] = 'insufficient_data';
-    if (weeksOfData >= WEEKS_FOR_HIGHLY_CONFIDENT) status = 'highly_confident';
-    else if (weeksOfData >= WEEKS_FOR_CONFIDENT) status = 'confident';
-    else if (weeksOfData >= 1) status = 'learning';
+    
+    const hasMinimumData = historicalData.length >= MIN_POINTS_FOR_LEARNING;
+    const hasConfidentData = historicalData.length >= MIN_POINTS_FOR_CONFIDENT 
+                             && timeSlotsWithData >= MIN_TIMESLOTS_FOR_CONFIDENT;
+    const hasHighlyConfidentData = historicalData.length >= MIN_POINTS_FOR_HIGHLY_CONFIDENT 
+                                   && timeSlotsWithData >= MIN_TIMESLOTS_FOR_HIGHLY_CONFIDENT;
+    
+    // Both time AND data requirements must be met
+    if (weeksOfData >= WEEKS_FOR_HIGHLY_CONFIDENT && hasHighlyConfidentData) {
+      status = 'highly_confident';
+    } else if (weeksOfData >= WEEKS_FOR_CONFIDENT && hasConfidentData) {
+      status = 'confident';
+    } else if (weeksOfData >= 1 && hasMinimumData) {
+      status = 'learning';
+    }
+    
+    console.log(`🧠 Learning status: ${status}`, {
+      weeksOfData,
+      dataPoints: historicalData.length,
+      timeSlots: timeSlotsWithData,
+      meetsLearning: hasMinimumData,
+      meetsConfident: hasConfidentData,
+      meetsHighlyConfident: hasHighlyConfidentData,
+    });
     
     const learning: VenueLearning = {
       venueId,
@@ -593,18 +625,25 @@ class VenueLearningService {
   
   /**
    * Calculate overall learning progress (0-100%)
+   * 
+   * Weights:
+   * - 40% time: weeks of data (need 8 for max)
+   * - 40% volume: data points (need 500+ for max)
+   * - 20% coverage: time slots covered (need 5+ for max)
    */
   private calculateLearningProgress(weeksOfData: number, dataPoints: number, timeSlotsCovered: number): number {
-    // Factors:
-    // - Weeks of data (40% weight) - need 8 weeks for full confidence
-    // - Data points (30% weight) - need 1000+ for full confidence
-    // - Time slots covered (30% weight) - need all 8 for full confidence
+    // Time progress - how many weeks of data do we have?
+    const timeProgress = Math.min(100, (weeksOfData / WEEKS_FOR_HIGHLY_CONFIDENT) * 100);
     
-    const weekScore = Math.min(100, (weeksOfData / WEEKS_FOR_HIGHLY_CONFIDENT) * 100);
-    const dataScore = Math.min(100, (dataPoints / 1000) * 100);
-    const slotScore = Math.min(100, (timeSlotsCovered / 8) * 100);
+    // Data volume progress - how many data points?
+    const dataProgress = Math.min(100, (dataPoints / MIN_POINTS_FOR_HIGHLY_CONFIDENT) * 100);
     
-    const progress = (weekScore * 0.4) + (dataScore * 0.3) + (slotScore * 0.3);
+    // Coverage progress - how many time slots have data?
+    const slotProgress = Math.min(100, (timeSlotsCovered / MIN_TIMESLOTS_FOR_HIGHLY_CONFIDENT) * 100);
+    
+    // Weighted average: 40% time, 40% data, 20% coverage
+    const progress = (timeProgress * 0.4) + (dataProgress * 0.4) + (slotProgress * 0.2);
+    
     return Math.round(progress);
   }
   
