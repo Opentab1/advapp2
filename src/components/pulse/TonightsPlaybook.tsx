@@ -15,6 +15,7 @@ import {
 import { haptic } from '../../utils/haptics';
 import { getCurrentTimeSlot } from '../../utils/scoring';
 import { TIME_SLOT_RANGES } from '../../utils/constants';
+import type { DiscoveredPattern } from '../../services/venue-learning.service';
 
 interface PlaybookAction {
   id: string;
@@ -23,7 +24,14 @@ interface PlaybookAction {
   description: string;
   icon: 'sound' | 'light' | 'music' | 'crowd' | 'alert' | 'opportunity';
   status: 'current' | 'upcoming' | 'done';
-  impact?: string; // "+32 guests expected"
+  impact?: string; // Only shown if backed by venue learning data
+}
+
+// Venue pattern prop type
+interface VenuePattern {
+  factor: 'sound' | 'light' | 'temperature' | 'time' | 'combined';
+  impact: string;
+  confidence: number;
 }
 
 interface TonightsPlaybookProps {
@@ -41,6 +49,8 @@ interface TonightsPlaybookProps {
     description: string;
     priority: 'high' | 'medium' | 'low';
   }>;
+  // Venue learning patterns - only show impact if we have data to back it up
+  venuePatterns?: VenuePattern[];
 }
 
 export function TonightsPlaybook({
@@ -49,8 +59,19 @@ export function TonightsPlaybook({
   currentOccupancy,
   peakPrediction,
   smartActions = [],
+  venuePatterns = [],
 }: TonightsPlaybookProps) {
   const [completedActions, setCompletedActions] = useState<Set<string>>(new Set());
+  
+  // Helper: Find a pattern for a specific factor with sufficient confidence
+  const getPatternImpact = (factor: 'sound' | 'light' | 'temperature'): string | undefined => {
+    // Only show impact if we have a pattern with 30%+ confidence
+    const pattern = venuePatterns.find(p => p.factor === factor && p.confidence >= 30);
+    if (pattern) {
+      return `Your data: ${pattern.impact}`;
+    }
+    return undefined; // No fabricated claims
+  };
   
   // Generate playbook actions based on current state
   const generateActions = (): PlaybookAction[] => {
@@ -76,6 +97,10 @@ export function TonightsPlaybook({
                          isHappyHour ? 'for happy hour' : 
                          isDaytime ? 'for daytime crowd' : 'for this time';
     
+    // Get data-backed impact claims (or undefined if no data)
+    const soundImpact = getPatternImpact('sound');
+    const lightImpact = getPatternImpact('light');
+    
     // RIGHT NOW actions
     if (soundStatus === 'good') {
       actions.push({
@@ -95,7 +120,7 @@ export function TonightsPlaybook({
         description: `${currentDecibels}dB is ${overBy}dB over optimal ${contextLabel}. Lower volume.`,
         icon: 'alert',
         status: 'current',
-        impact: 'Could add 15+ min per guest',
+        impact: soundImpact, // Only show if backed by data
       });
     } else {
       const underBy = Math.round(ranges.sound.min - currentDecibels);
@@ -106,7 +131,7 @@ export function TonightsPlaybook({
         description: `${currentDecibels}dB is ${underBy}dB under optimal ${contextLabel}. Raise volume.`,
         icon: 'sound',
         status: 'current',
-        impact: 'Higher energy = longer stays',
+        impact: soundImpact, // Only show if backed by data
       });
     }
     
@@ -119,6 +144,7 @@ export function TonightsPlaybook({
         description: `${currentLight}% is too bright ${contextLabel}. Target ${ranges.light.min}-${ranges.light.max}%.`,
         icon: 'light',
         status: 'current',
+        impact: lightImpact, // Only show if backed by data
       });
     } else if (lightStatus === 'dim' && isDaytime) {
       actions.push({
@@ -128,6 +154,7 @@ export function TonightsPlaybook({
         description: `${currentLight}% is too dim for daytime. Target ${ranges.light.min}-${ranges.light.max}%.`,
         icon: 'light',
         status: 'current',
+        impact: lightImpact, // Only show if backed by data
       });
     }
     

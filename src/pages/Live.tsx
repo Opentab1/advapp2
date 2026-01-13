@@ -336,6 +336,11 @@ export function Live() {
               description: a.description,
               priority: a.priority === 'critical' ? 'high' : a.priority,
             }))}
+            venuePatterns={venueLearning.patterns.map(p => ({
+              factor: p.factor,
+              impact: p.impact,
+              confidence: p.confidence,
+            }))}
           />
         </motion.div>
         

@@ -216,7 +216,6 @@ function processSummary(
   // Calculate current period metrics
   let totalScore = 0;
   let scoreCount = 0;
-  let totalGuests = 0;
   let hoursInZone = 0;
   let totalPeakHours = 0;
   let peakStartHour = 24;
@@ -238,12 +237,28 @@ function processSummary(
       // Count hours in zone (score >= 70)
       if (score >= 70) hoursInZone += 0.25; // Assuming 15-min intervals
     }
-    
-    // Guest count from occupancy entries
-    if (d.occupancy?.entries) {
-      totalGuests = Math.max(totalGuests, d.occupancy.entries);
-    }
   });
+  
+  // Calculate total guests correctly: difference between first and last entry counts
+  // (entries is cumulative, so we need the delta, not the max)
+  const calculateGuestCount = (periodData: SensorData[]): number => {
+    const withEntries = periodData
+      .filter(d => d.occupancy?.entries !== undefined)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    if (withEntries.length < 2) {
+      // Not enough data points, fall back to max entries if available
+      return withEntries[0]?.occupancy?.entries || 0;
+    }
+    
+    const firstEntries = withEntries[0].occupancy!.entries;
+    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+    
+    // Total guests = entries at end - entries at start of period
+    return Math.max(0, lastEntries - firstEntries);
+  };
+  
+  const totalGuests = calculateGuestCount(data);
   
   // Find peak hours (6pm-2am typically)
   Object.entries(hourlyScores).forEach(([hourStr, scores]) => {
@@ -261,7 +276,6 @@ function processSummary(
   // Calculate previous period metrics for delta
   let prevTotalScore = 0;
   let prevScoreCount = 0;
-  let prevTotalGuests = 0;
   
   previousData.forEach(d => {
     const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
@@ -269,10 +283,10 @@ function processSummary(
       prevTotalScore += score;
       prevScoreCount++;
     }
-    if (d.occupancy?.entries) {
-      prevTotalGuests = Math.max(prevTotalGuests, d.occupancy.entries);
-    }
   });
+  
+  // Calculate previous period guests using the same correct method
+  const prevTotalGuests = calculateGuestCount(previousData);
   
   const prevAvgScore = prevScoreCount > 0 ? Math.round(prevTotalScore / prevScoreCount) : avgScore;
   const scoreDelta = prevAvgScore > 0 ? Math.round(((avgScore - prevAvgScore) / prevAvgScore) * 100) : 0;
