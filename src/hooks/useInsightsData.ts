@@ -406,13 +406,12 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
   };
   
   const ranges = bucketRanges[variable];
-  const bucketData: Record<string, { staySum: number; count: number }> = {};
+  const bucketData: Record<string, { scoreSum: number; count: number }> = {};
   ranges.forEach(r => {
-    bucketData[r.label] = { staySum: 0, count: 0 };
+    bucketData[r.label] = { scoreSum: 0, count: 0 };
   });
   
-  // Estimate dwell time per data point (simplified)
-  // In reality, this would come from actual dwell calculations
+  // Calculate REAL Pulse Score average per bucket (not fabricated dwell time)
   data.forEach(d => {
     let value: number;
     switch (variable) {
@@ -426,42 +425,42 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
     // Find matching bucket
     const bucket = ranges.find(r => value >= r.min && value < r.max);
     if (bucket) {
-      // Estimate dwell based on score (simplified heuristic)
       const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
-      const estimatedDwell = 30 + (score || 0) * 0.3; // Base 30 min + score bonus
-      bucketData[bucket.label].staySum += estimatedDwell;
-      bucketData[bucket.label].count++;
+      if (score !== null) {
+        bucketData[bucket.label].scoreSum += score;
+        bucketData[bucket.label].count++;
+      }
     }
   });
   
-  // Convert to bucket array and find optimal
+  // Convert to bucket array and find optimal (highest avg score with sufficient samples)
   const buckets: SweetSpotBucket[] = ranges.map(r => {
     const bd = bucketData[r.label];
-    const avgStay = bd.count > 0 ? Math.round(bd.staySum / bd.count) : 0;
+    const avgScore = bd.count > 0 ? Math.round(bd.scoreSum / bd.count) : 0;
     return {
       range: r.label,
-      avgStayMinutes: avgStay,
+      avgScore,
       sampleCount: bd.count,
       isOptimal: false, // Set below
     };
   });
   
-  // Find optimal bucket (highest avg stay with sufficient samples)
+  // Find optimal bucket (highest avg score with sufficient samples)
   const minSamples = Math.max(5, data.length * 0.05); // At least 5% of data
   let optimalIdx = 0;
-  let maxStay = 0;
+  let maxScore = 0;
   buckets.forEach((b, idx) => {
-    if (b.sampleCount >= minSamples && b.avgStayMinutes > maxStay) {
-      maxStay = b.avgStayMinutes;
+    if (b.sampleCount >= minSamples && b.avgScore > maxScore) {
+      maxScore = b.avgScore;
       optimalIdx = idx;
     }
   });
   buckets[optimalIdx].isOptimal = true;
   
-  // Calculate outside-optimal average
+  // Calculate outside-optimal average score
   const outsideBuckets = buckets.filter((_, idx) => idx !== optimalIdx && buckets[idx].sampleCount > 0);
-  const outsideStay = outsideBuckets.length > 0 
-    ? Math.round(outsideBuckets.reduce((sum, b) => sum + b.avgStayMinutes * b.sampleCount, 0) / 
+  const outsideScore = outsideBuckets.length > 0 
+    ? Math.round(outsideBuckets.reduce((sum, b) => sum + b.avgScore * b.sampleCount, 0) / 
                  outsideBuckets.reduce((sum, b) => sum + b.sampleCount, 0))
     : 0;
   
@@ -475,8 +474,8 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
     variable,
     buckets,
     optimalRange: buckets[optimalIdx].range,
-    optimalStay: buckets[optimalIdx].avgStayMinutes,
-    outsideStay,
+    optimalScore: buckets[optimalIdx].avgScore,
+    outsideScore,
     hitPercentage,
     totalSamples,
   };

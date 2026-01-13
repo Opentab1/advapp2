@@ -39,7 +39,7 @@ export interface FactorScore {
 
 export interface SweetSpotBucket {
   range: string;                   // "75-82 dB"
-  avgStayMinutes: number;
+  avgScore: number;                // Average Pulse Score in this bucket (real data)
   sampleCount: number;
   isOptimal: boolean;
 }
@@ -48,8 +48,8 @@ export interface SweetSpotData {
   variable: 'sound' | 'light' | 'crowd' | 'temp';
   buckets: SweetSpotBucket[];
   optimalRange: string;            // "75-82 dB"
-  optimalStay: number;             // 51
-  outsideStay: number;             // 34
+  optimalScore: number;            // Avg score in optimal range (real)
+  outsideScore: number;            // Avg score outside optimal range (real)
   hitPercentage: number;           // 68 (percent of time in optimal range)
   totalSamples: number;
 }

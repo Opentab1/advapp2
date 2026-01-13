@@ -111,14 +111,14 @@ export function SweetSpotModal({
 
           {/* Variable Label */}
           <h3 className="text-sm font-semibold text-warm-200 uppercase tracking-whoop">
-            {VARIABLE_CONFIG[activeVariable].label} vs Avg Stay
+            {VARIABLE_CONFIG[activeVariable].label} vs Pulse Score
           </h3>
 
           {/* Buckets */}
           <div className="space-y-3">
             {currentData.buckets.map((bucket, idx) => {
-              const maxStay = Math.max(...currentData.buckets.map(b => b.avgStayMinutes));
-              const widthPercent = maxStay > 0 ? (bucket.avgStayMinutes / maxStay) * 100 : 0;
+              const maxScore = Math.max(...currentData.buckets.map(b => b.avgScore));
+              const widthPercent = maxScore > 0 ? (bucket.avgScore / maxScore) * 100 : 0;
               
               return (
                 <div key={bucket.range} className="relative">
@@ -134,7 +134,7 @@ export function SweetSpotModal({
                       transition={{ duration: 0.5, delay: idx * 0.1 }}
                     />
                     <span className="absolute left-3 text-sm font-bold text-white">
-                      {bucket.avgStayMinutes} min
+                      Score: {bucket.avgScore}
                     </span>
                   </div>
                   {bucket.isOptimal && (
@@ -151,9 +151,9 @@ export function SweetSpotModal({
           <div className="bg-teal/10 border border-teal/20 rounded-xl p-4">
             <h4 className="text-sm font-semibold text-teal mb-2">The Impact</h4>
             <p className="text-sm text-warm-300">
-              At <span className="text-white font-semibold">{currentData.optimalRange}</span>, guests stay{' '}
+              At <span className="text-white font-semibold">{currentData.optimalRange}</span>, your Pulse Score is{' '}
               <span className="text-teal font-semibold">
-                {currentData.optimalStay - currentData.outsideStay} minutes longer
+                +{currentData.optimalScore - currentData.outsideScore} points higher
               </span>{' '}
               than outside this range.
             </p>

@@ -31,8 +31,7 @@ export function SweetSpotCard({ data, loading, onTapDetails }: SweetSpotCardProp
     );
   }
 
-  // stayDiff available for future use
-  void (data.optimalStay - data.outsideStay);
+  const scoreDiff = data.optimalScore - data.outsideScore;
 
   return (
     <motion.button
@@ -57,10 +56,10 @@ export function SweetSpotCard({ data, loading, onTapDetails }: SweetSpotCardProp
           <div>
             <div className="text-lg font-bold text-teal">{data.optimalRange}</div>
             <div className="text-sm text-warm-300">
-              Guests stay <span className="text-white font-semibold">{data.optimalStay} min</span>
+              Avg Score: <span className="text-white font-semibold">{data.optimalScore}</span>
             </div>
             <div className="text-xs text-warm-400">
-              (vs {data.outsideStay} min outside range)
+              (+{scoreDiff} vs outside range)
             </div>
           </div>
         </div>
