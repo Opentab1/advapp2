@@ -170,7 +170,9 @@ function getPeriodLabel(range: TimeRange): string {
   switch (range) {
     case '24h': return 'Today';
     case '7d': return '7 Day Avg';
+    case '14d': return '14 Day Avg';
     case '30d': return '30 Day Avg';
+    case '90d': return '90 Day Avg';
     default: return 'Avg';
   }
 }

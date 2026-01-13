@@ -360,6 +360,10 @@ export function generateDemoHistoricalData(venueId: string, range: TimeRange): H
       startTime = now - (7 * 24 * 60 * 60 * 1000);
       interval = 60 * 60 * 1000; // 1 hour
       break;
+    case '14d':
+      startTime = now - (14 * 24 * 60 * 60 * 1000);
+      interval = 2 * 60 * 60 * 1000; // 2 hours
+      break;
     case '30d':
       startTime = now - (30 * 24 * 60 * 60 * 1000);
       interval = 4 * 60 * 60 * 1000; // 4 hours

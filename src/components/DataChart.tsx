@@ -84,6 +84,16 @@ export function DataChart({ data, metric, title, color = '#0093E7', timeRange = 
           tooltipFormat: 'EEE, MMM d, h:mm a',
           maxTicksLimit: 7
         };
+      case '14d':
+        return {
+          unit: 'day' as const,
+          displayFormats: {
+            day: 'MMM d',
+            week: 'MMM d'
+          },
+          tooltipFormat: 'EEE, MMM d, h:mm a',
+          maxTicksLimit: 14
+        };
       case '30d':
         return {
           unit: 'day' as const,
