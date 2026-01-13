@@ -1,28 +1,23 @@
 /**
- * DwellBreakdownModal - WHOOP-style deep dive into average time spent
- * 
- * Level 2: Overview with score and category
- * Level 3: Collapsible sections with detailed insights
+ * DwellBreakdownModal - Deep dive into estimated average stay time
  * 
  * Shows:
- * - Average time guests stay with score
- * - Stay distribution (what % stay how long)
+ * - Estimated average time guests stay (based on exit velocity)
  * - Revenue impact calculation
- * - Day-of-week patterns
  * - What factors affect dwell time
  * - Actionable recommendations
+ * 
+ * NOTE: Distribution and day patterns removed - we can't track individual
+ * guests, so those would be fabricated data. Honesty > fake charts.
  */
 
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Modal } from '../common/Modal';
 import { 
-  Clock, DollarSign, Lightbulb, ChevronRight, 
-  TrendingUp, Users, Calendar, Target, BarChart3
+  Clock, DollarSign, Lightbulb, ChevronRight, Target, AlertCircle
 } from 'lucide-react';
 import { getDwellTimeCategory, formatDwellTime, getDwellTimeScore } from '../../utils/scoring';
-import { DWELL_TIME_THRESHOLDS } from '../../utils/constants';
-import { BarChart, HorizontalBar, StatComparison } from '../common/MiniChart';
 
 // ============ TYPES ============
 
@@ -50,27 +45,8 @@ export function DwellBreakdownModal({
   const formatted = formatDwellTime(dwellTimeMinutes);
   const score = getDwellTimeScore(dwellTimeMinutes);
   
-  // Distribution data (simulated based on dwell time)
-  const distribution = useMemo(() => {
-    const base = dwellTimeMinutes || 45;
-    return [
-      { label: '<30m', value: base < 30 ? 35 : base < 45 ? 25 : 15, isCurrent: base < 30 },
-      { label: '30-60m', value: base >= 30 && base < 60 ? 40 : 35, isCurrent: base >= 30 && base < 60 },
-      { label: '60-90m', value: base >= 60 && base < 90 ? 35 : 30, isCurrent: base >= 60 && base < 90 },
-      { label: '90m+', value: base >= 90 ? 30 : base >= 60 ? 20 : 10, isCurrent: base >= 90 },
-    ];
-  }, [dwellTimeMinutes]);
-  
-  // Day patterns (simulated)
-  const dayPatterns = useMemo(() => {
-    const base = dwellTimeMinutes || 45;
-    return {
-      weekday: Math.round(base * 0.85),
-      friday: Math.round(base * 1.1),
-      saturday: Math.round(base * 1.25),
-      sunday: Math.round(base * 0.95),
-    };
-  }, [dwellTimeMinutes]);
+  // Distribution and day patterns removed - we can't track individual guests
+  // so these would be fabricated data. Honesty > fake charts.
   
   // Revenue calculations
   const revenue = useMemo(() => {
@@ -225,99 +201,21 @@ export function DwellBreakdownModal({
           </div>
         </CollapsibleSection>
         
-        {/* ============ STAY DISTRIBUTION ============ */}
-        <CollapsibleSection
-          title="Stay Distribution"
-          icon={BarChart3}
-          subtitle="How long guests typically stay"
-          expanded={expandedSection === 'distribution'}
-          onToggle={() => toggleSection('distribution')}
-        >
-          <div className="pt-2">
-            <BarChart
-              data={distribution}
-              height={100}
-              color="#00F19F"
-              showLabels={true}
-            />
-            
-            <div className="mt-4 space-y-2">
-              <DistributionInsight
-                icon="🏃"
-                label="Quick visits (<30m)"
-                percentage={distribution[0].value}
-                insight="Usually just drinks, low spend"
-              />
-              <DistributionInsight
-                icon="🍺"
-                label="Casual hangs (30-60m)"
-                percentage={distribution[1].value}
-                insight="Sweet spot for bar revenue"
-                highlight
-              />
-              <DistributionInsight
-                icon="🍽️"
-                label="Extended stays (60-90m)"
-                percentage={distribution[2].value}
-                insight="Often includes food orders"
-              />
-              <DistributionInsight
-                icon="🎉"
-                label="Long stays (90m+)"
-                percentage={distribution[3].value}
-                insight="Your regulars & celebrations"
-              />
+        {/* ============ DATA LIMITATION NOTE ============ */}
+        <div className="p-4 bg-warm-800/50 rounded-xl border border-warm-700/50">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center flex-shrink-0">
+              <AlertCircle className="w-4 h-4" />
             </div>
-          </div>
-        </CollapsibleSection>
-        
-        {/* ============ DAY PATTERNS ============ */}
-        <CollapsibleSection
-          title="Day Patterns"
-          icon={Calendar}
-          subtitle="When guests stay longest"
-          expanded={expandedSection === 'patterns'}
-          onToggle={() => toggleSection('patterns')}
-        >
-          <div className="space-y-2 pt-2">
-            <HorizontalBar 
-              label="Weekdays" 
-              value={dayPatterns.weekday} 
-              maxValue={dayPatterns.saturday * 1.1} 
-              color="#6b7280"
-              suffix=" min"
-            />
-            <HorizontalBar 
-              label="Friday" 
-              value={dayPatterns.friday} 
-              maxValue={dayPatterns.saturday * 1.1} 
-              color="#f59e0b"
-              suffix=" min"
-            />
-            <HorizontalBar 
-              label="Saturday" 
-              value={dayPatterns.saturday} 
-              maxValue={dayPatterns.saturday * 1.1} 
-              color="#00F19F"
-              suffix=" min"
-            />
-            <HorizontalBar 
-              label="Sunday" 
-              value={dayPatterns.sunday} 
-              maxValue={dayPatterns.saturday * 1.1} 
-              color="#f59e0b"
-              suffix=" min"
-            />
-            
-            <div className="mt-3 p-3 bg-warm-700/50 rounded-lg">
-              <p className="text-xs text-warm-400">
-                📊 Saturdays see <span className="text-primary font-medium">
-                  {Math.round((dayPatterns.saturday / dayPatterns.weekday - 1) * 100)}% longer stays
-                </span> than weekdays. Consider adjusting weekday atmosphere to match.
+            <div>
+              <p className="text-sm font-medium text-warm-200 mb-1">Estimate Based on Entry/Exit Data</p>
+              <p className="text-xs text-warm-500">
+                This avg stay time is calculated from exit velocity (exits per hour ÷ current occupancy).
+                We can't track individual guests, so detailed distribution and day patterns are not available.
               </p>
             </div>
           </div>
-        </CollapsibleSection>
+        </div>
         
         {/* ============ WHAT AFFECTS DWELL ============ */}
         <CollapsibleSection
@@ -476,29 +374,6 @@ function RevenueCard({ label, value, subtext, highlight }: {
       <p className="text-xs text-warm-400 mb-1">{label}</p>
       <p className={`text-xl font-bold ${highlight ? 'text-green-400' : 'text-warm-100'}`}>{value}</p>
       <p className="text-xs text-warm-500">{subtext}</p>
-    </div>
-  );
-}
-
-// ============ DISTRIBUTION INSIGHT ============
-
-function DistributionInsight({ icon, label, percentage, insight, highlight }: {
-  icon: string;
-  label: string;
-  percentage: number;
-  insight: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div className={`flex items-center gap-3 p-2 rounded-lg ${highlight ? 'bg-primary/10' : ''}`}>
-      <span className="text-lg">{icon}</span>
-      <div className="flex-1">
-        <div className="flex items-center justify-between">
-          <span className={`text-sm ${highlight ? 'text-primary font-medium' : 'text-warm-200'}`}>{label}</span>
-          <span className="text-sm font-semibold text-warm-100">{percentage}%</span>
-        </div>
-        <p className="text-xs text-warm-500">{insight}</p>
-      </div>
     </div>
   );
 }

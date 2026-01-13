@@ -18,8 +18,8 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Modal } from '../common/Modal';
 import { 
-  Users, UserPlus, UserMinus, TrendingUp, Clock, 
-  ChevronRight, ChevronDown, Target, Zap, Calendar,
+  Users, UserPlus, UserMinus, TrendingUp, 
+  ChevronRight, Target, Calendar,
   BarChart3, AlertCircle
 } from 'lucide-react';
 import { AnimatedNumber } from '../common/AnimatedNumber';
@@ -73,14 +73,16 @@ export function CrowdBreakdownModal({
   const capacityUsage = Math.min(100, Math.round((currentOccupancy / estimatedCapacity) * 100));
   const currentHour = new Date().getHours();
   
-  // Generate/use hourly data for chart
+  // Use provided hourly data only - no fake data generation
   const hourlyData = useMemo(() => {
     if (providedHourlyData && providedHourlyData.length > 0) {
       return providedHourlyData;
     }
-    // Generate realistic pattern based on current data
-    return generateHourlyPattern(currentOccupancy, peakOccupancy, currentHour);
-  }, [providedHourlyData, currentOccupancy, peakOccupancy, currentHour]);
+    // Return empty array - will show "no data" message
+    return [];
+  }, [providedHourlyData]);
+  
+  const hasHourlyData = hourlyData.length > 0;
   
   // Prepare chart data
   const chartData = useMemo(() => {
@@ -179,35 +181,45 @@ export function CrowdBreakdownModal({
         <CollapsibleSection
           title="Tonight's Flow"
           icon={BarChart3}
-          subtitle={prediction ? `Peak expected: ${formatHour(prediction.peakHour)}` : undefined}
+          subtitle={hasHourlyData && prediction ? `Peak expected: ${formatHour(prediction.peakHour)}` : 'Collecting data...'}
           expanded={expandedSection === 'flow'}
           onToggle={() => toggleSection('flow')}
           defaultOpen={true}
         >
           <div className="pt-2">
-            <AreaChart
-              data={chartData}
-              height={140}
-              color="#00F19F"
-              showLabels={true}
-              showValues={false}
-              animationDelay={0.1}
-            />
-            
-            <div className="flex items-center justify-center gap-4 mt-3 text-xs">
-              <div className="flex items-center gap-1.5">
-                <div className="w-3 h-0.5 bg-primary rounded" />
-                <span className="text-warm-400">Actual</span>
+            {hasHourlyData ? (
+              <>
+                <AreaChart
+                  data={chartData}
+                  height={140}
+                  color="#00F19F"
+                  showLabels={true}
+                  showValues={false}
+                  animationDelay={0.1}
+                />
+                
+                <div className="flex items-center justify-center gap-4 mt-3 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-0.5 bg-primary rounded" />
+                    <span className="text-warm-400">Actual</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-0.5 bg-primary/50 rounded" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 2px, currentColor 2px, currentColor 4px)' }} />
+                    <span className="text-warm-400">Predicted</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 bg-primary rounded-full" />
+                    <span className="text-warm-400">Now</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="h-[140px] flex flex-col items-center justify-center text-warm-500">
+                <BarChart3 className="w-8 h-8 mb-2 opacity-50" />
+                <p className="text-sm">Collecting hourly data...</p>
+                <p className="text-xs mt-1">Flow chart will appear as the night progresses</p>
               </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-3 h-0.5 bg-primary/50 rounded" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 2px, currentColor 2px, currentColor 4px)' }} />
-                <span className="text-warm-400">Predicted</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 bg-primary rounded-full" />
-                <span className="text-warm-400">Now</span>
-              </div>
-            </div>
+            )}
           </div>
         </CollapsibleSection>
         
@@ -601,44 +613,6 @@ function getStaffingRecommendation(occupancy: number) {
   };
 }
 
-function generateHourlyPattern(currentOccupancy: number, peak: number, currentHour: number): HourlyData[] {
-  const data: HourlyData[] = [];
-  const peakHour = 22; // 10pm typical peak
-  
-  for (let h = 0; h < 24; h++) {
-    let occupancy = 0;
-    
-    // Generate realistic bar pattern
-    if (h >= 16 && h <= 23) {
-      // Evening hours - ramping up
-      const hoursFromOpen = h - 16;
-      const hoursToPeak = peakHour - 16;
-      const progress = hoursFromOpen / hoursToPeak;
-      occupancy = Math.round(peak * Math.min(1, progress * 1.1));
-    } else if (h >= 0 && h <= 2) {
-      // Late night - winding down
-      const hoursFromMidnight = h;
-      occupancy = Math.round(peak * (1 - (hoursFromMidnight + 1) * 0.3));
-    }
-    
-    // Adjust based on current actual data
-    if (h === currentHour) {
-      occupancy = currentOccupancy;
-    } else if (h < currentHour || (currentHour < 4 && h > 20)) {
-      // Past hours - use proportional estimate
-      const ratio = currentOccupancy / Math.max(peak, 1);
-      occupancy = Math.round(occupancy * Math.max(0.5, Math.min(1.5, ratio)));
-    }
-    
-    data.push({
-      hour: h,
-      occupancy: Math.max(0, occupancy),
-      entries: Math.round(occupancy * 1.2),
-      exits: Math.round(occupancy * 0.2),
-    });
-  }
-  
-  return data;
-}
+// generateHourlyPattern removed - we only show real data now
 
 export default CrowdBreakdownModal;

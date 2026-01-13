@@ -96,11 +96,10 @@ export function TrendModal({
 
         {/* Content */}
         <div className="overflow-y-auto max-h-[calc(90vh-60px)] p-5 space-y-6">
-          {/* Metric Selector */}
+          {/* Metric Selector - Avg Stay removed as we can't calculate it accurately per-day */}
           <div className="flex gap-2">
             {[
               { value: 'score' as ChartMetric, label: 'Score' },
-              { value: 'avgStay' as ChartMetric, label: 'Avg Stay' },
               { value: 'guests' as ChartMetric, label: 'Guests' },
             ].map((metric) => (
               <button
@@ -161,14 +160,7 @@ export function TrendModal({
                         </td>
                       ))}
                     </tr>
-                    <tr className="border-b border-whoop-divider">
-                      <td className="text-sm text-warm-400 p-3">Avg Stay</td>
-                      {data.weekOverWeek.map((period, idx) => (
-                        <td key={idx} className="text-right text-sm font-medium text-white p-3">
-                          {period.avgStay}m
-                        </td>
-                      ))}
-                    </tr>
+                    {/* Avg Stay row removed - can't calculate accurate per-period avg stay */}
                     <tr>
                       <td className="text-sm text-warm-400 p-3">Guests</td>
                       {data.weekOverWeek.map((period, idx) => (

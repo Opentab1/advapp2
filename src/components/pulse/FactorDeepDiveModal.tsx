@@ -128,11 +128,11 @@ export function FactorDeepDiveModal({
     return { label: 'Needs Attention', color: 'text-red-400', bg: 'bg-red-900/30', icon: AlertTriangle };
   }, [score]);
   
-  // Generate chart data
+  // Generate chart data - only use real data, no mocks
   const chartData = useMemo(() => {
     if (!recentValues || recentValues.length === 0) {
-      // Generate mock trend data based on current value
-      return generateMockTrendData(currentValue, factor, timeSlot);
+      // No data available - return empty array (will show "no data" message)
+      return [];
     }
     
     const now = new Date();
@@ -145,7 +145,7 @@ export function FactorDeepDiveModal({
         isCurrent: i === recentValues.length - 1,
       };
     });
-  }, [recentValues, currentValue, factor, timeSlot]);
+  }, [recentValues]);
   
   // Get factor-specific content
   const content = useMemo(() => {
@@ -242,13 +242,19 @@ export function FactorDeepDiveModal({
             <span className="text-xs text-warm-500">Last few hours</span>
           </div>
           
-          <AreaChart
-            data={chartData}
-            height={120}
-            color={config.color}
-            showLabels={true}
-            animationDelay={0.1}
-          />
+          {chartData.length > 0 ? (
+            <AreaChart
+              data={chartData}
+              height={120}
+              color={config.color}
+              showLabels={true}
+              animationDelay={0.1}
+            />
+          ) : (
+            <div className="h-[120px] flex items-center justify-center text-warm-500 text-sm italic">
+              Collecting trend data...
+            </div>
+          )}
         </div>
         
         {/* ============ INSIGHTS ============ */}
@@ -567,32 +573,7 @@ function getTimeSlotLabel(timeSlot: TimeSlot): string {
   return labels[timeSlot];
 }
 
-function generateMockTrendData(
-  currentValue: number | null,
-  factor: FactorType,
-  _timeSlot: TimeSlot
-): Array<{ label: string; value: number; isCurrent?: boolean }> {
-  const now = new Date();
-  const currentHour = now.getHours();
-  const data: Array<{ label: string; value: number; isCurrent?: boolean }> = [];
-  
-  const baseValue = currentValue || 70;
-  const variance = factor === 'sound' ? 8 : factor === 'light' ? 50 : 5;
-  
-  for (let i = 5; i >= 0; i--) {
-    const hour = (currentHour - i + 24) % 24;
-    const randomOffset = (Math.random() - 0.5) * variance;
-    const timeOffset = (5 - i) * (variance / 10); // Gradual increase toward current
-    
-    data.push({
-      label: formatHour(hour),
-      value: Math.max(0, Math.round(baseValue + randomOffset + timeOffset - variance/2)),
-      isCurrent: i === 0,
-    });
-  }
-  
-  return data;
-}
+// generateMockTrendData removed - we only show real data now
 
 function getTypicalValue(factor: FactorType, dayType: 'weekday' | 'friday' | 'saturday'): number {
   const bases: Record<FactorType, Record<string, number>> = {

@@ -292,10 +292,52 @@ function processSummary(
   const scoreDelta = prevAvgScore > 0 ? Math.round(((avgScore - prevAvgScore) / prevAvgScore) * 100) : 0;
   const guestsDelta = prevTotalGuests > 0 ? Math.round(((totalGuests - prevTotalGuests) / prevTotalGuests) * 100) : 0;
   
-  // Estimate dwell time (simplified)
-  const avgStayMinutes = 45; // Default, would come from actual dwell calculation
-  const prevAvgStay = 40;
-  const avgStayDelta = Math.round(((avgStayMinutes - prevAvgStay) / prevAvgStay) * 100);
+  // Calculate avg stay based on exit velocity (same method as Live page)
+  // Avg Stay = avgOccupancy / exitsPerHour * 60 (in minutes)
+  const calculateAvgStay = (periodData: SensorData[]): number | null => {
+    if (periodData.length < 2) return null;
+    
+    const sorted = [...periodData].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    // Get total exits for period
+    const withExits = sorted.filter(d => d.occupancy?.exits !== undefined);
+    if (withExits.length < 2) return null;
+    
+    const firstExits = withExits[0].occupancy!.exits;
+    const lastExits = withExits[withExits.length - 1].occupancy!.exits;
+    const totalExits = Math.max(0, lastExits - firstExits);
+    
+    // Get hours in period
+    const firstTime = new Date(sorted[0].timestamp).getTime();
+    const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
+    const hoursInPeriod = Math.max(1, (lastTime - firstTime) / (1000 * 60 * 60));
+    
+    const exitsPerHour = totalExits / hoursInPeriod;
+    
+    // Get average occupancy
+    const occupancies = periodData
+      .filter(d => d.occupancy?.current !== undefined)
+      .map(d => d.occupancy!.current);
+    const avgOccupancy = occupancies.length > 0 
+      ? occupancies.reduce((a, b) => a + b, 0) / occupancies.length 
+      : 0;
+    
+    // If no exits, we can't calculate avg stay
+    if (exitsPerHour < 0.5 || avgOccupancy < 1) return null;
+    
+    // Avg stay in minutes, capped at 3 hours
+    return Math.min(180, Math.round((avgOccupancy / exitsPerHour) * 60));
+  };
+  
+  const avgStayMinutes = calculateAvgStay(data);
+  const prevAvgStay = calculateAvgStay(previousData);
+  
+  // Calculate delta only if both values exist
+  const avgStayDelta = (avgStayMinutes !== null && prevAvgStay !== null && prevAvgStay > 0)
+    ? Math.round(((avgStayMinutes - prevAvgStay) / prevAvgStay) * 100)
+    : null;
   
   // Format peak hours
   const formatHour = (h: number) => h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h-12}pm`;
@@ -311,8 +353,9 @@ function processSummary(
     summaryText = `Room for improvement. `;
   }
   
-  if (avgStayDelta > 0) {
-    summaryText += `Dwell time up, `;
+  // Only mention dwell time if we have real data
+  if (avgStayDelta !== null && avgStayDelta > 0) {
+    summaryText += `Avg stay up ${avgStayDelta}%, `;
   }
   
   summaryText += `you stayed in the zone for ${hoursInZone.toFixed(1)} of ${totalPeakHours} peak hours.`;
@@ -444,31 +487,72 @@ function processTrend(
   previousData: SensorData[],
   timeRange: InsightsTimeRange
 ): TrendData {
+  // Helper to calculate guest count correctly
+  const calcGuestCount = (periodData: SensorData[]): number => {
+    const withEntries = periodData
+      .filter(d => d.occupancy?.entries !== undefined)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    if (withEntries.length < 2) return withEntries[0]?.occupancy?.entries || 0;
+    
+    const firstEntries = withEntries[0].occupancy!.entries;
+    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+    return Math.max(0, lastEntries - firstEntries);
+  };
+
+  // Helper to calculate avg stay from exit velocity
+  const calcAvgStay = (periodData: SensorData[]): number | null => {
+    if (periodData.length < 2) return null;
+    
+    const sorted = [...periodData].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    const withExits = sorted.filter(d => d.occupancy?.exits !== undefined);
+    if (withExits.length < 2) return null;
+    
+    const firstExits = withExits[0].occupancy!.exits;
+    const lastExits = withExits[withExits.length - 1].occupancy!.exits;
+    const totalExits = Math.max(0, lastExits - firstExits);
+    
+    const firstTime = new Date(sorted[0].timestamp).getTime();
+    const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
+    const hoursInPeriod = Math.max(1, (lastTime - firstTime) / (1000 * 60 * 60));
+    
+    const exitsPerHour = totalExits / hoursInPeriod;
+    
+    const occupancies = periodData
+      .filter(d => d.occupancy?.current !== undefined)
+      .map(d => d.occupancy!.current);
+    const avgOccupancy = occupancies.length > 0 
+      ? occupancies.reduce((a, b) => a + b, 0) / occupancies.length 
+      : 0;
+    
+    if (exitsPerHour < 0.5 || avgOccupancy < 1) return null;
+    
+    return Math.min(180, Math.round((avgOccupancy / exitsPerHour) * 60));
+  };
+
   // Calculate current period metrics
-  const dailyMetrics: Record<string, { scores: number[]; guests: number }> = {};
+  const dailyMetrics: Record<string, { scores: number[] }> = {};
   
   data.forEach(d => {
     const date = new Date(d.timestamp).toDateString();
     if (!dailyMetrics[date]) {
-      dailyMetrics[date] = { scores: [], guests: 0 };
+      dailyMetrics[date] = { scores: [] };
     }
     const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
     if (score) dailyMetrics[date].scores.push(score);
-    if (d.occupancy?.entries) {
-      dailyMetrics[date].guests = Math.max(dailyMetrics[date].guests, d.occupancy.entries);
-    }
   });
   
   // Find best/worst days
   let bestDay = { date: '', score: 0, label: '' };
   let worstDay = { date: '', score: 100, label: '' };
-  let totalGuests = 0;
   
   Object.entries(dailyMetrics).forEach(([date, metrics]) => {
     const avgScore = metrics.scores.length > 0 
       ? Math.round(metrics.scores.reduce((a, b) => a + b, 0) / metrics.scores.length)
       : 0;
-    totalGuests += metrics.guests;
     
     if (avgScore > bestDay.score) {
       bestDay = { 
@@ -486,26 +570,26 @@ function processTrend(
     }
   });
   
-  // Calculate averages
+  // Calculate current period metrics
   const allScores = Object.values(dailyMetrics).flatMap(d => d.scores);
   const avgScore = allScores.length > 0 ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : 0;
-  const avgStay = 45; // Placeholder
+  const avgStay = calcAvgStay(data);
+  const totalGuests = calcGuestCount(data);
   
   // Previous period metrics
-  let prevTotalGuests = 0;
   const prevScores: number[] = [];
   previousData.forEach(d => {
     const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
     if (score) prevScores.push(score);
-    if (d.occupancy?.entries) {
-      prevTotalGuests = Math.max(prevTotalGuests, d.occupancy.entries);
-    }
   });
   const prevAvgScore = prevScores.length > 0 ? Math.round(prevScores.reduce((a, b) => a + b, 0) / prevScores.length) : avgScore;
-  const prevAvgStay = 40;
+  const prevAvgStay = calcAvgStay(previousData);
+  const prevTotalGuests = calcGuestCount(previousData);
   
   const guestsDelta = prevTotalGuests > 0 ? Math.round(((totalGuests - prevTotalGuests) / prevTotalGuests) * 100) : 0;
-  const avgStayDelta = Math.round(((avgStay - prevAvgStay) / prevAvgStay) * 100);
+  const avgStayDelta = (avgStay !== null && prevAvgStay !== null && prevAvgStay > 0)
+    ? Math.round(((avgStay - prevAvgStay) / prevAvgStay) * 100)
+    : null;
   
   return {
     avgStay,
@@ -617,20 +701,64 @@ function processComparison(
   previousData: SensorData[],
   timeRange: InsightsTimeRange
 ): PeriodComparison {
+  // Helper to calculate avg stay from exit velocity
+  const calcAvgStay = (periodData: SensorData[]): number | null => {
+    if (periodData.length < 2) return null;
+    
+    const sorted = [...periodData].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    const withExits = sorted.filter(d => d.occupancy?.exits !== undefined);
+    if (withExits.length < 2) return null;
+    
+    const firstExits = withExits[0].occupancy!.exits;
+    const lastExits = withExits[withExits.length - 1].occupancy!.exits;
+    const totalExits = Math.max(0, lastExits - firstExits);
+    
+    const firstTime = new Date(sorted[0].timestamp).getTime();
+    const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
+    const hoursInPeriod = Math.max(1, (lastTime - firstTime) / (1000 * 60 * 60));
+    
+    const exitsPerHour = totalExits / hoursInPeriod;
+    
+    const occupancies = periodData
+      .filter(d => d.occupancy?.current !== undefined)
+      .map(d => d.occupancy!.current);
+    const avgOccupancy = occupancies.length > 0 
+      ? occupancies.reduce((a, b) => a + b, 0) / occupancies.length 
+      : 0;
+    
+    if (exitsPerHour < 0.5 || avgOccupancy < 1) return null;
+    
+    return Math.min(180, Math.round((avgOccupancy / exitsPerHour) * 60));
+  };
+
+  // Helper to calculate guest count correctly
+  const calcGuestCount = (periodData: SensorData[]): number => {
+    const withEntries = periodData
+      .filter(d => d.occupancy?.entries !== undefined)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    if (withEntries.length < 2) return withEntries[0]?.occupancy?.entries || 0;
+    
+    const firstEntries = withEntries[0].occupancy!.entries;
+    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+    return Math.max(0, lastEntries - firstEntries);
+  };
+
   // Current period
-  let currentScoreSum = 0, currentCount = 0, currentGuests = 0;
+  let currentScoreSum = 0, currentCount = 0;
   currentData.forEach(d => {
     const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
     if (score) { currentScoreSum += score; currentCount++; }
-    if (d.occupancy?.entries) currentGuests = Math.max(currentGuests, d.occupancy.entries);
   });
   
   // Previous period
-  let prevScoreSum = 0, prevCount = 0, prevGuests = 0;
+  let prevScoreSum = 0, prevCount = 0;
   previousData.forEach(d => {
     const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
     if (score) { prevScoreSum += score; prevCount++; }
-    if (d.occupancy?.entries) prevGuests = Math.max(prevGuests, d.occupancy.entries);
   });
   
   const periodLabel = timeRange === 'last_night' ? 'vs last week same night' : 'vs previous period';
@@ -638,39 +766,54 @@ function processComparison(
   return {
     current: {
       score: currentCount > 0 ? Math.round(currentScoreSum / currentCount) : 0,
-      avgStay: 45,
-      guests: currentGuests,
+      avgStay: calcAvgStay(currentData),
+      guests: calcGuestCount(currentData),
     },
     previous: {
       score: prevCount > 0 ? Math.round(prevScoreSum / prevCount) : 0,
-      avgStay: 40,
-      guests: prevGuests,
+      avgStay: calcAvgStay(previousData),
+      guests: calcGuestCount(previousData),
     },
     periodLabel,
   };
 }
 
 function processTrendChartData(data: SensorData[]): Array<{ date: Date; score: number; avgStay: number; guests: number }> {
-  const dailyData: Record<string, { scores: number[]; guests: number }> = {};
+  // Group data by day
+  const dailyData: Record<string, { 
+    rawData: SensorData[];
+    scores: number[]; 
+  }> = {};
   
   data.forEach(d => {
     const date = new Date(d.timestamp).toDateString();
     if (!dailyData[date]) {
-      dailyData[date] = { scores: [], guests: 0 };
+      dailyData[date] = { rawData: [], scores: [] };
     }
+    dailyData[date].rawData.push(d);
     const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
     if (score) dailyData[date].scores.push(score);
-    if (d.occupancy?.entries) {
-      dailyData[date].guests = Math.max(dailyData[date].guests, d.occupancy.entries);
-    }
   });
+  
+  // Helper to calculate guest count for a day
+  const calcDayGuests = (dayData: SensorData[]): number => {
+    const withEntries = dayData
+      .filter(d => d.occupancy?.entries !== undefined)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    if (withEntries.length < 2) return withEntries[0]?.occupancy?.entries || 0;
+    
+    const firstEntries = withEntries[0].occupancy!.entries;
+    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+    return Math.max(0, lastEntries - firstEntries);
+  };
   
   return Object.entries(dailyData)
     .map(([dateStr, metrics]) => ({
       date: new Date(dateStr),
       score: metrics.scores.length > 0 ? Math.round(metrics.scores.reduce((a, b) => a + b, 0) / metrics.scores.length) : 0,
-      avgStay: 45, // Placeholder
-      guests: metrics.guests,
+      avgStay: 0, // Not displayed - can't calculate accurate per-day avg stay
+      guests: calcDayGuests(metrics.rawData),
     }))
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 }

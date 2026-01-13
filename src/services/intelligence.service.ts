@@ -56,7 +56,7 @@ export interface WhatIfScenario {
   action: string;
   predictedImpact: {
     pulseScore: number; // delta
-    dwellTime: number; // delta in minutes
+    dwellTime?: number; // delta in minutes - only shown if we have real data
     description: string;
   };
   confidence: number;
@@ -487,7 +487,6 @@ export function generateWhatIfScenarios(
       action: 'Lower music to 72-76 dB',
       predictedImpact: {
         pulseScore: Math.round(avgPulseAtOptimal - currentPulse),
-        dwellTime: 12,
         description: `Pulse Score could increase ~${Math.round(avgPulseAtOptimal - currentPulse)} points`,
       },
       confidence: 75,
@@ -509,8 +508,7 @@ export function generateWhatIfScenarios(
       action: 'Dim lights to 100-200 lux',
       predictedImpact: {
         pulseScore: Math.round(avgPulseWhenDim - currentPulse),
-        dwellTime: 8,
-        description: 'Evening ambiance typically adds 8+ min to dwell time',
+        description: 'Better evening ambiance could improve guest comfort',
       },
       confidence: 70,
       basedOn: `${dimLightData.length} evening readings with dimmer lighting`,
@@ -523,7 +521,6 @@ export function generateWhatIfScenarios(
     action: 'Hit all optimal targets',
     predictedImpact: {
       pulseScore: Math.round(bestPulse - currentPulse),
-      dwellTime: 15,
       description: `Your best recorded Pulse Score was ${bestPulse}`,
     },
     confidence: 60,

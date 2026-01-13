@@ -15,8 +15,6 @@ import {
 import { haptic } from '../../utils/haptics';
 import { getCurrentTimeSlot } from '../../utils/scoring';
 import { TIME_SLOT_RANGES } from '../../utils/constants';
-import type { DiscoveredPattern } from '../../services/venue-learning.service';
-
 interface PlaybookAction {
   id: string;
   timeLabel: string; // "RIGHT NOW" or "IN 47 MINUTES"

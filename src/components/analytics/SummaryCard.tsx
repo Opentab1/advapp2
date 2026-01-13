@@ -103,9 +103,9 @@ export function SummaryCard({ data, timeRange, loading, onTapDetails }: SummaryC
         />
         <div className="w-px bg-whoop-divider" />
         <MetricBox
-          value={`${data.avgStayMinutes}m`}
-          label="Avg Stay"
-          delta={data.avgStayDelta}
+          value={data.avgStayMinutes !== null ? `~${data.avgStayMinutes}m` : '—'}
+          label="~Avg Stay"
+          delta={data.avgStayDelta ?? undefined}
         />
         <div className="w-px bg-whoop-divider" />
         <MetricBox

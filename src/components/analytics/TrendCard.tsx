@@ -58,20 +58,23 @@ export function TrendCard({ data, timeRange, loading, onTapDetails }: TrendCardP
 
       {/* Metrics */}
       <div className="space-y-2 mb-4">
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-warm-400">Avg Stay</span>
-          <div className="flex items-center gap-2">
-            <span className="text-white font-semibold">{data.avgStay} min</span>
-            {data.avgStayDelta !== 0 && (
-              <span className={`text-xs font-medium flex items-center gap-0.5 ${
-                data.avgStayDelta > 0 ? 'text-recovery-high' : 'text-recovery-low'
-              }`}>
-                {data.avgStayDelta > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                {Math.abs(data.avgStayDelta)}%
-              </span>
-            )}
+        {/* Only show Avg Stay if we have real data */}
+        {data.avgStay !== null && (
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-warm-400">~Avg Stay</span>
+            <div className="flex items-center gap-2">
+              <span className="text-white font-semibold">~{data.avgStay} min</span>
+              {data.avgStayDelta !== null && data.avgStayDelta !== 0 && (
+                <span className={`text-xs font-medium flex items-center gap-0.5 ${
+                  data.avgStayDelta > 0 ? 'text-recovery-high' : 'text-recovery-low'
+                }`}>
+                  {data.avgStayDelta > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  {Math.abs(data.avgStayDelta)}%
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
         
         <div className="flex items-center justify-between">
           <span className="text-sm text-warm-400">Guests</span>

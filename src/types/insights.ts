@@ -12,8 +12,8 @@ export type InsightsTimeRange = 'last_night' | '7d' | '14d' | '30d';
 export interface InsightsSummary {
   score: number;
   scoreDelta: number;              // vs previous period (percentage)
-  avgStayMinutes: number;
-  avgStayDelta: number;            // vs previous period (percentage)
+  avgStayMinutes: number | null;   // null if not enough exit data
+  avgStayDelta: number | null;     // vs previous period (percentage), null if can't calculate
   totalGuests: number;
   guestsDelta: number;             // vs previous period (percentage)
   summaryText: string;             // "Solid night. Dwell time up..."
@@ -57,8 +57,8 @@ export interface SweetSpotData {
 // ============ LEVEL 1: TREND ============
 
 export interface TrendData {
-  avgStay: number;
-  avgStayDelta: number;            // percentage change
+  avgStay: number | null;          // null if not enough exit data
+  avgStayDelta: number | null;     // percentage change, null if can't calculate
   totalGuests: number;
   guestsDelta: number;             // percentage change
   bestDay: {
@@ -74,7 +74,7 @@ export interface TrendData {
   weekOverWeek: Array<{
     label: string;                 // "This Week" / "Last Week"
     avgScore: number;
-    avgStay: number;
+    avgStay: number | null;        // null if not enough exit data
     guests: number;
   }>;
 }
@@ -84,12 +84,12 @@ export interface TrendData {
 export interface PeriodComparison {
   current: {
     score: number;
-    avgStay: number;
+    avgStay: number | null;        // null if not enough exit data
     guests: number;
   };
   previous: {
     score: number;
-    avgStay: number;
+    avgStay: number | null;        // null if not enough exit data
     guests: number;
   };
   periodLabel: string;             // "vs last Thursday"

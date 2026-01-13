@@ -185,10 +185,20 @@ function ComparisonRow({
   suffix = '' 
 }: { 
   label: string; 
-  current: number; 
-  previous: number; 
+  current: number | null; 
+  previous: number | null; 
   suffix?: string;
 }) {
+  // Handle null values
+  if (current === null || previous === null) {
+    return (
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-warm-400">{label}</span>
+        <span className="text-sm text-warm-500 italic">Not enough data</span>
+      </div>
+    );
+  }
+
   const delta = previous > 0 ? Math.round(((current - previous) / previous) * 100) : 0;
   const isPositive = delta > 0;
 

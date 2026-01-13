@@ -81,8 +81,8 @@ function WhatIfCard({ scenario, index, onTap }: WhatIfCardProps) {
               </span>
             </div>
             
-            {/* Dwell impact */}
-            {scenario.predictedImpact.dwellTime > 0 && (
+            {/* Dwell impact - only shown if we have real data-backed dwell time */}
+            {scenario.predictedImpact.dwellTime && scenario.predictedImpact.dwellTime > 0 && (
               <div className="flex items-center gap-1 text-xs text-warm-400">
                 <Clock className="w-3 h-3" />
                 <span>+{scenario.predictedImpact.dwellTime} min dwell</span>
