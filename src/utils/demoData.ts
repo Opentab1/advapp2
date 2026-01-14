@@ -333,6 +333,98 @@ export function generateDemoLiveData(): SensorData {
 }
 
 /**
+ * Generate demo sensor data for a date range
+ * Used for dwell time calculation - needs data points throughout the day
+ * Uses its own cumulative counters to ensure consistent progression
+ */
+export function generateDemoDateRangeData(startTime: Date, endTime: Date): SensorData[] {
+  const data: SensorData[] = [];
+  const start = startTime.getTime();
+  const end = endTime.getTime();
+  
+  // Generate data points every 15 minutes
+  const interval = 15 * 60 * 1000; // 15 minutes
+  
+  // Initialize counters for this range
+  let rangeEntries = 650; // Starting baseline
+  let rangeExits = 220;   // Starting baseline
+  
+  for (let timestamp = start; timestamp <= end; timestamp += interval) {
+    const date = new Date(timestamp);
+    const hour = date.getHours();
+    const dayOfWeek = date.getDay();
+    
+    // Time periods
+    const isClosedHours = hour >= 2 && hour < 16;
+    const isHappyHour = hour >= 16 && hour < 19;
+    const isPrimeTime = hour >= 19 && hour < 23;
+    const isLateNight = hour >= 23 || hour < 2;
+    const isWeekend = dayOfWeek === 5 || dayOfWeek === 6;
+    
+    // Increment counters during open hours
+    if (!isClosedHours) {
+      // Higher activity during prime time
+      if (isPrimeTime) {
+        rangeEntries += Math.floor(4 + Math.random() * 6); // 4-10 entries
+        rangeExits += Math.floor(2 + Math.random() * 4);   // 2-6 exits
+      } else if (isLateNight) {
+        rangeEntries += Math.floor(2 + Math.random() * 4); // 2-6 entries
+        rangeExits += Math.floor(3 + Math.random() * 5);   // 3-8 exits (people leaving)
+      } else if (isHappyHour) {
+        rangeEntries += Math.floor(5 + Math.random() * 7); // 5-12 entries
+        rangeExits += Math.floor(1 + Math.random() * 2);   // 1-3 exits
+      }
+      if (isWeekend) {
+        rangeEntries += Math.floor(Math.random() * 3); // Extra weekend traffic
+      }
+    }
+    
+    // Calculate current occupancy (with realistic fluctuation)
+    const baseOccupancy = Math.max(0, rangeEntries - rangeExits);
+    const currentOccupancy = Math.min(480, Math.max(380, 430 + Math.floor(Math.random() * 40 - 20)));
+    
+    // Generate sound/light based on time
+    let decibels: number, light: number;
+    if (isClosedHours) {
+      decibels = 42 + Math.random() * 5;
+      light = 50 + Math.random() * 30;
+    } else if (isHappyHour) {
+      decibels = 74 + Math.random() * 5;
+      light = 280 + Math.random() * 40;
+    } else if (isPrimeTime) {
+      decibels = 82 + Math.random() * 6 + (isWeekend ? 3 : 0);
+      light = 150 + Math.random() * 50;
+    } else {
+      decibels = 85 + Math.random() * 5;
+      light = 120 + Math.random() * 40;
+    }
+    
+    const songInfo = getRandomSongInfo(hour);
+    
+    data.push({
+      timestamp: date.toISOString(),
+      decibels: Math.round(decibels * 10) / 10,
+      light: Math.round(light * 10) / 10,
+      indoorTemp: Math.round((71 + Math.random() * 2) * 10) / 10,
+      outdoorTemp: Math.round((75 + Math.random() * 8 - 4) * 10) / 10,
+      humidity: Math.round((48 + Math.random() * 12) * 10) / 10,
+      currentSong: songInfo.song,
+      artist: songInfo.artist,
+      albumArt: songInfo.art,
+      occupancy: {
+        current: currentOccupancy,
+        entries: rangeEntries,
+        exits: rangeExits,
+        capacity: DEMO_CAPACITY
+      }
+    });
+  }
+  
+  console.log(`🎭 Demo: Generated ${data.length} data points for dwell time (${rangeEntries} entries, ${rangeExits} exits)`);
+  return data;
+}
+
+/**
  * Generate historical data for a time range
  */
 export function generateDemoHistoricalData(venueId: string, range: TimeRange): HistoricalData {

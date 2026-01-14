@@ -1,7 +1,7 @@
 import { generateClient } from '@aws-amplify/api';
 import { fetchAuthSession } from '@aws-amplify/auth';
 import type { SensorData, TimeRange, HistoricalData, OccupancyMetrics } from '../types';
-import { isDemoAccount, generateDemoLiveData, generateDemoHistoricalData, generateDemoOccupancyMetrics } from '../utils/demoData';
+import { isDemoAccount, generateDemoLiveData, generateDemoHistoricalData, generateDemoOccupancyMetrics, generateDemoDateRangeData } from '../utils/demoData';
 import { calculateCurrentHourDwellTime } from '../utils/dwellTime';
 
 // ============================================
@@ -595,8 +595,8 @@ class DynamoDBService {
     
     // Demo mode check
     if (isDemoAccount(venueId)) {
-      console.log('🎭 Demo mode - skipping date range query');
-      return [];
+      console.log('🎭 Demo mode - generating date range data for dwell time');
+      return generateDemoDateRangeData(startTime, endTime);
     }
     
     try {
