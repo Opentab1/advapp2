@@ -216,21 +216,17 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
       });
     }
     
-    // Calculate total visitors - handles both hourly aggregated and raw cumulative data
-    const isHourlyAggregated = relevantData.length > 0 && (relevantData[0] as any)._hourlyAggregate === true;
+    // Calculate total visitors - both hourly and raw data use cumulative counters
+    // Use delta: last entry value - first entry value
+    const sortedByTime = [...relevantData].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    const withEntries = sortedByTime.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
     
-    if (isHourlyAggregated) {
-      // HOURLY AGGREGATED: entries = count per hour, SUM them all
-      totalVisitors = relevantData.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
-    } else {
-      // RAW DATA: entries = cumulative counter, take max (last value of night)
-      const entriesSet = new Set<number>();
-      relevantData.forEach(d => {
-        if (d.occupancy?.entries) {
-          entriesSet.add(d.occupancy.entries);
-        }
-      });
-      totalVisitors = entriesSet.size > 0 ? Math.max(...entriesSet) : 0;
+    if (withEntries.length >= 2) {
+      const firstEntries = withEntries[0].occupancy!.entries;
+      const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+      totalVisitors = Math.max(0, lastEntries - firstEntries);
     }
     
     // Get date info
