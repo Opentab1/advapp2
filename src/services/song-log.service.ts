@@ -477,7 +477,7 @@ class SongLogService {
         artist: s.artist,
         timestamp: s.timestamp,
         albumArt: s.albumArt,
-        source: s.source as 'shazam' | 'spotify' | 'manual',
+        source: s.source,
       }));
       return limit ? entries.slice(0, limit) : entries;
     }

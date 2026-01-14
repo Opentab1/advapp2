@@ -188,7 +188,7 @@ export interface SongLogEntry {
   artist: string;
   albumArt?: string;
   duration?: number;
-  source: 'spotify' | 'youtube' | 'other';
+  source: 'spotify' | 'youtube' | 'shazam' | 'manual' | 'other';
   genre?: string; // For future genre detection
 }
 

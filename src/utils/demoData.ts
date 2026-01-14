@@ -1004,7 +1004,7 @@ export interface DemoSongEntry {
   artist: string;
   timestamp: string;
   albumArt?: string;
-  source: string;
+  source: 'spotify' | 'youtube' | 'shazam' | 'manual' | 'other';
 }
 
 export function generateDemoSongLog(): DemoSongEntry[] {
