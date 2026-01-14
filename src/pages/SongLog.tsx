@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Music, Download, Clock, TrendingUp, RefreshCw, Zap, ListMusic, 
   Calendar, FileText, FileJson, ChevronDown, Disc3,
-  BarChart3, Users, ShieldCheck
+  BarChart3, Users, ShieldCheck, Timer
 } from 'lucide-react';
 import { format } from 'date-fns';
 import songLogService, { 
@@ -544,7 +544,7 @@ export function SongLog() {
 
                     <div className="text-right flex-shrink-0">
                       <div className="text-xs text-warm-400">
-                        {format(new Date(song.timestamp), 'MMM d, h:mm a')}
+                        {song.timestamp ? format(new Date(song.timestamp), 'MMM d, h:mm a') : '—'}
                       </div>
                     </div>
                   </motion.div>
