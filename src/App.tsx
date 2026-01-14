@@ -21,6 +21,7 @@ import { Live } from './pages/Live';
 import { Analytics } from './pages/Analytics';
 import { Settings } from './pages/Settings';
 import { SongLog } from './pages/SongLog';
+import Events from './pages/Events';
 
 // Layout
 import { DashboardLayout } from './layouts/DashboardLayout';
@@ -79,6 +80,8 @@ function ProtectedDashboard() {
         return <Analytics />;
       case 'songs':
         return <SongLog />;
+      case 'events':
+        return <Events />;
       case 'settings':
         return <Settings />;
       default:
