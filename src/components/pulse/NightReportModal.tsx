@@ -144,9 +144,9 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
       let hourEntries = 0;
       
       hourData.forEach(d => {
-        // Calculate pulse score
+        // Calculate pulse score - pass timestamp for accurate historical scoring
         if (d.decibels !== undefined && d.light !== undefined) {
-          const { score } = calculatePulseScore(d.decibels, d.light);
+          const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
           if (score !== null) {
             hourPulseTotal += score;
             hourPulseCount++;

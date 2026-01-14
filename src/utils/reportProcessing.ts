@@ -58,8 +58,8 @@ export function processReportData(data: SensorData[]): ProcessedReportData {
     const day = date.getDay();
     const hour = date.getHours();
     
-    // Score
-    const { score } = calculatePulseScore(d.decibels, d.light);
+    // Score - pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score) {
       totalScore += score;
       count++;
@@ -123,7 +123,8 @@ export function processReportData(data: SensorData[]): ProcessedReportData {
   // Assuming data is sorted, take last 5
   const sortedData = [...data].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   const scoreTrend = sortedData.slice(-5).map(d => {
-    const { score } = calculatePulseScore(d.decibels, d.light);
+    // Pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     return {
       label: new Date(d.timestamp).toLocaleTimeString([], { hour: 'numeric' }),
       value: score || 0,

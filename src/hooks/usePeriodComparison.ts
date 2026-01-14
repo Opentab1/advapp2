@@ -220,10 +220,10 @@ function calculatePeriodStats(data: SensorData[], timeRange: TimeRange, isCurren
     };
   }
   
-  // Calculate Pulse Scores
+  // Calculate Pulse Scores - pass timestamp for accurate historical scoring
   const scoredData = data.map(d => ({
     ...d,
-    pulseScore: calculatePulseScore(d.decibels, d.light).score,
+    pulseScore: calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp).score,
   }));
   
   // Average Pulse Score

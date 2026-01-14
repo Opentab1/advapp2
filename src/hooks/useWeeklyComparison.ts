@@ -115,10 +115,10 @@ function calculateWeekStats(data: SensorData[]): WeekData {
     };
   }
   
-  // Calculate Pulse Scores for each data point
+  // Calculate Pulse Scores for each data point - pass timestamp for accurate historical scoring
   const scoredData = data.map(d => ({
     ...d,
-    pulseScore: calculatePulseScore(d.decibels, d.light).score,
+    pulseScore: calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp).score,
   }));
   
   // Average Pulse Score

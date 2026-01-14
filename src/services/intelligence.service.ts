@@ -95,7 +95,8 @@ function analyzeHistoricalPatterns(data: SensorData[]): HistoricalPattern {
     const date = new Date(d.timestamp);
     const hour = date.getHours();
     const day = date.getDay();
-    const pulse = calculatePulseScore(d.decibels, d.light).score;
+    // Pass timestamp for accurate historical scoring
+    const pulse = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp).score;
     const crowd = d.occupancy?.current || 0;
     
     // Hourly patterns
@@ -199,7 +200,7 @@ export function generateSmartActions(
         .slice(0, 5);
       
       const avgPulseWhenOptimal = whatWorkedBefore.length > 0
-        ? avg(whatWorkedBefore.map(d => calculatePulseScore(d.decibels, d.light).score))
+        ? avg(whatWorkedBefore.map(d => calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp).score))
         : null;
       
       actions.push({
@@ -479,7 +480,7 @@ export function generateWhatIfScenarios(
       d.decibels && d.decibels >= 70 && d.decibels <= 76
     );
     const avgPulseAtOptimal = optimalSoundData.length > 0
-      ? avg(optimalSoundData.map(d => calculatePulseScore(d.decibels, d.light).score))
+      ? avg(optimalSoundData.map(d => calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp).score))
       : currentPulse + 8;
     
     scenarios.push({
@@ -500,7 +501,7 @@ export function generateWhatIfScenarios(
       d.light && d.light >= 80 && d.light <= 200
     );
     const avgPulseWhenDim = dimLightData.length > 0
-      ? avg(dimLightData.map(d => calculatePulseScore(d.decibels, d.light).score))
+      ? avg(dimLightData.map(d => calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp).score))
       : currentPulse + 5;
     
     scenarios.push({

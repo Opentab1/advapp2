@@ -122,7 +122,8 @@ function calculateHistorySummary(data: SensorData[]): HistorySummary {
   let peakTime: string | null = null;
   
   data.forEach(d => {
-    const { score } = calculatePulseScore(d.decibels, d.light);
+    // Pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score !== null) {
       totalScore += score;
       count++;
