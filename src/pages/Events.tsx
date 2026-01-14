@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Sparkles, 
@@ -235,11 +235,35 @@ export default function Events() {
   const user = authService.getStoredUser();
   const venueId = user?.venueId || 'theshowcaselounge';
   
-  const vibe = useMemo(() => eventsService.getVenueVibe(venueId), [venueId]);
-  const suggestions = useMemo(() => eventsService.getEventSuggestions(venueId, 8), [venueId]);
-  const quickWins = useMemo(() => eventsService.getQuickWins(venueId), [venueId]);
-  
+  const [vibe, setVibe] = useState<VenueVibe | null>(null);
+  const [suggestions, setSuggestions] = useState<EventSuggestion[]>([]);
+  const [quickWins, setQuickWins] = useState<EventSuggestion[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'theme_night' | 'special_event' | 'recurring'>('all');
+  
+  // Fetch vibe and suggestions on mount
+  useEffect(() => {
+    async function loadData() {
+      setIsLoading(true);
+      try {
+        console.log('🎵 Events: Loading vibe data for', venueId);
+        const [vibeData, suggestionsData, quickWinsData] = await Promise.all([
+          eventsService.getVenueVibe(venueId),
+          eventsService.getEventSuggestions(venueId, 8),
+          eventsService.getQuickWins(venueId),
+        ]);
+        setVibe(vibeData);
+        setSuggestions(suggestionsData);
+        setQuickWins(quickWinsData);
+        console.log('🎵 Events: Loaded', vibeData.songsAnalyzed, 'songs analyzed');
+      } catch (error) {
+        console.error('❌ Events: Error loading data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadData();
+  }, [venueId]);
   
   const filteredSuggestions = filter === 'all' 
     ? suggestions 
@@ -261,7 +285,24 @@ export default function Events() {
       
       {/* Vibe Profile */}
       <div className="px-5 mb-6">
-        <VibeProfileCard vibe={vibe} />
+        {isLoading ? (
+          <div className="bg-gradient-to-br from-purple-900/40 to-indigo-900/30 rounded-2xl p-6 border border-purple-500/20 animate-pulse">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-purple-500/20"></div>
+              <div className="flex-1">
+                <div className="h-6 bg-gray-700/50 rounded w-48 mb-2"></div>
+                <div className="h-4 bg-gray-700/30 rounded w-64"></div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="h-3 bg-gray-700/30 rounded w-full"></div>
+              <div className="h-3 bg-gray-700/30 rounded w-3/4"></div>
+            </div>
+            <p className="text-center text-sm text-purple-400 mt-4">Analyzing your music...</p>
+          </div>
+        ) : vibe ? (
+          <VibeProfileCard vibe={vibe} />
+        ) : null}
       </div>
       
       {/* Quick Wins */}

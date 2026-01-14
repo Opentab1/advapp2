@@ -8,6 +8,7 @@
  */
 
 import { getDemoTopSongs, getDemoGenreStats, isDemoAccount } from '../utils/demoData';
+import songLogService from './song-log.service';
 
 // ============ TYPES ============
 
@@ -167,10 +168,21 @@ function shuffleWithSeed<T>(array: T[], seed: number): T[] {
 // ============ MAIN SERVICE ============
 
 class EventsService {
+  // Cache for venue vibe to avoid repeated API calls
+  private vibeCache: Map<string, { vibe: VenueVibe; timestamp: number }> = new Map();
+  private readonly CACHE_TTL = 300000; // 5 minutes
+  
   /**
    * Analyze venue's song data to determine vibe profile
+   * Fetches ALL songs from DynamoDB for real accounts
    */
-  getVenueVibe(venueId: string): VenueVibe {
+  async getVenueVibe(venueId: string): Promise<VenueVibe> {
+    // Check cache first
+    const cached = this.vibeCache.get(venueId);
+    if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
+      return cached.vibe;
+    }
+    
     // For demo, use the demo genre stats
     if (isDemoAccount(venueId)) {
       const genreStats = getDemoGenreStats();
@@ -194,7 +206,7 @@ class EventsService {
       // Extract unique artists from top songs
       const topArtists = [...new Set(topSongs.map(s => s.artist))].slice(0, 5);
       
-      return {
+      const vibe: VenueVibe = {
         primary: { genre: primary.genre, percentage: primaryPct },
         secondary: secondaryPct > 5 ? { genre: secondary.genre, percentage: secondaryPct } : null,
         tertiary: tertiaryPct > 5 ? { genre: tertiary.genre, percentage: tertiaryPct } : null,
@@ -203,27 +215,92 @@ class EventsService {
         songsAnalyzed: totalPlays,
         topArtists,
       };
+      
+      this.vibeCache.set(venueId, { vibe, timestamp: Date.now() });
+      return vibe;
     }
     
-    // For real accounts, would analyze actual song data
-    // For now, return a default
-    return {
-      primary: { genre: 'Pop', percentage: 50 },
-      secondary: { genre: 'Hip Hop', percentage: 30 },
-      tertiary: { genre: 'R&B', percentage: 20 },
-      vibeName: 'Mainstream Magic',
-      vibeDescription: 'Everyone knows the songs, everyone sings along.',
-      songsAnalyzed: 0,
-      topArtists: [],
-    };
+    // For real accounts, fetch ALL songs from DynamoDB (90 days)
+    console.log('🎵 Events: Fetching all songs for vibe analysis...');
+    
+    try {
+      // Get genre stats (this fetches from DynamoDB)
+      const genreStats = await songLogService.getGenreStats(20, '90d');
+      const topSongs = await songLogService.getTopSongsFromAll(10);
+      
+      console.log(`🎵 Events: Got ${genreStats.length} genres, ${topSongs.length} top songs`);
+      
+      if (genreStats.length === 0) {
+        // No song data yet - return default
+        console.log('🎵 Events: No song data found, using defaults');
+        const defaultVibe: VenueVibe = {
+          primary: { genre: 'Pop', percentage: 100 },
+          secondary: null,
+          tertiary: null,
+          vibeName: 'Getting Started',
+          vibeDescription: 'Play more music to discover your venue\'s vibe!',
+          songsAnalyzed: 0,
+          topArtists: [],
+        };
+        return defaultVibe;
+      }
+      
+      // Calculate total plays from genre stats
+      const totalPlays = genreStats.reduce((sum, g) => sum + g.plays, 0);
+      
+      // Get top 3 genres
+      const sorted = [...genreStats].sort((a, b) => b.plays - a.plays);
+      const primary = sorted[0];
+      const secondary = sorted[1];
+      const tertiary = sorted[2];
+      
+      const primaryPct = totalPlays > 0 ? Math.round((primary.plays / totalPlays) * 100) : 100;
+      const secondaryPct = secondary && totalPlays > 0 ? Math.round((secondary.plays / totalPlays) * 100) : 0;
+      const tertiaryPct = tertiary && totalPlays > 0 ? Math.round((tertiary.plays / totalPlays) * 100) : 0;
+      
+      const vibeInfo = VIBE_NAMES[primary.genre] || { name: 'Eclectic Mix', description: 'A diverse musical palette.' };
+      
+      // Extract unique artists from top songs
+      const topArtists = [...new Set(topSongs.map(s => s.artist))].slice(0, 5);
+      
+      console.log(`🎵 Events: Vibe detected - ${vibeInfo.name} (${primary.genre} ${primaryPct}%, ${totalPlays} songs)`);
+      
+      const vibe: VenueVibe = {
+        primary: { genre: primary.genre, percentage: primaryPct },
+        secondary: secondary && secondaryPct > 5 ? { genre: secondary.genre, percentage: secondaryPct } : null,
+        tertiary: tertiary && tertiaryPct > 5 ? { genre: tertiary.genre, percentage: tertiaryPct } : null,
+        vibeName: vibeInfo.name,
+        vibeDescription: vibeInfo.description,
+        songsAnalyzed: totalPlays,
+        topArtists,
+      };
+      
+      // Cache the result
+      this.vibeCache.set(venueId, { vibe, timestamp: Date.now() });
+      
+      return vibe;
+    } catch (error) {
+      console.error('❌ Events: Error fetching song data:', error);
+      
+      // Return default on error
+      return {
+        primary: { genre: 'Pop', percentage: 100 },
+        secondary: null,
+        tertiary: null,
+        vibeName: 'Loading...',
+        vibeDescription: 'Analyzing your music data...',
+        songsAnalyzed: 0,
+        topArtists: [],
+      };
+    }
   }
   
   /**
    * Get event suggestions based on venue vibe
    * Returns different events each session
    */
-  getEventSuggestions(venueId: string, limit: number = 6): EventSuggestion[] {
-    const vibe = this.getVenueVibe(venueId);
+  async getEventSuggestions(venueId: string, limit: number = 6): Promise<EventSuggestion[]> {
+    const vibe = await this.getVenueVibe(venueId);
     const sessionSeed = getSessionSeed();
     
     // Get events for primary genre
@@ -249,17 +326,24 @@ class EventsService {
   /**
    * Get quick win suggestions (easy events)
    */
-  getQuickWins(venueId: string): EventSuggestion[] {
-    const suggestions = this.getEventSuggestions(venueId, 10);
+  async getQuickWins(venueId: string): Promise<EventSuggestion[]> {
+    const suggestions = await this.getEventSuggestions(venueId, 10);
     return suggestions.filter(e => e.difficulty === 'Easy').slice(0, 3);
   }
   
   /**
    * Get all events for a specific category
    */
-  getEventsByCategory(venueId: string, category: EventSuggestion['category']): EventSuggestion[] {
-    const suggestions = this.getEventSuggestions(venueId, 20);
+  async getEventsByCategory(venueId: string, category: EventSuggestion['category']): Promise<EventSuggestion[]> {
+    const suggestions = await this.getEventSuggestions(venueId, 20);
     return suggestions.filter(e => e.category === category);
+  }
+  
+  /**
+   * Clear the vibe cache (useful when new song data is available)
+   */
+  clearCache(): void {
+    this.vibeCache.clear();
   }
 }
 
