@@ -394,7 +394,26 @@ class SongLogService {
       }
       
       if (allSensorData.length === 0) {
-        console.log('🎵 No historical data found in DynamoDB');
+        console.log('🎵 No raw sensor data found - trying hourly aggregates as fallback...');
+        
+        // Fallback: Try to get songs from hourly aggregated data
+        try {
+          const hourlyData = await dynamoDBService.getHourlySensorData(venueId, '90d');
+          if (hourlyData.data && hourlyData.data.length > 0) {
+            // Extract songs from hourly data (topSong/artist fields)
+            const songsFromHourly = this.extractSongsFromSensorData(hourlyData.data);
+            if (songsFromHourly.length > 0) {
+              console.log(`🎵 Fallback: Extracted ${songsFromHourly.length} songs from hourly aggregates`);
+              this.dynamoDBSongs = songsFromHourly;
+              this.lastDynamoDBFetch = Date.now();
+              return songsFromHourly;
+            }
+          }
+        } catch (hourlyError) {
+          console.warn('⚠️ Hourly fallback also failed:', hourlyError);
+        }
+        
+        console.log('🎵 No song data found from any source');
         return [];
       }
       

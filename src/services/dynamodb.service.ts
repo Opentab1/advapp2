@@ -630,7 +630,19 @@ class DynamoDBService {
       
       return items.map((item: any) => this.transformDynamoDBData(item));
     } catch (error: any) {
-      console.error('❌ Error fetching sensor data by date range:', error);
+      // Log detailed error info for debugging
+      console.error('❌ Error fetching sensor data by date range:', {
+        message: error?.message || 'Unknown error',
+        name: error?.name,
+        code: error?.code,
+        errors: error?.errors,
+        // GraphQL-specific error details
+        graphQLErrors: error?.errors?.map((e: any) => ({
+          message: e.message,
+          errorType: e.errorType,
+          path: e.path
+        }))
+      });
       throw error;
     }
   }
