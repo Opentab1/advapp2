@@ -12,11 +12,11 @@
 import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  X, Download, Zap, Volume2, Sun, Users, Clock, Thermometer 
+  X, Download, Zap, Volume2, Sun, Users, Thermometer 
 } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 import { AreaChart } from '../common/MiniChart';
-import type { RawDataPoint, InsightsTimeRange, MetricType } from '../../types/insights';
+import type { RawDataPoint, InsightsTimeRange } from '../../types/insights';
 
 interface RawDataViewProps {
   isOpen: boolean;
@@ -24,11 +24,15 @@ interface RawDataViewProps {
   data: RawDataPoint[];
   timeRange: InsightsTimeRange;
   onTimeRangeChange: (range: InsightsTimeRange) => void;
-  initialMetric?: MetricType;
+  initialMetric?: DisplayableMetric;
   onExport: () => void;
 }
 
-const METRIC_CONFIG: Record<MetricType, { 
+// Only include metrics we can accurately display from real sensor data
+// Dwell removed - cannot calculate per-point dwell time (it's an aggregate metric)
+type DisplayableMetric = 'score' | 'sound' | 'light' | 'crowd' | 'temp';
+
+const METRIC_CONFIG: Record<DisplayableMetric, { 
   icon: typeof Volume2; 
   label: string; 
   color: string;
@@ -58,17 +62,10 @@ const METRIC_CONFIG: Record<MetricType, {
   },
   crowd: { 
     icon: Users, 
-    label: 'Crowd', 
+    label: 'Guests', 
     color: '#00F19F',
     unit: '',
     getValue: (d) => d.occupancy,
-  },
-  dwell: { 
-    icon: Clock, 
-    label: 'Dwell', 
-    color: '#0093E7',
-    unit: 'min',
-    getValue: (d) => d.dwellMinutes || 0,
   },
   temp: { 
     icon: Thermometer, 
@@ -95,7 +92,7 @@ export function RawDataView({
   initialMetric = 'score',
   onExport,
 }: RawDataViewProps) {
-  const [activeMetric, setActiveMetric] = useState<MetricType>(initialMetric);
+  const [activeMetric, setActiveMetric] = useState<DisplayableMetric>(initialMetric === 'dwell' ? 'score' : (initialMetric as DisplayableMetric) || 'score');
   
   if (!isOpen) return null;
 
@@ -165,7 +162,7 @@ export function RawDataView({
     onClose();
   };
 
-  const handleMetricChange = (metric: MetricType) => {
+  const handleMetricChange = (metric: DisplayableMetric) => {
     haptic('selection');
     setActiveMetric(metric);
   };
@@ -204,7 +201,7 @@ export function RawDataView({
       <div className="overflow-y-auto h-[calc(100vh-56px)] p-4 space-y-6 pb-20">
         {/* Metric Selector */}
         <div className="flex flex-wrap gap-2">
-          {(Object.keys(METRIC_CONFIG) as MetricType[]).map((metric) => {
+          {(Object.keys(METRIC_CONFIG) as DisplayableMetric[]).map((metric) => {
             const cfg = METRIC_CONFIG[metric];
             const Icon = cfg.icon;
             const isActive = activeMetric === metric;

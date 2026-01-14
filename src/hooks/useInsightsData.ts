@@ -462,10 +462,10 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
       { min: 150, max: 999, label: '150+ lux' },
     ],
     crowd: [
-      { min: 0, max: 25, label: '< 25%' },
-      { min: 25, max: 50, label: '25-50%' },
-      { min: 50, max: 75, label: '50-75%' },
-      { min: 75, max: 100, label: '75-100%' },
+      { min: 0, max: 50, label: '< 50 guests' },
+      { min: 50, max: 100, label: '50-100 guests' },
+      { min: 100, max: 150, label: '100-150 guests' },
+      { min: 150, max: 9999, label: '150+ guests' },
     ],
     temp: [
       { min: 0, max: 65, label: '< 65°F' },
@@ -487,7 +487,7 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
     switch (variable) {
       case 'sound': value = d.decibels || 0; break;
       case 'light': value = d.light || 0; break;
-      case 'crowd': value = (d.occupancy?.current || 0) / 2; break; // Normalize to percentage
+      case 'crowd': value = d.occupancy?.current || 0; break; // Use actual guest count
       case 'temp': value = d.indoorTemp || 70; break;
       default: value = 0;
     }
@@ -782,7 +782,7 @@ function processHourlyData(data: SensorData[]): HourlyData[] {
 }
 
 function processFactorScores(data: SensorData[]): FactorScore[] {
-  let soundSum = 0, lightSum = 0, crowdSum = 0, tempSum = 0;
+  let soundSum = 0, lightSum = 0, tempSum = 0;
   let count = 0;
   
   data.forEach(d => {
@@ -790,8 +790,6 @@ function processFactorScores(data: SensorData[]): FactorScore[] {
     soundSum += result.factors.sound.score;
     lightSum += result.factors.light.score;
     tempSum += result.factors.temperature.score;
-    // Crowd score approximation
-    crowdSum += (d.occupancy?.current || 0) > 20 ? 80 : 50;
     count++;
   });
   
@@ -803,10 +801,11 @@ function processFactorScores(data: SensorData[]): FactorScore[] {
     return 'Needs adjustment';
   };
   
+  // Only return factors we can accurately calculate from real sensor data
+  // Crowd score removed - cannot calculate meaningful score without venue capacity data
   return [
     { factor: 'sound', score: Math.round(soundSum / count), label: getLabel(soundSum / count) },
     { factor: 'light', score: Math.round(lightSum / count), label: getLabel(lightSum / count) },
-    { factor: 'crowd', score: Math.round(crowdSum / count), label: getLabel(crowdSum / count) },
     { factor: 'temp', score: Math.round(tempSum / count), label: getLabel(tempSum / count) },
   ];
 }
