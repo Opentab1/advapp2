@@ -260,7 +260,7 @@ export function PulseBreakdownModal({
             </div>
             
             {/* Recommendation */}
-            {proximityToBest !== null && proximityToBest < 80 && (
+            {proximityToBest != null && proximityToBest < 80 && (
               <div className="mt-4 p-3 bg-warm-800/50 rounded-lg">
                 <p className="text-xs text-warm-300">
                   💡 <span className="font-medium">To recreate this night:</span>{' '}

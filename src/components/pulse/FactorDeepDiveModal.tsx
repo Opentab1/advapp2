@@ -183,7 +183,7 @@ export function FactorDeepDiveModal({
           
           {/* Weight info */}
           <p className="text-xs text-warm-500 mt-2">
-            {Math.round(FACTOR_WEIGHTS[factor === 'comfort' ? 'temperature' : factor === 'music' ? 'vibe' : factor as keyof typeof FACTOR_WEIGHTS] * 100)}% of your Pulse Score
+            {Math.round((FACTOR_WEIGHTS[factor as keyof typeof FACTOR_WEIGHTS] ?? 0) * 100)}% of your Pulse Score
           </p>
         </div>
         

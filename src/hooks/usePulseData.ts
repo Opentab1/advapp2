@@ -308,32 +308,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     };
   }, [enabled, venueId, pollingInterval, fetchLiveData, fetchOccupancy]);
   
-  // ============ COMPUTED VALUES ============
-  
-  // Estimate venue capacity based on peak occupancy or default
-  const estimatedCapacity = useMemo(() => {
-    // Use peak occupancy * 1.2 as estimate, or default to 100
-    if (effectiveOccupancy.peakOccupancy > 0) {
-      return Math.max(effectiveOccupancy.peakOccupancy * 1.2, 50);
-    }
-    return 100;
-  }, [effectiveOccupancy.peakOccupancy]);
-  
-  const pulseScoreResult = useMemo(() => {
-    return calculatePulseScore(
-      sensorData?.decibels,
-      sensorData?.light,
-      null, // indoorTemp - removed
-      null, // outdoorTemp - removed
-      sensorData?.currentSong,
-      sensorData?.artist,
-      venueId,
-      undefined, // timestamp
-      effectiveOccupancy.current, // currentOccupancy for crowd scoring
-      estimatedCapacity // for crowd scoring
-    );
-  }, [sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist, venueId, effectiveOccupancy.current, estimatedCapacity]);
-  
+// ============ COMPUTED VALUES ============
+
   const reputationScore = getReputationScore(reviews?.rating ?? null);
   
   // Data freshness
@@ -384,8 +360,33 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       peakOccupancy: current,
       peakTime: null,
     };
-  }, [sensorData?.occupancy, baseline, venueId]);
-  
+}, [sensorData?.occupancy, baseline, venueId]);
+
+  // Estimate venue capacity based on peak occupancy or default
+  const estimatedCapacity = useMemo(() => {
+    // Use peak occupancy * 1.2 as estimate, or default to 100
+    if (effectiveOccupancy.peakOccupancy > 0) {
+      return Math.max(effectiveOccupancy.peakOccupancy * 1.2, 50);
+    }
+    return 100;
+  }, [effectiveOccupancy.peakOccupancy]);
+
+  // Calculate Pulse Score - now uses effectiveOccupancy and estimatedCapacity
+  const pulseScoreResult = useMemo(() => {
+    return calculatePulseScore(
+      sensorData?.decibels,
+      sensorData?.light,
+      null, // indoorTemp - removed
+      null, // outdoorTemp - removed
+      sensorData?.currentSong,
+      sensorData?.artist,
+      venueId,
+      undefined, // timestamp
+      effectiveOccupancy.current, // currentOccupancy for crowd scoring
+      estimatedCapacity // for crowd scoring
+    );
+  }, [sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist, venueId, effectiveOccupancy.current, estimatedCapacity]);
+
   // ============ DWELL TIME CALCULATION ============
   // Using Occupancy Integration method (more accurate than Little's Law)
   // 

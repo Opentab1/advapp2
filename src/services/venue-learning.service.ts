@@ -735,7 +735,9 @@ class VenueLearningService {
         avgDwell: number;
         avgSound: number;
         avgLight: number;
-        avgTemp: number;
+        topArtists: string[];
+        detectedGenres: string[];
+        songCount: number;
         score: number; // Combined score for ranking
       }> = [];
       

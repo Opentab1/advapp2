@@ -663,7 +663,7 @@ function processTrend(
       dailyMetrics[date].scores.push(result.score);
       dailyMetrics[date].soundScores.push(result.factors.sound.score);
       dailyMetrics[date].lightScores.push(result.factors.light.score);
-      dailyMetrics[date].tempScores.push(result.factors.temperature.score);
+      dailyMetrics[date].tempScores.push(result.factors.crowd.score);
     }
     if (d.occupancy?.current && d.occupancy.current > dailyMetrics[date].maxOccupancy) {
       dailyMetrics[date].maxOccupancy = d.occupancy.current;
@@ -840,7 +840,7 @@ function processFactorScores(data: SensorData[]): FactorScore[] {
     const result = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     soundSum += result.factors.sound.score;
     lightSum += result.factors.light.score;
-    tempSum += result.factors.temperature.score;
+    tempSum += result.factors.crowd.score;
     count++;
   });
   

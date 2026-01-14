@@ -435,6 +435,8 @@ export function Live() {
         todayEntries={pulseData.todayEntries}
         todayExits={pulseData.todayExits}
         peakOccupancy={pulseData.peakOccupancy}
+        currentSong={pulseData.sensorData?.currentSong ?? null}
+        artist={pulseData.sensorData?.artist ?? null}
         albumArt={pulseData.sensorData?.albumArt ?? null}
         reviews={pulseData.reviews}
         lastUpdated={pulseData.lastUpdated}
