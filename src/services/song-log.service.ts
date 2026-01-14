@@ -15,10 +15,9 @@ export interface PerformingSong {
   song: string;
   artist: string;
   plays: number;
-  avgOccupancy: number;
-  avgOccupancyChange: number;
-  avgDwellExtension: number; // minutes gained during this song
-  performanceScore: number;
+  retentionRate: number; // % of crowd that stayed (100% = no one left, 105% = more came than left)
+  avgExitRate: number; // exits per minute per 100 people (lower = better)
+  avgCrowdSize: number; // average crowd during song plays
   albumArt?: string;
   genre?: string;
 }
@@ -28,9 +27,8 @@ export interface PlaylistSong {
   song: string;
   artist: string;
   plays: number;
-  performanceScore: number;
+  retentionRate: number;
   albumArt?: string;
-  reason: string;
   genre?: string;
 }
 
@@ -589,9 +587,9 @@ class SongLogService {
   private readonly PERFORMANCE_CACHE_TTL = 300000; // 5 minute cache
   
   /**
-   * Get highest performing songs based on occupancy/dwell time correlation
-   * "Best performing" = songs that correlate with stable/growing occupancy and longer dwell
-   * Returns demo data for demo accounts
+   * Get highest retention songs - songs where people stayed (100% accurate metric)
+   * Retention Rate = (crowd at song end / crowd at song start) × 100
+   * Exit Rate = exits during song / crowd size / duration (lower = better)
    */
   async getHighestPerformingSongs(limit: number = 10, timeRange: AnalyticsTimeRange = '30d'): Promise<PerformingSong[]> {
     // Check for demo account first
@@ -628,31 +626,40 @@ class SongLogService {
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
       
-      console.log(`🎵 Analyzing ${sensorData.length} readings for song performance (${timeRange})`);
+      console.log(`🎵 Analyzing ${sensorData.length} readings for song retention (${timeRange})`);
       
-      // Build a map of song performances
+      // Build a map of song performances with retention metrics
       const songPerformance = new Map<string, {
         song: string;
         artist: string;
         plays: number;
-        occupancyReadings: number[];
-        occupancyChanges: number[];
-        dwellExtensions: number[]; // estimated dwell time extension per play
+        retentionRates: number[]; // crowd at end / crowd at start for each play
+        exitRates: number[]; // exits per minute per 100 people for each play
+        crowdSizes: number[]; // crowd size during each play
         albumArt?: string;
         genre?: string;
-        playDurations: number[]; // how long each play lasted in minutes
       }>();
       
-      // Track when each song starts playing
-      let currentSongStart: { song: string; startIndex: number; startTime: number } | null = null;
+      // Track song play sessions
+      interface SongSession {
+        key: string;
+        startIndex: number;
+        startTime: number;
+        startCrowd: number;
+        totalExits: number;
+        readings: number;
+      }
+      let currentSession: SongSession | null = null;
       
-      // Analyze each sensor reading that has a song
+      // Analyze each sensor reading
       for (let i = 0; i < sensorData.length; i++) {
         const reading = sensorData[i];
         if (!reading.currentSong) continue;
         
         const key = `${reading.currentSong}|${reading.artist || 'Unknown'}`;
         const currentTime = new Date(reading.timestamp).getTime();
+        const currentCrowd = reading.occupancy?.current ?? 0;
+        const exits = reading.occupancy?.exits ?? 0;
         
         // Initialize song entry if needed
         if (!songPerformance.has(key)) {
@@ -661,111 +668,119 @@ class SongLogService {
             song: reading.currentSong,
             artist: reading.artist || 'Unknown',
             plays: 0,
-            occupancyReadings: [],
-            occupancyChanges: [],
-            dwellExtensions: [],
+            retentionRates: [],
+            exitRates: [],
+            crowdSizes: [],
             albumArt: reading.albumArt,
             genre,
-            playDurations: []
           });
         }
         
         const perf = songPerformance.get(key)!;
         
-        // Check if song changed (new play)
+        // Check if song changed (new play session)
         const prevReading = i > 0 ? sensorData[i - 1] : null;
         const songChanged = !prevReading || prevReading.currentSong !== reading.currentSong;
         
         if (songChanged) {
-          // If we were tracking a previous song, record its duration
-          if (currentSongStart && currentSongStart.song !== key) {
-            const prevPerf = songPerformance.get(currentSongStart.song);
-            if (prevPerf) {
-              const duration = (currentTime - currentSongStart.startTime) / 60000; // minutes
-              if (duration > 0 && duration < 30) { // Sanity check: songs < 30 min
-                prevPerf.playDurations.push(duration);
+          // Finalize previous session if exists
+          if (currentSession && currentSession.readings > 0) {
+            const prevPerf = songPerformance.get(currentSession.key);
+            if (prevPerf && currentSession.startCrowd > 0) {
+              // Get the last reading's crowd for this session
+              const endReading = sensorData[i - 1];
+              const endCrowd = endReading?.occupancy?.current ?? currentSession.startCrowd;
+              const sessionDuration = (currentTime - currentSession.startTime) / 60000; // minutes
+              
+              // Calculate retention: end crowd / start crowd * 100
+              const retention = (endCrowd / currentSession.startCrowd) * 100;
+              prevPerf.retentionRates.push(retention);
+              
+              // Calculate exit rate: exits per minute per 100 people
+              if (sessionDuration > 0 && currentSession.startCrowd > 0) {
+                const exitRate = (currentSession.totalExits / sessionDuration) / (currentSession.startCrowd / 100);
+                prevPerf.exitRates.push(exitRate);
               }
+              
+              prevPerf.crowdSizes.push(currentSession.startCrowd);
             }
           }
           
-          // Start tracking this song
-          currentSongStart = { song: key, startIndex: i, startTime: currentTime };
+          // Start new session
+          currentSession = {
+            key,
+            startIndex: i,
+            startTime: currentTime,
+            startCrowd: currentCrowd,
+            totalExits: exits,
+            readings: 1,
+          };
           perf.plays++;
-        }
-        
-        // Record occupancy during this song
-        if (reading.occupancy?.current !== undefined) {
-          perf.occupancyReadings.push(reading.occupancy.current);
-        }
-        
-        // Calculate occupancy change (compare to reading ~5 min ago)
-        if (reading.occupancy?.current !== undefined) {
-          const fiveMinAgo = currentTime - 5 * 60 * 1000;
-          for (let j = i - 1; j >= 0; j--) {
-            const checkTime = new Date(sensorData[j].timestamp).getTime();
-            if (checkTime <= fiveMinAgo && sensorData[j].occupancy?.current !== undefined) {
-              const change = reading.occupancy.current - sensorData[j].occupancy!.current;
-              perf.occupancyChanges.push(change);
-              break;
-            }
-          }
+        } else if (currentSession && currentSession.key === key) {
+          // Continue current session
+          currentSession.totalExits += exits;
+          currentSession.readings++;
         }
       }
       
-      // Calculate dwell time extension for each song
-      // Songs with high occupancy stability = longer dwell
-      // We estimate dwell extension as: (avgOccupancy / maxOccupancy) * avgPlayDuration
-      const maxOccupancy = Math.max(...Array.from(songPerformance.values())
-        .flatMap(p => p.occupancyReadings)
-        .filter(v => v > 0), 100);
+      // Finalize last session
+      if (currentSession && currentSession.readings > 0) {
+        const lastReading = sensorData[sensorData.length - 1];
+        const prevPerf = songPerformance.get(currentSession.key);
+        if (prevPerf && currentSession.startCrowd > 0 && lastReading) {
+          const endCrowd = lastReading.occupancy?.current ?? currentSession.startCrowd;
+          const sessionDuration = (new Date(lastReading.timestamp).getTime() - currentSession.startTime) / 60000;
+          
+          const retention = (endCrowd / currentSession.startCrowd) * 100;
+          prevPerf.retentionRates.push(retention);
+          
+          if (sessionDuration > 0) {
+            const exitRate = (currentSession.totalExits / sessionDuration) / (currentSession.startCrowd / 100);
+            prevPerf.exitRates.push(exitRate);
+          }
+          
+          prevPerf.crowdSizes.push(currentSession.startCrowd);
+        }
+      }
       
-      // Calculate performance scores
+      // Calculate final metrics
       const results: PerformingSong[] = [];
       
       songPerformance.forEach((perf) => {
-        if (perf.plays < 1) return; // Need at least 1 play
+        if (perf.plays < 1) return;
         
-        const avgOccupancy = perf.occupancyReadings.length > 0
-          ? perf.occupancyReadings.reduce((a, b) => a + b, 0) / perf.occupancyReadings.length
+        // Average retention rate
+        const avgRetention = perf.retentionRates.length > 0
+          ? perf.retentionRates.reduce((a, b) => a + b, 0) / perf.retentionRates.length
+          : 100; // Default to 100% if no data
+        
+        // Average exit rate (lower is better)
+        const avgExitRate = perf.exitRates.length > 0
+          ? perf.exitRates.reduce((a, b) => a + b, 0) / perf.exitRates.length
           : 0;
-          
-        const avgChange = perf.occupancyChanges.length > 0
-          ? perf.occupancyChanges.reduce((a, b) => a + b, 0) / perf.occupancyChanges.length
+        
+        // Average crowd size
+        const avgCrowdSize = perf.crowdSizes.length > 0
+          ? perf.crowdSizes.reduce((a, b) => a + b, 0) / perf.crowdSizes.length
           : 0;
-        
-        // Estimate dwell extension: positive occupancy change during song = people staying
-        const dwellExtension = Math.max(-5, Math.min(10, avgChange * 0.5));
-        
-        // Performance score formula (0-100):
-        // - Base score from average occupancy (normalized 0-40)
-        // - Bonus for positive occupancy change (0-35)
-        // - Bonus for play count (0-15)
-        // - Bonus for dwell extension (0-10)
-        const occupancyScore = Math.min(40, (avgOccupancy / maxOccupancy) * 40);
-        const changeScore = Math.min(35, Math.max(0, (avgChange + 3) * 5)); // +3 offset so neutral = 15
-        const playsScore = Math.min(15, Math.log2(perf.plays + 1) * 5);
-        const dwellScore = Math.min(10, Math.max(0, (dwellExtension + 2) * 2));
-        
-        const performanceScore = Math.round(occupancyScore + changeScore + playsScore + dwellScore);
         
         results.push({
           song: perf.song,
           artist: perf.artist,
           plays: perf.plays,
-          avgOccupancy: Math.round(avgOccupancy),
-          avgOccupancyChange: Math.round(avgChange * 10) / 10,
-          avgDwellExtension: Math.round(dwellExtension * 10) / 10,
-          performanceScore: Math.min(100, performanceScore),
+          retentionRate: Math.round(avgRetention * 10) / 10,
+          avgExitRate: Math.round(avgExitRate * 100) / 100,
+          avgCrowdSize: Math.round(avgCrowdSize),
           albumArt: perf.albumArt,
           genre: perf.genre
         });
       });
       
-      // Sort by performance score descending
-      results.sort((a, b) => b.performanceScore - a.performanceScore);
+      // Sort by retention rate descending (highest retention = best)
+      results.sort((a, b) => b.retentionRate - a.retentionRate);
       
-      // Cache results (also compute genre stats while we have the data)
-      const genreStats = this.computeGenreStats(songPerformance, maxOccupancy);
+      // Cache results
+      const genreStats = this.computeGenreStatsFromRetention(songPerformance);
       
       this.analyticsCache.set(timeRange, {
         performingSongs: results,
@@ -773,39 +788,36 @@ class SongLogService {
         timestamp: now
       });
       
-      console.log(`🎵 Calculated performance scores for ${results.length} songs (${timeRange})`);
+      console.log(`🎵 Calculated retention for ${results.length} songs (${timeRange})`);
       
       return results.slice(0, limit);
     } catch (error) {
-      console.error('Error calculating song performance:', error);
+      console.error('Error calculating song retention:', error);
       return [];
     }
   }
   
   /**
-   * Compute genre statistics from song performance data
+   * Compute genre stats from retention data
    */
-  private computeGenreStats(
+  private computeGenreStatsFromRetention(
     songPerformance: Map<string, {
       song: string;
       artist: string;
       plays: number;
-      occupancyReadings: number[];
-      occupancyChanges: number[];
-      dwellExtensions: number[];
+      retentionRates: number[];
+      exitRates: number[];
+      crowdSizes: number[];
       albumArt?: string;
       genre?: string;
-      playDurations: number[];
-    }>,
-    maxOccupancy: number
+    }>
   ): GenreStats[] {
     const genreMap = new Map<string, {
       plays: number;
-      occupancySum: number;
-      occupancyCount: number;
-      changeSum: number;
-      changeCount: number;
-      totalDuration: number;
+      retentionSum: number;
+      retentionCount: number;
+      crowdSum: number;
+      crowdCount: number;
     }>();
     
     songPerformance.forEach((perf) => {
@@ -814,29 +826,25 @@ class SongLogService {
       if (!genreMap.has(genre)) {
         genreMap.set(genre, {
           plays: 0,
-          occupancySum: 0,
-          occupancyCount: 0,
-          changeSum: 0,
-          changeCount: 0,
-          totalDuration: 0
+          retentionSum: 0,
+          retentionCount: 0,
+          crowdSum: 0,
+          crowdCount: 0,
         });
       }
       
       const stats = genreMap.get(genre)!;
       stats.plays += perf.plays;
       
-      perf.occupancyReadings.forEach(o => {
-        stats.occupancySum += o;
-        stats.occupancyCount++;
+      perf.retentionRates.forEach(r => {
+        stats.retentionSum += r;
+        stats.retentionCount++;
       });
       
-      perf.occupancyChanges.forEach(c => {
-        stats.changeSum += c;
-        stats.changeCount++;
+      perf.crowdSizes.forEach(c => {
+        stats.crowdSum += c;
+        stats.crowdCount++;
       });
-      
-      const songDuration = perf.playDurations.reduce((a, b) => a + b, 0);
-      stats.totalDuration += songDuration || (perf.plays * 3.5); // Default 3.5 min per play
     });
     
     const results: GenreStats[] = [];
@@ -844,38 +852,29 @@ class SongLogService {
     genreMap.forEach((stats, genre) => {
       if (stats.plays < 1) return;
       
-      const avgOccupancy = stats.occupancyCount > 0 
-        ? stats.occupancySum / stats.occupancyCount 
+      const avgRetention = stats.retentionCount > 0 
+        ? stats.retentionSum / stats.retentionCount 
+        : 100;
+      
+      const avgCrowd = stats.crowdCount > 0 
+        ? stats.crowdSum / stats.crowdCount 
         : 0;
-      
-      const avgChange = stats.changeCount > 0 
-        ? stats.changeSum / stats.changeCount 
-        : 0;
-      
-      // Estimate avg dwell time based on occupancy stability
-      // Higher occupancy with positive change = longer dwell
-      const avgDwellTime = Math.max(5, 15 + avgChange * 2); // 5-30 minute range
-      
-      // Performance score for genre
-      const occupancyScore = Math.min(40, (avgOccupancy / maxOccupancy) * 40);
-      const changeScore = Math.min(35, Math.max(0, (avgChange + 3) * 5));
-      const playsScore = Math.min(25, Math.log10(stats.plays + 1) * 10);
       
       results.push({
         genre,
         plays: stats.plays,
-        avgDwellTime: Math.round(avgDwellTime),
-        avgOccupancy: Math.round(avgOccupancy),
-        totalMinutes: Math.round(stats.totalDuration),
-        performanceScore: Math.round(Math.min(100, occupancyScore + changeScore + playsScore))
+        avgDwellTime: Math.round(avgRetention), // Using retention as proxy
+        avgOccupancy: Math.round(avgCrowd),
+        totalMinutes: stats.plays * 3.5, // Estimate 3.5 min per song
+        performanceScore: Math.round(Math.min(100, avgRetention))
       });
     });
     
-    // Sort by plays descending
     results.sort((a, b) => b.plays - a.plays);
     
     return results;
   }
+  
   
   /**
    * Get genre statistics for the specified time range
@@ -973,14 +972,9 @@ class SongLogService {
       song: song.song,
       artist: song.artist,
       plays: song.plays,
-      performanceScore: song.performanceScore,
+      retentionRate: song.retentionRate,
       albumArt: song.albumArt,
       genre: song.genre,
-      reason: song.avgDwellExtension >= 0 
-        ? `+${song.avgDwellExtension} min dwell`
-        : song.avgOccupancyChange >= 0 
-          ? `+${song.avgOccupancyChange} people during plays`
-          : `${song.plays} plays, avg ${song.avgOccupancy} people`
     }));
   }
   

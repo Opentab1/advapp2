@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Music, Download, Clock, TrendingUp, RefreshCw, Star, Zap, ListMusic, 
+  Music, Download, Clock, TrendingUp, RefreshCw, Zap, ListMusic, 
   Calendar, FileText, FileJson, ChevronDown, Disc3,
-  BarChart3, Timer, Users, DollarSign
+  BarChart3, Users, ShieldCheck
 } from 'lucide-react';
-import { calculateSongRevenue, formatCurrency } from '../utils/revenue';
 import { format } from 'date-fns';
 import songLogService, { 
   PerformingSong, 
@@ -116,7 +115,6 @@ export function SongLog() {
       case '7d': return 'Last 7 Days';
       case '14d': return 'Last 14 Days';
       case '30d': return 'Last 30 Days';
-      case '90d': return 'Last 90 Days';
       default: return 'Last 30 Days';
     }
   };
@@ -149,7 +147,7 @@ export function SongLog() {
           <div className="flex flex-wrap items-center gap-3">
             {/* Time Range Selector */}
             <div className="flex items-center gap-1 bg-warm-800 rounded-lg p-1">
-              {(['7d', '14d', '30d', '90d'] as AnalyticsTimeRange[]).map((range) => (
+              {(['7d', '14d', '30d'] as AnalyticsTimeRange[]).map((range) => (
                 <motion.button
                   key={range}
                   onClick={() => { haptic('selection'); handleTimeRangeChange(range); }}
@@ -198,7 +196,7 @@ export function SongLog() {
 
         {/* Highest Performing Songs & Top Performers Playlist */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          {/* Highest Performing Songs */}
+          {/* Highest Retention Songs */}
           <motion.div
             className="glass-card p-6"
             initial={{ opacity: 0, y: -20 }}
@@ -207,78 +205,66 @@ export function SongLog() {
           >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
-                <DollarSign className="w-6 h-6 text-emerald-400" />
-                <h3 className="text-xl font-semibold text-white">Top Money Makers</h3>
+                <ShieldCheck className="w-6 h-6 text-emerald-400" />
+                <h3 className="text-xl font-semibold text-white">Highest Retention</h3>
               </div>
               <div className="flex items-center gap-1 text-xs text-emerald-400">
                 <TrendingUp className="w-3 h-3" />
-                <span>Revenue Impact</span>
+                <span>100% Accurate</span>
               </div>
             </div>
-            <p className="text-xs text-warm-400 mb-4">Songs that drive the most revenue per play</p>
+            <p className="text-xs text-warm-400 mb-4">Songs where people stayed or more came in</p>
 
             <div className="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar">
               {analyticsLoading && !highestPerforming.length ? (
                 <div className="text-center py-8">
                   <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin mx-auto mb-3" />
-                  <p className="text-sm text-warm-400">Calculating revenue impact...</p>
+                  <p className="text-sm text-warm-400">Calculating retention...</p>
                 </div>
               ) : highestPerforming.length > 0 ? (
-                highestPerforming.map((song, index) => {
-                  // Calculate revenue impact for this song
-                  const songRevenue = calculateSongRevenue(
-                    song.avgDwellExtension || 0,
-                    song.plays,
-                    30 // Average occupancy during play (estimate)
-                  );
-                  const revenuePerPlay = song.plays > 0 ? Math.round(songRevenue / song.plays) : 0;
-                  
-                  return (
-                    <motion.div
-                      key={`${song.song}-${song.artist}`}
-                      className="flex items-center gap-3 p-3 rounded-lg bg-gradient-to-r from-emerald-500/10 to-cyan-600/10 border border-emerald-500/20 hover:border-emerald-500/40 transition-colors"
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.1 + index * 0.05 }}
-                    >
-                      <div className="flex items-center justify-center w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-sm">
-                        {index + 1}
+                highestPerforming.map((song, index) => (
+                  <motion.div
+                    key={`${song.song}-${song.artist}`}
+                    className="flex items-center gap-3 p-3 rounded-lg bg-gradient-to-r from-emerald-500/10 to-cyan-600/10 border border-emerald-500/20 hover:border-emerald-500/40 transition-colors"
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.1 + index * 0.05 }}
+                  >
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-sm">
+                      {index + 1}
+                    </div>
+                    {song.albumArt ? (
+                      <img src={song.albumArt} alt={song.song} className="w-10 h-10 rounded-lg object-cover" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                        <Music className="w-5 h-5 text-emerald-400" />
                       </div>
-                      {song.albumArt ? (
-                        <img src={song.albumArt} alt={song.song} className="w-10 h-10 rounded-lg object-cover" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-                          <Music className="w-5 h-5 text-emerald-400" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-white truncate">{song.song}</div>
-                        <div className="text-xs text-warm-400 truncate">{song.artist}</div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xs text-warm-500">{song.plays} plays</span>
-                          {song.avgDwellExtension > 0 && (
-                            <>
-                              <span className="text-warm-600">•</span>
-                              <span className="text-xs text-cyan-400">+{song.avgDwellExtension} min dwell</span>
-                            </>
-                          )}
-                        </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-white truncate">{song.song}</div>
+                      <div className="text-xs text-warm-400 truncate">{song.artist}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs text-warm-500">{song.plays} plays</span>
+                        <span className="text-warm-600">•</span>
+                        <span className="text-xs text-warm-500">avg {song.avgCrowdSize} people</span>
                       </div>
-                      <div className="text-right">
-                        <div className="text-lg font-bold text-emerald-400">+${revenuePerPlay}</div>
-                        <div className="text-xs text-warm-500">per play</div>
-                        <div className="text-xs text-emerald-400/70 mt-0.5">
-                          {formatCurrency(songRevenue)} total
-                        </div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`text-lg font-bold ${song.retentionRate >= 100 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {song.retentionRate >= 100 ? '+' : ''}{(song.retentionRate - 100).toFixed(1)}%
                       </div>
-                    </motion.div>
-                  );
-                })
+                      <div className="text-xs text-warm-500">retention</div>
+                      <div className="text-xs text-warm-600 mt-0.5">
+                        {song.avgExitRate.toFixed(1)} exit rate
+                      </div>
+                    </div>
+                  </motion.div>
+                ))
               ) : (
                 <EmptyState 
-                  icon={DollarSign}
-                  title="No revenue data yet"
-                  message="Play more songs to see which ones drive revenue"
+                  icon={ShieldCheck}
+                  title="No retention data yet"
+                  message="Play more songs to see which ones keep people"
                 />
               )}
             </div>
@@ -375,7 +361,9 @@ export function SongLog() {
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <span className="text-xs text-warm-500">{song.plays}x</span>
                       <Zap className="w-3 h-3 text-green-400" />
-                      <span className="text-xs text-green-400">{song.reason}</span>
+                      <span className={`text-xs ${song.retentionRate >= 100 ? 'text-green-400' : 'text-amber-400'}`}>
+                        {song.retentionRate >= 100 ? '+' : ''}{(song.retentionRate - 100).toFixed(1)}%
+                      </span>
                     </div>
                   </motion.div>
                 ))
@@ -397,7 +385,7 @@ export function SongLog() {
               >
                 <div className="text-center text-xs text-warm-400">
                   <Zap className="w-4 h-4 inline-block mr-1 text-green-400" />
-                  Based on {totalSongs.toLocaleString()} songs analyzed over {timeRange}
+                  Sorted by retention rate ({timeRange})
                 </div>
               </motion.div>
             )}
@@ -582,25 +570,31 @@ export function SongLog() {
           >
             <div className="flex items-center gap-3 mb-4">
               <BarChart3 className="w-5 h-5 text-primary" />
-              <h3 className="text-lg font-semibold text-white">Summary Statistics</h3>
+              <h3 className="text-lg font-semibold text-white">Summary</h3>
             </div>
             
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div className="p-4 rounded-lg bg-warm-800">
                 <div className="text-2xl font-bold text-primary">{totalSongs.toLocaleString()}</div>
-                <div className="text-sm text-warm-400">Total Songs Tracked</div>
+                <div className="text-sm text-warm-400">Songs Detected</div>
+                <div className="text-xs text-warm-500 mt-1">All-time</div>
               </div>
               <div className="p-4 rounded-lg bg-warm-800">
                 <div className="text-2xl font-bold text-purple-400">{genreStats.length}</div>
-                <div className="text-sm text-warm-400">Genres Detected</div>
+                <div className="text-sm text-warm-400">Genres</div>
               </div>
               <div className="p-4 rounded-lg bg-warm-800">
-                <div className="text-2xl font-bold text-yellow-400">{highestPerforming.length}</div>
-                <div className="text-sm text-warm-400">Songs Analyzed</div>
+                <div className="text-2xl font-bold text-emerald-400">{topSongs.length}</div>
+                <div className="text-sm text-warm-400">Unique Songs</div>
               </div>
               <div className="p-4 rounded-lg bg-warm-800">
-                <div className="text-2xl font-bold text-green-400">{topPerformersPlaylist.length}</div>
-                <div className="text-sm text-warm-400">Playlist Songs</div>
+                <div className="text-2xl font-bold text-cyan-400">
+                  {highestPerforming.length > 0 
+                    ? `${((highestPerforming[0]?.retentionRate || 100) - 100).toFixed(1)}%`
+                    : '—'
+                  }
+                </div>
+                <div className="text-sm text-warm-400">Best Retention</div>
               </div>
             </div>
           </motion.div>

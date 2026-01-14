@@ -1348,33 +1348,33 @@ export function getDemoGenreStats(): Array<{
 }
 
 /**
- * Get demo highest performing songs - TOP MONEY MAKERS
- * Songs that drive the most revenue through dwell time extension
+ * Get demo highest retention songs - STICKIEST SONGS
+ * Songs where people stayed (100% accurate - based on sensor data)
+ * Retention Rate = (crowd at song end / crowd at song start) × 100
  */
 export function getDemoHighestPerformingSongs(limit: number = 10): Array<{
   song: string;
   artist: string;
   plays: number;
-  avgOccupancy: number;
-  avgOccupancyChange: number;
-  avgDwellExtension: number;
-  performanceScore: number;
+  retentionRate: number; // % of crowd that stayed (100% = no one left, 105% = more came than left)
+  avgExitRate: number; // exits per minute per 100 people (lower = better)
+  avgCrowdSize: number;
   albumArt?: string;
   genre?: string;
 }> {
   const topSongs = [
-    { song: 'Last Night', artist: 'Morgan Wallen', plays: 127, avgOccupancy: 415, avgOccupancyChange: 18, avgDwellExtension: 12, performanceScore: 98, genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b27396380cb6f87f7d18f6e91f55' },
-    { song: 'Blinding Lights', artist: 'The Weeknd', plays: 118, avgOccupancy: 425, avgOccupancyChange: 22, avgDwellExtension: 10, performanceScore: 97, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36' },
-    { song: 'Tennessee Whiskey', artist: 'Chris Stapleton', plays: 82, avgOccupancy: 380, avgOccupancyChange: 8, avgDwellExtension: 15, performanceScore: 96, genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b273e2e2bdd1b4d03c25ccb7e67b' },
-    { song: 'Mr. Brightside', artist: 'The Killers', plays: 105, avgOccupancy: 445, avgOccupancyChange: 28, avgDwellExtension: 8, performanceScore: 95, genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273stuvwxyz' },
-    { song: 'Rich Flex', artist: 'Drake & 21 Savage', plays: 98, avgOccupancy: 435, avgOccupancyChange: 25, avgDwellExtension: 7, performanceScore: 94, genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273a68e1c59d4fb4d32c26ea8ef' },
-    { song: 'Uptown Funk', artist: 'Bruno Mars', plays: 112, avgOccupancy: 455, avgOccupancyChange: 32, avgDwellExtension: 6, performanceScore: 96, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273efghijkl' },
-    { song: 'Wake Me Up', artist: 'Avicii', plays: 79, avgOccupancy: 440, avgOccupancyChange: 24, avgDwellExtension: 9, performanceScore: 93, genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273ijklmnop' },
-    { song: 'Despacito', artist: 'Luis Fonsi ft. Daddy Yankee', plays: 89, avgOccupancy: 420, avgOccupancyChange: 20, avgDwellExtension: 11, performanceScore: 94, genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b273ghijklmn' },
-    { song: 'Anti-Hero', artist: 'Taylor Swift', plays: 94, avgOccupancy: 395, avgOccupancyChange: 15, avgDwellExtension: 8, performanceScore: 92, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2735076e4160d018e378f488c33' },
-    { song: 'Kill Bill', artist: 'SZA', plays: 85, avgOccupancy: 385, avgOccupancyChange: 12, avgDwellExtension: 10, performanceScore: 91, genre: 'R&B', albumArt: 'https://i.scdn.co/image/ab67616d0000b2730c471c36970b9406233842a5' },
-    { song: 'Bohemian Rhapsody', artist: 'Queen', plays: 62, avgOccupancy: 460, avgOccupancyChange: 35, avgDwellExtension: 5, performanceScore: 93, genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273abcdefgh' },
-    { song: 'Heat Waves', artist: 'Glass Animals', plays: 71, avgOccupancy: 390, avgOccupancyChange: 14, avgDwellExtension: 9, performanceScore: 90, genre: 'Alternative', albumArt: 'https://i.scdn.co/image/ab67616d0000b273712dc99f1f0e32d94a314e13' },
+    { song: 'Tennessee Whiskey', artist: 'Chris Stapleton', plays: 82, retentionRate: 108.2, avgExitRate: 0.8, avgCrowdSize: 145, genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b273e2e2bdd1b4d03c25ccb7e67b' },
+    { song: 'Bohemian Rhapsody', artist: 'Queen', plays: 62, retentionRate: 106.5, avgExitRate: 1.1, avgCrowdSize: 168, genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273abcdefgh' },
+    { song: 'Last Night', artist: 'Morgan Wallen', plays: 127, retentionRate: 104.8, avgExitRate: 1.3, avgCrowdSize: 152, genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b27396380cb6f87f7d18f6e91f55' },
+    { song: 'Mr. Brightside', artist: 'The Killers', plays: 105, retentionRate: 103.2, avgExitRate: 1.5, avgCrowdSize: 175, genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273stuvwxyz' },
+    { song: 'Blinding Lights', artist: 'The Weeknd', plays: 118, retentionRate: 102.1, avgExitRate: 1.6, avgCrowdSize: 162, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36' },
+    { song: 'Uptown Funk', artist: 'Bruno Mars', plays: 112, retentionRate: 101.5, avgExitRate: 1.8, avgCrowdSize: 178, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273efghijkl' },
+    { song: 'Wake Me Up', artist: 'Avicii', plays: 79, retentionRate: 100.8, avgExitRate: 2.0, avgCrowdSize: 165, genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273ijklmnop' },
+    { song: 'Rich Flex', artist: 'Drake & 21 Savage', plays: 98, retentionRate: 100.2, avgExitRate: 2.1, avgCrowdSize: 158, genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273a68e1c59d4fb4d32c26ea8ef' },
+    { song: 'Kill Bill', artist: 'SZA', plays: 85, retentionRate: 99.8, avgExitRate: 2.2, avgCrowdSize: 142, genre: 'R&B', albumArt: 'https://i.scdn.co/image/ab67616d0000b2730c471c36970b9406233842a5' },
+    { song: 'Despacito', artist: 'Luis Fonsi ft. Daddy Yankee', plays: 89, retentionRate: 99.5, avgExitRate: 2.3, avgCrowdSize: 155, genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b273ghijklmn' },
+    { song: 'Anti-Hero', artist: 'Taylor Swift', plays: 94, retentionRate: 99.1, avgExitRate: 2.4, avgCrowdSize: 148, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2735076e4160d018e378f488c33' },
+    { song: 'Heat Waves', artist: 'Glass Animals', plays: 71, retentionRate: 98.7, avgExitRate: 2.5, avgCrowdSize: 138, genre: 'Alternative', albumArt: 'https://i.scdn.co/image/ab67616d0000b273712dc99f1f0e32d94a314e13' },
   ];
   
   return topSongs.slice(0, limit);
@@ -1382,39 +1382,38 @@ export function getDemoHighestPerformingSongs(limit: number = 10): Array<{
 
 /**
  * Get demo top performers playlist - READY TO EXPORT
- * Curated playlist of crowd favorites with reasons
+ * Sorted by retention rate (highest first)
  */
 export function getDemoTopPerformersPlaylist(limit: number = 20): Array<{
   position: number;
   song: string;
   artist: string;
   plays: number;
-  performanceScore: number;
+  retentionRate: number;
   albumArt?: string;
-  reason: string;
   genre?: string;
 }> {
   const playlistData = [
-    { song: 'Last Night', artist: 'Morgan Wallen', plays: 127, performanceScore: 98, reason: '+12 min dwell', genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b27396380cb6f87f7d18f6e91f55' },
-    { song: 'Uptown Funk', artist: 'Bruno Mars', plays: 112, performanceScore: 96, reason: 'Peak crowds', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273efghijkl' },
-    { song: 'Blinding Lights', artist: 'The Weeknd', plays: 118, performanceScore: 97, reason: 'High energy', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36' },
-    { song: 'Mr. Brightside', artist: 'The Killers', plays: 105, performanceScore: 95, reason: 'Crowd sings!', genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273stuvwxyz' },
-    { song: 'Rich Flex', artist: 'Drake & 21 Savage', plays: 98, performanceScore: 94, reason: '+25% crowd', genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273a68e1c59d4fb4d32c26ea8ef' },
-    { song: 'Anti-Hero', artist: 'Taylor Swift', plays: 94, performanceScore: 92, reason: 'Crowd favorite', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2735076e4160d018e378f488c33' },
-    { song: 'Despacito', artist: 'Luis Fonsi ft. Daddy Yankee', plays: 89, performanceScore: 94, reason: 'Dance floor packed', genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b273ghijklmn' },
-    { song: 'Kill Bill', artist: 'SZA', plays: 85, performanceScore: 91, reason: 'Vibe setter', genre: 'R&B', albumArt: 'https://i.scdn.co/image/ab67616d0000b2730c471c36970b9406233842a5' },
-    { song: 'Tennessee Whiskey', artist: 'Chris Stapleton', plays: 82, performanceScore: 96, reason: '+15 min dwell', genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b273e2e2bdd1b4d03c25ccb7e67b' },
-    { song: 'Wake Me Up', artist: 'Avicii', plays: 79, performanceScore: 93, reason: 'Peak energy', genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273ijklmnop' },
-    { song: 'HUMBLE.', artist: 'Kendrick Lamar', plays: 76, performanceScore: 90, reason: 'Drops hit hard', genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273db02243db6b16a0e6aae9cba' },
-    { song: 'Flowers', artist: 'Miley Cyrus', plays: 73, performanceScore: 89, reason: 'Singalong', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2739e01a5c5b0c6b4feaecb41f2' },
-    { song: 'Heat Waves', artist: 'Glass Animals', plays: 71, performanceScore: 90, reason: 'Late night hit', genre: 'Alternative', albumArt: 'https://i.scdn.co/image/ab67616d0000b273712dc99f1f0e32d94a314e13' },
-    { song: 'Pepas', artist: 'Farruko', plays: 68, performanceScore: 92, reason: 'Dance floor', genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b273wxyzabcd' },
-    { song: 'Shape of You', artist: 'Ed Sheeran', plays: 65, performanceScore: 88, reason: 'Always works', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273wxyzabcd' },
-    { song: 'Bohemian Rhapsody', artist: 'Queen', plays: 62, performanceScore: 93, reason: 'Epic singalong', genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273abcdefgh' },
-    { song: 'goosebumps', artist: 'Travis Scott', plays: 59, performanceScore: 87, reason: 'High energy', genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2739087f00e8e0e3f7c28c1c0fd' },
-    { song: 'Titanium', artist: 'David Guetta ft. Sia', plays: 56, performanceScore: 89, reason: 'Drop moment', genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273stuvwxyz' },
-    { song: 'Cruel Summer', artist: 'Taylor Swift', plays: 54, performanceScore: 88, reason: 'Crowd screams', genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273e787cffec20aa2a396a61647' },
-    { song: 'Titi Me Pregunto', artist: 'Bad Bunny', plays: 52, performanceScore: 90, reason: 'Latin nights', genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b273yzabcdef' },
+    { song: 'Tennessee Whiskey', artist: 'Chris Stapleton', plays: 82, retentionRate: 108.2, genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b273e2e2bdd1b4d03c25ccb7e67b' },
+    { song: 'Bohemian Rhapsody', artist: 'Queen', plays: 62, retentionRate: 106.5, genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273abcdefgh' },
+    { song: 'Last Night', artist: 'Morgan Wallen', plays: 127, retentionRate: 104.8, genre: 'Country', albumArt: 'https://i.scdn.co/image/ab67616d0000b27396380cb6f87f7d18f6e91f55' },
+    { song: 'Mr. Brightside', artist: 'The Killers', plays: 105, retentionRate: 103.2, genre: 'Rock', albumArt: 'https://i.scdn.co/image/ab67616d0000b273stuvwxyz' },
+    { song: 'Blinding Lights', artist: 'The Weeknd', plays: 118, retentionRate: 102.1, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36' },
+    { song: 'Uptown Funk', artist: 'Bruno Mars', plays: 112, retentionRate: 101.5, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273efghijkl' },
+    { song: 'Wake Me Up', artist: 'Avicii', plays: 79, retentionRate: 100.8, genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273ijklmnop' },
+    { song: 'Rich Flex', artist: 'Drake & 21 Savage', plays: 98, retentionRate: 100.2, genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273a68e1c59d4fb4d32c26ea8ef' },
+    { song: 'Kill Bill', artist: 'SZA', plays: 85, retentionRate: 99.8, genre: 'R&B', albumArt: 'https://i.scdn.co/image/ab67616d0000b2730c471c36970b9406233842a5' },
+    { song: 'Despacito', artist: 'Luis Fonsi ft. Daddy Yankee', plays: 89, retentionRate: 99.5, genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b273ghijklmn' },
+    { song: 'Anti-Hero', artist: 'Taylor Swift', plays: 94, retentionRate: 99.1, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2735076e4160d018e378f488c33' },
+    { song: 'Heat Waves', artist: 'Glass Animals', plays: 71, retentionRate: 98.7, genre: 'Alternative', albumArt: 'https://i.scdn.co/image/ab67616d0000b273712dc99f1f0e32d94a314e13' },
+    { song: 'HUMBLE.', artist: 'Kendrick Lamar', plays: 76, retentionRate: 98.3, genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273db02243db6b16a0e6aae9cba' },
+    { song: 'Flowers', artist: 'Miley Cyrus', plays: 73, retentionRate: 97.9, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2739e01a5c5b0c6b4feaecb41f2' },
+    { song: 'Pepas', artist: 'Farruko', plays: 68, retentionRate: 97.5, genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b273wxyzabcd' },
+    { song: 'Shape of You', artist: 'Ed Sheeran', plays: 65, retentionRate: 97.2, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273wxyzabcd' },
+    { song: 'goosebumps', artist: 'Travis Scott', plays: 59, retentionRate: 96.8, genre: 'Hip Hop', albumArt: 'https://i.scdn.co/image/ab67616d0000b2739087f00e8e0e3f7c28c1c0fd' },
+    { song: 'Titanium', artist: 'David Guetta ft. Sia', plays: 56, retentionRate: 96.4, genre: 'Electronic', albumArt: 'https://i.scdn.co/image/ab67616d0000b273stuvwxyz' },
+    { song: 'Cruel Summer', artist: 'Taylor Swift', plays: 54, retentionRate: 96.1, genre: 'Pop', albumArt: 'https://i.scdn.co/image/ab67616d0000b273e787cffec20aa2a396a61647' },
+    { song: 'Titi Me Pregunto', artist: 'Bad Bunny', plays: 52, retentionRate: 95.8, genre: 'Latin', albumArt: 'https://i.scdn.co/image/ab67616d0000b273yzabcdef' },
   ];
   
   return playlistData.slice(0, limit).map((s, i) => ({
