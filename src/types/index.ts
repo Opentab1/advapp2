@@ -39,6 +39,9 @@ export interface SensorData {
   albumArt?: string;
   artist?: string;
   occupancy?: OccupancyData;
+  // Flags for hourly aggregated data (from SensorDataHourly table)
+  _hourlyAggregate?: boolean;  // true if this is hourly aggregated data
+  _dataPointCount?: number;    // number of raw data points aggregated
 }
 
 export interface OccupancyData {

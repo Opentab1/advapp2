@@ -61,6 +61,7 @@ export interface TrendData {
   avgStay: number | null;          // null if not enough exit data
   avgStayDelta: number | null;     // percentage change, null if can't calculate
   totalGuests: number;
+  guestsIsEstimate: boolean;       // true if extrapolated from partial data
   guestsDelta: number;             // percentage change
   bestDay: {
     date: string;

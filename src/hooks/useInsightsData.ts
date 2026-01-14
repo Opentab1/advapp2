@@ -209,6 +209,166 @@ function getPeriodMs(range: InsightsTimeRange): number {
   }
 }
 
+// ============ SHARED GUEST COUNT CALCULATION ============
+/**
+ * Calculate total guests from sensor data.
+ * 
+ * CRITICAL: Handles TWO different data types correctly:
+ * 
+ * 1. HOURLY AGGREGATED DATA (_hourlyAggregate = true):
+ *    - entries = COUNT of entries during that hour
+ *    - We SUM all entries to get total
+ * 
+ * 2. RAW SENSOR DATA (_hourlyAggregate = false/undefined):
+ *    - entries = CUMULATIVE counter that increases over time
+ *    - We calculate: lastEntries - firstEntries (with reset handling)
+ */
+function calculateTotalGuests(
+  periodData: SensorData[], 
+  requestedDays: number
+): { count: number; isEstimate: boolean } {
+  const withEntries = periodData
+    .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  
+  if (withEntries.length === 0) {
+    return { count: 0, isEstimate: false };
+  }
+  
+  // Check if this is hourly aggregated data
+  const isHourlyAggregated = withEntries[0]._hourlyAggregate === true;
+  
+  let measuredEntries: number;
+  
+  if (isHourlyAggregated) {
+    // HOURLY AGGREGATED: entries = count per hour, SUM them all
+    measuredEntries = withEntries.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+  } else {
+    // RAW DATA: entries = cumulative counter, calculate delta
+    if (withEntries.length === 1) {
+      return { count: 0, isEstimate: false };
+    }
+    
+    const firstEntries = withEntries[0].occupancy!.entries;
+    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+    
+    measuredEntries = Math.max(0, lastEntries - firstEntries);
+    
+    // Handle counter resets: sum positive deltas
+    if (measuredEntries === 0 || lastEntries < firstEntries) {
+      measuredEntries = 0;
+      for (let i = 1; i < withEntries.length; i++) {
+        const prev = withEntries[i - 1].occupancy!.entries;
+        const curr = withEntries[i].occupancy!.entries;
+        if (curr > prev) {
+          measuredEntries += (curr - prev);
+        } else if (curr < prev) {
+          // Counter reset - add current value as new entries since reset
+          measuredEntries += curr;
+        }
+      }
+    }
+    
+    // Account for missing first interval (extrapolate ~1 interval)
+    const intervals = withEntries.length - 1;
+    if (intervals > 0 && measuredEntries > 0) {
+      const scaleFactor = (intervals + 1) / intervals;
+      measuredEntries = Math.round(measuredEntries * scaleFactor);
+    }
+  }
+  
+  // Calculate actual time span of our data
+  const firstTimestamp = new Date(withEntries[0].timestamp).getTime();
+  const lastTimestamp = new Date(withEntries[withEntries.length - 1].timestamp).getTime();
+  const actualSpanMs = lastTimestamp - firstTimestamp;
+  const actualSpanDays = Math.max(1, actualSpanMs / (24 * 60 * 60 * 1000));
+  
+  // If we have less data than requested, extrapolate to full period
+  if (actualSpanDays < requestedDays * 0.9) {
+    const dailyRate = measuredEntries / actualSpanDays;
+    return { count: Math.round(dailyRate * requestedDays), isEstimate: true };
+  }
+  
+  return { count: measuredEntries, isEstimate: false };
+}
+
+/**
+ * Calculate total entries for a period (used for avg stay calculation)
+ * Returns the RAW entry count without extrapolation.
+ */
+function calculatePeriodEntries(periodData: SensorData[]): number {
+  const withEntries = periodData
+    .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  
+  if (withEntries.length === 0) return 0;
+  
+  const isHourlyAggregated = withEntries[0]._hourlyAggregate === true;
+  
+  if (isHourlyAggregated) {
+    // SUM all hourly entries
+    return withEntries.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+  } else {
+    // Raw data: delta calculation
+    if (withEntries.length < 2) return 0;
+    
+    const firstEntries = withEntries[0].occupancy!.entries;
+    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+    return Math.max(0, lastEntries - firstEntries);
+  }
+}
+
+/**
+ * Calculate average stay using occupancy integration.
+ * Works correctly with both hourly aggregated and raw data.
+ */
+function calculatePeriodAvgStay(periodData: SensorData[]): number | null {
+  if (periodData.length < 2) return null;
+  
+  const sorted = [...periodData].sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  
+  // Get total entries using the correct method
+  const totalEntries = calculatePeriodEntries(sorted);
+  if (totalEntries < 5) return null; // Need meaningful sample
+  
+  // Calculate total guest-hours by integrating occupancy over time
+  let totalGuestHours = 0;
+  
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const curr = sorted[i];
+    
+    const prevTime = new Date(prev.timestamp).getTime();
+    const currTime = new Date(curr.timestamp).getTime();
+    const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
+    
+    // Skip unreasonably long intervals (> 4 hours = data gap)
+    if (intervalHours > 4) continue;
+    
+    // Use average occupancy for this interval (trapezoidal integration)
+    const prevOcc = prev.occupancy?.current || 0;
+    const currOcc = curr.occupancy?.current || 0;
+    const avgOccupancy = (prevOcc + currOcc) / 2;
+    
+    totalGuestHours += avgOccupancy * intervalHours;
+  }
+  
+  if (totalGuestHours === 0) return null;
+  
+  // Avg Stay (hours) = Total Guest-Hours ÷ Total Entries
+  const avgStayHours = totalGuestHours / totalEntries;
+  const avgStayMinutes = Math.round(avgStayHours * 60);
+  
+  // Sanity check: clamp to reasonable range (5 min to 4 hours)
+  if (avgStayMinutes < 5 || avgStayMinutes > 240) {
+    return null; // Data seems unreliable
+  }
+  
+  return avgStayMinutes;
+}
+
 function processSummary(
   data: SensorData[], 
   previousData: SensorData[],
@@ -254,77 +414,13 @@ function processSummary(
     }
   });
   
-  // Calculate total guests from cumulative entry counters
-  // 
-  // CRITICAL: We must account for partial data coverage.
-  // If user requests 30 days but we only have 7 days of data,
-  // we calculate guests/day from actual data and extrapolate.
-  //
-  // The hourly aggregator stores MAX cumulative entries per hour.
-  const calculateGuestCount = (periodData: SensorData[], requestedDays: number): { count: number; isEstimate: boolean } => {
-    const withEntries = periodData
-      .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    
-    if (withEntries.length === 0) {
-      return { count: 0, isEstimate: false };
-    }
-    
-    if (withEntries.length === 1) {
-      return { count: 0, isEstimate: false };
-    }
-    
-    // Calculate actual time span of our data
-    const firstTimestamp = new Date(withEntries[0].timestamp).getTime();
-    const lastTimestamp = new Date(withEntries[withEntries.length - 1].timestamp).getTime();
-    const actualSpanMs = lastTimestamp - firstTimestamp;
-    const actualSpanDays = Math.max(1, actualSpanMs / (24 * 60 * 60 * 1000));
-    
-    const firstEntries = withEntries[0].occupancy!.entries;
-    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    
-    // Calculate entries in our actual data span
-    let measuredEntries = Math.max(0, lastEntries - firstEntries);
-    
-    // Handle counter resets: sum positive deltas
-    if (measuredEntries === 0 || lastEntries < firstEntries) {
-      measuredEntries = 0;
-      for (let i = 1; i < withEntries.length; i++) {
-        const prev = withEntries[i - 1].occupancy!.entries;
-        const curr = withEntries[i].occupancy!.entries;
-        if (curr > prev) {
-          measuredEntries += (curr - prev);
-        } else if (curr < prev) {
-          // Counter reset - add current value as new entries since reset
-          measuredEntries += curr;
-        }
-      }
-    }
-    
-    // Account for missing first interval (extrapolate ~1 interval)
-    const intervals = withEntries.length - 1;
-    if (intervals > 0 && measuredEntries > 0) {
-      const scaleFactor = (intervals + 1) / intervals;
-      measuredEntries = Math.round(measuredEntries * scaleFactor);
-    }
-    
-    // If we have less data than requested, extrapolate to full period
-    // This ensures 30d shows ~4x the guests of 7d (if rates are similar)
-    if (actualSpanDays < requestedDays * 0.9) {
-      // We don't have enough data - extrapolate based on daily rate
-      const dailyRate = measuredEntries / actualSpanDays;
-      return { count: Math.round(dailyRate * requestedDays), isEstimate: true };
-    }
-    
-    return { count: measuredEntries, isEstimate: false };
-  };
-  
   // Determine requested days for this time range
   const requestedDays = timeRange === 'last_night' ? 1 : 
                         timeRange === '7d' ? 7 : 
                         timeRange === '14d' ? 14 : 30;
   
-  const guestResult = calculateGuestCount(data, requestedDays);
+  // Use shared helper that handles both hourly aggregated and raw data correctly
+  const guestResult = calculateTotalGuests(data, requestedDays);
   const totalGuests = guestResult.count;
   const guestsIsEstimate = guestResult.isEstimate;
   
@@ -371,73 +467,16 @@ function processSummary(
   });
   
   // Calculate previous period guests using the same correct method
-  const prevGuestResult = calculateGuestCount(previousData, requestedDays);
+  const prevGuestResult = calculateTotalGuests(previousData, requestedDays);
   const prevTotalGuests = prevGuestResult.count;
   
   const prevAvgScore = prevScoreCount > 0 ? Math.round(prevTotalScore / prevScoreCount) : avgScore;
   const scoreDelta = prevAvgScore > 0 ? Math.round(((avgScore - prevAvgScore) / prevAvgScore) * 100) : 0;
   const guestsDelta = prevTotalGuests > 0 ? Math.round(((totalGuests - prevTotalGuests) / prevTotalGuests) * 100) : 0;
   
-  // Calculate avg stay using OCCUPANCY INTEGRATION method
-  // This is more accurate than Little's Law (exit velocity method)
-  //
-  // Total Guest-Hours = ∫ Occupancy dt (sum of occupancy × time intervals)
-  // Avg Stay = Total Guest-Hours ÷ Total Entries
-  const calculateAvgStay = (periodData: SensorData[]): number | null => {
-    if (periodData.length < 2) return null;
-    
-    const sorted = [...periodData].sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-    
-    // Get total entries for period (using cumulative counter delta)
-    const withEntries = sorted.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
-    if (withEntries.length < 2) return null;
-    
-    const firstEntries = withEntries[0].occupancy!.entries;
-    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    const totalEntries = Math.max(0, lastEntries - firstEntries);
-    
-    if (totalEntries < 5) return null; // Need meaningful sample
-    
-    // Calculate total guest-hours by integrating occupancy over time
-    let totalGuestHours = 0;
-    
-    for (let i = 1; i < sorted.length; i++) {
-      const prev = sorted[i - 1];
-      const curr = sorted[i];
-      
-      const prevTime = new Date(prev.timestamp).getTime();
-      const currTime = new Date(curr.timestamp).getTime();
-      const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
-      
-      // Skip unreasonably long intervals (> 4 hours = data gap)
-      if (intervalHours > 4) continue;
-      
-      // Use average occupancy for this interval (trapezoidal integration)
-      const prevOcc = prev.occupancy?.current || 0;
-      const currOcc = curr.occupancy?.current || 0;
-      const avgOccupancy = (prevOcc + currOcc) / 2;
-      
-      totalGuestHours += avgOccupancy * intervalHours;
-    }
-    
-    if (totalGuestHours === 0) return null;
-    
-    // Avg Stay (hours) = Total Guest-Hours ÷ Total Entries
-    const avgStayHours = totalGuestHours / totalEntries;
-    const avgStayMinutes = Math.round(avgStayHours * 60);
-    
-    // Sanity check: clamp to reasonable range (5 min to 4 hours)
-    if (avgStayMinutes < 5 || avgStayMinutes > 240) {
-      return null; // Data seems unreliable
-    }
-    
-    return avgStayMinutes;
-  };
-  
-  const avgStayMinutes = calculateAvgStay(data);
-  const prevAvgStay = calculateAvgStay(previousData);
+  // Use shared helper for avg stay calculation (handles both data types correctly)
+  const avgStayMinutes = calculatePeriodAvgStay(data);
+  const prevAvgStay = calculatePeriodAvgStay(previousData);
   
   // Calculate delta only if both values exist
   const avgStayDelta = (avgStayMinutes !== null && prevAvgStay !== null && prevAvgStay > 0)
@@ -615,93 +654,6 @@ function processTrend(
                         timeRange === '7d' ? 7 : 
                         timeRange === '14d' ? 14 : 30;
 
-  // Helper to calculate guest count correctly (same logic as processSummary)
-  const calcGuestCount = (periodData: SensorData[], days: number): number => {
-    const withEntries = periodData
-      .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    
-    if (withEntries.length === 0) return 0;
-    if (withEntries.length === 1) return 0;
-    
-    // Calculate actual time span
-    const firstTimestamp = new Date(withEntries[0].timestamp).getTime();
-    const lastTimestamp = new Date(withEntries[withEntries.length - 1].timestamp).getTime();
-    const actualSpanDays = Math.max(1, (lastTimestamp - firstTimestamp) / (24 * 60 * 60 * 1000));
-    
-    const firstEntries = withEntries[0].occupancy!.entries;
-    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    
-    let measuredEntries = Math.max(0, lastEntries - firstEntries);
-    
-    // Handle counter resets
-    if (measuredEntries === 0 || lastEntries < firstEntries) {
-      measuredEntries = 0;
-      for (let i = 1; i < withEntries.length; i++) {
-        const prev = withEntries[i - 1].occupancy!.entries;
-        const curr = withEntries[i].occupancy!.entries;
-        if (curr > prev) {
-          measuredEntries += (curr - prev);
-        } else if (curr < prev) {
-          measuredEntries += curr;
-        }
-      }
-    }
-    
-    // Scale to account for missing first interval
-    const intervals = withEntries.length - 1;
-    if (intervals > 0 && measuredEntries > 0) {
-      const scaleFactor = (intervals + 1) / intervals;
-      measuredEntries = Math.round(measuredEntries * scaleFactor);
-    }
-    
-    // Extrapolate if we have less data than requested
-    if (actualSpanDays < days * 0.9) {
-      const dailyRate = measuredEntries / actualSpanDays;
-      return Math.round(dailyRate * days);
-    }
-    
-    return measuredEntries;
-  };
-
-  // Helper to calculate avg stay using OCCUPANCY INTEGRATION
-  const calcAvgStay = (periodData: SensorData[]): number | null => {
-    if (periodData.length < 2) return null;
-    
-    const sorted = [...periodData].sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-    
-    // Get total entries for period
-    const withEntries = sorted.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
-    if (withEntries.length < 2) return null;
-    
-    const firstEntries = withEntries[0].occupancy!.entries;
-    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    const totalEntries = Math.max(0, lastEntries - firstEntries);
-    
-    if (totalEntries < 5) return null;
-    
-    // Integrate occupancy over time
-    let totalGuestHours = 0;
-    for (let i = 1; i < sorted.length; i++) {
-      const prevTime = new Date(sorted[i - 1].timestamp).getTime();
-      const currTime = new Date(sorted[i].timestamp).getTime();
-      const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
-      
-      if (intervalHours > 4) continue; // Skip data gaps
-      
-      const prevOcc = sorted[i - 1].occupancy?.current || 0;
-      const currOcc = sorted[i].occupancy?.current || 0;
-      totalGuestHours += ((prevOcc + currOcc) / 2) * intervalHours;
-    }
-    
-    if (totalGuestHours === 0) return null;
-    
-    const avgStayMinutes = Math.round((totalGuestHours / totalEntries) * 60);
-    return (avgStayMinutes >= 5 && avgStayMinutes <= 240) ? avgStayMinutes : null;
-  };
-
   // Calculate current period metrics with factor breakdown for meaningful labels
   const dailyMetrics: Record<string, { 
     scores: number[]; 
@@ -792,8 +744,10 @@ function processTrend(
   // Calculate current period metrics
   const allScores = Object.values(dailyMetrics).flatMap(d => d.scores);
   const avgScore = allScores.length > 0 ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : 0;
-  const avgStay = calcAvgStay(data);
-  const totalGuests = calcGuestCount(data, requestedDays);
+  const avgStay = calculatePeriodAvgStay(data);
+  const guestResult = calculateTotalGuests(data, requestedDays);
+  const totalGuests = guestResult.count;
+  const guestsIsEstimate = guestResult.isEstimate;
   
   // Previous period metrics
   const prevScores: number[] = [];
@@ -803,8 +757,8 @@ function processTrend(
     if (score) prevScores.push(score);
   });
   const prevAvgScore = prevScores.length > 0 ? Math.round(prevScores.reduce((a, b) => a + b, 0) / prevScores.length) : avgScore;
-  const prevAvgStay = calcAvgStay(previousData);
-  const prevTotalGuests = calcGuestCount(previousData, requestedDays);
+  const prevAvgStay = calculatePeriodAvgStay(previousData);
+  const prevTotalGuests = calculateTotalGuests(previousData, requestedDays).count;
   
   const guestsDelta = prevTotalGuests > 0 ? Math.round(((totalGuests - prevTotalGuests) / prevTotalGuests) * 100) : 0;
   const avgStayDelta = (avgStay !== null && prevAvgStay !== null && prevAvgStay > 0)
@@ -815,6 +769,7 @@ function processTrend(
     avgStay,
     avgStayDelta,
     totalGuests,
+    guestsIsEstimate,
     guestsDelta,
     bestDay,
     worstDay,
@@ -927,93 +882,6 @@ function processComparison(
                         timeRange === '7d' ? 7 : 
                         timeRange === '14d' ? 14 : 30;
 
-  // Helper to calculate avg stay using OCCUPANCY INTEGRATION
-  const calcAvgStay = (periodData: SensorData[]): number | null => {
-    if (periodData.length < 2) return null;
-    
-    const sorted = [...periodData].sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-    
-    // Get total entries for period
-    const withEntries = sorted.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
-    if (withEntries.length < 2) return null;
-    
-    const firstEntries = withEntries[0].occupancy!.entries;
-    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    const totalEntries = Math.max(0, lastEntries - firstEntries);
-    
-    if (totalEntries < 5) return null;
-    
-    // Integrate occupancy over time
-    let totalGuestHours = 0;
-    for (let i = 1; i < sorted.length; i++) {
-      const prevTime = new Date(sorted[i - 1].timestamp).getTime();
-      const currTime = new Date(sorted[i].timestamp).getTime();
-      const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
-      
-      if (intervalHours > 4) continue; // Skip data gaps
-      
-      const prevOcc = sorted[i - 1].occupancy?.current || 0;
-      const currOcc = sorted[i].occupancy?.current || 0;
-      totalGuestHours += ((prevOcc + currOcc) / 2) * intervalHours;
-    }
-    
-    if (totalGuestHours === 0) return null;
-    
-    const avgStayMinutes = Math.round((totalGuestHours / totalEntries) * 60);
-    return (avgStayMinutes >= 5 && avgStayMinutes <= 240) ? avgStayMinutes : null;
-  };
-
-  // Helper to calculate guest count correctly (same logic as processSummary)
-  const calcGuestCount = (periodData: SensorData[], days: number): number => {
-    const withEntries = periodData
-      .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    
-    if (withEntries.length === 0) return 0;
-    if (withEntries.length === 1) return 0;
-    
-    // Calculate actual time span
-    const firstTimestamp = new Date(withEntries[0].timestamp).getTime();
-    const lastTimestamp = new Date(withEntries[withEntries.length - 1].timestamp).getTime();
-    const actualSpanDays = Math.max(1, (lastTimestamp - firstTimestamp) / (24 * 60 * 60 * 1000));
-    
-    const firstEntries = withEntries[0].occupancy!.entries;
-    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    
-    let measuredEntries = Math.max(0, lastEntries - firstEntries);
-    
-    // Handle counter resets
-    if (measuredEntries === 0 || lastEntries < firstEntries) {
-      measuredEntries = 0;
-      for (let i = 1; i < withEntries.length; i++) {
-        const prev = withEntries[i - 1].occupancy!.entries;
-        const curr = withEntries[i].occupancy!.entries;
-        if (curr > prev) {
-          measuredEntries += (curr - prev);
-        } else if (curr < prev) {
-          measuredEntries += curr;
-        }
-      }
-    }
-    
-    // Scale to account for missing first interval
-    const intervals = withEntries.length - 1;
-    if (intervals > 0 && measuredEntries > 0) {
-      const scaleFactor = (intervals + 1) / intervals;
-      measuredEntries = Math.round(measuredEntries * scaleFactor);
-    }
-    
-    // Extrapolate if we have less data than requested
-    if (actualSpanDays < days * 0.9) {
-      const dailyRate = measuredEntries / actualSpanDays;
-      return Math.round(dailyRate * days);
-    }
-    
-    return measuredEntries;
-  };
-
   // Current period
   let currentScoreSum = 0, currentCount = 0;
   currentData.forEach(d => {
@@ -1044,13 +912,13 @@ function processComparison(
   return {
     current: {
       score: currentCount > 0 ? Math.round(currentScoreSum / currentCount) : 0,
-      avgStay: calcAvgStay(currentData),
-      guests: calcGuestCount(currentData, requestedDays),
+      avgStay: calculatePeriodAvgStay(currentData),
+      guests: calculateTotalGuests(currentData, requestedDays).count,
     },
     previous: {
       score: prevCount > 0 ? Math.round(prevScoreSum / prevCount) : 0,
-      avgStay: calcAvgStay(previousData),
-      guests: calcGuestCount(previousData, requestedDays),
+      avgStay: calculatePeriodAvgStay(previousData),
+      guests: calculateTotalGuests(previousData, requestedDays).count,
     },
     periodLabel,
   };
@@ -1074,25 +942,12 @@ function processTrendChartData(data: SensorData[]): Array<{ date: Date; score: n
     if (score) dailyData[date].scores.push(score);
   });
   
-  // Helper to calculate guest count for a day
-  const calcDayGuests = (dayData: SensorData[]): number => {
-    const withEntries = dayData
-      .filter(d => d.occupancy?.entries !== undefined)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    
-    if (withEntries.length < 2) return withEntries[0]?.occupancy?.entries || 0;
-    
-    const firstEntries = withEntries[0].occupancy!.entries;
-    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    return Math.max(0, lastEntries - firstEntries);
-  };
-  
   return Object.entries(dailyData)
     .map(([dateStr, metrics]) => ({
       date: new Date(dateStr),
       score: metrics.scores.length > 0 ? Math.round(metrics.scores.reduce((a, b) => a + b, 0) / metrics.scores.length) : 0,
       avgStay: 0, // Not displayed - can't calculate accurate per-day avg stay
-      guests: calcDayGuests(metrics.rawData),
+      guests: calculateTotalGuests(metrics.rawData, 1).count, // Use shared helper for correct calculation
     }))
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 }

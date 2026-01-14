@@ -77,9 +77,9 @@ export function TrendCard({ data, timeRange, loading, onTapDetails }: TrendCardP
         )}
         
         <div className="flex items-center justify-between">
-          <span className="text-sm text-warm-400">Guests</span>
+          <span className="text-sm text-warm-400">{data.guestsIsEstimate ? '~Guests' : 'Guests'}</span>
           <div className="flex items-center gap-2">
-            <span className="text-white font-semibold">{data.totalGuests.toLocaleString()}</span>
+            <span className="text-white font-semibold">{data.guestsIsEstimate ? '~' : ''}{data.totalGuests.toLocaleString()}</span>
             {data.guestsDelta !== 0 && (
               <span className={`text-xs font-medium flex items-center gap-0.5 ${
                 data.guestsDelta > 0 ? 'text-recovery-high' : 'text-recovery-low'
