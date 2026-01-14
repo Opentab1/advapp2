@@ -124,15 +124,50 @@ function calculateWeekStats(data: SensorData[]): WeekData {
   // Average Pulse Score
   const avgPulseScore = scoredData.reduce((sum, d) => sum + d.pulseScore, 0) / scoredData.length;
   
-  // Total visitors (sum of unique daily entries)
-  const dailyEntries = new Map<string, number>();
-  data.forEach(d => {
-    const date = new Date(d.timestamp).toDateString();
-    const entries = d.occupancy?.entries || 0;
-    const current = dailyEntries.get(date) || 0;
-    dailyEntries.set(date, Math.max(current, entries));
-  });
-  const totalVisitors = Array.from(dailyEntries.values()).reduce((sum, v) => sum + v, 0);
+  // Total visitors - handles both hourly aggregated and raw cumulative data
+  const isHourlyAggregated = data.length > 0 && data[0]._hourlyAggregate === true;
+  
+  let totalVisitors = 0;
+  
+  if (isHourlyAggregated) {
+    // HOURLY AGGREGATED: entries = count per period, SUM them all
+    totalVisitors = data.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+  } else {
+    // RAW DATA: entries = cumulative counter, take max per day (end of day value - start of day value would be better, but this is approximate)
+    const dailyEntries = new Map<string, { first: number; last: number; firstTs: number; lastTs: number }>();
+    
+    const sortedData = [...data].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    sortedData.forEach(d => {
+      const date = new Date(d.timestamp).toDateString();
+      const entries = d.occupancy?.entries || 0;
+      const ts = new Date(d.timestamp).getTime();
+      
+      const existing = dailyEntries.get(date);
+      if (!existing) {
+        dailyEntries.set(date, { first: entries, last: entries, firstTs: ts, lastTs: ts });
+      } else {
+        if (ts < existing.firstTs) {
+          existing.first = entries;
+          existing.firstTs = ts;
+        }
+        if (ts > existing.lastTs) {
+          existing.last = entries;
+          existing.lastTs = ts;
+        }
+      }
+    });
+    
+    // Sum the deltas (actual visitors per day)
+    dailyEntries.forEach(({ first, last }) => {
+      const delta = last - first;
+      if (delta > 0) {
+        totalVisitors += delta;
+      }
+    });
+  }
   
   // Peak occupancy
   const peakOccupancy = Math.max(...data.map(d => d.occupancy?.current || 0));

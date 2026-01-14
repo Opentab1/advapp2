@@ -229,43 +229,51 @@ function calculatePeriodStats(data: SensorData[], timeRange: TimeRange, isCurren
   // Average Pulse Score
   const avgPulseScore = scoredData.reduce((sum, d) => sum + d.pulseScore, 0) / scoredData.length;
   
-  // Total visitors - calculate from DELTAS, not cumulative counters
-  // For each period (hour/day), compute: last entries - first entries = actual visitors
-  const periodEntries = new Map<string, { first: number; last: number; firstTs: number; lastTs: number }>();
+  // Total visitors - handles both hourly aggregated and raw cumulative data
+  // Check if this is hourly aggregated data
+  const isHourlyAggregated = data.length > 0 && data[0]._hourlyAggregate === true;
   
-  // Sort by timestamp
-  const sortedData = [...data].sort((a, b) => 
-    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  );
-  
-  sortedData.forEach(d => {
-    const key = getEntryKey(d.timestamp, timeRange);
-    const entries = d.occupancy?.entries || 0;
-    const ts = new Date(d.timestamp).getTime();
-    
-    const existing = periodEntries.get(key);
-    if (!existing) {
-      periodEntries.set(key, { first: entries, last: entries, firstTs: ts, lastTs: ts });
-    } else {
-      if (ts < existing.firstTs) {
-        existing.first = entries;
-        existing.firstTs = ts;
-      }
-      if (ts > existing.lastTs) {
-        existing.last = entries;
-        existing.lastTs = ts;
-      }
-    }
-  });
-  
-  // Sum the deltas (actual visitors per period)
   let totalVisitors = 0;
-  periodEntries.forEach(({ first, last }) => {
-    const delta = last - first;
-    if (delta > 0) {
-      totalVisitors += delta;
-    }
-  });
+  
+  if (isHourlyAggregated) {
+    // HOURLY AGGREGATED: entries = count per period, SUM them all
+    totalVisitors = data.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+  } else {
+    // RAW DATA: entries = cumulative counter, calculate deltas per period
+    const periodEntries = new Map<string, { first: number; last: number; firstTs: number; lastTs: number }>();
+    
+    const sortedData = [...data].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    sortedData.forEach(d => {
+      const key = getEntryKey(d.timestamp, timeRange);
+      const entries = d.occupancy?.entries || 0;
+      const ts = new Date(d.timestamp).getTime();
+      
+      const existing = periodEntries.get(key);
+      if (!existing) {
+        periodEntries.set(key, { first: entries, last: entries, firstTs: ts, lastTs: ts });
+      } else {
+        if (ts < existing.firstTs) {
+          existing.first = entries;
+          existing.firstTs = ts;
+        }
+        if (ts > existing.lastTs) {
+          existing.last = entries;
+          existing.lastTs = ts;
+        }
+      }
+    });
+    
+    // Sum the deltas (actual visitors per period)
+    periodEntries.forEach(({ first, last }) => {
+      const delta = last - first;
+      if (delta > 0) {
+        totalVisitors += delta;
+      }
+    });
+  }
   
   // Peak occupancy
   const peakOccupancy = Math.max(...data.map(d => d.occupancy?.current || 0), 0);
