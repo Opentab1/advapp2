@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import { calculatePulseScore } from '../utils/scoring';
+import { isDemoAccount } from '../utils/demoData';
 import type { SensorData, TimeRange } from '../types';
 import type {
   InsightsTimeRange,
@@ -118,8 +119,8 @@ export function useInsightsData(timeRange: InsightsTimeRange): InsightsData {
   // Level 1: Summary
   const summary = useMemo((): InsightsSummary | null => {
     if (rawSensorData.length === 0) return null;
-    return processSummary(rawSensorData, previousPeriodData, timeRange);
-  }, [rawSensorData, previousPeriodData, timeRange]);
+    return processSummary(rawSensorData, previousPeriodData, timeRange, venueId);
+  }, [rawSensorData, previousPeriodData, timeRange, venueId]);
   
   // Level 1: Sweet Spot (default to sound)
   const allSweetSpots = useMemo(() => {
@@ -361,7 +362,8 @@ function calculatePeriodAvgStay(periodData: SensorData[]): number | null {
 function processSummary(
   data: SensorData[], 
   previousData: SensorData[],
-  timeRange: InsightsTimeRange
+  timeRange: InsightsTimeRange,
+  venueId: string
 ): InsightsSummary {
   // Calculate current period metrics
   let totalScore = 0;
@@ -464,8 +466,16 @@ function processSummary(
   const guestsDelta = prevTotalGuests > 0 ? Math.round(((totalGuests - prevTotalGuests) / prevTotalGuests) * 100) : 0;
   
   // Use shared helper for avg stay calculation (handles both data types correctly)
-  const avgStayMinutes = calculatePeriodAvgStay(data);
-  const prevAvgStay = calculatePeriodAvgStay(previousData);
+  let avgStayMinutes = calculatePeriodAvgStay(data);
+  let prevAvgStay = calculatePeriodAvgStay(previousData);
+  
+  // DEMO: Always show a number, never null
+  if (avgStayMinutes === null && isDemoAccount(venueId)) {
+    avgStayMinutes = 98; // ~1.5 hours for a busy venue
+  }
+  if (prevAvgStay === null && isDemoAccount(venueId)) {
+    prevAvgStay = 92; // Previous period slightly lower
+  }
   
   // Calculate delta only if both values exist
   const avgStayDelta = (avgStayMinutes !== null && prevAvgStay !== null && prevAvgStay > 0)

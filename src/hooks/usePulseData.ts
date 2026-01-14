@@ -459,8 +459,18 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     return avgStayMinutes;
   }, [todayHistory, effectiveOccupancy.todayEntries, sensorData?.occupancy?.current]);
   
-  const dwellScore = getDwellTimeScore(dwellTimeMinutes);
-  const dwellTimeFormatted = formatDwellTime(dwellTimeMinutes);
+  // DEMO: Always show a number, never null
+  const effectiveDwellTime = useMemo(() => {
+    if (dwellTimeMinutes !== null) return dwellTimeMinutes;
+    // Demo fallback: realistic avg stay for a busy venue
+    if (isDemoAccount(venueId)) {
+      return 95 + Math.floor(Math.random() * 20); // 95-115 minutes
+    }
+    return null;
+  }, [dwellTimeMinutes, venueId]);
+  
+  const dwellScore = getDwellTimeScore(effectiveDwellTime);
+  const dwellTimeFormatted = formatDwellTime(effectiveDwellTime);
   
   // ============ ACCURATE RETENTION METRICS ============
   // These are 100% accurate based on raw entry/exit data
@@ -506,9 +516,14 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     // 5. Avg Stay (exit-based, more accurate than Little's Law)
     // If people are exiting, how long are they staying on average?
-    const avgStayMinutes = exitsPerHour > 0 
+    let avgStayMinutes: number | null = exitsPerHour > 0 
       ? Math.round((current / exitsPerHour) * 60)
-      : null; // Can't calculate without exits
+      : null;
+    
+    // DEMO: Always show a number
+    if (avgStayMinutes === null && isDemoAccount(venueId)) {
+      avgStayMinutes = 105; // ~1.75 hours
+    }
     
     return {
       retentionRate,       // 0-100%
@@ -572,7 +587,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     peakTime: effectiveOccupancy.peakTime,
     
     // Dwell time
-    dwellTimeMinutes,
+    dwellTimeMinutes: effectiveDwellTime,
     dwellTimeFormatted,
     dwellScore,
     
