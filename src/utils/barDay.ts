@@ -55,22 +55,24 @@ export function getBarDayStartISO(timezone: string = 'America/New_York'): string
  * Calculate total entries and exits from sensor data array
  * for the current bar day (3am to now)
  * 
- * Strategy: If the device sends cumulative values (since device start or midnight),
- * we calculate the DIFFERENCE between the first reading at 3am and the latest reading.
- * This gives us only the activity since 3am.
+ * CRITICAL: Handles TWO different data types:
+ * 1. HOURLY AGGREGATED (_hourlyAggregate = true): entries = count per hour, SUM them
+ * 2. RAW DATA: entries = cumulative counter, calculate difference
  * 
  * @param data - Array of sensor data with occupancy info
  * @param timezone - Venue timezone
  * @returns Object with total entries and exits for the bar day
  */
 export function calculateBarDayOccupancy(
-  data: Array<{ timestamp: string; occupancy?: { entries: number; exits: number; current?: number } }>,
+  data: Array<{ timestamp: string; occupancy?: { entries: number; exits: number; current?: number }; _hourlyAggregate?: boolean }>,
   timezone: string = 'America/New_York'
 ): { entries: number; exits: number; current: number } {
   const barDayStart = getBarDayStart(timezone);
   
-  // Filter data to only include records with occupancy data
-  const dataWithOccupancy = data.filter(item => item.occupancy);
+  // Filter data to only include records with occupancy data at or after bar day start
+  const dataWithOccupancy = data.filter(item => 
+    item.occupancy && new Date(item.timestamp) >= barDayStart
+  );
   
   if (dataWithOccupancy.length === 0) {
     return { entries: 0, exits: 0, current: 0 };
@@ -81,36 +83,42 @@ export function calculateBarDayOccupancy(
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
   
-  // Find the first reading at or after bar day start (3am)
-  const firstAfterBarDayStart = sorted.find(item => 
-    new Date(item.timestamp) >= barDayStart
-  );
-  
-  // Get the latest reading (last in sorted array)
+  // Get the latest reading for current occupancy
   const latest = sorted[sorted.length - 1];
-  
-  // Get the current occupancy from latest reading
   const latestCurrent = latest.occupancy?.current || 0;
   
-  // If we have a reading from bar day start, calculate the difference
-  // Otherwise, fall back to the latest values (device may have reset at 3am)
-  if (firstAfterBarDayStart && firstAfterBarDayStart !== latest) {
-    const startEntries = firstAfterBarDayStart.occupancy?.entries || 0;
-    const startExits = firstAfterBarDayStart.occupancy?.exits || 0;
+  // Check if this is hourly aggregated data
+  const isHourlyAggregated = sorted[0]._hourlyAggregate === true;
+  
+  let barDayEntries: number;
+  let barDayExits: number;
+  
+  if (isHourlyAggregated) {
+    // HOURLY AGGREGATED: entries/exits = count per hour, SUM them all
+    barDayEntries = sorted.reduce((sum, item) => sum + (item.occupancy?.entries || 0), 0);
+    barDayExits = sorted.reduce((sum, item) => sum + (item.occupancy?.exits || 0), 0);
+    
+    console.log('📊 Bar day calculation (hourly aggregated SUM method):', {
+      barDayStart: barDayStart.toISOString(),
+      dataPoints: sorted.length,
+      totalEntries: barDayEntries,
+      totalExits: barDayExits,
+      currentOccupancy: latestCurrent
+    });
+  } else {
+    // RAW DATA: entries = cumulative counter, calculate difference
+    const first = sorted[0];
+    const startEntries = first.occupancy?.entries || 0;
+    const startExits = first.occupancy?.exits || 0;
     const latestEntries = latest.occupancy?.entries || 0;
     const latestExits = latest.occupancy?.exits || 0;
     
-    // Calculate difference (activity since bar day start)
-    const barDayEntries = Math.max(0, latestEntries - startEntries);
-    const barDayExits = Math.max(0, latestExits - startExits);
+    barDayEntries = Math.max(0, latestEntries - startEntries);
+    barDayExits = Math.max(0, latestExits - startExits);
     
-    // Calculate current occupancy as entries - exits for the bar day
-    // This is more accurate than the sensor's "current" value which may be cumulative
-    const calculatedCurrent = Math.max(0, barDayEntries - barDayExits);
-    
-    console.log('📊 Bar day calculation (difference method):', {
+    console.log('📊 Bar day calculation (cumulative difference method):', {
       barDayStart: barDayStart.toISOString(),
-      firstReading: firstAfterBarDayStart.timestamp,
+      firstReading: first.timestamp,
       latestReading: latest.timestamp,
       startEntries,
       latestEntries,
@@ -118,36 +126,14 @@ export function calculateBarDayOccupancy(
       startExits,
       latestExits,
       barDayExits,
-      sensorCurrent: latestCurrent,
-      calculatedCurrent
+      sensorCurrent: latestCurrent
     });
-    
-    return {
-      entries: barDayEntries,
-      exits: barDayExits,
-      current: calculatedCurrent
-    };
   }
   
-  // Fallback: If no reading from before bar day start, 
-  // the device likely reset at 3am, so use latest values directly
-  const fallbackEntries = latest.occupancy?.entries || 0;
-  const fallbackExits = latest.occupancy?.exits || 0;
-  const fallbackCurrent = Math.max(0, fallbackEntries - fallbackExits);
-  
-  console.log('📊 Bar day calculation (direct method - device likely reset at 3am):', {
-    barDayStart: barDayStart.toISOString(),
-    latestReading: latest.timestamp,
-    entries: fallbackEntries,
-    exits: fallbackExits,
-    sensorCurrent: latestCurrent,
-    calculatedCurrent: fallbackCurrent
-  });
-  
   return {
-    entries: fallbackEntries,
-    exits: fallbackExits,
-    current: fallbackCurrent
+    entries: barDayEntries,
+    exits: barDayExits,
+    current: latestCurrent  // Use latest sensor reading for current occupancy
   };
 }
 
@@ -225,6 +211,10 @@ export function getBarDayBoundaries(
  * Aggregate occupancy data by bar day for a date range
  * Returns daily totals for entries/exits based on 3am-3am boundaries
  * 
+ * CRITICAL: Handles TWO different data types:
+ * 1. HOURLY AGGREGATED (_hourlyAggregate = true): entries = count per hour, SUM them
+ * 2. RAW DATA: entries = cumulative counter, calculate difference
+ * 
  * @param data - Array of sensor data with occupancy info
  * @param startDate - Start of the range
  * @param endDate - End of the range  
@@ -232,7 +222,7 @@ export function getBarDayBoundaries(
  * @returns Object with total entries/exits and daily breakdown
  */
 export function aggregateOccupancyByBarDay(
-  data: Array<{ timestamp: string; occupancy?: { entries: number; exits: number; current?: number } }>,
+  data: Array<{ timestamp: string; occupancy?: { entries: number; exits: number; current?: number }; _hourlyAggregate?: boolean }>,
   startDate: Date,
   endDate: Date,
   timezone: string = 'America/New_York'
@@ -258,6 +248,9 @@ export function aggregateOccupancyByBarDay(
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
   
+  // Check if this is hourly aggregated data
+  const isHourlyAggregated = sorted[0]._hourlyAggregate === true;
+  
   // Process each bar day
   for (const barDay of barDays) {
     // Get data points within this bar day
@@ -271,13 +264,20 @@ export function aggregateOccupancyByBarDay(
       continue;
     }
     
-    // Get first and last readings for this bar day
-    const first = barDayData[0];
-    const last = barDayData[barDayData.length - 1];
+    let dayEntries: number;
+    let dayExits: number;
     
-    // Calculate entries/exits as difference (handles cumulative values)
-    const dayEntries = Math.max(0, (last.occupancy?.entries || 0) - (first.occupancy?.entries || 0));
-    const dayExits = Math.max(0, (last.occupancy?.exits || 0) - (first.occupancy?.exits || 0));
+    if (isHourlyAggregated) {
+      // HOURLY AGGREGATED: SUM all entries/exits for this bar day
+      dayEntries = barDayData.reduce((sum, item) => sum + (item.occupancy?.entries || 0), 0);
+      dayExits = barDayData.reduce((sum, item) => sum + (item.occupancy?.exits || 0), 0);
+    } else {
+      // RAW DATA: Calculate difference between first and last
+      const first = barDayData[0];
+      const last = barDayData[barDayData.length - 1];
+      dayEntries = Math.max(0, (last.occupancy?.entries || 0) - (first.occupancy?.entries || 0));
+      dayExits = Math.max(0, (last.occupancy?.exits || 0) - (first.occupancy?.exits || 0));
+    }
     
     dailyBreakdown.push({ 
       date: barDay.label, 
@@ -292,6 +292,7 @@ export function aggregateOccupancyByBarDay(
   console.log('📊 Bar day aggregation complete:', {
     period: `${startDate.toISOString()} to ${endDate.toISOString()}`,
     barDaysProcessed: barDays.length,
+    isHourlyAggregated,
     totalEntries,
     totalExits,
     dailyBreakdown
