@@ -41,6 +41,10 @@ export function calculateDwellTime(
  * Calculate dwell time from historical sensor data
  * Uses average occupancy and total entries across the dataset
  * 
+ * CRITICAL: Handles TWO different data types:
+ * 1. HOURLY AGGREGATED (_hourlyAggregate = true): entries = count per hour, SUM them
+ * 2. RAW DATA: entries = cumulative counter, use lastEntries - firstEntries
+ * 
  * @param data - Array of sensor data points
  * @param timeRangeHours - Total time range in hours
  * @returns Average dwell time in minutes, or null if cannot calculate
@@ -64,18 +68,29 @@ export function calculateDwellTimeFromHistory(
 
   const avgOccupancy = occupancyValues.reduce((sum, val) => sum + val, 0) / occupancyValues.length;
 
-  // Sum total entries across all data points
-  // Note: Each data point may have incremental entries, or we may need to use first/last
-  const entryData = data.filter(d => d.occupancy?.entries !== undefined);
+  // Get entries data sorted by timestamp
+  const entryData = data
+    .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   
   if (entryData.length === 0) {
     return null;
   }
 
-  // Use the difference between first and last entry counts
-  const firstEntries = entryData[0].occupancy!.entries;
-  const lastEntries = entryData[entryData.length - 1].occupancy!.entries;
-  const totalEntries = Math.max(0, lastEntries - firstEntries);
+  // Check if this is hourly aggregated data
+  const isHourlyAggregated = entryData[0]._hourlyAggregate === true;
+  
+  let totalEntries: number;
+  
+  if (isHourlyAggregated) {
+    // HOURLY AGGREGATED: entries = count per hour, SUM them all
+    totalEntries = entryData.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+  } else {
+    // RAW DATA: entries = cumulative counter, calculate delta
+    const firstEntries = entryData[0].occupancy!.entries;
+    const lastEntries = entryData[entryData.length - 1].occupancy!.entries;
+    totalEntries = Math.max(0, lastEntries - firstEntries);
+  }
 
   return calculateDwellTime(avgOccupancy, totalEntries, timeRangeHours);
 }
@@ -149,7 +164,7 @@ export function calculateRecentDwellTime(
 
   const avgOccupancy = occupancyValues.reduce((sum, val) => sum + val, 0) / occupancyValues.length;
 
-  // Get entries - find min and max to calculate total entries in the period
+  // Get entries - check if hourly aggregated or raw cumulative data
   const entryData = recentData.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
   
   if (entryData.length < 2) {
@@ -157,11 +172,22 @@ export function calculateRecentDwellTime(
     return null;
   }
 
-  // Since entries is cumulative, take the MAX minus the MIN
-  const entryValues = entryData.map(d => d.occupancy!.entries);
-  const minEntries = Math.min(...entryValues);
-  const maxEntries = Math.max(...entryValues);
-  const totalEntries = maxEntries - minEntries;
+  // Check if this is hourly aggregated data
+  const isHourlyAggregated = entryData[0]._hourlyAggregate === true;
+  
+  let totalEntries: number;
+  
+  if (isHourlyAggregated) {
+    // HOURLY AGGREGATED: entries = count per hour, SUM them all
+    totalEntries = entryData.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+    console.log(`📊 Dwell time: Using hourly aggregated SUM method, totalEntries=${totalEntries}`);
+  } else {
+    // RAW DATA: entries = cumulative counter, use MAX minus MIN
+    const entryValues = entryData.map(d => d.occupancy!.entries);
+    const minEntries = Math.min(...entryValues);
+    const maxEntries = Math.max(...entryValues);
+    totalEntries = maxEntries - minEntries;
+  }
 
   // Calculate actual time span
   const firstTime = new Date(recentData[0].timestamp).getTime();
@@ -171,8 +197,7 @@ export function calculateRecentDwellTime(
   console.log(`📊 Dwell time debug:`, {
     dataPoints: recentData.length,
     avgOccupancy: avgOccupancy.toFixed(1),
-    minEntries,
-    maxEntries,
+    isHourlyAggregated,
     totalEntries,
     actualHours: actualHours.toFixed(2)
   });
