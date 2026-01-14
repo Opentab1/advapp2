@@ -52,6 +52,36 @@ export interface DiscoveredPattern {
   actionable: boolean;      // Can they act on this now?
 }
 
+/**
+ * Best Night Profile - The actual conditions during YOUR best nights
+ * This is what we want to recreate!
+ */
+export interface BestNightProfile {
+  // When was this best night?
+  date: string;                    // ISO date string
+  dayOfWeek: string;               // "Saturday", "Friday", etc.
+  timeSlot: TimeSlot;
+  
+  // Performance metrics (what made it "best")
+  totalGuests: number;             // Total guests that night
+  peakOccupancy: number;           // Max people at once
+  avgDwellMinutes: number;         // Average time guests stayed
+  
+  // Environmental conditions during the best night
+  avgSound: number;                // Average dB level
+  avgLight: number;                // Average lux level
+  avgTemp: number;                 // Average indoor temp °F
+  
+  // Optional: Peak hour conditions (the sweet spot)
+  peakHour?: number;               // What hour was peak (e.g., 22 = 10pm)
+  peakHourSound?: number;          // dB during peak hour
+  peakHourLight?: number;          // Lux during peak hour
+  
+  // Confidence in this profile
+  dataPointsFromNight: number;     // How many readings we have from this night
+  confidence: number;              // 0-100
+}
+
 export interface VenueLearning {
   venueId: string;
   learningProgress: number;       // 0-100%
@@ -62,6 +92,9 @@ export interface VenueLearning {
   
   // Learned ranges per time slot
   timeSlots: Partial<Record<TimeSlot, TimeSlotLearning>>;
+  
+  // ✨ NEW: Best Night Profiles per time slot - YOUR proven formula
+  bestNights: Partial<Record<TimeSlot, BestNightProfile>>;
   
   // Notable patterns discovered
   patterns: DiscoveredPattern[];
@@ -169,6 +202,9 @@ class VenueLearningService {
     // Discover patterns
     const patterns = this.discoverPatterns(dataWithDwell, timeSlots, weeksOfData);
     
+    // ✨ Find best nights per time slot
+    const bestNights = this.findBestNights(dataWithDwell, byTimeSlot);
+    
     // Build venue profile
     const venueProfile = this.buildVenueProfile(dataWithDwell);
     
@@ -212,6 +248,7 @@ class VenueLearningService {
       oldestDataDate: oldestDate.toISOString(),
       newestDataDate: newestDate.toISOString(),
       timeSlots,
+      bestNights,
       patterns,
       venueProfile,
       lastAnalyzed: new Date().toISOString(),
@@ -299,6 +336,7 @@ class VenueLearningService {
       oldestDataDate: null,
       newestDataDate: null,
       timeSlots: {},
+      bestNights: {},
       patterns: [],
       venueProfile: null,
       lastAnalyzed: new Date().toISOString(),
@@ -653,6 +691,185 @@ class VenueLearningService {
     } catch (error) {
       console.error('Error persisting venue learning:', error);
     }
+  }
+  
+  /**
+   * Find the BEST night for each time slot based on:
+   * - Total guests (primary metric)
+   * - Average dwell time (secondary metric)
+   * 
+   * Returns the actual conditions during those best nights.
+   */
+  private findBestNights(
+    data: Array<SensorData & { estimatedDwell: number }>,
+    byTimeSlot: Record<string, Array<SensorData & { estimatedDwell: number }>>
+  ): Partial<Record<TimeSlot, BestNightProfile>> {
+    const bestNights: Partial<Record<TimeSlot, BestNightProfile>> = {};
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    
+    for (const [slot, slotData] of Object.entries(byTimeSlot)) {
+      if (slotData.length < 5) continue; // Need minimum data
+      
+      // Group by calendar date (night)
+      const byNight: Record<string, Array<SensorData & { estimatedDwell: number }>> = {};
+      
+      for (const d of slotData) {
+        const date = new Date(d.timestamp);
+        // Use date string as key (YYYY-MM-DD)
+        const dateKey = date.toISOString().split('T')[0];
+        if (!byNight[dateKey]) byNight[dateKey] = [];
+        byNight[dateKey].push(d);
+      }
+      
+      // Calculate metrics for each night
+      const nightMetrics: Array<{
+        dateKey: string;
+        date: Date;
+        dataPoints: Array<SensorData & { estimatedDwell: number }>;
+        totalGuests: number;
+        peakOccupancy: number;
+        avgDwell: number;
+        avgSound: number;
+        avgLight: number;
+        avgTemp: number;
+        score: number; // Combined score for ranking
+      }> = [];
+      
+      for (const [dateKey, nightData] of Object.entries(byNight)) {
+        if (nightData.length < 3) continue; // Need at least 3 data points per night
+        
+        // Calculate total guests using delta method
+        const withEntries = nightData.filter(d => d.occupancy?.entries !== undefined && d.occupancy?.entries !== null);
+        let totalGuests = 0;
+        if (withEntries.length >= 2) {
+          const sorted = [...withEntries].sort((a, b) => 
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          );
+          for (let i = 1; i < sorted.length; i++) {
+            const prev = sorted[i - 1].occupancy!.entries;
+            const curr = sorted[i].occupancy!.entries;
+            if (curr > prev) {
+              totalGuests += (curr - prev);
+            } else if (curr < prev) {
+              totalGuests += curr; // Counter reset
+            }
+          }
+        }
+        
+        // Peak occupancy
+        const peakOccupancy = Math.max(...nightData.map(d => d.occupancy?.current || 0));
+        
+        // Average dwell time
+        const avgDwell = nightData.reduce((sum, d) => sum + d.estimatedDwell, 0) / nightData.length;
+        
+        // Average environmental conditions
+        const withSound = nightData.filter(d => d.decibels != null);
+        const avgSound = withSound.length > 0 
+          ? withSound.reduce((sum, d) => sum + (d.decibels || 0), 0) / withSound.length 
+          : 0;
+        
+        const withLight = nightData.filter(d => d.light != null);
+        const avgLight = withLight.length > 0 
+          ? withLight.reduce((sum, d) => sum + (d.light || 0), 0) / withLight.length 
+          : 0;
+        
+        const withTemp = nightData.filter(d => d.indoorTemp != null);
+        const avgTemp = withTemp.length > 0 
+          ? withTemp.reduce((sum, d) => sum + (d.indoorTemp || 0), 0) / withTemp.length 
+          : 70;
+        
+        // Combined score: prioritize total guests, then dwell time
+        // Normalize: assume max 500 guests and 120 min dwell for scaling
+        const guestScore = Math.min(100, (totalGuests / 200) * 100); // 200 guests = 100 score
+        const dwellScore = Math.min(100, (avgDwell / 90) * 100);      // 90 min = 100 score
+        const score = (guestScore * 0.6) + (dwellScore * 0.4);        // 60% guests, 40% dwell
+        
+        nightMetrics.push({
+          dateKey,
+          date: new Date(dateKey),
+          dataPoints: nightData,
+          totalGuests,
+          peakOccupancy,
+          avgDwell,
+          avgSound,
+          avgLight,
+          avgTemp,
+          score,
+        });
+      }
+      
+      if (nightMetrics.length === 0) continue;
+      
+      // Find the best night (highest combined score)
+      const bestNight = nightMetrics.reduce((a, b) => a.score > b.score ? a : b);
+      
+      // Only include if we have meaningful data
+      if (bestNight.totalGuests < 5 && bestNight.peakOccupancy < 5) continue;
+      
+      // Find peak hour within this best night
+      const hourlyData: Record<number, Array<SensorData & { estimatedDwell: number }>> = {};
+      for (const d of bestNight.dataPoints) {
+        const hour = new Date(d.timestamp).getHours();
+        if (!hourlyData[hour]) hourlyData[hour] = [];
+        hourlyData[hour].push(d);
+      }
+      
+      let peakHour = 21;
+      let peakHourOccupancy = 0;
+      let peakHourSound: number | undefined;
+      let peakHourLight: number | undefined;
+      
+      for (const [hourStr, hourData] of Object.entries(hourlyData)) {
+        const avgOccupancy = hourData.reduce((sum, d) => sum + (d.occupancy?.current || 0), 0) / hourData.length;
+        if (avgOccupancy > peakHourOccupancy) {
+          peakHourOccupancy = avgOccupancy;
+          peakHour = parseInt(hourStr);
+          const withSound = hourData.filter(d => d.decibels != null);
+          peakHourSound = withSound.length > 0 
+            ? withSound.reduce((sum, d) => sum + (d.decibels || 0), 0) / withSound.length 
+            : undefined;
+          const withLight = hourData.filter(d => d.light != null);
+          peakHourLight = withLight.length > 0 
+            ? withLight.reduce((sum, d) => sum + (d.light || 0), 0) / withLight.length 
+            : undefined;
+        }
+      }
+      
+      bestNights[slot as TimeSlot] = {
+        date: bestNight.dateKey,
+        dayOfWeek: dayNames[bestNight.date.getDay()],
+        timeSlot: slot as TimeSlot,
+        totalGuests: Math.round(bestNight.totalGuests),
+        peakOccupancy: Math.round(bestNight.peakOccupancy),
+        avgDwellMinutes: Math.round(bestNight.avgDwell),
+        avgSound: Math.round(bestNight.avgSound),
+        avgLight: Math.round(bestNight.avgLight),
+        avgTemp: Math.round(bestNight.avgTemp),
+        peakHour,
+        peakHourSound: peakHourSound ? Math.round(peakHourSound) : undefined,
+        peakHourLight: peakHourLight ? Math.round(peakHourLight) : undefined,
+        dataPointsFromNight: bestNight.dataPoints.length,
+        confidence: Math.min(100, bestNight.dataPoints.length * 10), // 10+ data points = 100%
+      };
+    }
+    
+    console.log(`🏆 Found best nights for ${Object.keys(bestNights).length} time slots`);
+    
+    return bestNights;
+  }
+  
+  /**
+   * Get the Best Night Profile for the current time slot
+   */
+  getBestNightProfile(venueId: string, timeSlot?: TimeSlot): BestNightProfile | null {
+    const learning = this.getLearning(venueId);
+    const slot = timeSlot || getCurrentTimeSlot();
+    
+    if (!learning || !learning.bestNights || !learning.bestNights[slot]) {
+      return null;
+    }
+    
+    return learning.bestNights[slot] || null;
   }
 }
 

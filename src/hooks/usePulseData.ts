@@ -52,6 +52,11 @@ export interface PulseData {
   // Time slot
   timeSlot: string;
   
+  // ✨ Best Night comparison (YOUR historical best)
+  bestNight: import('../services/venue-learning.service').BestNightProfile | null;
+  isUsingHistoricalData: boolean;
+  proximityToBest: number | null;
+  
   // Current sensor values
   currentDecibels: number | null;
   currentLight: number | null;
@@ -525,6 +530,11 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     // Time slot
     timeSlot: pulseScoreResult.timeSlot,
+    
+    // ✨ Best Night comparison (YOUR historical best)
+    bestNight: pulseScoreResult.bestNight,
+    isUsingHistoricalData: pulseScoreResult.isUsingHistoricalData,
+    proximityToBest: pulseScoreResult.proximityToBest,
     
     // Current sensor values
     currentDecibels: sensorData?.decibels ?? null,

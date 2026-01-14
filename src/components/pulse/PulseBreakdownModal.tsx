@@ -6,6 +6,7 @@
  * 
  * Shows:
  * - Overall score with clear status
+ * - ✨ YOUR BEST NIGHT comparison (when available)
  * - Factor breakdown: Sound, Light, Temp, Vibe (TAPPABLE!)
  * - Context-aware based on time/day
  * - How to improve
@@ -14,11 +15,12 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Thermometer, Clock, ChevronRight, Sparkles } from 'lucide-react';
+import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Thermometer, Clock, ChevronRight, Sparkles, Trophy, Users, Timer, TrendingUp } from 'lucide-react';
 import { FACTOR_WEIGHTS, SCORE_THRESHOLDS, TIME_SLOT_RANGES, type TimeSlot } from '../../utils/constants';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import { getCurrentTimeSlot } from '../../utils/scoring';
 import { FactorDeepDiveModal, type FactorType } from './FactorDeepDiveModal';
+import type { BestNightProfile } from '../../services/venue-learning.service';
 
 interface PulseBreakdownModalProps {
   isOpen: boolean;
@@ -34,6 +36,10 @@ interface PulseBreakdownModalProps {
   indoorTemp?: number | null;
   outdoorTemp?: number | null;
   timeSlot?: string;
+  // ✨ NEW: Best Night comparison data
+  bestNight?: BestNightProfile | null;
+  isUsingHistoricalData?: boolean;
+  proximityToBest?: number | null;
 }
 
 export function PulseBreakdownModal({
@@ -50,6 +56,9 @@ export function PulseBreakdownModal({
   indoorTemp,
   outdoorTemp,
   timeSlot: timeSlotProp,
+  bestNight,
+  isUsingHistoricalData,
+  proximityToBest,
 }: PulseBreakdownModalProps) {
   // State for factor deep dive
   const [selectedFactor, setSelectedFactor] = useState<FactorType | null>(null);
@@ -57,6 +66,12 @@ export function PulseBreakdownModal({
   // Get time slot
   const timeSlot = (timeSlotProp as TimeSlot) || getCurrentTimeSlot();
   const ranges = TIME_SLOT_RANGES[timeSlot];
+  
+  // Format date for display
+  const formatBestNightDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
   
   // Time slot display labels
   const slotLabels: Record<TimeSlot, string> = {
@@ -123,13 +138,152 @@ export function PulseBreakdownModal({
           
           {/* Score meaning */}
           <p className="text-sm text-warm-400 mt-2 px-4">
-            {pulseScore !== null && pulseScore >= SCORE_THRESHOLDS.optimal
+            {isUsingHistoricalData && bestNight
+              ? pulseScore !== null && pulseScore >= SCORE_THRESHOLDS.optimal
+                ? `You're matching your best ${bestNight.dayOfWeek}!`
+                : `Get closer to your best ${bestNight.dayOfWeek}'s conditions`
+              : pulseScore !== null && pulseScore >= SCORE_THRESHOLDS.optimal
               ? 'Your venue atmosphere is ideal for guests right now.'
               : pulseScore !== null && pulseScore >= SCORE_THRESHOLDS.good
               ? 'Good conditions. Small tweaks could make it perfect.'
               : 'Some adjustments needed for optimal guest experience.'}
           </p>
+          
+          {/* Proximity to Best indicator */}
+          {isUsingHistoricalData && proximityToBest !== null && (
+            <div className="mt-3">
+              <p className="text-xs text-warm-500 mb-1">Match to your best: {proximityToBest}%</p>
+              <div className="w-40 mx-auto h-1.5 bg-warm-600 rounded-full overflow-hidden">
+                <motion.div
+                  className="h-full rounded-full bg-primary"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${proximityToBest}%` }}
+                  transition={{ duration: 0.5 }}
+                />
+              </div>
+            </div>
+          )}
         </div>
+        
+        {/* ✨ YOUR BEST NIGHT SECTION */}
+        {bestNight && (
+          <div className="bg-gradient-to-br from-amber-900/20 to-yellow-900/10 rounded-2xl border border-amber-800/30 p-4 -mx-2">
+            <div className="flex items-center gap-2 mb-4">
+              <Trophy className="w-5 h-5 text-amber-400" />
+              <h4 className="text-sm font-bold text-amber-300 uppercase tracking-wide">
+                Your Best {bestNight.dayOfWeek}
+              </h4>
+              <span className="text-xs text-amber-500 ml-auto">
+                {formatBestNightDate(bestNight.date)}
+              </span>
+            </div>
+            
+            {/* Best Night Stats */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="bg-warm-800/50 rounded-lg p-3 text-center">
+                <Users className="w-4 h-4 text-amber-400 mx-auto mb-1" />
+                <p className="text-lg font-bold text-warm-100">{bestNight.totalGuests}</p>
+                <p className="text-[10px] text-warm-400 uppercase">Total Guests</p>
+              </div>
+              <div className="bg-warm-800/50 rounded-lg p-3 text-center">
+                <Timer className="w-4 h-4 text-amber-400 mx-auto mb-1" />
+                <p className="text-lg font-bold text-warm-100">{bestNight.avgDwellMinutes}m</p>
+                <p className="text-[10px] text-warm-400 uppercase">Avg Stay</p>
+              </div>
+            </div>
+            
+            {/* Conditions Comparison */}
+            <div className="space-y-2">
+              <p className="text-xs text-warm-400 font-medium mb-2">That night's conditions:</p>
+              
+              {/* Sound */}
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <Volume2 className="w-4 h-4 text-warm-500" />
+                  <span className="text-warm-300">Sound</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-400 font-semibold">{bestNight.avgSound}dB</span>
+                  {currentDecibels !== null && (
+                    <span className={`text-xs ${
+                      Math.abs(currentDecibels - bestNight.avgSound) <= 3 ? 'text-green-400' : 'text-warm-500'
+                    }`}>
+                      (You: {currentDecibels.toFixed(0)}dB)
+                    </span>
+                  )}
+                </div>
+              </div>
+              
+              {/* Light */}
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <Sun className="w-4 h-4 text-warm-500" />
+                  <span className="text-warm-300">Light</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-400 font-semibold">{bestNight.avgLight} lux</span>
+                  {currentLight !== null && (
+                    <span className={`text-xs ${
+                      Math.abs(currentLight - bestNight.avgLight) <= 30 ? 'text-green-400' : 'text-warm-500'
+                    }`}>
+                      (You: {currentLight.toFixed(0)} lux)
+                    </span>
+                  )}
+                </div>
+              </div>
+              
+              {/* Temp */}
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <Thermometer className="w-4 h-4 text-warm-500" />
+                  <span className="text-warm-300">Temp</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-400 font-semibold">{bestNight.avgTemp}°F</span>
+                  {indoorTemp !== null && indoorTemp !== undefined && (
+                    <span className={`text-xs ${
+                      Math.abs(indoorTemp - bestNight.avgTemp) <= 2 ? 'text-green-400' : 'text-warm-500'
+                    }`}>
+                      (You: {indoorTemp.toFixed(0)}°F)
+                    </span>
+                  )}
+                </div>
+              </div>
+              
+              {/* Peak Hour */}
+              {bestNight.peakHour !== undefined && (
+                <div className="flex items-center justify-between text-sm mt-2 pt-2 border-t border-warm-700/50">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-warm-500" />
+                    <span className="text-warm-300">Peak Hour</span>
+                  </div>
+                  <span className="text-amber-400 font-semibold">
+                    {bestNight.peakHour > 12 ? `${bestNight.peakHour - 12}pm` : bestNight.peakHour === 12 ? '12pm' : `${bestNight.peakHour}am`}
+                    {bestNight.peakOccupancy > 0 && ` (${bestNight.peakOccupancy} people)`}
+                  </span>
+                </div>
+              )}
+            </div>
+            
+            {/* Recommendation */}
+            {proximityToBest !== null && proximityToBest < 80 && (
+              <div className="mt-4 p-3 bg-warm-800/50 rounded-lg">
+                <p className="text-xs text-warm-300">
+                  💡 <span className="font-medium">To recreate this night:</span>{' '}
+                  {currentDecibels !== null && Math.abs(currentDecibels - bestNight.avgSound) > 3 && (
+                    <>Adjust sound to ~{bestNight.avgSound}dB. </>
+                  )}
+                  {currentLight !== null && Math.abs(currentLight - bestNight.avgLight) > 30 && (
+                    <>Set lighting to ~{bestNight.avgLight} lux. </>
+                  )}
+                  {indoorTemp !== null && Math.abs(indoorTemp - bestNight.avgTemp) > 2 && (
+                    <>Target {bestNight.avgTemp}°F. </>
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
         
         {/* What makes up this score */}
         <div>
@@ -150,6 +304,8 @@ export function PulseBreakdownModal({
               optimalRange={`${ranges.sound.min}-${ranges.sound.max} dB`}
               insight={soundInsight}
               onTap={() => setSelectedFactor('sound')}
+              bestNightValue={bestNight ? `${bestNight.avgSound} dB` : undefined}
+              isUsingHistoricalData={isUsingHistoricalData}
             />
             
             {/* Light Factor */}
@@ -162,6 +318,8 @@ export function PulseBreakdownModal({
               optimalRange={`${ranges.light.min}-${ranges.light.max} lux`}
               insight={lightInsight}
               onTap={() => setSelectedFactor('light')}
+              bestNightValue={bestNight ? `${bestNight.avgLight} lux` : undefined}
+              isUsingHistoricalData={isUsingHistoricalData}
             />
             
             {/* Temperature Factor */}
@@ -174,6 +332,8 @@ export function PulseBreakdownModal({
               optimalRange={outdoorTemp && outdoorTemp > 80 ? '68-72°F' : '68-74°F'}
               insight={tempInsight}
               onTap={() => setSelectedFactor('comfort')}
+              bestNightValue={bestNight ? `${bestNight.avgTemp}°F` : undefined}
+              isUsingHistoricalData={isUsingHistoricalData}
             />
             
             {/* Vibe Factor */}
@@ -276,9 +436,12 @@ interface FactorCardProps {
   optimalRange: string;
   insight: { status: 'optimal' | 'warning' | 'critical'; message: string; action?: string };
   onTap?: () => void;
+  // ✨ NEW: Best night comparison
+  bestNightValue?: string;       // e.g., "78 dB"
+  isUsingHistoricalData?: boolean;
 }
 
-function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRange, insight, onTap }: FactorCardProps) {
+function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRange, insight, onTap, bestNightValue, isUsingHistoricalData }: FactorCardProps) {
   const statusColors = {
     optimal: 'bg-green-500',
     warning: 'bg-amber-500',
@@ -332,15 +495,24 @@ function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRan
         />
       </div>
       
-      {/* Current vs Optimal */}
+      {/* Current vs Your Best / Optimal */}
       <div className="flex justify-between text-xs mb-3">
         <div>
           <span className="text-warm-400">Current: </span>
           <span className="font-medium text-warm-200">{currentValue}</span>
         </div>
         <div>
-          <span className="text-warm-400">Optimal: </span>
-          <span className="font-medium text-warm-200">{optimalRange}</span>
+          {isUsingHistoricalData && bestNightValue ? (
+            <>
+              <span className="text-amber-400">Your Best: </span>
+              <span className="font-medium text-amber-300">{bestNightValue}</span>
+            </>
+          ) : (
+            <>
+              <span className="text-warm-400">Optimal: </span>
+              <span className="font-medium text-warm-200">{optimalRange}</span>
+            </>
+          )}
         </div>
       </div>
       

@@ -371,6 +371,10 @@ export function Live() {
         indoorTemp={pulseData.sensorData?.indoorTemp}
         outdoorTemp={pulseData.weather?.temperature}
         timeSlot={pulseData.timeSlot}
+        // ✨ Best Night comparison data from Pulse Score
+        bestNight={pulseData.bestNight}
+        isUsingHistoricalData={pulseData.isUsingHistoricalData}
+        proximityToBest={pulseData.proximityToBest}
       />
       
       {/* Dwell Breakdown */}

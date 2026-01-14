@@ -22,7 +22,7 @@ import {
   type TimeSlot,
 } from './constants';
 import venueCalibrationService from '../services/venue-calibration.service';
-import venueLearningService from '../services/venue-learning.service';
+import venueLearningService, { type BestNightProfile } from '../services/venue-learning.service';
 
 // ============ TYPES ============
 
@@ -38,6 +38,10 @@ export interface PulseScoreResult {
     temperature: FactorScore;
     vibe: FactorScore;
   };
+  // ✨ NEW: Best Night comparison data
+  bestNight: BestNightProfile | null;         // The historical best night for this time slot
+  isUsingHistoricalData: boolean;             // True if we're scoring against YOUR best
+  proximityToBest: number | null;             // 0-100: How close to recreating your best night
 }
 
 export interface FactorScore {
@@ -208,15 +212,64 @@ export function calculateVibeScore(
 }
 
 /**
+ * Calculate how close a current value is to a target value.
+ * Returns 0-100 score based on proximity.
+ * 
+ * Used for comparing current conditions to YOUR best night's conditions.
+ */
+export function calculateProximityScore(
+  current: number | null | undefined,
+  target: number,
+  tolerance: number // How far off is still considered "close"? (in units)
+): number {
+  if (current === null || current === undefined) return 0;
+  
+  const diff = Math.abs(current - target);
+  
+  if (diff === 0) return 100;
+  if (diff >= tolerance) return 0;
+  
+  // Linear falloff within tolerance
+  return Math.round(100 * (1 - diff / tolerance));
+}
+
+/**
+ * Calculate overall proximity to the Best Night Profile.
+ * This tells the user: "How close are you to recreating YOUR best night?"
+ */
+export function calculateBestNightProximity(
+  decibels: number | null | undefined,
+  light: number | null | undefined,
+  indoorTemp: number | null | undefined,
+  bestNight: BestNightProfile
+): number {
+  // Tolerances - how far off can you be and still be "close"?
+  const SOUND_TOLERANCE = 10;  // +/- 10 dB
+  const LIGHT_TOLERANCE = 100; // +/- 100 lux
+  const TEMP_TOLERANCE = 5;    // +/- 5°F
+  
+  const soundProx = calculateProximityScore(decibels, bestNight.avgSound, SOUND_TOLERANCE);
+  const lightProx = calculateProximityScore(light, bestNight.avgLight, LIGHT_TOLERANCE);
+  const tempProx = calculateProximityScore(indoorTemp, bestNight.avgTemp, TEMP_TOLERANCE);
+  
+  // Weight sound and light more heavily (they're controllable)
+  // Temp is harder to control quickly
+  const weightedProx = (soundProx * 0.40) + (lightProx * 0.35) + (tempProx * 0.25);
+  
+  return Math.round(weightedProx);
+}
+
+/**
  * Calculate the complete Pulse Score from sensor data.
  * 
- * Priority for optimal ranges:
- * 1. Learned ranges (from historical data analysis - what actually works)
- * 2. Manual calibration (owner-set preferences)
- * 3. Time-slot defaults (industry assumptions)
+ * NEW PRIORITY (Your Historical Best First):
+ * 1. Best Night Profile - YOUR proven best conditions for this time slot
+ * 2. Learned ranges (from historical data analysis - what actually works)
+ * 3. Manual calibration (owner-set preferences)
+ * 4. Time-slot defaults (industry assumptions - fallback only)
  * 
- * The goal: Score how close current conditions are to YOUR historically-proven
- * optimal conditions for this specific day/time.
+ * The goal: Score how close current conditions are to YOUR BEST NIGHT.
+ * "Your best Saturday had 142 guests at 78dB, 95 lux, 71°F. Match that!"
  * 
  * IMPORTANT: For historical data, pass the data's timestamp to get accurate scoring.
  * Without timestamp, uses current time (only correct for live data).
@@ -240,43 +293,75 @@ export function calculatePulseScore(
   const timeSlot = getTimeSlotFromTimestamp(dataTime);
   const defaultRanges = TIME_SLOT_RANGES[timeSlot];
   
-  // Priority 1: Check for learned ranges (from historical data)
+  // Track what data source we're using
   let ranges = defaultRanges;
   let weights = FACTOR_WEIGHTS;
-  let isLearned = false;
+  let isUsingHistoricalData = false;
+  let bestNight: BestNightProfile | null = null;
+  let proximityToBest: number | null = null;
   
   if (venueId) {
-    // First try learned ranges (most accurate, based on actual dwell time data)
-    const learnedRanges = venueLearningService.getCurrentOptimalRanges(venueId);
+    // ✨ PRIORITY 1: Check for Best Night Profile (YOUR proven formula)
+    bestNight = venueLearningService.getBestNightProfile(venueId, timeSlot);
     
-    if (learnedRanges.isLearned && learnedRanges.confidence >= 30) {
-      // Use learned ranges where available
-      isLearned = true;
+    if (bestNight && bestNight.confidence >= 30) {
+      isUsingHistoricalData = true;
+      
+      // Build ranges from best night values (+/- tolerance)
+      // The "optimal" range is centered around YOUR best night's actual values
+      const SOUND_TOLERANCE = 5;  // +/- 5 dB from your best
+      const LIGHT_TOLERANCE = 50; // +/- 50 lux from your best
+      
       ranges = {
         ...defaultRanges,
-        sound: learnedRanges.sound || defaultRanges.sound,
-        light: learnedRanges.light || defaultRanges.light,
+        sound: { 
+          min: bestNight.avgSound - SOUND_TOLERANCE, 
+          max: bestNight.avgSound + SOUND_TOLERANCE 
+        },
+        light: { 
+          min: Math.max(0, bestNight.avgLight - LIGHT_TOLERANCE), 
+          max: bestNight.avgLight + LIGHT_TOLERANCE 
+        },
       };
       
-      // Use learned weights (which factors matter most for this venue)
-      weights = {
-        sound: learnedRanges.weights.sound,
-        light: learnedRanges.weights.light,
-        temperature: learnedRanges.weights.temperature,
-        vibe: 0.10, // Keep vibe constant
-      };
+      // Calculate proximity to best night
+      proximityToBest = calculateBestNightProximity(decibels, light, indoorTemp, bestNight);
+      
+      console.log(`🏆 Scoring against YOUR Best ${timeSlot}: ${bestNight.date} (${bestNight.totalGuests} guests)`);
     } else {
-      // Fall back to manual calibration if no learned data
-      const calibration = venueCalibrationService.getEffectiveRanges(venueId, {
-        sound: defaultRanges.sound,
-        light: defaultRanges.light,
-      });
-      if (calibration.isCustom) {
+      // PRIORITY 2: Try learned ranges (from dwell time analysis)
+      const learnedRanges = venueLearningService.getCurrentOptimalRanges(venueId);
+      
+      if (learnedRanges.isLearned && learnedRanges.confidence >= 30) {
+        isUsingHistoricalData = true;
         ranges = {
           ...defaultRanges,
-          sound: calibration.sound,
-          light: calibration.light,
+          sound: learnedRanges.sound || defaultRanges.sound,
+          light: learnedRanges.light || defaultRanges.light,
         };
+        
+        // Use learned weights
+        weights = {
+          sound: learnedRanges.weights.sound,
+          light: learnedRanges.weights.light,
+          temperature: learnedRanges.weights.temperature,
+          vibe: 0.10,
+        };
+        
+        console.log(`🧠 Using learned optimal ranges for ${timeSlot}`);
+      } else {
+        // PRIORITY 3: Fall back to manual calibration
+        const calibration = venueCalibrationService.getEffectiveRanges(venueId, {
+          sound: defaultRanges.sound,
+          light: defaultRanges.light,
+        });
+        if (calibration.isCustom) {
+          ranges = {
+            ...defaultRanges,
+            sound: calibration.sound,
+            light: calibration.light,
+          };
+        }
       }
     }
   }
@@ -295,14 +380,9 @@ export function calculatePulseScore(
     (vibeScore * weights.vibe)
   );
   
-  // Log if using learned data (for debugging)
-  if (isLearned) {
-    console.log(`🧠 Using learned optimal ranges for ${timeSlot}`);
-  }
-  
-  // Determine status
+  // Determine status with business-focused labels
   const status = getScoreStatus(pulseScore);
-  const statusLabel = getScoreStatusLabel(pulseScore);
+  const statusLabel = getScoreStatusLabel(pulseScore, isUsingHistoricalData);
   const color = getScoreColor(pulseScore);
   
   return {
@@ -317,20 +397,20 @@ export function calculatePulseScore(
         value: decibels ?? null,
         inRange: decibels !== null && decibels !== undefined && 
                  decibels >= ranges.sound.min && decibels <= ranges.sound.max,
-        message: getSoundMessage(decibels, soundScore, timeSlot),
+        message: getSoundMessageWithBest(decibels, soundScore, timeSlot, bestNight),
       },
       light: {
         score: lightScore,
         value: light ?? null,
         inRange: light !== null && light !== undefined && 
                  light >= ranges.light.min && light <= ranges.light.max,
-        message: getLightMessage(light, lightScore, timeSlot),
+        message: getLightMessageWithBest(light, lightScore, timeSlot, bestNight),
       },
       temperature: {
         score: tempScore,
         value: indoorTemp ?? null,
         inRange: tempScore >= 80,
-        message: getTempMessage(indoorTemp, tempScore),
+        message: getTempMessageWithBest(indoorTemp, tempScore, bestNight),
       },
       vibe: {
         score: vibeScore,
@@ -339,6 +419,10 @@ export function calculatePulseScore(
         message: getVibeMessage(vibeScore, timeSlot),
       },
     },
+    // ✨ NEW: Best night comparison data
+    bestNight,
+    isUsingHistoricalData,
+    proximityToBest,
   };
 }
 
@@ -351,8 +435,17 @@ export function getScoreStatus(score: number | null): 'optimal' | 'good' | 'poor
   return 'poor';
 }
 
-export function getScoreStatusLabel(score: number | null): string {
+export function getScoreStatusLabel(score: number | null, isUsingHistoricalData: boolean = false): string {
   if (score === null) return 'No Data';
+  
+  // Business-focused labels when using historical data
+  if (isUsingHistoricalData) {
+    if (score >= SCORE_THRESHOLDS.optimal) return 'Peak Performance 💰';
+    if (score >= SCORE_THRESHOLDS.good) return 'Almost There';
+    return 'Quick Fix Needed';
+  }
+  
+  // Standard labels when using defaults
   if (score >= SCORE_THRESHOLDS.optimal) return 'Optimal';
   if (score >= SCORE_THRESHOLDS.good) return 'Good';
   return 'Adjust';
@@ -380,6 +473,33 @@ function getSoundMessage(
   return 'Too loud for now';
 }
 
+/**
+ * Sound message that compares to your best night
+ */
+function getSoundMessageWithBest(
+  value: number | null | undefined, 
+  score: number,
+  timeSlot: TimeSlot,
+  bestNight: BestNightProfile | null
+): string {
+  if (value === null || value === undefined) return 'No sound data';
+  
+  // If we have a best night, compare to it!
+  if (bestNight && bestNight.avgSound > 0) {
+    const diff = Math.round(value - bestNight.avgSound);
+    if (Math.abs(diff) <= 2) return `Matching your best (${bestNight.avgSound}dB)`;
+    if (diff > 0) return `${diff}dB louder than your best`;
+    return `${Math.abs(diff)}dB quieter than your best`;
+  }
+  
+  // Fallback to standard message
+  const ranges = TIME_SLOT_RANGES[timeSlot];
+  if (score >= 85) return 'Perfect energy';
+  if (score >= 60) return 'Good vibe';
+  if (value < ranges.sound.min) return 'Too quiet for now';
+  return 'Too loud for now';
+}
+
 function getLightMessage(
   value: number | null | undefined, 
   score: number,
@@ -393,11 +513,63 @@ function getLightMessage(
   return 'Could dim a bit';
 }
 
+/**
+ * Light message that compares to your best night
+ */
+function getLightMessageWithBest(
+  value: number | null | undefined, 
+  score: number,
+  timeSlot: TimeSlot,
+  bestNight: BestNightProfile | null
+): string {
+  if (value === null || value === undefined) return 'No light data';
+  
+  // If we have a best night, compare to it!
+  if (bestNight && bestNight.avgLight > 0) {
+    const diff = Math.round(value - bestNight.avgLight);
+    if (Math.abs(diff) <= 20) return `Matching your best (${bestNight.avgLight} lux)`;
+    if (diff > 0) return `${diff} lux brighter than your best`;
+    return `${Math.abs(diff)} lux dimmer than your best`;
+  }
+  
+  // Fallback to standard message
+  const ranges = TIME_SLOT_RANGES[timeSlot];
+  if (score >= 85) return 'Perfect ambiance';
+  if (score >= 60) return 'Good mood';
+  if (value !== null && value < ranges.light.min) return 'Could be brighter';
+  return 'Could dim a bit';
+}
+
 function getTempMessage(
   value: number | null | undefined,
   score: number
 ): string {
   if (value === null || value === undefined) return 'No temp data';
+  if (score >= 80) return 'Comfortable';
+  if (score >= 60) return 'Okay';
+  if (value && value < 68) return 'Too cold';
+  return 'Too warm';
+}
+
+/**
+ * Temperature message that compares to your best night
+ */
+function getTempMessageWithBest(
+  value: number | null | undefined, 
+  score: number,
+  bestNight: BestNightProfile | null
+): string {
+  if (value === null || value === undefined) return 'No temp data';
+  
+  // If we have a best night, compare to it!
+  if (bestNight && bestNight.avgTemp > 0) {
+    const diff = Math.round(value - bestNight.avgTemp);
+    if (Math.abs(diff) <= 1) return `Matching your best (${bestNight.avgTemp}°F)`;
+    if (diff > 0) return `${diff}°F warmer than your best`;
+    return `${Math.abs(diff)}°F cooler than your best`;
+  }
+  
+  // Fallback to standard message
   if (score >= 80) return 'Comfortable';
   if (score >= 60) return 'Okay';
   if (value && value < 68) return 'Too cold';
