@@ -217,8 +217,17 @@ function getPeriodMs(range: InsightsTimeRange): number {
  * - Hourly aggregated: `totalEntries` = MAX cumulative value for that hour
  * - Raw data: `entries` = cumulative counter at that moment
  * 
- * In both cases, we calculate: lastEntries - firstEntries (delta method)
- * to get the actual number of new guests during the period.
+ * CRITICAL: Counters may reset daily (at 3am for bar day) or periodically.
+ * We MUST sum all positive deltas between consecutive points, plus add
+ * the new value after each reset. This catches ALL entries across resets.
+ * 
+ * Example with daily resets:
+ * Day 1: 10→50→100→200 (reset)
+ * Day 2: 5→40→90→180 (reset)
+ * Day 3: 8→45→95→190
+ * 
+ * Simple delta: 190 - 10 = 180 (WRONG - misses day 1 and 2!)
+ * Correct: (200-10) + 180 + 190 = 560 (sums each day correctly)
  */
 function calculateTotalGuests(
   periodData: SensorData[], 
@@ -233,29 +242,24 @@ function calculateTotalGuests(
   }
   
   if (withEntries.length === 1) {
-    // Only one data point - can't calculate delta
-    return { count: 0, isEstimate: false };
+    // Only one data point - can't calculate delta, use the value itself as minimum
+    return { count: withEntries[0].occupancy!.entries, isEstimate: true };
   }
   
-  const firstEntries = withEntries[0].occupancy!.entries;
-  const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-  
-  // Primary calculation: simple delta
-  let measuredEntries = Math.max(0, lastEntries - firstEntries);
-  
-  // Handle counter resets: if last < first, sum positive deltas between consecutive points
-  if (measuredEntries === 0 || lastEntries < firstEntries) {
-    measuredEntries = 0;
-    for (let i = 1; i < withEntries.length; i++) {
-      const prev = withEntries[i - 1].occupancy!.entries;
-      const curr = withEntries[i].occupancy!.entries;
-      if (curr > prev) {
-        measuredEntries += (curr - prev);
-      } else if (curr < prev) {
-        // Counter reset detected - add current value as new entries since reset
-        measuredEntries += curr;
-      }
+  // ALWAYS sum deltas between consecutive points to handle any resets
+  let measuredEntries = 0;
+  for (let i = 1; i < withEntries.length; i++) {
+    const prev = withEntries[i - 1].occupancy!.entries;
+    const curr = withEntries[i].occupancy!.entries;
+    
+    if (curr > prev) {
+      // Normal increment - add the delta
+      measuredEntries += (curr - prev);
+    } else if (curr < prev) {
+      // Counter reset detected - add current value as new entries since reset
+      measuredEntries += curr;
     }
+    // If curr === prev, no new entries in this interval
   }
   
   // Calculate actual time span of our data
@@ -277,8 +281,7 @@ function calculateTotalGuests(
  * Calculate total entries for a period (used for avg stay calculation)
  * Returns the RAW entry count without extrapolation.
  * 
- * Both hourly aggregated and raw data use cumulative counters,
- * so we always use delta calculation: lastEntries - firstEntries
+ * ALWAYS sums deltas between consecutive points to handle counter resets.
  */
 function calculatePeriodEntries(periodData: SensorData[]): number {
   const withEntries = periodData
@@ -287,9 +290,21 @@ function calculatePeriodEntries(periodData: SensorData[]): number {
   
   if (withEntries.length < 2) return 0;
   
-  const firstEntries = withEntries[0].occupancy!.entries;
-  const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-  return Math.max(0, lastEntries - firstEntries);
+  // Sum all deltas to handle any resets
+  let totalEntries = 0;
+  for (let i = 1; i < withEntries.length; i++) {
+    const prev = withEntries[i - 1].occupancy!.entries;
+    const curr = withEntries[i].occupancy!.entries;
+    
+    if (curr > prev) {
+      totalEntries += (curr - prev);
+    } else if (curr < prev) {
+      // Counter reset - add current value
+      totalEntries += curr;
+    }
+  }
+  
+  return totalEntries;
 }
 
 /**

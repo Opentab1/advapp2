@@ -76,10 +76,17 @@ export function calculateDwellTimeFromHistory(
     return null;
   }
 
-  // Both hourly and raw data use cumulative counters - use delta
-  const firstEntries = entryData[0].occupancy!.entries;
-  const lastEntries = entryData[entryData.length - 1].occupancy!.entries;
-  const totalEntries = Math.max(0, lastEntries - firstEntries);
+  // Sum all deltas to handle counter resets
+  let totalEntries = 0;
+  for (let i = 1; i < entryData.length; i++) {
+    const prev = entryData[i - 1].occupancy!.entries;
+    const curr = entryData[i].occupancy!.entries;
+    if (curr > prev) {
+      totalEntries += (curr - prev);
+    } else if (curr < prev) {
+      totalEntries += curr; // Counter reset
+    }
+  }
 
   return calculateDwellTime(avgOccupancy, totalEntries, timeRangeHours);
 }
@@ -161,11 +168,21 @@ export function calculateRecentDwellTime(
     return null;
   }
 
-  // Both hourly and raw data use cumulative counters - use MAX minus MIN (delta)
-  const entryValues = entryData.map(d => d.occupancy!.entries);
-  const minEntries = Math.min(...entryValues);
-  const maxEntries = Math.max(...entryValues);
-  const totalEntries = maxEntries - minEntries;
+  // Sum all deltas to handle counter resets (sorted data required)
+  const sortedEntryData = [...entryData].sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  
+  let totalEntries = 0;
+  for (let i = 1; i < sortedEntryData.length; i++) {
+    const prev = sortedEntryData[i - 1].occupancy!.entries;
+    const curr = sortedEntryData[i].occupancy!.entries;
+    if (curr > prev) {
+      totalEntries += (curr - prev);
+    } else if (curr < prev) {
+      totalEntries += curr; // Counter reset
+    }
+  }
 
   // Calculate actual time span
   const firstTime = new Date(recentData[0].timestamp).getTime();

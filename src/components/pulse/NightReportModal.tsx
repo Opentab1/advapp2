@@ -216,17 +216,20 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
       });
     }
     
-    // Calculate total visitors - both hourly and raw data use cumulative counters
-    // Use delta: last entry value - first entry value
+    // Calculate total visitors - sum all deltas to handle counter resets
     const sortedByTime = [...relevantData].sort((a, b) => 
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     const withEntries = sortedByTime.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
     
-    if (withEntries.length >= 2) {
-      const firstEntries = withEntries[0].occupancy!.entries;
-      const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-      totalVisitors = Math.max(0, lastEntries - firstEntries);
+    for (let i = 1; i < withEntries.length; i++) {
+      const prev = withEntries[i - 1].occupancy!.entries;
+      const curr = withEntries[i].occupancy!.entries;
+      if (curr > prev) {
+        totalVisitors += (curr - prev);
+      } else if (curr < prev) {
+        totalVisitors += curr; // Counter reset
+      }
     }
     
     // Get date info

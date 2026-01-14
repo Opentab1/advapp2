@@ -229,8 +229,7 @@ function calculatePeriodStats(data: SensorData[], timeRange: TimeRange, isCurren
   // Average Pulse Score
   const avgPulseScore = scoredData.reduce((sum, d) => sum + d.pulseScore, 0) / scoredData.length;
   
-  // Total visitors - both hourly aggregated and raw data use cumulative counters
-  // Use simple delta: last entry value - first entry value
+  // Total visitors - sum all deltas to handle counter resets
   const sortedData = [...data].sort((a, b) => 
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
@@ -238,10 +237,14 @@ function calculatePeriodStats(data: SensorData[], timeRange: TimeRange, isCurren
   const withEntries = sortedData.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
   
   let totalVisitors = 0;
-  if (withEntries.length >= 2) {
-    const firstEntries = withEntries[0].occupancy!.entries;
-    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
-    totalVisitors = Math.max(0, lastEntries - firstEntries);
+  for (let i = 1; i < withEntries.length; i++) {
+    const prev = withEntries[i - 1].occupancy!.entries;
+    const curr = withEntries[i].occupancy!.entries;
+    if (curr > prev) {
+      totalVisitors += (curr - prev);
+    } else if (curr < prev) {
+      totalVisitors += curr; // Counter reset
+    }
   }
   
   // Peak occupancy
