@@ -292,8 +292,11 @@ const SONGS = {
     { song: "Come On Eileen", artist: "Dexys Midnight Runners", art: "https://i.scdn.co/image/ab67616d0000b273dc30583ba717007b00cceb25" },
   ],
   // Closed - no music
+  // Even during closed hours, demo shows ambient music (for demo purposes)
   closed: [
-    { song: null, artist: null, art: null }
+    { song: "Chill Vibes Mix", artist: "House DJ", art: "https://i.scdn.co/image/ab67616d0000b273c5716278abba6a103ad13aa7" },
+    { song: "Smooth Jazz Session", artist: "Late Night Collective", art: "https://i.scdn.co/image/ab67616d0000b273f6b55ca93bd33211227b502b" },
+    { song: "Lo-Fi Beats", artist: "Chillhop Music", art: "https://i.scdn.co/image/ab67616d0000b2738a3f0a3ca7929dea23cd274c" },
   ]
 };
 

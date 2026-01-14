@@ -272,6 +272,8 @@ export function Live() {
           decibels={pulseData.currentDecibels}
           light={pulseData.currentLight}
           occupancy={pulseData.currentOccupancy}
+          currentSong={pulseData.sensorData?.currentSong}
+          artist={pulseData.sensorData?.artist}
           albumArt={pulseData.sensorData?.albumArt}
           lastUpdated={pulseData.lastUpdated}
           onTap={() => setActiveModal('livestats')}
