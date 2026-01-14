@@ -48,9 +48,6 @@ import staffService from '../services/staff.service';
 import { pulseStore } from '../stores/pulseStore';
 import type { SportsGame } from '../types';
 
-// Intelligence Components
-import { TrendAlerts } from '../components/pulse/TrendAlerts';
-
 // Common components
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { OfflineState, ErrorState } from '../components/common/LoadingState';
@@ -356,20 +353,6 @@ export function Live() {
           />
         </motion.div>
       </div>
-      
-      {/* Trend Alerts - At bottom */}
-      {intelligence.trendAlerts.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <TrendAlerts
-            alerts={intelligence.trendAlerts}
-            onDismiss={intelligence.dismissAlert}
-          />
-        </motion.div>
-      )}
       
       {/* ============ MODALS ============ */}
       
