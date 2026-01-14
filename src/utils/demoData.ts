@@ -472,9 +472,94 @@ export function generateDemoHistoricalData(venueId: string, range: TimeRange): H
       interval = 15 * 60 * 1000;
   }
   
-  // Generate data points
+  // Generate data points with proper cumulative entries/exits
+  // This ensures avg stay calculation works correctly
+  let cumulativeEntriesHist = 0;
+  let cumulativeExitsHist = 0;
+  let lastDayOfYear = -1;
+  
   for (let timestamp = startTime; timestamp <= now; timestamp += interval) {
-    data.push(generateSensorData(new Date(timestamp)));
+    const date = new Date(timestamp);
+    const hour = date.getHours();
+    const dayOfWeek = date.getDay();
+    const dayOfYear = Math.floor((timestamp - new Date(date.getFullYear(), 0, 0).getTime()) / (1000 * 60 * 60 * 24));
+    
+    // Reset counters at 3am each day (bar day boundary)
+    if (dayOfYear !== lastDayOfYear && hour >= 3) {
+      cumulativeEntriesHist = 0;
+      cumulativeExitsHist = 0;
+      lastDayOfYear = dayOfYear;
+    }
+    
+    // Time periods
+    const isClosedHours = hour >= 2 && hour < 16;
+    const isHappyHour = hour >= 16 && hour < 19;
+    const isPrimeTime = hour >= 19 && hour < 23;
+    const isLateNight = hour >= 23 || hour < 2;
+    const isWeekend = dayOfWeek === 5 || dayOfWeek === 6;
+    
+    // Add entries/exits during open hours
+    if (!isClosedHours) {
+      let newEntries = 0;
+      let newExits = 0;
+      
+      if (isPrimeTime) {
+        newEntries = 25 + Math.floor(Math.random() * 15); // 25-40 per hour
+        newExits = 10 + Math.floor(Math.random() * 10);   // 10-20 per hour
+      } else if (isLateNight) {
+        newEntries = 10 + Math.floor(Math.random() * 10); // Slowing down
+        newExits = 20 + Math.floor(Math.random() * 15);   // People leaving
+      } else if (isHappyHour) {
+        newEntries = 30 + Math.floor(Math.random() * 20); // Building crowd
+        newExits = 5 + Math.floor(Math.random() * 5);
+      }
+      
+      if (isWeekend) {
+        newEntries = Math.floor(newEntries * 1.3); // 30% more on weekends
+      }
+      
+      cumulativeEntriesHist += newEntries;
+      cumulativeExitsHist += newExits;
+    }
+    
+    // Calculate current occupancy
+    const currentOcc = Math.max(0, Math.min(480, cumulativeEntriesHist - cumulativeExitsHist));
+    
+    // Generate sound/light based on time
+    let decibels: number, light: number;
+    if (isClosedHours) {
+      decibels = 42 + Math.random() * 5;
+      light = 50 + Math.random() * 30;
+    } else if (isHappyHour) {
+      decibels = 74 + Math.random() * 5;
+      light = 280 + Math.random() * 40;
+    } else if (isPrimeTime) {
+      decibels = 82 + Math.random() * 6 + (isWeekend ? 3 : 0);
+      light = 150 + Math.random() * 50;
+    } else {
+      decibels = 78 + Math.random() * 5;
+      light = 180 + Math.random() * 40;
+    }
+    
+    const songInfo = getRandomSongInfo(hour);
+    
+    data.push({
+      timestamp: date.toISOString(),
+      decibels: Math.round(decibels * 10) / 10,
+      light: Math.round(light * 10) / 10,
+      indoorTemp: Math.round((71 + Math.random() * 2) * 10) / 10,
+      outdoorTemp: Math.round((75 + Math.random() * 8 - 4) * 10) / 10,
+      humidity: Math.round((48 + Math.random() * 12) * 10) / 10,
+      currentSong: songInfo.song,
+      artist: songInfo.artist,
+      albumArt: songInfo.art,
+      occupancy: {
+        current: currentOcc > 0 ? currentOcc : (isClosedHours ? 0 : 350 + Math.floor(Math.random() * 100)),
+        entries: cumulativeEntriesHist,
+        exits: cumulativeExitsHist,
+        capacity: DEMO_CAPACITY
+      }
+    });
   }
   
   return {
