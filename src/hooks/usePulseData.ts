@@ -117,6 +117,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   // Data states
   const [sensorData, setSensorData] = useState<SensorData | null>(null);
   const [baseline, setBaseline] = useState<{entries: number; exits: number} | null>(null);
+  const [todayHistory, setTodayHistory] = useState<SensorData[]>([]); // For dwell time calculation
   const [reviews, setReviews] = useState<GoogleReviewsData | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   
@@ -184,16 +185,20 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         
         setBaseline(baselineValue);
         
+        // Store all today's data for occupancy integration (dwell time calculation)
+        setTodayHistory(withOccupancy);
+        
         // Log when we found baseline
         const hourFound = baselineTime.getHours();
         if (hourFound <= 4) {
-          console.log('✅ Ideal baseline (3-4am):', baselineValue);
+          console.log('✅ Ideal baseline (3-4am):', baselineValue, `| ${withOccupancy.length} data points for dwell calc`);
         } else {
           console.log(`⚠️ Late baseline (${hourFound}:00) - sensor may have been offline earlier:`, baselineValue);
         }
       } else {
         // No data at all today - this is a true "no data" scenario
         console.warn('⚠️ No sensor data found since 3am today');
+        setTodayHistory([]);
         // baseline stays null, which will show 0s - correct behavior
         // because we genuinely have no data for today's bar day
       }
@@ -361,41 +366,76 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   }, [sensorData?.occupancy, baseline, venueId]);
   
   // ============ DWELL TIME CALCULATION ============
-  // Dwell = average time guests are staying based on current occupancy vs turnover
-  const dwellTimeMinutes = useMemo(() => {
-    const current = effectiveOccupancy.current;
-    const entries = effectiveOccupancy.todayEntries;
-    const exits = effectiveOccupancy.todayExits;
+  // Using Occupancy Integration method (more accurate than Little's Law)
+  // 
+  // Total Guest-Hours = ∫ Occupancy dt (sum of occupancy × time intervals)
+  // Avg Stay = Total Guest-Hours ÷ Total Entries
+  //
+  // This uses ALL historical data points, not just current snapshot.
+  
+  const dwellTimeMinutes = useMemo((): number | null => {
+    const todayEntries = effectiveOccupancy.todayEntries;
     
-    // If no data yet, return default
-    if (entries === 0 || current === 0) {
-      return 45; // Default baseline dwell time
+    // Need entries to calculate average stay
+    if (todayEntries === 0) {
+      return null; // No guests yet - can't calculate
     }
     
-    // Calculate hours since bar day start (3 AM)
-    const now = new Date();
-    const barDayStart = new Date(now);
-    barDayStart.setHours(3, 0, 0, 0);
-    if (now.getHours() < 3) {
-      barDayStart.setDate(barDayStart.getDate() - 1);
-    }
-    const hoursSinceStart = Math.max(1, (now.getTime() - barDayStart.getTime()) / (1000 * 60 * 60));
-    
-    // Turnover rate = exits per hour
-    const turnoverRate = exits / hoursSinceStart;
-    
-    // If low turnover, people are staying longer
-    if (turnoverRate < 1) {
-      // Few exits = long dwell times
-      return Math.min(180, Math.round(60 + (current * 2))); // Cap at 3 hours
+    // Need at least 2 data points to integrate
+    if (todayHistory.length < 2) {
+      return null; // Not enough data yet
     }
     
-    // Dwell time ≈ current occupancy / turnover rate (in minutes)
-    const estimatedDwell = Math.round((current / turnoverRate) * 60);
+    // Sort by timestamp
+    const sorted = [...todayHistory].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
     
-    // Clamp to reasonable range (15 min to 3 hours)
-    return Math.max(15, Math.min(180, estimatedDwell));
-  }, [effectiveOccupancy]);
+    // Calculate total guest-hours by integrating occupancy over time
+    let totalGuestHours = 0;
+    
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      
+      const prevTime = new Date(prev.timestamp).getTime();
+      const currTime = new Date(curr.timestamp).getTime();
+      const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
+      
+      // Use average occupancy for this interval
+      const prevOcc = prev.occupancy?.current || 0;
+      const currOcc = curr.occupancy?.current || 0;
+      const avgOccupancy = (prevOcc + currOcc) / 2;
+      
+      totalGuestHours += avgOccupancy * intervalHours;
+    }
+    
+    // Add current period (last data point to now) using current occupancy
+    if (sorted.length > 0 && sensorData?.occupancy?.current !== undefined) {
+      const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
+      const nowTime = Date.now();
+      const finalIntervalHours = (nowTime - lastTime) / (1000 * 60 * 60);
+      
+      // Only add if interval is reasonable (< 2 hours)
+      if (finalIntervalHours < 2) {
+        const lastOcc = sorted[sorted.length - 1].occupancy?.current || 0;
+        const currOcc = sensorData.occupancy.current;
+        totalGuestHours += ((lastOcc + currOcc) / 2) * finalIntervalHours;
+      }
+    }
+    
+    // Avg Stay (hours) = Total Guest-Hours ÷ Total Entries
+    const avgStayHours = totalGuestHours / todayEntries;
+    const avgStayMinutes = Math.round(avgStayHours * 60);
+    
+    // Sanity check: clamp to reasonable range (5 min to 4 hours)
+    // Values outside this range indicate data issues
+    if (avgStayMinutes < 5 || avgStayMinutes > 240) {
+      return null; // Data seems unreliable
+    }
+    
+    return avgStayMinutes;
+  }, [todayHistory, effectiveOccupancy.todayEntries, sensorData?.occupancy?.current]);
   
   const dwellScore = getDwellTimeScore(dwellTimeMinutes);
   const dwellTimeFormatted = formatDwellTime(dwellTimeMinutes);

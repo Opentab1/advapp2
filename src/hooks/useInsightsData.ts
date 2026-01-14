@@ -343,8 +343,11 @@ function processSummary(
   const scoreDelta = prevAvgScore > 0 ? Math.round(((avgScore - prevAvgScore) / prevAvgScore) * 100) : 0;
   const guestsDelta = prevTotalGuests > 0 ? Math.round(((totalGuests - prevTotalGuests) / prevTotalGuests) * 100) : 0;
   
-  // Calculate avg stay based on exit velocity (same method as Live page)
-  // Avg Stay = avgOccupancy / exitsPerHour * 60 (in minutes)
+  // Calculate avg stay using OCCUPANCY INTEGRATION method
+  // This is more accurate than Little's Law (exit velocity method)
+  //
+  // Total Guest-Hours = ∫ Occupancy dt (sum of occupancy × time intervals)
+  // Avg Stay = Total Guest-Hours ÷ Total Entries
   const calculateAvgStay = (periodData: SensorData[]): number | null => {
     if (periodData.length < 2) return null;
     
@@ -352,34 +355,50 @@ function processSummary(
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     
-    // Get total exits for period
-    const withExits = sorted.filter(d => d.occupancy?.exits !== undefined);
-    if (withExits.length < 2) return null;
+    // Get total entries for period (using cumulative counter delta)
+    const withEntries = sorted.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
+    if (withEntries.length < 2) return null;
     
-    const firstExits = withExits[0].occupancy!.exits;
-    const lastExits = withExits[withExits.length - 1].occupancy!.exits;
-    const totalExits = Math.max(0, lastExits - firstExits);
+    const firstEntries = withEntries[0].occupancy!.entries;
+    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+    const totalEntries = Math.max(0, lastEntries - firstEntries);
     
-    // Get hours in period
-    const firstTime = new Date(sorted[0].timestamp).getTime();
-    const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
-    const hoursInPeriod = Math.max(1, (lastTime - firstTime) / (1000 * 60 * 60));
+    if (totalEntries < 5) return null; // Need meaningful sample
     
-    const exitsPerHour = totalExits / hoursInPeriod;
+    // Calculate total guest-hours by integrating occupancy over time
+    let totalGuestHours = 0;
     
-    // Get average occupancy
-    const occupancies = periodData
-      .filter(d => d.occupancy?.current !== undefined)
-      .map(d => d.occupancy!.current);
-    const avgOccupancy = occupancies.length > 0 
-      ? occupancies.reduce((a, b) => a + b, 0) / occupancies.length 
-      : 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      
+      const prevTime = new Date(prev.timestamp).getTime();
+      const currTime = new Date(curr.timestamp).getTime();
+      const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
+      
+      // Skip unreasonably long intervals (> 4 hours = data gap)
+      if (intervalHours > 4) continue;
+      
+      // Use average occupancy for this interval (trapezoidal integration)
+      const prevOcc = prev.occupancy?.current || 0;
+      const currOcc = curr.occupancy?.current || 0;
+      const avgOccupancy = (prevOcc + currOcc) / 2;
+      
+      totalGuestHours += avgOccupancy * intervalHours;
+    }
     
-    // If no exits, we can't calculate avg stay
-    if (exitsPerHour < 0.5 || avgOccupancy < 1) return null;
+    if (totalGuestHours === 0) return null;
     
-    // Avg stay in minutes, capped at 3 hours
-    return Math.min(180, Math.round((avgOccupancy / exitsPerHour) * 60));
+    // Avg Stay (hours) = Total Guest-Hours ÷ Total Entries
+    const avgStayHours = totalGuestHours / totalEntries;
+    const avgStayMinutes = Math.round(avgStayHours * 60);
+    
+    // Sanity check: clamp to reasonable range (5 min to 4 hours)
+    if (avgStayMinutes < 5 || avgStayMinutes > 240) {
+      return null; // Data seems unreliable
+    }
+    
+    return avgStayMinutes;
   };
   
   const avgStayMinutes = calculateAvgStay(data);
@@ -591,7 +610,7 @@ function processTrend(
     return measuredEntries;
   };
 
-  // Helper to calculate avg stay from exit velocity
+  // Helper to calculate avg stay using OCCUPANCY INTEGRATION
   const calcAvgStay = (periodData: SensorData[]): number | null => {
     if (periodData.length < 2) return null;
     
@@ -599,29 +618,34 @@ function processTrend(
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     
-    const withExits = sorted.filter(d => d.occupancy?.exits !== undefined);
-    if (withExits.length < 2) return null;
+    // Get total entries for period
+    const withEntries = sorted.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
+    if (withEntries.length < 2) return null;
     
-    const firstExits = withExits[0].occupancy!.exits;
-    const lastExits = withExits[withExits.length - 1].occupancy!.exits;
-    const totalExits = Math.max(0, lastExits - firstExits);
+    const firstEntries = withEntries[0].occupancy!.entries;
+    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+    const totalEntries = Math.max(0, lastEntries - firstEntries);
     
-    const firstTime = new Date(sorted[0].timestamp).getTime();
-    const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
-    const hoursInPeriod = Math.max(1, (lastTime - firstTime) / (1000 * 60 * 60));
+    if (totalEntries < 5) return null;
     
-    const exitsPerHour = totalExits / hoursInPeriod;
+    // Integrate occupancy over time
+    let totalGuestHours = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const prevTime = new Date(sorted[i - 1].timestamp).getTime();
+      const currTime = new Date(sorted[i].timestamp).getTime();
+      const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
+      
+      if (intervalHours > 4) continue; // Skip data gaps
+      
+      const prevOcc = sorted[i - 1].occupancy?.current || 0;
+      const currOcc = sorted[i].occupancy?.current || 0;
+      totalGuestHours += ((prevOcc + currOcc) / 2) * intervalHours;
+    }
     
-    const occupancies = periodData
-      .filter(d => d.occupancy?.current !== undefined)
-      .map(d => d.occupancy!.current);
-    const avgOccupancy = occupancies.length > 0 
-      ? occupancies.reduce((a, b) => a + b, 0) / occupancies.length 
-      : 0;
+    if (totalGuestHours === 0) return null;
     
-    if (exitsPerHour < 0.5 || avgOccupancy < 1) return null;
-    
-    return Math.min(180, Math.round((avgOccupancy / exitsPerHour) * 60));
+    const avgStayMinutes = Math.round((totalGuestHours / totalEntries) * 60);
+    return (avgStayMinutes >= 5 && avgStayMinutes <= 240) ? avgStayMinutes : null;
   };
 
   // Calculate current period metrics
@@ -797,7 +821,7 @@ function processComparison(
                         timeRange === '7d' ? 7 : 
                         timeRange === '14d' ? 14 : 30;
 
-  // Helper to calculate avg stay from exit velocity
+  // Helper to calculate avg stay using OCCUPANCY INTEGRATION
   const calcAvgStay = (periodData: SensorData[]): number | null => {
     if (periodData.length < 2) return null;
     
@@ -805,29 +829,34 @@ function processComparison(
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     
-    const withExits = sorted.filter(d => d.occupancy?.exits !== undefined);
-    if (withExits.length < 2) return null;
+    // Get total entries for period
+    const withEntries = sorted.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
+    if (withEntries.length < 2) return null;
     
-    const firstExits = withExits[0].occupancy!.exits;
-    const lastExits = withExits[withExits.length - 1].occupancy!.exits;
-    const totalExits = Math.max(0, lastExits - firstExits);
+    const firstEntries = withEntries[0].occupancy!.entries;
+    const lastEntries = withEntries[withEntries.length - 1].occupancy!.entries;
+    const totalEntries = Math.max(0, lastEntries - firstEntries);
     
-    const firstTime = new Date(sorted[0].timestamp).getTime();
-    const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
-    const hoursInPeriod = Math.max(1, (lastTime - firstTime) / (1000 * 60 * 60));
+    if (totalEntries < 5) return null;
     
-    const exitsPerHour = totalExits / hoursInPeriod;
+    // Integrate occupancy over time
+    let totalGuestHours = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const prevTime = new Date(sorted[i - 1].timestamp).getTime();
+      const currTime = new Date(sorted[i].timestamp).getTime();
+      const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
+      
+      if (intervalHours > 4) continue; // Skip data gaps
+      
+      const prevOcc = sorted[i - 1].occupancy?.current || 0;
+      const currOcc = sorted[i].occupancy?.current || 0;
+      totalGuestHours += ((prevOcc + currOcc) / 2) * intervalHours;
+    }
     
-    const occupancies = periodData
-      .filter(d => d.occupancy?.current !== undefined)
-      .map(d => d.occupancy!.current);
-    const avgOccupancy = occupancies.length > 0 
-      ? occupancies.reduce((a, b) => a + b, 0) / occupancies.length 
-      : 0;
+    if (totalGuestHours === 0) return null;
     
-    if (exitsPerHour < 0.5 || avgOccupancy < 1) return null;
-    
-    return Math.min(180, Math.round((avgOccupancy / exitsPerHour) * 60));
+    const avgStayMinutes = Math.round((totalGuestHours / totalEntries) * 60);
+    return (avgStayMinutes >= 5 && avgStayMinutes <= 240) ? avgStayMinutes : null;
   };
 
   // Helper to calculate guest count correctly (same logic as processSummary)
