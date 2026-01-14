@@ -1,22 +1,18 @@
 /**
  * PulseBreakdownModal - Deep dive into Pulse Score
  * 
- * Level 2: Overview with all factors
- * Level 3: Tap any factor for deep dive (FactorDeepDiveModal)
- * 
  * Shows:
  * - Overall score with clear status
- * - ✨ YOUR BEST NIGHT comparison (when available)
- * - Factor breakdown: Sound, Light, Temp, Vibe (TAPPABLE!)
+ * - YOUR BEST NIGHT comparison (when available)
+ * - Factor breakdown: Sound (40%), Light (25%), Crowd (20%), Music (15%)
  * - Context-aware based on time/day
- * - How to improve
  */
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Thermometer, Clock, ChevronRight, Sparkles, Trophy, Users, Timer, TrendingUp } from 'lucide-react';
-import { FACTOR_WEIGHTS, SCORE_THRESHOLDS, TIME_SLOT_RANGES, type TimeSlot } from '../../utils/constants';
+import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Clock, ChevronRight, Trophy, Users, Timer, TrendingUp, Music } from 'lucide-react';
+import { FACTOR_WEIGHTS, SCORE_THRESHOLDS, TIME_SLOT_RANGES, OPTIMAL_CROWD, type TimeSlot } from '../../utils/constants';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import { getCurrentTimeSlot } from '../../utils/scoring';
 import { FactorDeepDiveModal, type FactorType } from './FactorDeepDiveModal';
@@ -29,14 +25,16 @@ interface PulseBreakdownModalProps {
   pulseStatusLabel: string;
   soundScore: number;
   lightScore: number;
-  tempScore: number;
-  vibeScore: number;
+  crowdScore: number;
+  musicScore: number;
   currentDecibels: number | null;
   currentLight: number | null;
-  indoorTemp?: number | null;
-  outdoorTemp?: number | null;
+  currentOccupancy?: number | null;
+  estimatedCapacity?: number;
+  currentSong?: string | null;
+  detectedGenres?: string[];
   timeSlot?: string;
-  // ✨ NEW: Best Night comparison data
+  // Best Night comparison data
   bestNight?: BestNightProfile | null;
   isUsingHistoricalData?: boolean;
   proximityToBest?: number | null;
@@ -49,31 +47,30 @@ export function PulseBreakdownModal({
   pulseStatusLabel,
   soundScore,
   lightScore,
-  tempScore,
-  vibeScore,
+  crowdScore,
+  musicScore,
   currentDecibels,
   currentLight,
-  indoorTemp,
-  outdoorTemp,
+  currentOccupancy,
+  estimatedCapacity = 100,
+  currentSong,
+  detectedGenres = [],
   timeSlot: timeSlotProp,
   bestNight,
   isUsingHistoricalData,
   proximityToBest,
 }: PulseBreakdownModalProps) {
-  // State for factor deep dive
   const [selectedFactor, setSelectedFactor] = useState<FactorType | null>(null);
   
-  // Get time slot
   const timeSlot = (timeSlotProp as TimeSlot) || getCurrentTimeSlot();
   const ranges = TIME_SLOT_RANGES[timeSlot];
+  const crowdRange = OPTIMAL_CROWD[timeSlot];
   
-  // Format date for display
   const formatBestNightDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
   
-  // Time slot display labels
   const slotLabels: Record<TimeSlot, string> = {
     weekday_happy_hour: 'Happy Hour',
     weekday_night: 'Weeknight',
@@ -85,7 +82,6 @@ export function PulseBreakdownModal({
     daytime: 'Daytime',
   };
   
-  // Determine status colors
   const getStatusStyle = (score: number | null) => {
     if (score === null) return 'bg-warm-700 text-warm-300';
     if (score >= SCORE_THRESHOLDS.optimal) return 'bg-green-900/30 text-green-400';
@@ -102,11 +98,15 @@ export function PulseBreakdownModal({
   
   const StatusIcon = getStatusIcon(pulseScore);
   
-  // Generate insights based on scores
+  // Generate insights
   const soundInsight = getSoundInsight(currentDecibels, soundScore, ranges.sound);
   const lightInsight = getLightInsight(currentLight, lightScore, ranges.light);
-  const tempInsight = getTempInsight(indoorTemp, tempScore, outdoorTemp);
-  const vibeInsight = getVibeInsight(vibeScore, timeSlot);
+  const crowdInsight = getCrowdInsight(currentOccupancy, estimatedCapacity, crowdScore, crowdRange);
+  const musicInsight = getMusicInsight(musicScore, detectedGenres, bestNight?.detectedGenres || []);
+  
+  const occupancyPercent = currentOccupancy && estimatedCapacity > 0 
+    ? Math.round((currentOccupancy / estimatedCapacity) * 100) 
+    : null;
   
   return (
     <>
@@ -130,18 +130,16 @@ export function PulseBreakdownModal({
             {pulseStatusLabel}
           </p>
           
-          {/* Time slot context */}
           <p className="text-xs text-warm-500 mt-2">
             <Clock className="w-3 h-3 inline mr-1" />
             Optimized for {slotLabels[timeSlot]}
           </p>
           
-          {/* Score meaning */}
           <p className="text-sm text-warm-400 mt-2 px-4">
             {isUsingHistoricalData && bestNight
               ? pulseScore !== null && pulseScore >= SCORE_THRESHOLDS.optimal
                 ? `You're matching your best ${bestNight.dayOfWeek}!`
-                : `Get closer to your best ${bestNight.dayOfWeek}'s conditions`
+                : `Get closer to your best ${bestNight.dayOfWeek}'s formula`
               : pulseScore !== null && pulseScore >= SCORE_THRESHOLDS.optimal
               ? 'Your venue atmosphere is ideal for guests right now.'
               : pulseScore !== null && pulseScore >= SCORE_THRESHOLDS.good
@@ -149,7 +147,6 @@ export function PulseBreakdownModal({
               : 'Some adjustments needed for optimal guest experience.'}
           </p>
           
-          {/* Proximity to Best indicator */}
           {isUsingHistoricalData && proximityToBest !== null && (
             <div className="mt-3">
               <p className="text-xs text-warm-500 mb-1">Match to your best: {proximityToBest}%</p>
@@ -165,7 +162,7 @@ export function PulseBreakdownModal({
           )}
         </div>
         
-        {/* ✨ YOUR BEST NIGHT SECTION */}
+        {/* YOUR BEST NIGHT SECTION */}
         {bestNight && (
           <div className="bg-gradient-to-br from-amber-900/20 to-yellow-900/10 rounded-2xl border border-amber-800/30 p-4 -mx-2">
             <div className="flex items-center gap-2 mb-4">
@@ -232,23 +229,20 @@ export function PulseBreakdownModal({
                 </div>
               </div>
               
-              {/* Temp */}
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-2">
-                  <Thermometer className="w-4 h-4 text-warm-500" />
-                  <span className="text-warm-300">Temp</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-amber-400 font-semibold">{bestNight.avgTemp}°F</span>
-                  {indoorTemp !== null && indoorTemp !== undefined && (
-                    <span className={`text-xs ${
-                      Math.abs(indoorTemp - bestNight.avgTemp) <= 2 ? 'text-green-400' : 'text-warm-500'
-                    }`}>
-                      (You: {indoorTemp.toFixed(0)}°F)
+              {/* Music/Genres */}
+              {bestNight.detectedGenres && bestNight.detectedGenres.length > 0 && (
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <Music className="w-4 h-4 text-warm-500" />
+                    <span className="text-warm-300">Music</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-400 font-semibold">
+                      {bestNight.detectedGenres.slice(0, 2).join(', ')}
                     </span>
-                  )}
+                  </div>
                 </div>
-              </div>
+              )}
               
               {/* Peak Hour */}
               {bestNight.peakHour !== undefined && (
@@ -276,8 +270,8 @@ export function PulseBreakdownModal({
                   {currentLight !== null && Math.abs(currentLight - bestNight.avgLight) > 30 && (
                     <>Set lighting to ~{bestNight.avgLight} lux. </>
                   )}
-                  {indoorTemp !== null && Math.abs(indoorTemp - bestNight.avgTemp) > 2 && (
-                    <>Target {bestNight.avgTemp}°F. </>
+                  {bestNight.detectedGenres && bestNight.detectedGenres.length > 0 && (
+                    <>Play {bestNight.detectedGenres[0]}. </>
                   )}
                 </p>
               </div>
@@ -285,7 +279,7 @@ export function PulseBreakdownModal({
           </div>
         )}
         
-        {/* What makes up this score */}
+        {/* Score Breakdown */}
         <div>
           <h4 className="text-xs font-semibold text-warm-400 uppercase tracking-wide mb-3">
             Score Breakdown
@@ -294,7 +288,7 @@ export function PulseBreakdownModal({
           <p className="text-xs text-warm-500 mb-3">Tap any factor for deeper insights →</p>
           
           <div className="space-y-3">
-            {/* Sound Factor */}
+            {/* Sound Factor - 40% */}
             <FactorCard
               icon={Volume2}
               label="Sound"
@@ -308,7 +302,7 @@ export function PulseBreakdownModal({
               isUsingHistoricalData={isUsingHistoricalData}
             />
             
-            {/* Light Factor */}
+            {/* Light Factor - 25% */}
             <FactorCard
               icon={Sun}
               label="Light"
@@ -322,30 +316,29 @@ export function PulseBreakdownModal({
               isUsingHistoricalData={isUsingHistoricalData}
             />
             
-            {/* Temperature Factor */}
+            {/* Crowd Factor - 20% */}
             <FactorCard
-              icon={Thermometer}
-              label="Comfort"
-              weight={Math.round(FACTOR_WEIGHTS.temperature * 100)}
-              score={tempScore}
-              currentValue={indoorTemp !== null && indoorTemp !== undefined ? `${indoorTemp.toFixed(0)}°F` : '--'}
-              optimalRange={outdoorTemp && outdoorTemp > 80 ? '68-72°F' : '68-74°F'}
-              insight={tempInsight}
-              onTap={() => setSelectedFactor('comfort')}
-              bestNightValue={bestNight ? `${bestNight.avgTemp}°F` : undefined}
-              isUsingHistoricalData={isUsingHistoricalData}
+              icon={Users}
+              label="Crowd"
+              weight={Math.round(FACTOR_WEIGHTS.crowd * 100)}
+              score={crowdScore}
+              currentValue={occupancyPercent !== null ? `${occupancyPercent}% full` : '--'}
+              optimalRange={`${crowdRange.min}-${crowdRange.max}%`}
+              insight={crowdInsight}
+              onTap={() => setSelectedFactor('vibe')}
             />
             
-            {/* Vibe Factor */}
+            {/* Music Factor - 15% */}
             <FactorCard
-              icon={Sparkles}
-              label="Vibe Match"
-              weight={Math.round(FACTOR_WEIGHTS.vibe * 100)}
-              score={vibeScore}
-              currentValue={slotLabels[timeSlot]}
-              optimalRange="All factors aligned"
-              insight={vibeInsight}
-              onTap={() => setSelectedFactor('vibe')}
+              icon={Music}
+              label="Music"
+              weight={Math.round(FACTOR_WEIGHTS.music * 100)}
+              score={musicScore}
+              currentValue={detectedGenres.length > 0 ? detectedGenres[0] : (currentSong || '--')}
+              optimalRange={bestNight?.detectedGenres?.join(', ') || ranges.genres.slice(0, 2).join(', ')}
+              insight={musicInsight}
+              bestNightValue={bestNight?.detectedGenres?.slice(0, 2).join(', ')}
+              isUsingHistoricalData={isUsingHistoricalData && (bestNight?.detectedGenres?.length ?? 0) > 0}
             />
           </div>
         </div>
@@ -369,12 +362,12 @@ export function PulseBreakdownModal({
               <span className="font-medium text-warm-100">{(lightScore * FACTOR_WEIGHTS.light).toFixed(0)}</span>
             </div>
             <div className="flex justify-between text-warm-300">
-              <span>Comfort × {Math.round(FACTOR_WEIGHTS.temperature * 100)}%</span>
-              <span className="font-medium text-warm-100">{(tempScore * FACTOR_WEIGHTS.temperature).toFixed(0)}</span>
+              <span>Crowd × {Math.round(FACTOR_WEIGHTS.crowd * 100)}%</span>
+              <span className="font-medium text-warm-100">{(crowdScore * FACTOR_WEIGHTS.crowd).toFixed(0)}</span>
             </div>
             <div className="flex justify-between text-warm-300">
-              <span>Vibe × {Math.round(FACTOR_WEIGHTS.vibe * 100)}%</span>
-              <span className="font-medium text-warm-100">{(vibeScore * FACTOR_WEIGHTS.vibe).toFixed(0)}</span>
+              <span>Music × {Math.round(FACTOR_WEIGHTS.music * 100)}%</span>
+              <span className="font-medium text-warm-100">{(musicScore * FACTOR_WEIGHTS.music).toFixed(0)}</span>
             </div>
             <div className="flex justify-between pt-2 border-t border-warm-600 font-semibold text-warm-100">
               <span>Pulse Score</span>
@@ -401,7 +394,7 @@ export function PulseBreakdownModal({
       </div>
     </Modal>
     
-    {/* Factor Deep Dive Modal (Level 3) */}
+    {/* Factor Deep Dive Modal */}
     <FactorDeepDiveModal
       isOpen={selectedFactor !== null}
       onClose={() => setSelectedFactor(null)}
@@ -409,17 +402,14 @@ export function PulseBreakdownModal({
       currentValue={
         selectedFactor === 'sound' ? currentDecibels :
         selectedFactor === 'light' ? currentLight :
-        selectedFactor === 'comfort' ? (indoorTemp ?? null) :
         null
       }
       score={
         selectedFactor === 'sound' ? soundScore :
         selectedFactor === 'light' ? lightScore :
-        selectedFactor === 'comfort' ? tempScore :
-        vibeScore
+        crowdScore
       }
       timeSlot={timeSlot}
-      outdoorTemp={outdoorTemp}
     />
     </>
   );
@@ -436,8 +426,7 @@ interface FactorCardProps {
   optimalRange: string;
   insight: { status: 'optimal' | 'warning' | 'critical'; message: string; action?: string };
   onTap?: () => void;
-  // ✨ NEW: Best night comparison
-  bestNightValue?: string;       // e.g., "78 dB"
+  bestNightValue?: string;
   isUsingHistoricalData?: boolean;
 }
 
@@ -467,12 +456,8 @@ function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRan
     >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
-          <div className={`w-9 h-9 rounded-lg ${
-            label === 'Sound Level' ? 'bg-primary/20' : 'bg-amber-900/30'
-          } flex items-center justify-center`}>
-            <Icon className={`w-4.5 h-4.5 ${
-              label === 'Sound Level' ? 'text-primary' : 'text-amber-400'
-            }`} />
+          <div className="w-9 h-9 rounded-lg bg-warm-700/50 flex items-center justify-center">
+            <Icon className="w-4.5 h-4.5 text-warm-300" />
           </div>
           <div>
             <h5 className="text-sm font-semibold text-warm-100">{label}</h5>
@@ -485,7 +470,6 @@ function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRan
         </div>
       </div>
       
-      {/* Progress bar */}
       <div className="h-2 bg-warm-600 rounded-full overflow-hidden mb-3">
         <motion.div
           className={`h-full rounded-full ${statusColors[insight.status]}`}
@@ -495,7 +479,6 @@ function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRan
         />
       </div>
       
-      {/* Current vs Your Best / Optimal */}
       <div className="flex justify-between text-xs mb-3">
         <div>
           <span className="text-warm-400">Current: </span>
@@ -516,7 +499,6 @@ function FactorCard({ icon: Icon, label, weight, score, currentValue, optimalRan
         </div>
       </div>
       
-      {/* Insight + Tap indicator */}
       <div className="flex items-start justify-between">
         <div className={`text-sm ${textColors[insight.status]} flex-1`}>
           <p className="font-medium">{insight.message}</p>
@@ -538,23 +520,13 @@ function getSoundInsight(db: number | null, score: number, range: { min: number;
   if (db === null) {
     return { status: 'warning', message: 'No sound data', action: 'Check sensor' };
   }
-  
-  if (score >= 85) {
-    return { status: 'optimal', message: 'Perfect energy level' };
-  }
-  
+  if (score >= 85) return { status: 'optimal', message: 'Perfect energy level' };
   if (db > range.max) {
-    const diff = db - range.max;
-    if (diff > 10) {
-      return { status: 'critical', message: 'Too loud right now', action: 'Lower music' };
-    }
-    return { status: 'warning', message: 'Slightly loud', action: 'Consider turning down' };
+    return { status: db - range.max > 10 ? 'critical' : 'warning', message: 'Too loud', action: 'Lower music' };
   }
-  
   if (db < range.min) {
-    return { status: 'warning', message: 'Too quiet for now', action: 'Add more energy' };
+    return { status: 'warning', message: 'Too quiet', action: 'Add more energy' };
   }
-  
   return { status: 'optimal', message: 'Sound is good' };
 }
 
@@ -562,63 +534,42 @@ function getLightInsight(lux: number | null, score: number, range: { min: number
   if (lux === null) {
     return { status: 'warning', message: 'No light data', action: 'Check sensor' };
   }
-  
-  if (score >= 85) {
-    return { status: 'optimal', message: 'Perfect ambiance' };
-  }
-  
-  if (lux > range.max) {
-    return { status: 'warning', message: 'Too bright', action: 'Dim the lights' };
-  }
-  
-  if (lux < range.min) {
-    return { status: 'warning', message: 'Too dark', action: 'Brighten up a bit' };
-  }
-  
+  if (score >= 85) return { status: 'optimal', message: 'Perfect ambiance' };
+  if (lux > range.max) return { status: 'warning', message: 'Too bright', action: 'Dim the lights' };
+  if (lux < range.min) return { status: 'warning', message: 'Too dark', action: 'Brighten up' };
   return { status: 'optimal', message: 'Lighting is good' };
 }
 
-function getTempInsight(indoor: number | null | undefined, score: number, _outdoor: number | null | undefined): InsightResult {
-  if (indoor === null || indoor === undefined) {
-    return { status: 'warning', message: 'No temp data', action: 'Neutral score applied' };
+function getCrowdInsight(
+  occupancy: number | null | undefined, 
+  capacity: number, 
+  score: number,
+  range: { min: number; max: number }
+): InsightResult {
+  if (occupancy === null || occupancy === undefined) {
+    return { status: 'warning', message: 'No crowd data' };
   }
-  
-  if (score >= 80) {
-    return { status: 'optimal', message: 'Comfortable temperature' };
-  }
-  
-  if (indoor < 68) {
-    return { status: 'warning', message: 'A bit cold', action: 'Turn up the heat' };
-  }
-  
-  if (indoor > 76) {
-    return { status: 'warning', message: 'A bit warm', action: 'Increase AC' };
-  }
-  
-  return { status: 'optimal', message: 'Temp is okay' };
+  const percent = Math.round((occupancy / capacity) * 100);
+  if (score >= 85) return { status: 'optimal', message: `Perfect crowd level (${percent}%)` };
+  if (percent < range.min) return { status: 'warning', message: `Quiet (${percent}%)`, action: 'Building up' };
+  if (percent > range.max) return { status: 'warning', message: `Very busy (${percent}%)` };
+  return { status: 'optimal', message: `Good crowd (${percent}%)` };
 }
 
-function getVibeInsight(score: number, timeSlot: TimeSlot): InsightResult {
-  const slotLabels: Record<TimeSlot, string> = {
-    weekday_happy_hour: 'Happy Hour',
-    weekday_night: 'Weeknight',
-    friday_early: 'Friday Evening',
-    friday_peak: 'Friday Peak',
-    saturday_early: 'Saturday Evening',
-    saturday_peak: 'Saturday Peak',
-    sunday_funday: 'Sunday Funday',
-    daytime: 'Daytime',
-  };
-  
-  if (score >= 80) {
-    return { status: 'optimal', message: `Nailing ${slotLabels[timeSlot]}` };
+function getMusicInsight(score: number, detectedGenres: string[], bestNightGenres: string[]): InsightResult {
+  if (detectedGenres.length === 0) {
+    return { status: 'warning', message: 'No music detected', action: 'Playing music?' };
   }
-  
-  if (score >= 60) {
-    return { status: 'warning', message: 'Good but could be better', action: 'Align all factors' };
+  if (score >= 90) {
+    return { status: 'optimal', message: `${detectedGenres[0]} - perfect match!` };
   }
-  
-  return { status: 'critical', message: 'Factors out of sync', action: 'Review each factor' };
+  if (score >= 70) {
+    return { status: 'optimal', message: `Playing ${detectedGenres[0]}` };
+  }
+  if (bestNightGenres.length > 0) {
+    return { status: 'warning', message: `Different from your best`, action: `Try ${bestNightGenres[0]}` };
+  }
+  return { status: 'optimal', message: `Playing ${detectedGenres[0]}` };
 }
 
 export default PulseBreakdownModal;

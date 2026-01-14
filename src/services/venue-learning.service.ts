@@ -70,7 +70,11 @@ export interface BestNightProfile {
   // Environmental conditions during the best night
   avgSound: number;                // Average dB level
   avgLight: number;                // Average lux level
-  avgTemp: number;                 // Average indoor temp °F
+  
+  // Music/Genre data from that night
+  topArtists: string[];            // Artists detected during best night
+  detectedGenres: string[];        // Genres detected (e.g., ["hip-hop", "r&b"])
+  songCount: number;               // How many songs we tracked
   
   // Optional: Peak hour conditions (the sweet spot)
   peakHour?: number;               // What hour was peak (e.g., 22 = 10pm)
@@ -773,10 +777,40 @@ class VenueLearningService {
           ? withLight.reduce((sum, d) => sum + (d.light || 0), 0) / withLight.length 
           : 0;
         
-        const withTemp = nightData.filter(d => d.indoorTemp != null);
-        const avgTemp = withTemp.length > 0 
-          ? withTemp.reduce((sum, d) => sum + (d.indoorTemp || 0), 0) / withTemp.length 
-          : 70;
+        // Collect music/artist data from this night
+        const artistsPlayed: string[] = [];
+        const songsPlayed: string[] = [];
+        for (const d of nightData) {
+          if (d.artist && !artistsPlayed.includes(d.artist)) {
+            artistsPlayed.push(d.artist);
+          }
+          if (d.currentSong && !songsPlayed.includes(d.currentSong)) {
+            songsPlayed.push(d.currentSong);
+          }
+        }
+        
+        // Detect genres from songs/artists using keyword matching
+        const detectedGenres: string[] = [];
+        const searchText = [...artistsPlayed, ...songsPlayed].join(' ').toLowerCase();
+        
+        // Import genre keywords from constants
+        const genreKeywords: Record<string, string[]> = {
+          'hip-hop': ['hip hop', 'hip-hop', 'rap', 'trap', 'drake', 'kendrick', 'kanye', 'jay-z', 'lil wayne', 'future', 'migos', 'cardi b', 'nicki minaj', 'j cole', 'travis scott', 'post malone'],
+          'r&b': ['r&b', 'rnb', 'soul', 'usher', 'beyonce', 'sza', 'frank ocean', 'the weeknd', 'chris brown', 'rihanna', 'alicia keys', 'bruno mars'],
+          'pop': ['pop', 'taylor swift', 'ariana grande', 'justin bieber', 'dua lipa', 'harry styles', 'billie eilish', 'olivia rodrigo', 'ed sheeran', 'doja cat'],
+          'edm': ['edm', 'electronic', 'house', 'techno', 'calvin harris', 'marshmello', 'chainsmokers', 'david guetta', 'tiesto', 'zedd', 'martin garrix'],
+          'country': ['country', 'nashville', 'luke bryan', 'morgan wallen', 'luke combs', 'chris stapleton', 'kane brown', 'jason aldean'],
+          'rock': ['rock', 'guitar', 'metal', 'punk', 'foo fighters', 'red hot chili', 'green day', 'imagine dragons'],
+          'latin': ['latin', 'reggaeton', 'bad bunny', 'j balvin', 'daddy yankee', 'ozuna', 'maluma', 'karol g', 'shakira'],
+          'jazz': ['jazz', 'smooth', 'saxophone', 'coltrane', 'miles davis', 'norah jones'],
+          'dance': ['dance', 'club', 'party', 'disco', 'funk', 'daft punk'],
+        };
+        
+        for (const [genre, keywords] of Object.entries(genreKeywords)) {
+          if (keywords.some(kw => searchText.includes(kw))) {
+            detectedGenres.push(genre);
+          }
+        }
         
         // Combined score: prioritize total guests, then dwell time
         // Normalize: assume max 500 guests and 120 min dwell for scaling
@@ -793,7 +827,9 @@ class VenueLearningService {
           avgDwell,
           avgSound,
           avgLight,
-          avgTemp,
+          topArtists: artistsPlayed.slice(0, 10),  // Top 10 artists
+          detectedGenres,
+          songCount: songsPlayed.length,
           score,
         });
       }
@@ -844,7 +880,9 @@ class VenueLearningService {
         avgDwellMinutes: Math.round(bestNight.avgDwell),
         avgSound: Math.round(bestNight.avgSound),
         avgLight: Math.round(bestNight.avgLight),
-        avgTemp: Math.round(bestNight.avgTemp),
+        topArtists: bestNight.topArtists,
+        detectedGenres: bestNight.detectedGenres,
+        songCount: bestNight.songCount,
         peakHour,
         peakHourSound: peakHourSound ? Math.round(peakHourSound) : undefined,
         peakHourLight: peakHourLight ? Math.round(peakHourLight) : undefined,

@@ -43,19 +43,26 @@ export interface PulseData {
   pulseStatusLabel: string;
   pulseColor: string;
   
-  // Factor scores
+  // Factor scores (new formula: 40/25/20/15)
   soundScore: number;
   lightScore: number;
-  tempScore: number;
-  vibeScore: number;
+  crowdScore: number;
+  musicScore: number;
   
   // Time slot
   timeSlot: string;
   
-  // ✨ Best Night comparison (YOUR historical best)
+  // Best Night comparison (YOUR historical best)
   bestNight: import('../services/venue-learning.service').BestNightProfile | null;
   isUsingHistoricalData: boolean;
   proximityToBest: number | null;
+  
+  // Music detection
+  detectedGenres: string[];
+  bestNightGenres: string[];
+  
+  // Estimated capacity (for crowd scoring)
+  estimatedCapacity: number;
   
   // Current sensor values
   currentDecibels: number | null;
@@ -303,20 +310,29 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   // ============ COMPUTED VALUES ============
   
+  // Estimate venue capacity based on peak occupancy or default
+  const estimatedCapacity = useMemo(() => {
+    // Use peak occupancy * 1.2 as estimate, or default to 100
+    if (effectiveOccupancy.peakOccupancy > 0) {
+      return Math.max(effectiveOccupancy.peakOccupancy * 1.2, 50);
+    }
+    return 100;
+  }, [effectiveOccupancy.peakOccupancy]);
+  
   const pulseScoreResult = useMemo(() => {
-    // Use outdoor temp from weather service if sensor doesn't have it
-    const outdoorTemp = sensorData?.outdoorTemp ?? weather?.temperature ?? null;
-    
     return calculatePulseScore(
       sensorData?.decibels,
       sensorData?.light,
-      sensorData?.indoorTemp,
-      outdoorTemp,
+      null, // indoorTemp - removed
+      null, // outdoorTemp - removed
       sensorData?.currentSong,
       sensorData?.artist,
-      venueId // Pass venueId for custom calibration support
+      venueId,
+      undefined, // timestamp
+      effectiveOccupancy.current, // currentOccupancy for crowd scoring
+      estimatedCapacity // for crowd scoring
     );
-  }, [sensorData?.decibels, sensorData?.light, sensorData?.indoorTemp, sensorData?.outdoorTemp, sensorData?.currentSong, sensorData?.artist, weather?.temperature, venueId]);
+  }, [sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist, venueId, effectiveOccupancy.current, estimatedCapacity]);
   
   const reputationScore = getReputationScore(reviews?.rating ?? null);
   
@@ -522,19 +538,26 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     pulseStatusLabel: pulseScoreResult.statusLabel,
     pulseColor: pulseScoreResult.color,
     
-    // Factor scores
+    // Factor scores (new formula: 40/25/20/15)
     soundScore: pulseScoreResult.factors.sound.score,
     lightScore: pulseScoreResult.factors.light.score,
-    tempScore: pulseScoreResult.factors.temperature.score,
-    vibeScore: pulseScoreResult.factors.vibe.score,
+    crowdScore: pulseScoreResult.factors.crowd.score,
+    musicScore: pulseScoreResult.factors.music.score,
     
     // Time slot
     timeSlot: pulseScoreResult.timeSlot,
     
-    // ✨ Best Night comparison (YOUR historical best)
+    // Best Night comparison (YOUR historical best)
     bestNight: pulseScoreResult.bestNight,
     isUsingHistoricalData: pulseScoreResult.isUsingHistoricalData,
     proximityToBest: pulseScoreResult.proximityToBest,
+    
+    // Music detection
+    detectedGenres: pulseScoreResult.detectedGenres,
+    bestNightGenres: pulseScoreResult.bestNightGenres,
+    
+    // Estimated capacity
+    estimatedCapacity,
     
     // Current sensor values
     currentDecibels: sensorData?.decibels ?? null,

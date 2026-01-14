@@ -364,14 +364,15 @@ export function Live() {
         pulseStatusLabel={pulseData.pulseStatusLabel}
         soundScore={pulseData.soundScore}
         lightScore={pulseData.lightScore}
-        tempScore={pulseData.tempScore}
-        vibeScore={pulseData.vibeScore}
+        crowdScore={pulseData.crowdScore}
+        musicScore={pulseData.musicScore}
         currentDecibels={pulseData.currentDecibels}
         currentLight={pulseData.currentLight}
-        indoorTemp={pulseData.sensorData?.indoorTemp}
-        outdoorTemp={pulseData.weather?.temperature}
+        currentOccupancy={pulseData.currentOccupancy}
+        estimatedCapacity={pulseData.estimatedCapacity}
+        currentSong={pulseData.sensorData?.currentSong}
+        detectedGenres={pulseData.detectedGenres}
         timeSlot={pulseData.timeSlot}
-        // ✨ Best Night comparison data from Pulse Score
         bestNight={pulseData.bestNight}
         isUsingHistoricalData={pulseData.isUsingHistoricalData}
         proximityToBest={pulseData.proximityToBest}
