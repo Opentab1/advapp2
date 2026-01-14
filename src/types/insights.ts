@@ -15,6 +15,7 @@ export interface InsightsSummary {
   avgStayMinutes: number | null;   // null if not enough exit data
   avgStayDelta: number | null;     // vs previous period (percentage), null if can't calculate
   totalGuests: number;
+  guestsIsEstimate: boolean;       // true if extrapolated from partial data
   guestsDelta: number;             // vs previous period (percentage)
   summaryText: string;             // "Solid night. Dwell time up..."
   peakHours: string;               // "9pm - 1am"

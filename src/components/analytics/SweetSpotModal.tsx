@@ -21,7 +21,7 @@ interface SweetSpotModalProps {
 const VARIABLE_CONFIG: Record<SweetSpotVariable, { icon: typeof Volume2; label: string; color: string }> = {
   sound: { icon: Volume2, label: 'Sound', color: 'text-strain' },
   light: { icon: Sun, label: 'Light', color: 'text-recovery-medium' },
-  crowd: { icon: Users, label: 'Crowd', color: 'text-teal' },
+  crowd: { icon: Users, label: 'Occupancy', color: 'text-teal' },
   temp: { icon: Thermometer, label: 'Temp', color: 'text-recovery-low' },
 };
 

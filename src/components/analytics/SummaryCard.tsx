@@ -109,8 +109,8 @@ export function SummaryCard({ data, timeRange, loading, onTapDetails }: SummaryC
         />
         <div className="w-px bg-whoop-divider" />
         <MetricBox
-          value={data.totalGuests.toString()}
-          label="Guests"
+          value={data.guestsIsEstimate ? `~${data.totalGuests}` : data.totalGuests.toString()}
+          label={data.guestsIsEstimate ? '~Guests' : 'Guests'}
           delta={data.guestsDelta}
         />
       </div>

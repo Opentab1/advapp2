@@ -167,7 +167,8 @@ export function useInsightsData(timeRange: InsightsTimeRange): InsightsData {
   // Level 3: Raw data points
   const rawData = useMemo((): RawDataPoint[] => {
     return rawSensorData.map(d => {
-      const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+      // Pass timestamp for accurate historical scoring
+      const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
       return {
         timestamp: new Date(d.timestamp),
         score: score || 0,
@@ -224,8 +225,14 @@ function processSummary(
   // Group by hour for peak detection
   const hourlyScores: Record<number, number[]> = {};
   
-  data.forEach(d => {
-    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+  // Sort data by timestamp to calculate actual time intervals
+  const sortedData = [...data].sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  
+  sortedData.forEach((d, idx) => {
+    // Pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score !== null) {
       totalScore += score;
       scoreCount++;
@@ -234,8 +241,16 @@ function processSummary(
       if (!hourlyScores[hour]) hourlyScores[hour] = [];
       hourlyScores[hour].push(score);
       
-      // Count hours in zone (score >= 70)
-      if (score >= 70) hoursInZone += 0.25; // Assuming 15-min intervals
+      // Count ACTUAL hours in zone based on real time intervals
+      if (score >= 70 && idx > 0) {
+        const prevTime = new Date(sortedData[idx - 1].timestamp).getTime();
+        const currTime = new Date(d.timestamp).getTime();
+        const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
+        // Only count reasonable intervals (< 4 hours, to skip data gaps)
+        if (intervalHours < 4) {
+          hoursInZone += intervalHours;
+        }
+      }
     }
   });
   
@@ -246,17 +261,17 @@ function processSummary(
   // we calculate guests/day from actual data and extrapolate.
   //
   // The hourly aggregator stores MAX cumulative entries per hour.
-  const calculateGuestCount = (periodData: SensorData[], requestedDays: number): number => {
+  const calculateGuestCount = (periodData: SensorData[], requestedDays: number): { count: number; isEstimate: boolean } => {
     const withEntries = periodData
       .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     
     if (withEntries.length === 0) {
-      return 0;
+      return { count: 0, isEstimate: false };
     }
     
     if (withEntries.length === 1) {
-      return 0;
+      return { count: 0, isEstimate: false };
     }
     
     // Calculate actual time span of our data
@@ -298,10 +313,10 @@ function processSummary(
     if (actualSpanDays < requestedDays * 0.9) {
       // We don't have enough data - extrapolate based on daily rate
       const dailyRate = measuredEntries / actualSpanDays;
-      return Math.round(dailyRate * requestedDays);
+      return { count: Math.round(dailyRate * requestedDays), isEstimate: true };
     }
     
-    return measuredEntries;
+    return { count: measuredEntries, isEstimate: false };
   };
   
   // Determine requested days for this time range
@@ -309,18 +324,36 @@ function processSummary(
                         timeRange === '7d' ? 7 : 
                         timeRange === '14d' ? 14 : 30;
   
-  const totalGuests = calculateGuestCount(data, requestedDays);
+  const guestResult = calculateGuestCount(data, requestedDays);
+  const totalGuests = guestResult.count;
+  const guestsIsEstimate = guestResult.isEstimate;
   
-  // Find peak hours (6pm-2am typically)
+  // Find peak hours (business hours 4pm-2am typically)
+  // Collect all hours that qualify as "peak" (score >= 70 during evening/night)
+  const peakHoursList: number[] = [];
   Object.entries(hourlyScores).forEach(([hourStr, scores]) => {
     const hour = parseInt(hourStr);
     const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-    if (avgScore >= 70 && (hour >= 18 || hour <= 2)) {
-      peakStartHour = Math.min(peakStartHour, hour);
-      peakEndHour = Math.max(peakEndHour, hour);
+    // Peak hours are typically 4pm (16) through 2am, with score >= 70
+    if (avgScore >= 70 && (hour >= 16 || hour <= 2)) {
+      peakHoursList.push(hour);
       totalPeakHours++;
     }
   });
+  
+  // Sort peak hours accounting for midnight wraparound
+  // Convert to "evening time" where 0-6am becomes 24-30
+  const sortedPeakHours = peakHoursList
+    .map(h => h <= 6 ? h + 24 : h)
+    .sort((a, b) => a - b);
+  
+  if (sortedPeakHours.length > 0) {
+    // Convert back from "evening time"
+    peakStartHour = sortedPeakHours[0] >= 24 ? sortedPeakHours[0] - 24 : sortedPeakHours[0];
+    peakEndHour = sortedPeakHours[sortedPeakHours.length - 1] >= 24 
+      ? sortedPeakHours[sortedPeakHours.length - 1] - 24 
+      : sortedPeakHours[sortedPeakHours.length - 1];
+  }
   
   const avgScore = scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0;
   
@@ -329,7 +362,8 @@ function processSummary(
   let prevScoreCount = 0;
   
   previousData.forEach(d => {
-    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+    // Pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score !== null) {
       prevTotalScore += score;
       prevScoreCount++;
@@ -337,7 +371,8 @@ function processSummary(
   });
   
   // Calculate previous period guests using the same correct method
-  const prevTotalGuests = calculateGuestCount(previousData, requestedDays);
+  const prevGuestResult = calculateGuestCount(previousData, requestedDays);
+  const prevTotalGuests = prevGuestResult.count;
   
   const prevAvgScore = prevScoreCount > 0 ? Math.round(prevTotalScore / prevScoreCount) : avgScore;
   const scoreDelta = prevAvgScore > 0 ? Math.round(((avgScore - prevAvgScore) / prevAvgScore) * 100) : 0;
@@ -428,7 +463,24 @@ function processSummary(
     summaryText += `Avg stay up ${avgStayDelta}%, `;
   }
   
-  summaryText += `you stayed in the zone for ${hoursInZone.toFixed(1)} of ${totalPeakHours} peak hours.`;
+  // Calculate actual time spent during peak hours (hours where we have data)
+  // This makes the comparison meaningful: "X hours in zone out of Y total peak hours"
+  const actualPeakHours = peakHoursList.length > 0 
+    ? Math.round((peakHoursList.length / Object.keys(hourlyScores).length) * hoursInZone * 10) / 10
+    : 0;
+  
+  // Use hoursInZone (actual time at score >= 70) vs total data hours
+  const totalDataHours = sortedData.length > 1 
+    ? (new Date(sortedData[sortedData.length - 1].timestamp).getTime() - 
+       new Date(sortedData[0].timestamp).getTime()) / (1000 * 60 * 60)
+    : 0;
+  
+  if (hoursInZone > 0) {
+    const zonePercentage = totalDataHours > 0 ? Math.round((hoursInZone / totalDataHours) * 100) : 0;
+    summaryText += `You were in the zone ${zonePercentage}% of the time (${hoursInZone.toFixed(1)} hours).`;
+  } else {
+    summaryText += `Limited time in optimal zone.`;
+  }
   
   return {
     score: avgScore,
@@ -436,11 +488,12 @@ function processSummary(
     avgStayMinutes,
     avgStayDelta,
     totalGuests,
+    guestsIsEstimate,
     guestsDelta,
     summaryText,
     peakHours,
     timeInZoneHours: Math.round(hoursInZone * 10) / 10,
-    totalPeakHours,
+    totalPeakHours: peakHoursList.length, // Number of unique peak hours
   };
 }
 
@@ -462,10 +515,10 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
       { min: 150, max: 999, label: '150+ lux' },
     ],
     crowd: [
-      { min: 0, max: 50, label: '< 50 guests' },
-      { min: 50, max: 100, label: '50-100 guests' },
-      { min: 100, max: 150, label: '100-150 guests' },
-      { min: 150, max: 9999, label: '150+ guests' },
+      { min: 0, max: 50, label: '< 50 in venue' },
+      { min: 50, max: 100, label: '50-100 in venue' },
+      { min: 100, max: 150, label: '100-150 in venue' },
+      { min: 150, max: 9999, label: '150+ in venue' },
     ],
     temp: [
       { min: 0, max: 65, label: '< 65°F' },
@@ -495,7 +548,8 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
     // Find matching bucket
     const bucket = ranges.find(r => value >= r.min && value < r.max);
     if (bucket) {
-      const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+      // Pass timestamp for accurate historical scoring
+      const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
       if (score !== null) {
         bucketData[bucket.label].scoreSum += score;
         bucketData[bucket.label].count++;
@@ -648,21 +702,65 @@ function processTrend(
     return (avgStayMinutes >= 5 && avgStayMinutes <= 240) ? avgStayMinutes : null;
   };
 
-  // Calculate current period metrics
-  const dailyMetrics: Record<string, { scores: number[] }> = {};
+  // Calculate current period metrics with factor breakdown for meaningful labels
+  const dailyMetrics: Record<string, { 
+    scores: number[]; 
+    soundScores: number[];
+    lightScores: number[];
+    tempScores: number[];
+    maxOccupancy: number;
+  }> = {};
   
   data.forEach(d => {
     const date = new Date(d.timestamp).toDateString();
     if (!dailyMetrics[date]) {
-      dailyMetrics[date] = { scores: [] };
+      dailyMetrics[date] = { scores: [], soundScores: [], lightScores: [], tempScores: [], maxOccupancy: 0 };
     }
-    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
-    if (score) dailyMetrics[date].scores.push(score);
+    // Pass timestamp for accurate historical scoring
+    const result = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
+    if (result.score) {
+      dailyMetrics[date].scores.push(result.score);
+      dailyMetrics[date].soundScores.push(result.factors.sound.score);
+      dailyMetrics[date].lightScores.push(result.factors.light.score);
+      dailyMetrics[date].tempScores.push(result.factors.temperature.score);
+    }
+    if (d.occupancy?.current && d.occupancy.current > dailyMetrics[date].maxOccupancy) {
+      dailyMetrics[date].maxOccupancy = d.occupancy.current;
+    }
   });
+  
+  // Helper to generate meaningful label based on factor analysis
+  const generateDayLabel = (metrics: typeof dailyMetrics[string], isBest: boolean): string => {
+    if (metrics.scores.length === 0) return '';
+    
+    const avgSound = metrics.soundScores.reduce((a, b) => a + b, 0) / metrics.soundScores.length;
+    const avgLight = metrics.lightScores.reduce((a, b) => a + b, 0) / metrics.lightScores.length;
+    const avgTemp = metrics.tempScores.reduce((a, b) => a + b, 0) / metrics.tempScores.length;
+    
+    if (isBest) {
+      // Find what made this day great
+      if (avgSound >= 85 && avgLight >= 85) return 'Sound & lighting on point';
+      if (avgSound >= 85) return 'Great energy (sound perfect)';
+      if (avgLight >= 85) return 'Perfect ambiance (lighting)';
+      if (avgTemp >= 85) return 'Comfortable temp all day';
+      if (metrics.maxOccupancy >= 100) return 'Packed house, great vibe';
+      return 'Strong overall performance';
+    } else {
+      // Find what made this day weak
+      const weakest = Math.min(avgSound, avgLight, avgTemp);
+      if (weakest === avgSound && avgSound < 60) return 'Sound levels off';
+      if (weakest === avgLight && avgLight < 60) return 'Lighting needs work';
+      if (weakest === avgTemp && avgTemp < 60) return 'Temperature uncomfortable';
+      if (metrics.maxOccupancy < 30) return 'Low turnout';
+      return 'Room for improvement';
+    }
+  };
   
   // Find best/worst days
   let bestDay = { date: '', score: 0, label: '' };
   let worstDay = { date: '', score: 100, label: '' };
+  let bestDayMetrics: typeof dailyMetrics[string] | null = null;
+  let worstDayMetrics: typeof dailyMetrics[string] | null = null;
   
   Object.entries(dailyMetrics).forEach(([date, metrics]) => {
     const avgScore = metrics.scores.length > 0 
@@ -673,17 +771,23 @@ function processTrend(
       bestDay = { 
         date: new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
         score: avgScore,
-        label: 'Peak performance'
+        label: '' // Set after loop
       };
+      bestDayMetrics = metrics;
     }
     if (avgScore < worstDay.score && avgScore > 0) {
       worstDay = { 
         date: new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
         score: avgScore,
-        label: 'Needs attention'
+        label: '' // Set after loop
       };
+      worstDayMetrics = metrics;
     }
   });
+  
+  // Generate meaningful labels based on actual factor data
+  if (bestDayMetrics) bestDay.label = generateDayLabel(bestDayMetrics, true);
+  if (worstDayMetrics) worstDay.label = generateDayLabel(worstDayMetrics, false);
   
   // Calculate current period metrics
   const allScores = Object.values(dailyMetrics).flatMap(d => d.scores);
@@ -694,7 +798,8 @@ function processTrend(
   // Previous period metrics
   const prevScores: number[] = [];
   previousData.forEach(d => {
-    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+    // Pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score) prevScores.push(score);
   });
   const prevAvgScore = prevScores.length > 0 ? Math.round(prevScores.reduce((a, b) => a + b, 0) / prevScores.length) : avgScore;
@@ -725,7 +830,8 @@ function processHourlyData(data: SensorData[]): HourlyData[] {
   
   data.forEach(d => {
     const hour = new Date(d.timestamp).getHours();
-    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+    // Pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score) {
       if (!hourlyScores[hour]) hourlyScores[hour] = [];
       hourlyScores[hour].push(score);
@@ -786,7 +892,8 @@ function processFactorScores(data: SensorData[]): FactorScore[] {
   let count = 0;
   
   data.forEach(d => {
-    const result = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+    // Pass timestamp for accurate historical scoring
+    const result = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     soundSum += result.factors.sound.score;
     lightSum += result.factors.light.score;
     tempSum += result.factors.temperature.score;
@@ -910,18 +1017,29 @@ function processComparison(
   // Current period
   let currentScoreSum = 0, currentCount = 0;
   currentData.forEach(d => {
-    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+    // Pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score) { currentScoreSum += score; currentCount++; }
   });
   
   // Previous period
   let prevScoreSum = 0, prevCount = 0;
   previousData.forEach(d => {
-    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+    // Pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score) { prevScoreSum += score; prevCount++; }
   });
   
-  const periodLabel = timeRange === 'last_night' ? 'vs last week same night' : 'vs previous period';
+  // Label accurately describes what we're comparing
+  // For 'last_night': comparing to the night before (not same night last week)
+  // For other ranges: comparing to the previous period of equal length
+  const periodLabel = timeRange === 'last_night' 
+    ? 'vs previous night' 
+    : timeRange === '7d' 
+      ? 'vs previous 7 days'
+      : timeRange === '14d'
+        ? 'vs previous 14 days'
+        : 'vs previous 30 days';
   
   return {
     current: {
@@ -951,7 +1069,8 @@ function processTrendChartData(data: SensorData[]): Array<{ date: Date; score: n
       dailyData[date] = { rawData: [], scores: [] };
     }
     dailyData[date].rawData.push(d);
-    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp);
+    // Pass timestamp for accurate historical scoring
+    const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score) dailyData[date].scores.push(score);
   });
   

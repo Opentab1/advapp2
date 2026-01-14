@@ -50,12 +50,12 @@ export interface FactorScore {
 // ============ TIME SLOT DETECTION ============
 
 /**
- * Determine the current time slot based on day and hour.
+ * Determine the time slot based on day and hour.
+ * Can use current time or a specific timestamp (for historical data accuracy).
  */
-export function getCurrentTimeSlot(): TimeSlot {
-  const now = new Date();
-  const day = now.getDay(); // 0 = Sunday, 6 = Saturday
-  const hour = now.getHours();
+export function getTimeSlotFromTimestamp(timestamp: Date): TimeSlot {
+  const day = timestamp.getDay(); // 0 = Sunday, 6 = Saturday
+  const hour = timestamp.getHours();
   
   // Sunday
   if (day === 0) {
@@ -80,6 +80,13 @@ export function getCurrentTimeSlot(): TimeSlot {
   if (hour < 16) return 'daytime';
   if (hour < 19) return 'weekday_happy_hour';
   return 'weekday_night';
+}
+
+/**
+ * Determine the current time slot based on day and hour.
+ */
+export function getCurrentTimeSlot(): TimeSlot {
+  return getTimeSlotFromTimestamp(new Date());
 }
 
 // ============ CORE SCORING ============
@@ -210,6 +217,9 @@ export function calculateVibeScore(
  * 
  * The goal: Score how close current conditions are to YOUR historically-proven
  * optimal conditions for this specific day/time.
+ * 
+ * IMPORTANT: For historical data, pass the data's timestamp to get accurate scoring.
+ * Without timestamp, uses current time (only correct for live data).
  */
 export function calculatePulseScore(
   decibels: number | null | undefined,
@@ -218,14 +228,16 @@ export function calculatePulseScore(
   outdoorTemp?: number | null,
   _currentSong?: string | null,
   _artist?: string | null,
-  venueId?: string | null
+  venueId?: string | null,
+  timestamp?: Date | string | null
 ): PulseScoreResult {
   // Note: _currentSong and _artist kept for API compatibility but not used in scoring
   void _currentSong;
   void _artist;
   
-  // Get current time slot
-  const timeSlot = getCurrentTimeSlot();
+  // Get time slot from timestamp (for historical accuracy) or use current time
+  const dataTime = timestamp ? (typeof timestamp === 'string' ? new Date(timestamp) : timestamp) : new Date();
+  const timeSlot = getTimeSlotFromTimestamp(dataTime);
   const defaultRanges = TIME_SLOT_RANGES[timeSlot];
   
   // Priority 1: Check for learned ranges (from historical data)
