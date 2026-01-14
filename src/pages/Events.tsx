@@ -252,6 +252,9 @@ export default function Events() {
         <div className="flex items-center gap-2 mb-1">
           <Sparkles className="w-5 h-5 text-purple-400" />
           <h1 className="text-2xl font-bold text-white">Events</h1>
+          <span className="px-2 py-0.5 bg-purple-500/20 border border-purple-500/40 rounded-full text-[10px] font-semibold text-purple-300 uppercase tracking-wide">
+            Beta
+          </span>
         </div>
         <p className="text-sm text-gray-400">Event ideas tailored to your venue's vibe</p>
       </div>
@@ -317,9 +320,12 @@ export default function Events() {
       </div>
       
       {/* Footer note */}
-      <div className="px-5 mt-8 text-center">
+      <div className="px-5 mt-8 text-center space-y-2">
         <p className="text-xs text-gray-600">
           Suggestions refresh each session based on your venue's music data
+        </p>
+        <p className="text-xs text-purple-400/70">
+          🚧 This feature is in beta — we're still refining the recommendations
         </p>
       </div>
     </div>
