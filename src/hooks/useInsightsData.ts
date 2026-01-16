@@ -213,28 +213,22 @@ function getPeriodMs(range: InsightsTimeRange): number {
 /**
  * Calculate total guests from sensor data.
  * 
- * BOTH hourly aggregated and raw data store entries as a CUMULATIVE counter.
- * - Hourly aggregated: `totalEntries` = MAX cumulative value for that hour
- * - Raw data: `entries` = cumulative counter at that moment
+ * Counter is CUMULATIVE ALL-TIME (never resets).
+ * DynamoDB stores: entries = all-time total entries
  * 
- * CRITICAL: Counters may reset daily (at 3am for bar day) or periodically.
- * We MUST sum all positive deltas between consecutive points, plus add
- * the new value after each reset. This catches ALL entries across resets.
+ * Calculation is simple:
+ *   Guests for period = entries_now - entries_at_period_start
  * 
- * Example with daily resets:
- * Day 1: 10→50→100→200 (reset)
- * Day 2: 5→40→90→180 (reset)
- * Day 3: 8→45→95→190
- * 
- * Simple delta: 190 - 10 = 180 (WRONG - misses day 1 and 2!)
- * Correct: (200-10) + 180 + 190 = 560 (sums each day correctly)
+ * Period starts at 3am (bar day boundary).
  */
 function calculateTotalGuests(
   periodData: SensorData[], 
-  requestedDays: number
+  _requestedDays: number
 ): { count: number; isEstimate: boolean } {
+  void _requestedDays; // Not needed - we use actual data span
+  
   const withEntries = periodData
-    .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
+    .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   
   if (withEntries.length === 0) {
@@ -242,69 +236,40 @@ function calculateTotalGuests(
   }
   
   if (withEntries.length === 1) {
-    // Only one data point - can't calculate delta, use the value itself as minimum
-    return { count: withEntries[0].occupancy!.entries, isEstimate: true };
+    // Only one data point - can't calculate difference
+    return { count: 0, isEstimate: true };
   }
   
-  // ALWAYS sum deltas between consecutive points to handle any resets
-  let measuredEntries = 0;
-  for (let i = 1; i < withEntries.length; i++) {
-    const prev = withEntries[i - 1].occupancy!.entries;
-    const curr = withEntries[i].occupancy!.entries;
-    
-    if (curr > prev) {
-      // Normal increment - add the delta
-      measuredEntries += (curr - prev);
-    } else if (curr < prev) {
-      // Counter reset detected - add current value as new entries since reset
-      measuredEntries += curr;
-    }
-    // If curr === prev, no new entries in this interval
-  }
+  // Simple calculation: latest entries - earliest entries
+  const earliest = withEntries[0];
+  const latest = withEntries[withEntries.length - 1];
   
-  // Calculate actual time span of our data
-  const firstTimestamp = new Date(withEntries[0].timestamp).getTime();
-  const lastTimestamp = new Date(withEntries[withEntries.length - 1].timestamp).getTime();
-  const actualSpanMs = lastTimestamp - firstTimestamp;
-  const actualSpanDays = Math.max(0.1, actualSpanMs / (24 * 60 * 60 * 1000));
+  const startEntries = earliest.occupancy!.entries;
+  const endEntries = latest.occupancy!.entries;
   
-  // If we have less data than requested, extrapolate to full period
-  if (actualSpanDays < requestedDays * 0.9) {
-    const dailyRate = measuredEntries / actualSpanDays;
-    return { count: Math.round(dailyRate * requestedDays), isEstimate: true };
-  }
+  // Guests = difference between end and start
+  const guests = Math.max(0, endEntries - startEntries);
   
-  return { count: measuredEntries, isEstimate: false };
+  return { count: guests, isEstimate: false };
 }
 
 /**
  * Calculate total entries for a period (used for avg stay calculation)
  * Returns the RAW entry count without extrapolation.
  * 
- * ALWAYS sums deltas between consecutive points to handle counter resets.
+ * Counter is cumulative all-time, so: entries = latest - earliest
  */
 function calculatePeriodEntries(periodData: SensorData[]): number {
   const withEntries = periodData
-    .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
+    .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   
   if (withEntries.length < 2) return 0;
   
-  // Sum all deltas to handle any resets
-  let totalEntries = 0;
-  for (let i = 1; i < withEntries.length; i++) {
-    const prev = withEntries[i - 1].occupancy!.entries;
-    const curr = withEntries[i].occupancy!.entries;
-    
-    if (curr > prev) {
-      totalEntries += (curr - prev);
-    } else if (curr < prev) {
-      // Counter reset - add current value
-      totalEntries += curr;
-    }
-  }
+  const earliest = withEntries[0];
+  const latest = withEntries[withEntries.length - 1];
   
-  return totalEntries;
+  return Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
 }
 
 /**
