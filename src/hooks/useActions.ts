@@ -2,12 +2,16 @@
  * useActions - Action generation and tracking
  * 
  * Generates contextual recommendations based on current data.
- * Tracks completed actions for feedback.
+ * Uses YOUR venue's historical data for optimal ranges.
+ * NO fabricated impact claims - only shows data we can prove.
  */
 
 import { useState, useMemo, useCallback } from 'react';
 import { Volume2, Sun, Users, Clock, Trophy, Music, LucideIcon } from 'lucide-react';
-import { OPTIMAL_RANGES, OCCUPANCY_THRESHOLDS, TIME_PERIODS } from '../utils/constants';
+import { OCCUPANCY_THRESHOLDS, TIME_PERIODS } from '../utils/constants';
+import { getCurrentTimeSlot } from '../utils/scoring';
+import venueLearningService from '../services/venue-learning.service';
+import authService from '../services/auth.service';
 import type { ActionPriority } from '../utils/constants';
 import type { OccupancyMetrics } from '../types';
 
@@ -19,7 +23,7 @@ export interface PulseAction {
   category: 'sound' | 'light' | 'occupancy' | 'timing' | 'general';
   title: string;
   description: string;
-  impact: string;
+  impact?: string; // Only shown if we have data to back it up
   currentValue?: string;
   targetValue?: string;
   icon: LucideIcon;
@@ -94,6 +98,24 @@ function generateActions(input: ActionInput): PulseAction[] {
   const isPrePeak = currentHour >= TIME_PERIODS.prePeak.start && currentHour < TIME_PERIODS.prePeak.end;
   const isWeekend = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
   
+  // Get venue's historical data for optimal ranges
+  const user = authService.getStoredUser();
+  const venueId = user?.venueId || '';
+  const timeSlot = getCurrentTimeSlot();
+  const bestNight = venueLearningService.getBestNightProfile(venueId, timeSlot);
+  const learnedRanges = venueLearningService.getCurrentOptimalRanges(venueId);
+  
+  // Use YOUR best night data if available, otherwise use learned ranges
+  const optimalSound = bestNight 
+    ? { min: bestNight.avgSound - 5, max: bestNight.avgSound + 5 }
+    : learnedRanges.sound || { min: 65, max: 80 };
+  
+  const optimalLight = bestNight
+    ? { min: Math.max(0, bestNight.avgLight - 50), max: bestNight.avgLight + 50 }
+    : learnedRanges.light || { min: 30, max: 150 };
+  
+  const hasHistoricalData = !!bestNight || learnedRanges.isLearned;
+  
   // Estimate capacity from peak occupancy
   const estimatedCapacity = occupancy?.peakOccupancy 
     ? Math.max(occupancy.peakOccupancy * 1.2, 50) 
@@ -105,8 +127,8 @@ function generateActions(input: ActionInput): PulseAction[] {
   // ============ SOUND ACTIONS ============
   
   if (currentDecibels !== null) {
-    if (currentDecibels > OPTIMAL_RANGES.sound.max) {
-      const diff = currentDecibels - OPTIMAL_RANGES.sound.max;
+    if (currentDecibels > optimalSound.max) {
+      const diff = currentDecibels - optimalSound.max;
       let priority: ActionPriority = diff > 12 ? 'critical' : diff > 8 ? 'high' : 'medium';
       
       // Escalate if venue is packed
@@ -119,35 +141,50 @@ function generateActions(input: ActionInput): PulseAction[] {
         priority,
         category: 'sound',
         title: diff > 10 ? 'Music is Too Loud' : 'Turn Down the Volume',
-        description: `Sound is ${Math.round(diff)} dB above optimal. Guests can't hear each other.`,
-        impact: 'Comfortable conversation = longer stays, higher tabs',
+        description: hasHistoricalData
+          ? `Sound is ${Math.round(diff)} dB above your best nights for this time.`
+          : `Sound is ${Math.round(diff)} dB above optimal range.`,
+        // NO fabricated impact - only show if we have data
+        impact: hasHistoricalData 
+          ? `Your best ${timeSlot}s average ${bestNight?.avgSound || optimalSound.max} dB`
+          : undefined,
         currentValue: `${currentDecibels.toFixed(0)} dB`,
-        targetValue: `${OPTIMAL_RANGES.sound.min}-${OPTIMAL_RANGES.sound.max} dB`,
+        targetValue: `${optimalSound.min}-${optimalSound.max} dB`,
         icon: Volume2,
-        reasoning: [
-          `Above ${OPTIMAL_RANGES.sound.max} dB, conversation becomes difficult.`,
-          'Studies show guests leave 23% sooner when they can\'t talk.',
-          'Your sound has been elevated for the past 30+ minutes.',
+        reasoning: hasHistoricalData ? [
+          `Your best nights at this time average ${bestNight?.avgSound || optimalSound.max} dB.`,
+          `Currently ${Math.round(diff)} dB higher than your proven formula.`,
+        ] : [
+          `Sound is above the comfortable conversation range.`,
+          `Consider turning down ${Math.round(diff)} dB.`,
         ],
-        historicalComparison: 'Last Saturday at this hour: 74 dB, 15% longer dwell time',
+        historicalComparison: bestNight 
+          ? `Your best ${bestNight.dayOfWeek}: ${bestNight.avgSound} dB` 
+          : undefined,
       });
-    } else if (currentDecibels < OPTIMAL_RANGES.sound.min) {
-      const diff = OPTIMAL_RANGES.sound.min - currentDecibels;
+    } else if (currentDecibels < optimalSound.min) {
+      const diff = optimalSound.min - currentDecibels;
       actions.push({
         id: 'sound-low',
         priority: diff > 20 ? 'high' : 'medium',
         category: 'sound',
         title: 'Pump Up the Energy',
-        description: isPeakHours 
-          ? 'Peak hours but energy feels flat. Turn up the music.' 
-          : 'A bit quiet. Background music helps fill the space.',
-        impact: 'The right energy makes guests feel part of something',
+        description: hasHistoricalData
+          ? `Sound is ${Math.round(diff)} dB below your best nights.`
+          : isPeakHours 
+            ? 'Peak hours but energy feels flat.' 
+            : 'A bit quiet for this time.',
+        impact: hasHistoricalData
+          ? `Your best ${timeSlot}s average ${bestNight?.avgSound || optimalSound.min} dB`
+          : undefined,
         currentValue: `${currentDecibels.toFixed(0)} dB`,
-        targetValue: `${OPTIMAL_RANGES.sound.min}-${OPTIMAL_RANGES.sound.max} dB`,
+        targetValue: `${optimalSound.min}-${optimalSound.max} dB`,
         icon: Music,
-        reasoning: [
-          'Venues that feel "dead" have lower return rates.',
-          'Music sets the mood — energy attracts energy.',
+        reasoning: hasHistoricalData ? [
+          `Your best nights at this time average ${bestNight?.avgSound || optimalSound.min} dB.`,
+          `Currently ${Math.round(diff)} dB lower.`,
+        ] : [
+          `Consider turning up the music.`,
         ],
       });
     }
@@ -155,22 +192,29 @@ function generateActions(input: ActionInput): PulseAction[] {
   
   // ============ LIGHT ACTIONS ============
   
-  if (currentLight !== null) {
-    if (currentLight > OPTIMAL_RANGES.light.max && currentHour >= 18) {
+  if (currentLight !== null && currentHour >= 18) {
+    if (currentLight > optimalLight.max) {
+      const diff = currentLight - optimalLight.max;
       actions.push({
         id: 'light-high',
         priority: currentHour >= 20 ? 'high' : 'medium',
         category: 'light',
         title: 'Dim the Lights',
-        description: 'Evening vibes need softer lighting. Too bright kills the mood.',
-        impact: 'Dimmer evening lighting increases average tab by 18%',
+        description: hasHistoricalData
+          ? `Lighting is ${Math.round(diff)} lux brighter than your best nights.`
+          : 'Evening lighting could be dimmer.',
+        // NO fabricated "18% higher tabs" claim
+        impact: hasHistoricalData
+          ? `Your best ${timeSlot}s average ${bestNight?.avgLight || optimalLight.max} lux`
+          : undefined,
         currentValue: `${currentLight.toFixed(0)} lux`,
-        targetValue: `${OPTIMAL_RANGES.light.min}-${OPTIMAL_RANGES.light.max} lux`,
+        targetValue: `${optimalLight.min}-${optimalLight.max} lux`,
         icon: Sun,
-        reasoning: [
-          'Bright lights signal "daytime" — subconsciously tells guests to leave.',
-          'Softer lighting encourages relaxation and longer stays.',
-          'Average tabs are 18% higher with proper ambient lighting.',
+        reasoning: hasHistoricalData ? [
+          `Your best nights at this time average ${bestNight?.avgLight || optimalLight.max} lux.`,
+          `Currently ${Math.round(diff)} lux brighter.`,
+        ] : [
+          `Consider dimming the lights for evening ambiance.`,
         ],
       });
     }
@@ -185,12 +229,14 @@ function generateActions(input: ActionInput): PulseAction[] {
         priority: 'medium',
         category: 'occupancy',
         title: 'Slow for a Weekend',
-        description: `Only ${Math.round(occupancyPercent)}% capacity. Consider a quick social post.`,
-        impact: 'A promo or story can shift momentum fast',
+        description: `Running at ${Math.round(occupancyPercent)}% capacity.`,
+        // No fabricated claims
+        impact: bestNight 
+          ? `Your best ${bestNight.dayOfWeek} had ${bestNight.peakOccupancy} at peak`
+          : undefined,
         icon: Users,
         reasoning: [
-          `You're running at ${Math.round(occupancyPercent)}% — well below typical for this time.`,
-          'Weekend nights usually pick up, but a nudge can accelerate it.',
+          `Currently at ${Math.round(occupancyPercent)}% capacity.`,
         ],
       });
     }
@@ -201,12 +247,11 @@ function generateActions(input: ActionInput): PulseAction[] {
         priority: 'high',
         category: 'occupancy',
         title: 'House is Packed!',
-        description: `${Math.round(occupancyPercent)}% capacity. Keep service fast, don't let the wait kill vibes.`,
-        impact: 'Fast service = higher tips, return customers',
+        description: `${Math.round(occupancyPercent)}% capacity. Keep service fast.`,
+        // No fabricated claims
         icon: Users,
         reasoning: [
-          'Wait times over 10 min drastically hurt satisfaction.',
-          'This is when you make your money — maximize throughput.',
+          `Great turnout! Keep the momentum going.`,
         ],
       });
     }
@@ -220,13 +265,12 @@ function generateActions(input: ActionInput): PulseAction[] {
       priority: 'high',
       category: 'timing',
       title: 'Game Starting Soon',
-      description: 'Expect a rush 30 min before kickoff. Check TVs, stock up.',
-      impact: 'Game crowds order 2x faster — be ready',
+      description: 'Expect a rush before kickoff. Check TVs, stock up.',
+      // No fabricated "2x faster" claim
       icon: Trophy,
       reasoning: [
-        'Game-day traffic spikes 30 min before start.',
-        'Make sure all TVs are on the right channels.',
-        'Pre-stock the bar — you won\'t have time during the rush.',
+        'Game-day traffic typically spikes before start.',
+        'Make sure TVs are on the right channels.',
       ],
     });
   }
@@ -238,7 +282,6 @@ function generateActions(input: ActionInput): PulseAction[] {
       category: 'timing',
       title: 'Pre-Peak Prep Time',
       description: 'Rush hour approaching. Make sure you\'re set.',
-      impact: 'Prepared venues handle rushes smoother',
       icon: Clock,
     });
   }
