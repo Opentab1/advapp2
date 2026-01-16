@@ -213,7 +213,9 @@ export function SongLog() {
                 <span>Real Data</span>
               </div>
             </div>
-            <p className="text-xs text-warm-400 mb-4">Songs where people stayed or more came in</p>
+            <p className="text-xs text-warm-400 mb-4" title="Retention = crowd at song end ÷ crowd at song start × 100. Above 100% means crowd grew.">
+              Songs where crowd stayed or grew (based on sensor data)
+            </p>
 
             <div className="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar">
               {analyticsLoading && !highestPerforming.length ? (
@@ -588,7 +590,7 @@ export function SongLog() {
               <div className="p-4 rounded-lg bg-warm-800">
                 <div className="text-2xl font-bold text-primary">{totalSongs.toLocaleString()}</div>
                 <div className="text-sm text-warm-400">Songs Detected</div>
-                <div className="text-xs text-warm-500 mt-1">All-time</div>
+                <div className="text-xs text-warm-500 mt-1">All available</div>
               </div>
               <div className="p-4 rounded-lg bg-warm-800">
                 <div className="text-2xl font-bold text-purple-400">{genreStats.length}</div>

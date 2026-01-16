@@ -196,7 +196,7 @@ class SongLogService {
   private readonly MAX_SONGS = 500;
   private dynamoDBSongs: SongLogEntry[] = [];
   private lastDynamoDBFetch: number = 0;
-  private readonly DYNAMODB_CACHE_TTL = 60000; // 1 minute cache
+  private readonly DYNAMODB_CACHE_TTL = 30000; // 30 second cache for fresher data
   
   // Cache for different time ranges
   private analyticsCache: Map<AnalyticsTimeRange, {
@@ -396,7 +396,7 @@ class SongLogService {
         
         // Fallback: Try to get songs from hourly aggregated data
         try {
-          const hourlyData = await dynamoDBService.getHourlySensorData(venueId, '90d');
+          const hourlyData = await dynamoDBService.getHourlySensorData(venueId, '365d');
           if (hourlyData.data && hourlyData.data.length > 0) {
             // Extract songs from hourly data (topSong/artist fields)
             const songsFromHourly = this.extractSongsFromSensorData(hourlyData.data);
@@ -442,23 +442,27 @@ class SongLogService {
   /**
    * Extract unique songs from sensor data readings
    * Deduplicates consecutive plays of the same song
+   * A new song entry is created each time the song changes
    */
   private extractSongsFromSensorData(sensorData: SensorData[]): SongLogEntry[] {
     const songs: SongLogEntry[] = [];
     let lastSongKey = '';
+    let readingsWithSongs = 0;
     
-    // Sort by timestamp ascending
+    // Sort by timestamp ascending to properly detect song changes
     const sorted = [...sensorData].sort((a, b) => 
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     
     for (const reading of sorted) {
       if (!reading.currentSong) continue;
+      readingsWithSongs++;
       
       // Create a unique key for this song
       const songKey = `${reading.currentSong}|${reading.artist || 'Unknown'}`;
       
       // Skip if it's the same song as the last one (still playing)
+      // This correctly counts each unique play, not each sensor reading
       if (songKey === lastSongKey) continue;
       
       lastSongKey = songKey;
@@ -473,6 +477,8 @@ class SongLogService {
         genre: undefined
       });
     }
+    
+    console.log(`🎵 Song extraction: ${readingsWithSongs} readings with songs → ${songs.length} unique song plays`);
     
     // Return in reverse chronological order (newest first)
     return songs.reverse();
@@ -499,8 +505,8 @@ class SongLogService {
       return limit ? entries.slice(0, limit) : entries;
     }
     
-    // Fetch from DynamoDB
-    const dynamoSongs = await this.fetchSongsFromDynamoDB(90);
+    // Fetch from DynamoDB - get ALL available data (365 days)
+    const dynamoSongs = await this.fetchSongsFromDynamoDB(365);
     
     // Load localStorage songs
     this.loadSongs();
