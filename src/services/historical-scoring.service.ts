@@ -18,6 +18,7 @@
  */
 
 import dynamoDBService from './dynamodb.service';
+import venueSettingsService from './venue-settings.service';
 
 // ============ TYPES ============
 
@@ -283,8 +284,9 @@ class HistoricalScoringService {
           .map(([genre]) => genre);
         
         // Calculate best score: occupancy (60%) + retention (40%)
-        // Normalize occupancy to 0-100 scale (assume 200 is max)
-        const occupancyScore = Math.min(100, (peakOccupancy / 200) * 100);
+        // Normalize occupancy to 0-100 scale using venue's configured capacity
+        const venueCapacity = venueSettingsService.getCapacity(venueId) || 200;
+        const occupancyScore = Math.min(100, (peakOccupancy / venueCapacity) * 100);
         const score = (occupancyScore * 0.6) + (retentionRate * 0.4);
         
         analyses.push({

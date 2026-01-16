@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Key, MapPin, Check, Building2,
-  User, Info, CloudSun, Sliders
+  User, Info, CloudSun, Sliders, Users, Save
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
@@ -17,15 +17,39 @@ export function Settings() {
   const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'calibration' | 'about'>('account');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [savedAddress, setSavedAddress] = useState<VenueAddress | null>(null);
+  const [capacity, setCapacity] = useState<number | ''>('');
+  const [capacitySaving, setCapacitySaving] = useState(false);
+  const [capacitySaved, setCapacitySaved] = useState(false);
   const user = authService.getStoredUser();
 
   useEffect(() => {
-    // Load saved address
+    // Load saved address and capacity
     if (user?.venueId) {
       const address = venueSettingsService.getAddress(user.venueId);
       setSavedAddress(address);
+      
+      const savedCapacity = venueSettingsService.getCapacity(user.venueId);
+      if (savedCapacity) {
+        setCapacity(savedCapacity);
+      }
     }
   }, [user?.venueId]);
+
+  const handleSaveCapacity = async () => {
+    if (!user?.venueId || !capacity) return;
+    
+    setCapacitySaving(true);
+    try {
+      await venueSettingsService.saveCapacity(user.venueId, Number(capacity));
+      haptic('success');
+      setCapacitySaved(true);
+      setTimeout(() => setCapacitySaved(false), 3000);
+    } catch (error) {
+      console.error('Failed to save capacity:', error);
+    } finally {
+      setCapacitySaving(false);
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -165,6 +189,66 @@ export function Settings() {
                     </div>
                     <p className="text-sm text-green-300">
                       {savedAddress.street}, {savedAddress.city}, {savedAddress.state} {savedAddress.zipCode}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Venue Capacity */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <Users className="w-5 h-5 text-green-400" />
+                  <h3 className="text-xl font-semibold text-white">Venue Capacity</h3>
+                </div>
+                <p className="text-sm text-warm-400 mb-6">
+                  Set your venue's maximum capacity. This is used to calculate accurate occupancy percentages 
+                  and compare to your best historical performance.
+                </p>
+                
+                {user?.venueId ? (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-warm-300 mb-2">Maximum Capacity (people)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10000"
+                        value={capacity}
+                        onChange={(e) => setCapacity(e.target.value ? Number(e.target.value) : '')}
+                        placeholder="e.g., 200"
+                        className="w-full px-4 py-3 bg-warm-900 border border-warm-700 rounded-lg text-white focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                      />
+                      <p className="text-xs text-warm-500 mt-2">
+                        This is the maximum number of people your venue can legally or comfortably hold.
+                      </p>
+                    </div>
+                    
+                    <button
+                      onClick={handleSaveCapacity}
+                      disabled={!capacity || capacitySaving}
+                      className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-all ${
+                        capacitySaved 
+                          ? 'bg-green-500/20 border border-green-500/50 text-green-400'
+                          : 'bg-primary/20 border border-primary/50 text-primary hover:bg-primary/30'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {capacitySaved ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          Saved!
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-4 h-4" />
+                          {capacitySaving ? 'Saving...' : 'Save Capacity'}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                    <p className="text-sm text-yellow-300">
+                      Venue ID not configured. Please contact your administrator.
                     </p>
                   </div>
                 )}

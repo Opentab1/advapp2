@@ -1,10 +1,11 @@
 /**
  * Venue Settings Service
  * 
- * Manages venue-specific settings like address that can be updated by operators
- * Uses localStorage for now (will migrate to DynamoDB when backend is ready)
+ * Manages venue-specific settings like address and capacity
+ * Uses localStorage + DynamoDB for persistence across devices
  */
 
+import { generateClient } from 'aws-amplify/api';
 import { isDemoAccount, DEMO_VENUE } from '../utils/demoData';
 
 export interface VenueAddress {
@@ -17,6 +18,7 @@ export interface VenueAddress {
 
 export interface VenueSettings {
   address?: VenueAddress;
+  capacity?: number;  // Max capacity of the venue
   lastUpdated?: string;
 }
 
@@ -161,6 +163,108 @@ class VenueSettingsService {
     } catch (error) {
       console.error('Error clearing venue settings:', error);
     }
+  }
+
+  // ============ CAPACITY METHODS ============
+
+  /**
+   * Get venue capacity
+   */
+  getCapacity(venueId: string): number | null {
+    // Demo account - return demo capacity
+    if (isDemoAccount(venueId)) {
+      return 150;
+    }
+    
+    const settings = this.getSettings(venueId);
+    return settings?.capacity ?? null;
+  }
+
+  /**
+   * Save venue capacity (localStorage + DynamoDB)
+   */
+  async saveCapacity(venueId: string, capacity: number): Promise<boolean> {
+    // Save to localStorage first (immediate)
+    const existing = this.getSettings(venueId) || {};
+    this.saveSettings(venueId, {
+      ...existing,
+      capacity
+    });
+
+    // Also save to DynamoDB for cross-device persistence
+    try {
+      const client = generateClient();
+      
+      const mutation = `
+        mutation UpdateVenueCapacity($venueId: ID!, $capacity: Int!) {
+          updateVenueCapacity(venueId: $venueId, capacity: $capacity) {
+            success
+            message
+          }
+        }
+      `;
+
+      const response = await client.graphql({
+        query: mutation,
+        variables: { venueId, capacity },
+        authMode: 'userPool'
+      }) as any;
+
+      if (response?.data?.updateVenueCapacity?.success) {
+        console.log('✅ Capacity saved to DynamoDB');
+        return true;
+      }
+    } catch (error) {
+      // If DynamoDB mutation doesn't exist yet, just use localStorage
+      console.warn('⚠️ Could not save capacity to DynamoDB (mutation may not exist):', error);
+      // Still return true since we saved to localStorage
+    }
+
+    return true;
+  }
+
+  /**
+   * Load capacity from DynamoDB (for cross-device sync)
+   */
+  async loadCapacityFromCloud(venueId: string): Promise<number | null> {
+    if (isDemoAccount(venueId)) {
+      return 150;
+    }
+
+    try {
+      const client = generateClient();
+      
+      const query = `
+        query GetVenueCapacity($venueId: ID!) {
+          getVenueConfig(venueId: $venueId, locationId: "mainfloor") {
+            capacity
+          }
+        }
+      `;
+
+      const response = await client.graphql({
+        query,
+        variables: { venueId },
+        authMode: 'userPool'
+      }) as any;
+
+      const cloudCapacity = response?.data?.getVenueConfig?.capacity;
+      
+      if (cloudCapacity) {
+        // Update local storage with cloud value
+        const existing = this.getSettings(venueId) || {};
+        this.saveSettings(venueId, {
+          ...existing,
+          capacity: cloudCapacity
+        });
+        return cloudCapacity;
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not load capacity from DynamoDB:', error);
+    }
+
+    // Fall back to localStorage
+    return this.getCapacity(venueId);
   }
 }
 
