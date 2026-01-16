@@ -14,7 +14,7 @@
  * - All supporting metrics
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getDwellTimeScore, formatDwellTime, getReputationScore } from '../utils/scoring';
 import { POLLING_INTERVALS, DATA_FRESHNESS } from '../utils/constants';
 import apiService from '../services/api.service';
@@ -22,7 +22,7 @@ import authService from '../services/auth.service';
 import googleReviewsService, { GoogleReviewsData } from '../services/google-reviews.service';
 import venueSettingsService from '../services/venue-settings.service';
 import weatherService, { WeatherData } from '../services/weather.service';
-import historicalScoringService, { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
+import { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
 import { isDemoAccount } from '../utils/demoData';
 import type { SensorData, OccupancyMetrics } from '../types';
 
@@ -376,83 +376,106 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     return 100;
   }, [effectiveOccupancy.peakOccupancy]);
 
-  // Calculate Pulse Score - 100% historically based
-  // Compares current conditions to YOUR best block for this day/time
-  const [historicalScore, setHistoricalScore] = useState<HistoricalScoreResult | null>(null);
-  const scoreCalculationRef = useRef<number>(0);
-  
-  // Store current occupancy in a ref to avoid stale closure issues
-  const currentOccupancyRef = useRef(effectiveOccupancy.current);
-  currentOccupancyRef.current = effectiveOccupancy.current;
-  
-  useEffect(() => {
-    const calculationId = ++scoreCalculationRef.current;
+  // Calculate Pulse Score using simple scoring (temporarily disabled historical scoring)
+  // This provides a working score while we fix the historical scoring system
+  const historicalScore = useMemo((): HistoricalScoreResult | null => {
+    // Generate a working score based on current data
+    // This is a simplified version that doesn't require async historical data
     
-    async function calculateHistoricalScore() {
-      if (!venueId) return;
-      
-      // For demo account, generate a good-looking score
-      if (isDemoAccount(venueId)) {
-        const demoScore: HistoricalScoreResult = {
-          score: 82,
-          isLearning: false,
-          confidence: 100,
-          weeksOfData: 12,
-          bestBlock: {
-            date: '2025-12-14',
-            day: 'saturday' as const,
-            block: 'prime' as const,
-            avgOccupancy: 95,
-            peakOccupancy: 127,
-            avgSound: 76,
-            avgLight: 85,
-            totalEntries: 245,
-            totalExits: 198,
-            retentionRate: 81,
-            topGenres: ['hip-hop', 'pop', 'r&b'],
-            songCount: 48,
-            bestScore: 78,
-            dataPoints: 36,
-          },
-          currentVsBest: {
-            occupancyMatch: 85,
-            soundMatch: 88,
-            lightMatch: 79,
-            genreMatch: 90,
-          },
-          status: 'good',
-          statusLabel: 'Close to Your Best',
-          currentBlock: { day: 'saturday' as const, block: 'prime' as const },
-        };
-        setHistoricalScore(demoScore);
-        return;
-      }
-      
-      try {
-        const result = await historicalScoringService.calculateScore(venueId, {
-          occupancy: currentOccupancyRef.current,
-          sound: sensorData?.decibels ?? null,
-          light: sensorData?.light ?? null,
-          currentSong: sensorData?.currentSong ?? null,
-          artist: sensorData?.artist ?? null,
-        });
-        
-        // Validate result has required properties before using
-        if (result && result.currentBlock && result.currentBlock.day && result.currentBlock.block) {
-          // Only update if this is still the latest calculation
-          if (calculationId === scoreCalculationRef.current) {
-            setHistoricalScore(result);
-          }
-        } else {
-          console.warn('Invalid historical score result:', result);
-        }
-      } catch (error) {
-        console.error('Error calculating historical score:', error);
+    const now = new Date();
+    const dayNames: Array<'sunday' | 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday'> = 
+      ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const day = dayNames[now.getDay()];
+    
+    // Determine time block
+    const hour = now.getHours();
+    let block: 'morning' | 'late_morning' | 'lunch' | 'afternoon' | 'evening' | 'prime' | 'late_night' | 'after_hours';
+    if (hour >= 6 && hour < 9) block = 'morning';
+    else if (hour >= 9 && hour < 12) block = 'late_morning';
+    else if (hour >= 12 && hour < 15) block = 'lunch';
+    else if (hour >= 15 && hour < 18) block = 'afternoon';
+    else if (hour >= 18 && hour < 21) block = 'evening';
+    else if (hour >= 21 || hour < 0) block = 'prime';
+    else if (hour >= 0 && hour < 3) block = 'late_night';
+    else block = 'after_hours';
+    
+    // Calculate a score based on available sensor data
+    let score = 50; // Base score
+    let soundMatch = 50;
+    let lightMatch = 50;
+    let occupancyMatch = 50;
+    
+    // Adjust based on sensor data
+    if (sensorData?.decibels !== undefined && sensorData.decibels !== null) {
+      // Good sound range: 65-85 dB for bars
+      if (sensorData.decibels >= 65 && sensorData.decibels <= 85) {
+        soundMatch = 90;
+      } else if (sensorData.decibels >= 55 && sensorData.decibels <= 95) {
+        soundMatch = 70;
       }
     }
     
-    calculateHistoricalScore();
-  }, [venueId, sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist]);
+    if (sensorData?.light !== undefined && sensorData.light !== null) {
+      // Good light range varies by time
+      if (block === 'prime' || block === 'late_night') {
+        // Dimmer is better at night
+        if (sensorData.light >= 20 && sensorData.light <= 150) lightMatch = 90;
+        else if (sensorData.light <= 300) lightMatch = 70;
+      } else {
+        // Brighter during day
+        if (sensorData.light >= 100 && sensorData.light <= 500) lightMatch = 90;
+      }
+    }
+    
+    // Occupancy score based on capacity
+    const capacity = venueSettingsService.getCapacity(venueId) || 150;
+    const currentOcc = effectiveOccupancy.current;
+    if (currentOcc > 0) {
+      const fillRate = currentOcc / capacity;
+      if (fillRate >= 0.6 && fillRate <= 0.9) occupancyMatch = 100;
+      else if (fillRate >= 0.4 && fillRate <= 1.0) occupancyMatch = 80;
+      else if (fillRate >= 0.2) occupancyMatch = 60;
+    }
+    
+    // Calculate final score (weighted)
+    score = Math.round(
+      occupancyMatch * 0.40 +
+      soundMatch * 0.25 +
+      lightMatch * 0.20 +
+      50 * 0.15 // Music match - neutral since we can't easily score this
+    );
+    
+    // Determine status
+    let status: 'optimal' | 'good' | 'needs_work' = 'good';
+    let statusLabel = 'Good Conditions';
+    if (score >= 85) {
+      status = 'optimal';
+      statusLabel = 'Great Night! 🔥';
+    } else if (score >= 60) {
+      status = 'good';
+      statusLabel = 'Good Conditions';
+    } else {
+      status = 'needs_work';
+      statusLabel = 'Room to Improve';
+    }
+    
+    return {
+      score,
+      isLearning: true, // Show as learning since we're not using full historical
+      confidence: 50,
+      weeksOfData: 0,
+      bestBlock: null, // No historical best to compare
+      currentVsBest: {
+        occupancyMatch,
+        soundMatch,
+        lightMatch,
+        genreMatch: 50,
+      },
+      status,
+      statusLabel,
+      currentBlock: { day, block },
+    };
+  }, [venueId, sensorData?.decibels, sensorData?.light, effectiveOccupancy]);
   
   // Build pulseScoreResult from historical score for backward compatibility
   const pulseScoreResult = useMemo(() => {
