@@ -29,36 +29,21 @@ import type { TabId } from './components/common/TabNav';
 
 // Services & Hooks
 import authService from './services/auth.service';
-import { usePulseScore, useWeather } from './stores/pulseStore';
+import { usePulseScore, useWeather, useDataConnection } from './stores/pulseStore';
 
 // ============ PROTECTED DASHBOARD ============
 
 function ProtectedDashboard() {
   const [activeTab, setActiveTab] = useState<TabId>('live');
   
-  // Get shared pulse score and weather for header display
+  // Get shared pulse score, weather, and connection status for header display
   const pulseScore = usePulseScore();
   const weather = useWeather();
-  
-  // Simple connection check (could be enhanced)
-  const [isConnected, setIsConnected] = useState(true);
+  const dataConnection = useDataConnection();
   
   // Set browser tab title
   useEffect(() => {
     document.title = 'Advizia Pulse';
-  }, []);
-  
-  useEffect(() => {
-    const handleOnline = () => setIsConnected(true);
-    const handleOffline = () => setIsConnected(false);
-    
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
   }, []);
   
   const handleLogout = async () => {
@@ -92,7 +77,8 @@ function ProtectedDashboard() {
   return (
     <DashboardLayout
       venueName="Pulse"
-      isConnected={isConnected}
+      isConnected={dataConnection.isConnected}
+      dataAgeSeconds={dataConnection.dataAgeSeconds}
       pulseScore={pulseScore}
       weather={weather}
       activeTab={activeTab}

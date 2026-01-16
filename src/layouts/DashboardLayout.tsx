@@ -16,6 +16,7 @@ interface DashboardLayoutProps {
   children: ReactNode;
   venueName: string;
   isConnected?: boolean;
+  dataAgeSeconds?: number;
   pulseScore?: number | null;
   weather?: { temperature: number; icon: string } | null;
   activeTab: TabId;
@@ -27,6 +28,7 @@ export function DashboardLayout({
   children,
   venueName, // kept for prop compatibility but unused in Header
   isConnected = true,
+  dataAgeSeconds,
   pulseScore, // kept for prop compatibility but unused in Header
   weather, // kept for prop compatibility but unused in Header
   activeTab,
@@ -38,6 +40,7 @@ export function DashboardLayout({
       {/* Minimal Header */}
       <Header 
         isConnected={isConnected}
+        dataAgeSeconds={dataAgeSeconds}
         onLogout={onLogout}
       />
       

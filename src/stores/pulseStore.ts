@@ -1,7 +1,7 @@
 /**
- * Pulse Store - Simple shared state for Pulse Score and Weather
+ * Pulse Store - Simple shared state for Pulse Score, Weather, and Data Connection
  * 
- * Allows the Pulse page to share the current score and weather with the Header.
+ * Allows the Pulse page to share state with the Header.
  */
 
 import { useState, useEffect } from 'react';
@@ -11,14 +11,23 @@ export interface WeatherData {
   icon: string;
 }
 
+export interface DataConnectionStatus {
+  isConnected: boolean;
+  lastUpdated: Date | null;
+  dataAgeSeconds: number;
+}
+
 type ScoreListener = (score: number | null) => void;
 type WeatherListener = (weather: WeatherData | null) => void;
+type ConnectionListener = (status: DataConnectionStatus) => void;
 
 class PulseStore {
   private score: number | null = null;
   private weather: WeatherData | null = null;
+  private connectionStatus: DataConnectionStatus = { isConnected: false, lastUpdated: null, dataAgeSeconds: Infinity };
   private scoreListeners: Set<ScoreListener> = new Set();
   private weatherListeners: Set<WeatherListener> = new Set();
+  private connectionListeners: Set<ConnectionListener> = new Set();
   
   getScore(): number | null {
     return this.score;
@@ -55,6 +64,25 @@ class PulseStore {
     this.weatherListeners.add(listener);
     return () => this.weatherListeners.delete(listener);
   }
+  
+  getConnectionStatus(): DataConnectionStatus {
+    return this.connectionStatus;
+  }
+  
+  setConnectionStatus(status: DataConnectionStatus): void {
+    if (
+      this.connectionStatus.isConnected !== status.isConnected ||
+      this.connectionStatus.dataAgeSeconds !== status.dataAgeSeconds
+    ) {
+      this.connectionStatus = status;
+      this.connectionListeners.forEach(listener => listener(status));
+    }
+  }
+  
+  subscribeConnection(listener: ConnectionListener): () => void {
+    this.connectionListeners.add(listener);
+    return () => this.connectionListeners.delete(listener);
+  }
 }
 
 export const pulseStore = new PulseStore();
@@ -79,4 +107,15 @@ export function useWeather(): WeatherData | null {
   }, []);
   
   return weather;
+}
+
+// React hook for data connection status
+export function useDataConnection(): DataConnectionStatus {
+  const [status, setStatus] = useState<DataConnectionStatus>(pulseStore.getConnectionStatus());
+  
+  useEffect(() => {
+    return pulseStore.subscribeConnection(setStatus);
+  }, []);
+  
+  return status;
 }

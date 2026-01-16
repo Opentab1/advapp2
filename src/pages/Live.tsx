@@ -128,7 +128,7 @@ export function Live() {
     loadExternalData();
   }, []);
   
-  // Share pulse score and weather with header via store
+  // Share pulse score, weather, and connection status with header via store
   useEffect(() => {
     pulseStore.setScore(pulseData.pulseScore);
   }, [pulseData.pulseScore]);
@@ -141,6 +141,14 @@ export function Live() {
       });
     }
   }, [pulseData.weather]);
+  
+  useEffect(() => {
+    pulseStore.setConnectionStatus({
+      isConnected: pulseData.isConnected,
+      lastUpdated: pulseData.lastUpdated,
+      dataAgeSeconds: pulseData.dataAgeSeconds,
+    });
+  }, [pulseData.isConnected, pulseData.lastUpdated, pulseData.dataAgeSeconds]);
   
   // Record for staff tracking
   useEffect(() => {
