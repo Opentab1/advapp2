@@ -222,15 +222,16 @@ export function AuditLog() {
         {!loading && auditEntries.length === 0 && (
           <div className="glass-card p-12 text-center">
             <FileDown className="w-16 h-16 mx-auto mb-4 text-gray-600" />
-            <h3 className="text-xl font-bold text-white mb-2">No Audit Entries</h3>
+            <h3 className="text-xl font-bold text-white mb-2">No Audit Entries Found</h3>
             <p className="text-gray-400 mb-4">
-              Audit entries will appear once the getAuditLog resolver is deployed
+              No entries match the current filters, or no admin actions have been recorded yet.
             </p>
-            <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg max-w-md mx-auto">
+            <div className="p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-lg max-w-md mx-auto">
               <div className="flex items-start gap-2">
-                <Settings className="w-5 h-5 text-yellow-400 mt-0.5" />
-                <p className="text-sm text-yellow-300 text-left">
-                  Audit logging requires a DynamoDB table <code className="text-yellow-400">AdminAuditLog</code> and all admin mutations to log their actions.
+                <Settings className="w-5 h-5 text-cyan-400 mt-0.5" />
+                <p className="text-sm text-cyan-300 text-left">
+                  Audit entries are created when you create venues, add users, or modify settings. 
+                  Try expanding the date range or clearing filters.
                 </p>
               </div>
             </div>

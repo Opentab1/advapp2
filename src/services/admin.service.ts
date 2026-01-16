@@ -844,8 +844,8 @@ class AdminService {
 
     // 3. Generate synthetic entries from existing venue/user data
     try {
-      const venues = await this.getVenues();
-      const users = await this.getUsers();
+      const venues = await this.listVenues();
+      const users = await this.listUsers();
       
       // Create "venue created" entries from venue data
       for (const venue of venues) {
