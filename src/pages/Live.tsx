@@ -157,11 +157,9 @@ export function Live() {
     }
   }, [pulseData.pulseScore, pulseData.currentOccupancy]);
   
-  // Calculate occupancy score (for ring display)
-  const estimatedCapacity = pulseData.peakOccupancy 
-    ? Math.max(pulseData.peakOccupancy * 1.2, 50) 
-    : 100;
-  const occupancyScore = Math.min(100, Math.round((pulseData.currentOccupancy / estimatedCapacity) * 100));
+  // Crowd ring now shows retention rate (% of tonight's guests still here)
+  // This is 100% accurate from raw entry/exit data
+  const crowdScore = pulseData.retentionMetrics.retentionRate;
   
   // ============ HANDLERS ============
   
@@ -260,7 +258,7 @@ export function Live() {
           reputationScore={pulseData.reputationScore}
           onReputationTap={() => setActiveModal('reputation')}
           currentOccupancy={pulseData.currentOccupancy}
-          occupancyScore={occupancyScore}
+          occupancyScore={crowdScore}
           onCrowdTap={() => setActiveModal('crowd')}
         />
       </motion.div>

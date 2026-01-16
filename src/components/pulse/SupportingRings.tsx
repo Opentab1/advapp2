@@ -83,8 +83,8 @@ export function SupportingRings({
     {
       id: 'crowd',
       score: occupancyScore,
-      label: 'Crowd',
-      value: String(currentOccupancy),
+      label: 'Still Here',
+      value: `${occupancyScore}%`,
       color: RING_COLORS.crowd,
       onClick: onCrowdTap,
     },
