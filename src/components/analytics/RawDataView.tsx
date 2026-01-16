@@ -12,7 +12,7 @@
 import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  X, Download, Zap, Volume2, Sun, Users, Thermometer 
+  X, Download, Zap, Volume2, Sun, Users 
 } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 import { AreaChart } from '../common/MiniChart';
@@ -30,7 +30,8 @@ interface RawDataViewProps {
 
 // Only include metrics we can accurately display from real sensor data
 // Dwell removed - cannot calculate per-point dwell time (it's an aggregate metric)
-type DisplayableMetric = 'score' | 'sound' | 'light' | 'crowd' | 'temp';
+// Temp removed - not part of Pulse Score calculation
+type DisplayableMetric = 'score' | 'sound' | 'light' | 'crowd';
 
 const METRIC_CONFIG: Record<DisplayableMetric, { 
   icon: typeof Volume2; 
@@ -66,13 +67,6 @@ const METRIC_CONFIG: Record<DisplayableMetric, {
     color: '#00F19F',
     unit: '',
     getValue: (d) => d.occupancy,
-  },
-  temp: { 
-    icon: Thermometer, 
-    label: 'Temp', 
-    color: '#FF0026',
-    unit: '°F',
-    getValue: (d) => d.temperature,
   },
 };
 

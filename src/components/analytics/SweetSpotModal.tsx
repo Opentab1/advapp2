@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, Volume2, Sun, Users, Thermometer } from 'lucide-react';
+import { X, Volume2, Sun, Users } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 import type { SweetSpotData, SweetSpotVariable } from '../../types/insights';
 
@@ -22,7 +22,6 @@ const VARIABLE_CONFIG: Record<SweetSpotVariable, { icon: typeof Volume2; label: 
   sound: { icon: Volume2, label: 'Sound', color: 'text-strain' },
   light: { icon: Sun, label: 'Light', color: 'text-recovery-medium' },
   crowd: { icon: Users, label: 'Occupancy', color: 'text-teal' },
-  temp: { icon: Thermometer, label: 'Temp', color: 'text-recovery-low' },
 };
 
 export function SweetSpotModal({

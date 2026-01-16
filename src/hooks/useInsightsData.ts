@@ -129,7 +129,6 @@ export function useInsightsData(timeRange: InsightsTimeRange): InsightsData {
       sound: processSweetSpot(rawSensorData, 'sound'),
       light: processSweetSpot(rawSensorData, 'light'),
       crowd: processSweetSpot(rawSensorData, 'crowd'),
-      temp: processSweetSpot(rawSensorData, 'temp'),
     };
   }, [rawSensorData]);
   
@@ -599,12 +598,6 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
       { min: 100, max: 150, label: '100-150 in venue' },
       { min: 150, max: 9999, label: '150+ in venue' },
     ],
-    temp: [
-      { min: 0, max: 65, label: '< 65°F' },
-      { min: 65, max: 70, label: '65-70°F' },
-      { min: 70, max: 75, label: '70-75°F' },
-      { min: 75, max: 999, label: '75+°F' },
-    ],
   };
   
   const ranges = bucketRanges[variable];
@@ -620,7 +613,6 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
       case 'sound': value = d.decibels || 0; break;
       case 'light': value = d.light || 0; break;
       case 'crowd': value = d.occupancy?.current || 0; break; // Use actual guest count
-      case 'temp': value = d.indoorTemp || 70; break;
       default: value = 0;
     }
     
@@ -883,7 +875,7 @@ function processHourlyData(data: SensorData[]): HourlyData[] {
 }
 
 function processFactorScores(data: SensorData[]): FactorScore[] {
-  let soundSum = 0, lightSum = 0, tempSum = 0;
+  let soundSum = 0, lightSum = 0, crowdSum = 0;
   let count = 0;
   
   data.forEach(d => {
@@ -891,7 +883,7 @@ function processFactorScores(data: SensorData[]): FactorScore[] {
     const result = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     soundSum += result.factors.sound.score;
     lightSum += result.factors.light.score;
-    tempSum += result.factors.crowd.score;
+    crowdSum += result.factors.crowd.score;
     count++;
   });
   
@@ -903,12 +895,11 @@ function processFactorScores(data: SensorData[]): FactorScore[] {
     return 'Needs adjustment';
   };
   
-  // Only return factors we can accurately calculate from real sensor data
-  // Crowd score removed - cannot calculate meaningful score without venue capacity data
+  // Return factors that match our Pulse Score calculation
   return [
     { factor: 'sound', score: Math.round(soundSum / count), label: getLabel(soundSum / count) },
     { factor: 'light', score: Math.round(lightSum / count), label: getLabel(lightSum / count) },
-    { factor: 'temp', score: Math.round(tempSum / count), label: getLabel(tempSum / count) },
+    { factor: 'crowd', score: Math.round(crowdSum / count), label: getLabel(crowdSum / count) },
   ];
 }
 

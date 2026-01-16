@@ -31,7 +31,7 @@ export interface HourlyData {
 }
 
 export interface FactorScore {
-  factor: 'sound' | 'light' | 'crowd' | 'temp';
+  factor: 'sound' | 'light' | 'crowd';
   score: number;
   label: string;                   // "In range all night"
 }
@@ -46,7 +46,7 @@ export interface SweetSpotBucket {
 }
 
 export interface SweetSpotData {
-  variable: 'sound' | 'light' | 'crowd' | 'temp';
+  variable: 'sound' | 'light' | 'crowd';
   buckets: SweetSpotBucket[];
   optimalRange: string;            // "75-82 dB"
   optimalScore: number;            // Avg score in optimal range (real)
@@ -127,7 +127,7 @@ export interface InsightsData {
   // Level 1 data
   summary: InsightsSummary | null;
   sweetSpot: SweetSpotData | null;
-  allSweetSpots: Record<'sound' | 'light' | 'crowd' | 'temp', SweetSpotData> | null;
+  allSweetSpots: Record<'sound' | 'light' | 'crowd', SweetSpotData> | null;
   trend: TrendData | null;
   
   // Level 2 data
@@ -145,6 +145,6 @@ export interface InsightsData {
 
 // ============ HELPER TYPES ============
 
-export type MetricType = 'score' | 'sound' | 'light' | 'crowd' | 'dwell' | 'temp';
+export type MetricType = 'score' | 'sound' | 'light' | 'crowd' | 'dwell';
 
-export type SweetSpotVariable = 'sound' | 'light' | 'crowd' | 'temp';
+export type SweetSpotVariable = 'sound' | 'light' | 'crowd';
