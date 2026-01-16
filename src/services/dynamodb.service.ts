@@ -1189,48 +1189,116 @@ class DynamoDBService {
   }
 
   /**
+   * Get the most recent 3am boundary (bar day start)
+   * If it's currently before 3am, returns yesterday's 3am
+   * If it's currently after 3am, returns today's 3am
+   */
+  private getMostRecent3am(): Date {
+    const now = new Date();
+    const today3am = new Date(now);
+    today3am.setHours(3, 0, 0, 0);
+    
+    // If we haven't reached 3am yet today, use yesterday's 3am
+    if (now < today3am) {
+      today3am.setDate(today3am.getDate() - 1);
+    }
+    
+    return today3am;
+  }
+
+  /**
    * Calculate start and end times for a given time range
+   * 
+   * Bar day aligned ranges (7d, 14d, 30d, 24h/1d):
+   * - End time: Most recent 3am OR now (whichever gives complete data)
+   * - Start time: X bar days before end time at 3am
+   * 
+   * Real-time ranges (live, 6h):
+   * - Use actual current time for freshness
    */
   private getTimeRangeValues(range: TimeRange | string): { startTime: string; endTime: string } {
-    const endTime = new Date().toISOString();
+    const now = new Date();
+    const mostRecent3am = this.getMostRecent3am();
+    
     let startTime: string;
+    let endTime: string;
 
     // Handle custom day ranges (e.g., "45d", "365d")
-    if (typeof range === 'string' && range.endsWith('d') && !['7d', '30d', '90d'].includes(range)) {
+    if (typeof range === 'string' && range.endsWith('d') && !['7d', '14d', '30d', '90d', '24h', '1d'].includes(range)) {
       const days = parseInt(range.replace('d', ''));
       if (!isNaN(days) && days > 0) {
-        startTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-        return { startTime, endTime };
+        // Align to 3am boundaries
+        const start3am = new Date(mostRecent3am);
+        start3am.setDate(start3am.getDate() - days);
+        return { 
+          startTime: start3am.toISOString(), 
+          endTime: now.toISOString() // Use now for most recent data
+        };
       }
     }
 
     switch (range) {
       case 'live':
-        startTime = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // Last 5 minutes
+        // Real-time: last 5 minutes from now
+        startTime = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        endTime = now.toISOString();
         break;
+        
       case '6h':
+        // Real-time: last 6 hours from now
         startTime = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+        endTime = now.toISOString();
         break;
+        
       case '24h':
-        startTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      case '1d': {
+        // Last complete bar day: previous 3am to most recent 3am
+        const previousBarDay = new Date(mostRecent3am);
+        previousBarDay.setDate(previousBarDay.getDate() - 1);
+        startTime = previousBarDay.toISOString();
+        endTime = now.toISOString(); // Include today's partial data too
         break;
-      case '1d':
-        startTime = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
+      }
+        
+      case '7d': {
+        // Last 7 bar days: 7 days ago at 3am to now
+        const start7d = new Date(mostRecent3am);
+        start7d.setDate(start7d.getDate() - 7);
+        startTime = start7d.toISOString();
+        endTime = now.toISOString();
         break;
-      case '7d':
-        startTime = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      }
+        
+      case '14d': {
+        // Last 14 bar days: 14 days ago at 3am to now
+        const start14d = new Date(mostRecent3am);
+        start14d.setDate(start14d.getDate() - 14);
+        startTime = start14d.toISOString();
+        endTime = now.toISOString();
         break;
-      case '14d':
-        startTime = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+      }
+        
+      case '30d': {
+        // Last 30 bar days: 30 days ago at 3am to now
+        const start30d = new Date(mostRecent3am);
+        start30d.setDate(start30d.getDate() - 30);
+        startTime = start30d.toISOString();
+        endTime = now.toISOString();
         break;
-      case '30d':
-        startTime = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      }
+        
+      case '90d': {
+        // Last 90 bar days: 90 days ago at 3am to now
+        const start90d = new Date(mostRecent3am);
+        start90d.setDate(start90d.getDate() - 90);
+        startTime = start90d.toISOString();
+        endTime = now.toISOString();
         break;
-      case '90d':
-        startTime = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-        break;
+      }
+        
       default:
         startTime = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        endTime = now.toISOString();
     }
 
     return { startTime, endTime };
