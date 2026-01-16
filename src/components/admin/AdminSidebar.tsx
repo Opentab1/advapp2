@@ -9,7 +9,8 @@ import {
   BarChart3,
   Settings,
   LogOut,
-  LucideIcon
+  LucideIcon,
+  ShieldCheck
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -31,6 +32,7 @@ const navItems: NavItem[] = [
   { id: 'users', label: 'Users', icon: Users },
   { id: 'team', label: 'Team', icon: UserCog },
   { id: 'devices', label: 'Devices', icon: Wifi },
+  { id: 'data-accuracy', label: 'Data Accuracy', icon: ShieldCheck },
   { id: 'audit', label: 'Audit Log', icon: ScrollText },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings }
