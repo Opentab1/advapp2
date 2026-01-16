@@ -744,26 +744,16 @@ class VenueLearningService {
       for (const [dateKey, nightData] of Object.entries(byNight)) {
         if (nightData.length < 3) continue; // Need at least 3 data points per night
         
-        // Calculate total guests
-        // Handles both raw data (cumulative) and hourly data (per-hour totals)
+        // Calculate total guests: latest.entries - earliest.entries
         const withEntries = nightData.filter(d => d.occupancy?.entries !== undefined && d.occupancy?.entries !== null);
         let totalGuests = 0;
-        if (withEntries.length > 0) {
+        if (withEntries.length >= 2) {
           const sorted = [...withEntries].sort((a, b) => 
             new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
           );
-          
-          const isHourlyData = (sorted[0] as any)._hourlyAggregate === true;
-          
-          if (isHourlyData) {
-            // HOURLY DATA: Sum all entries
-            totalGuests = sorted.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
-          } else if (sorted.length >= 2) {
-            // RAW DATA: latest - earliest
-            const earliest = sorted[0];
-            const latest = sorted[sorted.length - 1];
-            totalGuests = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
-          }
+          const earliest = sorted[0];
+          const latest = sorted[sorted.length - 1];
+          totalGuests = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
         }
         
         // Peak occupancy

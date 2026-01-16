@@ -229,8 +229,7 @@ function calculatePeriodStats(data: SensorData[], timeRange: TimeRange, isCurren
   // Average Pulse Score
   const avgPulseScore = scoredData.reduce((sum, d) => sum + d.pulseScore, 0) / scoredData.length;
   
-  // Total visitors calculation
-  // Handles both raw data (cumulative) and hourly data (per-hour totals)
+  // Total visitors: latest.entries - earliest.entries
   const sortedData = [...data].sort((a, b) => 
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
@@ -238,18 +237,10 @@ function calculatePeriodStats(data: SensorData[], timeRange: TimeRange, isCurren
   const withEntries = sortedData.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0);
   
   let totalVisitors = 0;
-  if (withEntries.length > 0) {
-    const isHourlyData = (withEntries[0] as any)._hourlyAggregate === true;
-    
-    if (isHourlyData) {
-      // HOURLY DATA: Sum all entries
-      totalVisitors = withEntries.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
-    } else if (withEntries.length >= 2) {
-      // RAW DATA: latest - earliest
-      const earliest = withEntries[0];
-      const latest = withEntries[withEntries.length - 1];
-      totalVisitors = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
-    }
+  if (withEntries.length >= 2) {
+    const earliest = withEntries[0];
+    const latest = withEntries[withEntries.length - 1];
+    totalVisitors = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
   }
   
   // Peak occupancy

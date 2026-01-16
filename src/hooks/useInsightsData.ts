@@ -213,82 +213,43 @@ function getPeriodMs(range: InsightsTimeRange): number {
 /**
  * Calculate total guests from sensor data.
  * 
- * IMPORTANT: Handles TWO different data formats:
+ * Formula: latest.entries - earliest.entries
  * 
- * 1. RAW DATA: entries = cumulative all-time counter
- *    → Calculation: latest.entries - earliest.entries
- * 
- * 2. HOURLY AGGREGATED DATA: entries = total entries DURING that hour
- *    → Calculation: SUM of all entries values
- *    → Identified by _hourlyAggregate flag
- * 
- * Period starts at 3am (bar day boundary).
+ * Counter is cumulative all-time (never resets).
+ * This formula works for ALL time ranges.
  */
 function calculateTotalGuests(
   periodData: SensorData[], 
   _requestedDays: number
 ): { count: number; isEstimate: boolean } {
-  void _requestedDays; // Not needed - we use actual data span
+  void _requestedDays;
   
   const withEntries = periodData
     .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   
-  if (withEntries.length === 0) {
-    return { count: 0, isEstimate: false };
+  if (withEntries.length < 2) {
+    return { count: 0, isEstimate: withEntries.length === 1 };
   }
   
-  // Check if this is hourly aggregated data
-  const isHourlyData = (withEntries[0] as any)._hourlyAggregate === true;
-  
-  if (isHourlyData) {
-    // HOURLY DATA: entries = total entries during that hour
-    // Sum all entries values
-    const totalGuests = withEntries.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
-    return { count: totalGuests, isEstimate: false };
-  }
-  
-  // RAW DATA: entries = cumulative all-time counter
-  if (withEntries.length === 1) {
-    // Only one data point - can't calculate difference
-    return { count: 0, isEstimate: true };
-  }
-  
-  // Simple calculation: latest entries - earliest entries
   const earliest = withEntries[0];
   const latest = withEntries[withEntries.length - 1];
   
-  const startEntries = earliest.occupancy!.entries;
-  const endEntries = latest.occupancy!.entries;
-  
-  // Guests = difference between end and start
-  const guests = Math.max(0, endEntries - startEntries);
+  const guests = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
   
   return { count: guests, isEstimate: false };
 }
 
 /**
  * Calculate total entries for a period (used for avg stay calculation)
- * Returns the RAW entry count without extrapolation.
  * 
- * Handles both raw data (cumulative) and hourly data (per-hour totals).
+ * Formula: latest.entries - earliest.entries
  */
 function calculatePeriodEntries(periodData: SensorData[]): number {
   const withEntries = periodData
     .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   
-  if (withEntries.length === 0) return 0;
-  
-  // Check if this is hourly aggregated data
-  const isHourlyData = (withEntries[0] as any)._hourlyAggregate === true;
-  
-  if (isHourlyData) {
-    // HOURLY DATA: Sum all entries
-    return withEntries.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
-  }
-  
-  // RAW DATA: latest - earliest
   if (withEntries.length < 2) return 0;
   
   const earliest = withEntries[0];
