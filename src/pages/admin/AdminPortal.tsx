@@ -7,6 +7,7 @@ import { UsersManagement } from './UsersManagement';
 import { TeamManagement } from './TeamManagement';
 import { DevicesManagement } from './DevicesManagement';
 import { DataAccuracy } from './DataAccuracy';
+import { DataValidator } from './DataValidator';
 import { AuditLog } from './AuditLog';
 import { SystemAnalytics } from './SystemAnalytics';
 import { AdminSettings } from './AdminSettings';
@@ -59,7 +60,8 @@ export function AdminPortal() {
           {activeTab === 'users' && <UsersManagement />}
           {activeTab === 'team' && <TeamManagement />}
           {activeTab === 'devices' && <DevicesManagement />}
-          {activeTab === 'data-accuracy' && <DataAccuracy />}
+          {activeTab === 'data-health' && <DataAccuracy />}
+          {activeTab === 'data-validator' && <DataValidator />}
           {activeTab === 'audit' && <AuditLog />}
           {activeTab === 'analytics' && <SystemAnalytics />}
           {activeTab === 'settings' && <AdminSettings />}

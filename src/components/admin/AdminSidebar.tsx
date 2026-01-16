@@ -10,7 +10,8 @@ import {
   Settings,
   LogOut,
   LucideIcon,
-  ShieldCheck
+  ShieldCheck,
+  Search
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -32,7 +33,8 @@ const navItems: NavItem[] = [
   { id: 'users', label: 'Users', icon: Users },
   { id: 'team', label: 'Team', icon: UserCog },
   { id: 'devices', label: 'Devices', icon: Wifi },
-  { id: 'data-accuracy', label: 'Data Accuracy', icon: ShieldCheck },
+  { id: 'data-health', label: 'Data Health', icon: ShieldCheck },
+  { id: 'data-validator', label: 'Accuracy Check', icon: Search },
   { id: 'audit', label: 'Audit Log', icon: ScrollText },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings }
