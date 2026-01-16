@@ -381,6 +381,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   const [historicalScore, setHistoricalScore] = useState<HistoricalScoreResult | null>(null);
   const scoreCalculationRef = useRef<number>(0);
   
+  // Store current occupancy in a ref to avoid stale closure issues
+  const currentOccupancyRef = useRef(effectiveOccupancy.current);
+  currentOccupancyRef.current = effectiveOccupancy.current;
+  
   useEffect(() => {
     const calculationId = ++scoreCalculationRef.current;
     
@@ -396,8 +400,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
           weeksOfData: 12,
           bestBlock: {
             date: '2025-12-14',
-            day: 'saturday',
-            block: 'prime',
+            day: 'saturday' as const,
+            block: 'prime' as const,
             avgOccupancy: 95,
             peakOccupancy: 127,
             avgSound: 76,
@@ -418,7 +422,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
           },
           status: 'good',
           statusLabel: 'Close to Your Best',
-          currentBlock: { day: 'saturday', block: 'prime' },
+          currentBlock: { day: 'saturday' as const, block: 'prime' as const },
         };
         setHistoricalScore(demoScore);
         return;
@@ -426,16 +430,21 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       
       try {
         const result = await historicalScoringService.calculateScore(venueId, {
-          occupancy: effectiveOccupancy.current,
+          occupancy: currentOccupancyRef.current,
           sound: sensorData?.decibels ?? null,
           light: sensorData?.light ?? null,
           currentSong: sensorData?.currentSong ?? null,
           artist: sensorData?.artist ?? null,
         });
         
-        // Only update if this is still the latest calculation
-        if (calculationId === scoreCalculationRef.current) {
-          setHistoricalScore(result);
+        // Validate result has required properties before using
+        if (result && result.currentBlock && result.currentBlock.day && result.currentBlock.block) {
+          // Only update if this is still the latest calculation
+          if (calculationId === scoreCalculationRef.current) {
+            setHistoricalScore(result);
+          }
+        } else {
+          console.warn('Invalid historical score result:', result);
         }
       } catch (error) {
         console.error('Error calculating historical score:', error);
@@ -443,11 +452,12 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     }
     
     calculateHistoricalScore();
-  }, [venueId, effectiveOccupancy.current, sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist]);
+  }, [venueId, sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist]);
   
   // Build pulseScoreResult from historical score for backward compatibility
   const pulseScoreResult = useMemo(() => {
-    if (!historicalScore) {
+    // Defensive check - ensure we have valid historicalScore with required properties
+    if (!historicalScore || !historicalScore.currentBlock) {
       return {
         score: 50,
         status: 'good' as const,
@@ -528,7 +538,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       detectedGenres: [],
       bestNightGenres: historicalScore.bestBlock?.topGenres ?? [],
     };
-  }, [historicalScore, sensorData?.decibels, sensorData?.light, sensorData?.currentSong, effectiveOccupancy.current]);
+  }, [historicalScore, sensorData?.decibels, sensorData?.light, sensorData?.currentSong, effectiveOccupancy]);
 
   // ============ DWELL TIME CALCULATION ============
   // Using Occupancy Integration method (more accurate than Little's Law)
@@ -705,7 +715,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     // Time block (3-hour blocks)
     timeSlot: pulseScoreResult.timeSlot,
-    timeBlockLabel: historicalScore ? getTimeBlockLabel(historicalScore.currentBlock.block) : '',
+    timeBlockLabel: historicalScore?.currentBlock?.block ? getTimeBlockLabel(historicalScore.currentBlock.block) : '',
     
     // Historical comparison (YOUR best block for this day/time)
     bestNight: pulseScoreResult.bestNight as any, // Mapped to BestNightProfile format
