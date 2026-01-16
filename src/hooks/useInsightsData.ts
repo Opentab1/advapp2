@@ -177,7 +177,7 @@ export function useInsightsData(timeRange: InsightsTimeRange): InsightsData {
         light: d.light || 0,
         occupancy: d.occupancy?.current || 0,
         dwellMinutes: null, // Calculated separately
-        temperature: d.indoorTemp || 0,
+        temperature: d.outdoorTemp || 0,
       };
     });
   }, [rawSensorData]);
