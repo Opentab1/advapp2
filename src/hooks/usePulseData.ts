@@ -15,14 +15,15 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getDwellTimeScore, formatDwellTime, getReputationScore } from '../utils/scoring';
+import { getDwellTimeScore, formatDwellTime, getReputationScore, calculatePulseScore } from '../utils/scoring';
 import { POLLING_INTERVALS, DATA_FRESHNESS } from '../utils/constants';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import googleReviewsService, { GoogleReviewsData } from '../services/google-reviews.service';
 import venueSettingsService from '../services/venue-settings.service';
 import weatherService, { WeatherData } from '../services/weather.service';
-import { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
+// Historical scoring will be re-implemented properly
+// import { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
 import { isDemoAccount } from '../utils/demoData';
 import type { SensorData, OccupancyMetrics } from '../types';
 
@@ -376,192 +377,22 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     return 100;
   }, [effectiveOccupancy.peakOccupancy]);
 
-  // Calculate Pulse Score using simple scoring (temporarily disabled historical scoring)
-  // This provides a working score while we fix the historical scoring system
-  const historicalScore = useMemo((): HistoricalScoreResult | null => {
-    // Generate a working score based on current data
-    // This is a simplified version that doesn't require async historical data
-    
-    const now = new Date();
-    const dayNames: Array<'sunday' | 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday'> = 
-      ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const day = dayNames[now.getDay()];
-    
-    // Determine time block
-    const hour = now.getHours();
-    let block: 'morning' | 'late_morning' | 'lunch' | 'afternoon' | 'evening' | 'prime' | 'late_night' | 'after_hours';
-    if (hour >= 6 && hour < 9) block = 'morning';
-    else if (hour >= 9 && hour < 12) block = 'late_morning';
-    else if (hour >= 12 && hour < 15) block = 'lunch';
-    else if (hour >= 15 && hour < 18) block = 'afternoon';
-    else if (hour >= 18 && hour < 21) block = 'evening';
-    else if (hour >= 21 || hour < 0) block = 'prime';
-    else if (hour >= 0 && hour < 3) block = 'late_night';
-    else block = 'after_hours';
-    
-    // Calculate a score based on available sensor data
-    let score = 50; // Base score
-    let soundMatch = 50;
-    let lightMatch = 50;
-    let occupancyMatch = 50;
-    
-    // Adjust based on sensor data
-    if (sensorData?.decibels !== undefined && sensorData.decibels !== null) {
-      // Good sound range: 65-85 dB for bars
-      if (sensorData.decibels >= 65 && sensorData.decibels <= 85) {
-        soundMatch = 90;
-      } else if (sensorData.decibels >= 55 && sensorData.decibels <= 95) {
-        soundMatch = 70;
-      }
-    }
-    
-    if (sensorData?.light !== undefined && sensorData.light !== null) {
-      // Good light range varies by time
-      if (block === 'prime' || block === 'late_night') {
-        // Dimmer is better at night
-        if (sensorData.light >= 20 && sensorData.light <= 150) lightMatch = 90;
-        else if (sensorData.light <= 300) lightMatch = 70;
-      } else {
-        // Brighter during day
-        if (sensorData.light >= 100 && sensorData.light <= 500) lightMatch = 90;
-      }
-    }
-    
-    // Occupancy score based on capacity
-    const capacity = venueSettingsService.getCapacity(venueId) || 150;
-    const currentOcc = effectiveOccupancy.current;
-    if (currentOcc > 0) {
-      const fillRate = currentOcc / capacity;
-      if (fillRate >= 0.6 && fillRate <= 0.9) occupancyMatch = 100;
-      else if (fillRate >= 0.4 && fillRate <= 1.0) occupancyMatch = 80;
-      else if (fillRate >= 0.2) occupancyMatch = 60;
-    }
-    
-    // Calculate final score (weighted)
-    score = Math.round(
-      occupancyMatch * 0.40 +
-      soundMatch * 0.25 +
-      lightMatch * 0.20 +
-      50 * 0.15 // Music match - neutral since we can't easily score this
-    );
-    
-    // Determine status
-    let status: 'optimal' | 'good' | 'needs_work' = 'good';
-    let statusLabel = 'Good Conditions';
-    if (score >= 85) {
-      status = 'optimal';
-      statusLabel = 'Great Night! 🔥';
-    } else if (score >= 60) {
-      status = 'good';
-      statusLabel = 'Good Conditions';
-    } else {
-      status = 'needs_work';
-      statusLabel = 'Room to Improve';
-    }
-    
-    return {
-      score,
-      isLearning: true, // Show as learning since we're not using full historical
-      confidence: 50,
-      weeksOfData: 0,
-      bestBlock: null, // No historical best to compare
-      currentVsBest: {
-        occupancyMatch,
-        soundMatch,
-        lightMatch,
-        genreMatch: 50,
-      },
-      status,
-      statusLabel,
-      currentBlock: { day, block },
-    };
-  }, [venueId, sensorData?.decibels, sensorData?.light, effectiveOccupancy]);
-  
-  // Build pulseScoreResult from historical score for backward compatibility
+  // Calculate Pulse Score - uses the original working scoring function
   const pulseScoreResult = useMemo(() => {
-    // Defensive check - ensure we have valid historicalScore with required properties
-    if (!historicalScore || !historicalScore.currentBlock) {
-      return {
-        score: 50,
-        status: 'good' as const,
-        statusLabel: 'Loading...',
-        color: '#FFB800',
-        timeSlot: 'evening' as any,
-        factors: {
-          sound: { score: 50, value: null, inRange: false, message: 'Loading...' },
-          light: { score: 50, value: null, inRange: false, message: 'Loading...' },
-          crowd: { score: 50, value: null, inRange: false, message: 'Loading...' },
-          music: { score: 50, value: null, inRange: false, message: 'Loading...' },
-        },
-        bestNight: null,
-        isUsingHistoricalData: false,
-        proximityToBest: null,
-        detectedGenres: [],
-        bestNightGenres: [],
-      };
-    }
-    
-    const cvb = historicalScore.currentVsBest;
-    
-    return {
-      score: historicalScore.score,
-      status: historicalScore.status === 'needs_work' ? 'poor' as const : historicalScore.status,
-      statusLabel: historicalScore.statusLabel,
-      color: historicalScore.score >= 85 ? '#00DC82' : historicalScore.score >= 60 ? '#FFB800' : '#FF4444',
-      timeSlot: `${historicalScore.currentBlock.day}_${historicalScore.currentBlock.block}` as any,
-      factors: {
-        sound: { 
-          score: cvb?.soundMatch ?? 50, 
-          value: sensorData?.decibels ?? null, 
-          inRange: (cvb?.soundMatch ?? 0) >= 80, 
-          message: historicalScore.bestBlock 
-            ? `vs ${historicalScore.bestBlock.avgSound}dB on your best` 
-            : 'Learning...' 
-        },
-        light: { 
-          score: cvb?.lightMatch ?? 50, 
-          value: sensorData?.light ?? null, 
-          inRange: (cvb?.lightMatch ?? 0) >= 80, 
-          message: historicalScore.bestBlock 
-            ? `vs ${historicalScore.bestBlock.avgLight} lux on your best` 
-            : 'Learning...' 
-        },
-        crowd: { 
-          score: cvb?.occupancyMatch ?? 50, 
-          value: effectiveOccupancy.current, 
-          inRange: (cvb?.occupancyMatch ?? 0) >= 80, 
-          message: historicalScore.bestBlock 
-            ? `vs ${historicalScore.bestBlock.peakOccupancy} on your best` 
-            : 'Learning...' 
-        },
-        music: { 
-          score: cvb?.genreMatch ?? 80, 
-          value: sensorData?.currentSong ?? null, 
-          inRange: (cvb?.genreMatch ?? 0) >= 80, 
-          message: historicalScore.bestBlock?.topGenres?.length 
-            ? `Best nights: ${historicalScore.bestBlock.topGenres.join(', ')}` 
-            : 'Learning...' 
-        },
-      },
-      // Map BestBlockData to BestNightProfile format for backward compatibility
-      bestNight: historicalScore.bestBlock ? {
-        date: historicalScore.bestBlock.date,
-        dayOfWeek: historicalScore.bestBlock.day.charAt(0).toUpperCase() + historicalScore.bestBlock.day.slice(1), // "saturday" -> "Saturday"
-        timeSlot: historicalScore.bestBlock.block as any,
-        totalGuests: historicalScore.bestBlock.totalEntries,
-        peakOccupancy: historicalScore.bestBlock.peakOccupancy,
-        avgDwellMinutes: historicalScore.bestBlock.retentionRate, // Using retention as proxy
-        avgSound: historicalScore.bestBlock.avgSound,
-        avgLight: historicalScore.bestBlock.avgLight,
-        detectedGenres: historicalScore.bestBlock.topGenres,
-        peakHour: undefined, // Not tracked in new format
-      } : null,
-      isUsingHistoricalData: !historicalScore.isLearning,
-      proximityToBest: cvb ? Math.round((cvb.occupancyMatch + cvb.soundMatch + cvb.lightMatch + cvb.genreMatch) / 4) : null,
-      detectedGenres: [],
-      bestNightGenres: historicalScore.bestBlock?.topGenres ?? [],
-    };
-  }, [historicalScore, sensorData?.decibels, sensorData?.light, sensorData?.currentSong, effectiveOccupancy]);
+    return calculatePulseScore(
+      sensorData?.decibels,
+      sensorData?.light,
+      null, // indoorTemp - removed
+      null, // outdoorTemp - removed
+      sensorData?.currentSong,
+      sensorData?.artist,
+      venueId,
+      undefined, // timestamp
+      effectiveOccupancy.current, // currentOccupancy for crowd scoring
+      estimatedCapacity // for crowd scoring
+    );
+  }, [sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist, venueId, effectiveOccupancy.current, estimatedCapacity]);
+  
 
   // ============ DWELL TIME CALCULATION ============
   // Using Occupancy Integration method (more accurate than Little's Law)
@@ -736,16 +567,16 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     crowdScore: pulseScoreResult.factors.crowd.score,
     musicScore: pulseScoreResult.factors.music.score,
     
-    // Time block (3-hour blocks)
+    // Time slot
     timeSlot: pulseScoreResult.timeSlot,
-    timeBlockLabel: historicalScore?.currentBlock?.block ? getTimeBlockLabel(historicalScore.currentBlock.block) : '',
+    timeBlockLabel: '', // Will be implemented with historical scoring later
     
-    // Historical comparison (YOUR best block for this day/time)
-    bestNight: pulseScoreResult.bestNight as any, // Mapped to BestNightProfile format
-    isLearning: historicalScore?.isLearning ?? true,
-    learningConfidence: historicalScore?.confidence ?? 0,
-    weeksOfData: historicalScore?.weeksOfData ?? 0,
-    proximityToBest: pulseScoreResult.proximityToBest, // Already a number
+    // Historical comparison (will be implemented with historical scoring later)
+    bestNight: pulseScoreResult.bestNight,
+    isLearning: true, // Always learning until historical scoring is implemented
+    learningConfidence: 0,
+    weeksOfData: 0,
+    proximityToBest: pulseScoreResult.proximityToBest,
     
     // Legacy fields for backward compatibility
     isUsingHistoricalData: pulseScoreResult.isUsingHistoricalData,

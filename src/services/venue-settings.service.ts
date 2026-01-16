@@ -5,8 +5,18 @@
  * Uses localStorage + DynamoDB for persistence across devices
  */
 
-import { generateClient } from 'aws-amplify/api';
 import { isDemoAccount, DEMO_VENUE } from '../utils/demoData';
+
+// Lazy-load Amplify client to avoid initialization issues
+async function getAmplifyClient() {
+  try {
+    const { generateClient } = await import('aws-amplify/api');
+    return generateClient();
+  } catch (error) {
+    console.warn('Could not load Amplify client:', error);
+    return null;
+  }
+}
 
 export interface VenueAddress {
   street: string;
@@ -193,7 +203,11 @@ class VenueSettingsService {
 
     // Also save to DynamoDB for cross-device persistence
     try {
-      const client = generateClient();
+      const client = await getAmplifyClient();
+      if (!client) {
+        console.warn('⚠️ Amplify client not available, using localStorage only');
+        return true;
+      }
       
       const mutation = `
         mutation UpdateVenueCapacity($venueId: ID!, $capacity: Int!) {
@@ -232,7 +246,10 @@ class VenueSettingsService {
     }
 
     try {
-      const client = generateClient();
+      const client = await getAmplifyClient();
+      if (!client) {
+        return this.getCapacity(venueId);
+      }
       
       const query = `
         query GetVenueCapacity($venueId: ID!) {
