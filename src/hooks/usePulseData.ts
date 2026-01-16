@@ -438,24 +438,17 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
 
   // ============ DWELL TIME CALCULATION ============
-  // Using Occupancy Integration method (more accurate than Little's Law)
+  // Using FIFO (First In, First Out) method
   // 
-  // Total Guest-Hours = ∫ Occupancy dt (sum of occupancy × time intervals)
-  // Avg Stay = Total Guest-Hours ÷ Total Entries
+  // For each exit, match it to the earliest unmatched entry.
+  // Dwell time = exit timestamp - entry timestamp
   //
-  // This uses ALL historical data points, not just current snapshot.
+  // This gives intuitive, per-cohort dwell times.
   
   const dwellTimeMinutes = useMemo((): number | null => {
-    const todayEntries = effectiveOccupancy.todayEntries;
-    
-    // Need entries to calculate average stay
-    if (todayEntries === 0) {
-      return null; // No guests yet - can't calculate
-    }
-    
-    // Need at least 2 data points to integrate
+    // Need at least 2 data points
     if (todayHistory.length < 2) {
-      return null; // Not enough data yet
+      return null;
     }
     
     // Sort by timestamp
@@ -463,51 +456,83 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     
-    // Calculate total guest-hours by integrating occupancy over time
-    let totalGuestHours = 0;
+    // Build entry and exit events from the cumulative counters
+    // Each data point has cumulative entries/exits - we need to find the deltas
+    interface TimeEvent {
+      timestamp: number;
+      entries: number;  // New entries in this interval
+      exits: number;    // New exits in this interval
+    }
+    
+    const events: TimeEvent[] = [];
     
     for (let i = 1; i < sorted.length; i++) {
       const prev = sorted[i - 1];
       const curr = sorted[i];
       
-      const prevTime = new Date(prev.timestamp).getTime();
-      const currTime = new Date(curr.timestamp).getTime();
-      const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
+      const prevEntries = prev.occupancy?.entries ?? 0;
+      const currEntries = curr.occupancy?.entries ?? 0;
+      const prevExits = prev.occupancy?.exits ?? 0;
+      const currExits = curr.occupancy?.exits ?? 0;
       
-      // Use average occupancy for this interval
-      const prevOcc = prev.occupancy?.current || 0;
-      const currOcc = curr.occupancy?.current || 0;
-      const avgOccupancy = (prevOcc + currOcc) / 2;
+      const newEntries = Math.max(0, currEntries - prevEntries);
+      const newExits = Math.max(0, currExits - prevExits);
       
-      totalGuestHours += avgOccupancy * intervalHours;
-    }
-    
-    // Add current period (last data point to now) using current occupancy
-    if (sorted.length > 0 && sensorData?.occupancy?.current !== undefined) {
-      const lastTime = new Date(sorted[sorted.length - 1].timestamp).getTime();
-      const nowTime = Date.now();
-      const finalIntervalHours = (nowTime - lastTime) / (1000 * 60 * 60);
-      
-      // Only add if interval is reasonable (< 2 hours)
-      if (finalIntervalHours < 2) {
-        const lastOcc = sorted[sorted.length - 1].occupancy?.current || 0;
-        const currOcc = sensorData.occupancy.current;
-        totalGuestHours += ((lastOcc + currOcc) / 2) * finalIntervalHours;
+      if (newEntries > 0 || newExits > 0) {
+        events.push({
+          timestamp: new Date(curr.timestamp).getTime(),
+          entries: newEntries,
+          exits: newExits,
+        });
       }
     }
     
-    // Avg Stay (hours) = Total Guest-Hours ÷ Total Entries
-    const avgStayHours = totalGuestHours / todayEntries;
-    const avgStayMinutes = Math.round(avgStayHours * 60);
-    
-    // Sanity check: clamp to reasonable range (5 min to 4 hours)
-    // Values outside this range indicate data issues
-    if (avgStayMinutes < 5 || avgStayMinutes > 240) {
-      return null; // Data seems unreliable
+    if (events.length === 0) {
+      return null;
     }
     
-    return avgStayMinutes;
-  }, [todayHistory, effectiveOccupancy.todayEntries, sensorData?.occupancy?.current]);
+    // FIFO matching: Build a queue of entry timestamps
+    // Each entry adds N timestamps to the queue
+    // Each exit removes the oldest N timestamps and calculates dwell
+    const entryQueue: number[] = [];
+    let totalDwellMinutes = 0;
+    let matchedExits = 0;
+    
+    for (const event of events) {
+      // Add entries to the queue
+      for (let i = 0; i < event.entries; i++) {
+        entryQueue.push(event.timestamp);
+      }
+      
+      // Match exits to oldest entries (FIFO)
+      for (let i = 0; i < event.exits && entryQueue.length > 0; i++) {
+        const entryTime = entryQueue.shift()!; // Remove oldest
+        const dwellMs = event.timestamp - entryTime;
+        const dwellMins = dwellMs / (1000 * 60);
+        
+        // Only count reasonable dwell times (1 min to 6 hours)
+        if (dwellMins >= 1 && dwellMins <= 360) {
+          totalDwellMinutes += dwellMins;
+          matchedExits++;
+        }
+      }
+    }
+    
+    // Calculate average
+    if (matchedExits === 0) {
+      return null;
+    }
+    
+    const avgDwell = Math.round(totalDwellMinutes / matchedExits);
+    
+    // Sanity check
+    if (avgDwell < 5 || avgDwell > 240) {
+      return null;
+    }
+    
+    console.log(`⏱️ FIFO Dwell: ${matchedExits} exits matched, avg ${avgDwell} min`);
+    return avgDwell;
+  }, [todayHistory]);
   
   // DEMO: Always show a number, never null
   const effectiveDwellTime = useMemo(() => {
