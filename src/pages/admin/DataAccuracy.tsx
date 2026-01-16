@@ -1,26 +1,21 @@
 /**
- * DataAccuracy - Admin tools for ensuring UI data accuracy
+ * DataAccuracy - Admin Command Center for Data Health
  * 
- * Contains:
- * 1. Live Data Monitor - Real-time sensor feed
- * 2. Data Source Transparency - Show where each metric comes from
- * 3. Side-by-Side Comparison - Raw data vs UI display
- * 4. Historical Data Audit - Query any metric for any time range
+ * Features:
+ * 1. All-Venues Health Dashboard - See all venues at a glance
+ * 2. Active Issues Panel - Auto-detected problems with recommendations
+ * 3. Sensor Status Grid - Visual overview of all sensors
+ * 4. Data Quality Score - Per-venue scoring
+ * 5. Drill-down tools for detailed analysis
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Activity, 
-  Database, 
-  GitCompare, 
-  History,
-  RefreshCw,
-  Search,
-  ChevronDown,
+  AlertTriangle,
   CheckCircle,
   XCircle,
-  AlertTriangle,
   Clock,
   Wifi,
   WifiOff,
@@ -28,722 +23,527 @@ import {
   Users,
   Volume2,
   Sun,
-  Play,
-  Pause
+  RefreshCw,
+  ChevronRight,
+  TrendingUp,
+  TrendingDown,
+  Zap,
+  AlertCircle,
+  Shield,
+  Eye,
+  BarChart3
 } from 'lucide-react';
 import { useAdminData } from '../../hooks/useAdminData';
 import dynamoDBService from '../../services/dynamodb.service';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 
 // ============ TYPES ============
 
-interface SensorReading {
-  timestamp: string;
-  occupancy?: { current: number; entries: number; exits: number };
-  sound?: { level: number };
-  light?: { lux: number };
-  currentSong?: string;
-  artist?: string;
-}
-
-interface DataSourceInfo {
-  metric: string;
-  value: string | number;
-  source: string;
-  calculation?: string;
-  lastUpdate: string;
-  confidence: 'high' | 'medium' | 'low';
-  dataPoints?: number;
-}
-
-// ============ LIVE DATA MONITOR ============
-
-function LiveDataMonitor({ venueId }: { venueId: string }) {
-  const [readings, setReadings] = useState<SensorReading[]>([]);
-  const [isLive, setIsLive] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [lastFetch, setLastFetch] = useState<Date | null>(null);
-
-  const fetchLatestData = useCallback(async () => {
-    if (!venueId) return;
-    setLoading(true);
-    try {
-      const now = new Date();
-      const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000);
-      
-      const data = await dynamoDBService.getSensorDataByDateRange(
-        venueId,
-        fiveMinAgo,
-        now,
-        50
-      );
-      
-      if (data && data.length > 0) {
-        // Sort by timestamp descending
-        const sorted = [...data].sort((a, b) => 
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-        );
-        setReadings(sorted.slice(0, 20));
-      }
-      setLastFetch(now);
-    } catch (error) {
-      console.error('Error fetching live data:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [venueId]);
-
-  // Auto-refresh when live
-  useEffect(() => {
-    if (isLive && venueId) {
-      fetchLatestData();
-      const interval = setInterval(fetchLatestData, 15000); // Every 15 seconds
-      return () => clearInterval(interval);
-    }
-  }, [isLive, venueId, fetchLatestData]);
-
-  const formatTime = (timestamp: string) => {
-    try {
-      return format(new Date(timestamp), 'HH:mm:ss');
-    } catch {
-      return timestamp;
-    }
+interface VenueHealth {
+  venueId: string;
+  venueName: string;
+  status: 'healthy' | 'warning' | 'critical' | 'offline' | 'demo';
+  lastDataTime: Date | null;
+  lastDataAgo: string;
+  dataQualityScore: number;
+  issues: Issue[];
+  sensors: {
+    occupancy: SensorStatus;
+    sound: SensorStatus;
+    light: SensorStatus;
+    song: SensorStatus;
   };
+  latestData: {
+    occupancy?: number;
+    entries?: number;
+    exits?: number;
+    capacity?: number;
+    soundLevel?: number;
+    lightLevel?: number;
+    currentSong?: string;
+  };
+}
 
+interface SensorStatus {
+  status: 'ok' | 'warning' | 'error' | 'offline' | 'unknown';
+  lastValue?: number | string;
+  issue?: string;
+}
+
+interface Issue {
+  id: string;
+  severity: 'critical' | 'warning' | 'info';
+  venueId: string;
+  venueName: string;
+  title: string;
+  description: string;
+  recommendation: string;
+  timestamp: Date;
+}
+
+// ============ HEALTH ANALYSIS ============
+
+async function analyzeVenueHealth(venue: any): Promise<VenueHealth> {
+  const venueId = venue.venueId;
+  const venueName = venue.venueName || venueId;
+  
+  // Demo account detection
+  if (venueId === 'theshowcaselounge') {
+    return {
+      venueId,
+      venueName,
+      status: 'demo',
+      lastDataTime: null,
+      lastDataAgo: 'Demo Account',
+      dataQualityScore: 100,
+      issues: [],
+      sensors: {
+        occupancy: { status: 'ok', lastValue: 'Demo' },
+        sound: { status: 'ok', lastValue: 'Demo' },
+        light: { status: 'ok', lastValue: 'Demo' },
+        song: { status: 'ok', lastValue: 'Demo' },
+      },
+      latestData: {},
+    };
+  }
+
+  try {
+    const now = new Date();
+    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    
+    const data = await dynamoDBService.getSensorDataByDateRange(venueId, dayAgo, now, 100);
+    
+    const issues: Issue[] = [];
+    let status: VenueHealth['status'] = 'healthy';
+    let dataQualityScore = 100;
+    
+    // No data at all
+    if (!data || data.length === 0) {
+      return {
+        venueId,
+        venueName,
+        status: 'offline',
+        lastDataTime: null,
+        lastDataAgo: 'No data',
+        dataQualityScore: 0,
+        issues: [{
+          id: `${venueId}-no-data`,
+          severity: 'critical',
+          venueId,
+          venueName,
+          title: 'No data received',
+          description: 'This venue has not sent any data in the last 24 hours',
+          recommendation: 'Check if the Raspberry Pi is powered on and connected to WiFi',
+          timestamp: now,
+        }],
+        sensors: {
+          occupancy: { status: 'offline' },
+          sound: { status: 'offline' },
+          light: { status: 'offline' },
+          song: { status: 'offline' },
+        },
+        latestData: {},
+      };
+    }
+
+    // Sort by timestamp descending
+    const sorted = [...data].sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    const latest = sorted[0];
+    const lastDataTime = new Date(latest.timestamp);
+    const minutesAgo = (now.getTime() - lastDataTime.getTime()) / 60000;
+
+    // Check data freshness
+    if (minutesAgo > 60) {
+      status = 'critical';
+      dataQualityScore -= 40;
+      issues.push({
+        id: `${venueId}-stale`,
+        severity: 'critical',
+        venueId,
+        venueName,
+        title: `No data for ${Math.round(minutesAgo / 60)} hours`,
+        description: `Last data received ${formatDistanceToNow(lastDataTime)} ago`,
+        recommendation: 'Check device connectivity and power',
+        timestamp: now,
+      });
+    } else if (minutesAgo > 15) {
+      if (status === 'healthy') status = 'warning';
+      dataQualityScore -= 15;
+      issues.push({
+        id: `${venueId}-delayed`,
+        severity: 'warning',
+        venueId,
+        venueName,
+        title: 'Data delayed',
+        description: `Last data received ${Math.round(minutesAgo)} minutes ago`,
+        recommendation: 'Monitor - may be temporary network issue',
+        timestamp: now,
+      });
+    }
+
+    // Analyze sensors
+    const sensors: VenueHealth['sensors'] = {
+      occupancy: { status: 'unknown' },
+      sound: { status: 'unknown' },
+      light: { status: 'unknown' },
+      song: { status: 'unknown' },
+    };
+
+    // Occupancy analysis
+    const occ = latest.occupancy;
+    if (occ) {
+      const current = occ.current ?? 0;
+      const capacity = occ.capacity ?? 200;
+      sensors.occupancy = { status: 'ok', lastValue: current };
+
+      // Check for impossible values
+      if (current < 0) {
+        sensors.occupancy = { status: 'error', lastValue: current, issue: 'Negative value' };
+        dataQualityScore -= 20;
+        issues.push({
+          id: `${venueId}-occ-negative`,
+          severity: 'warning',
+          venueId,
+          venueName,
+          title: 'Negative occupancy detected',
+          description: `Current occupancy is ${current}`,
+          recommendation: 'Sensor may need recalibration - exits counted without matching entries',
+          timestamp: now,
+        });
+      } else if (current > capacity * 2) {
+        sensors.occupancy = { status: 'warning', lastValue: current, issue: 'Over capacity' };
+        dataQualityScore -= 10;
+        issues.push({
+          id: `${venueId}-occ-over`,
+          severity: 'warning',
+          venueId,
+          venueName,
+          title: `Occupancy ${Math.round((current / capacity) * 100)}% of capacity`,
+          description: `Current: ${current}, Capacity: ${capacity}`,
+          recommendation: 'Verify capacity setting or recalibrate sensor',
+          timestamp: now,
+        });
+      }
+    } else {
+      sensors.occupancy = { status: 'offline' };
+    }
+
+    // Sound analysis
+    const soundLevel = latest.sound?.level ?? latest.sensors?.sound_level;
+    if (soundLevel !== undefined) {
+      sensors.sound = { status: 'ok', lastValue: Math.round(soundLevel) };
+      
+      if (soundLevel < 0) {
+        sensors.sound = { status: 'error', lastValue: soundLevel, issue: 'Invalid reading' };
+        dataQualityScore -= 15;
+        issues.push({
+          id: `${venueId}-sound-invalid`,
+          severity: 'warning',
+          venueId,
+          venueName,
+          title: 'Invalid sound level',
+          description: `Reading: ${soundLevel} dB (should be 0-120)`,
+          recommendation: 'Check microphone connection',
+          timestamp: now,
+        });
+      }
+
+      // Check for stuck sensor
+      const soundReadings = sorted.slice(0, 20).map(d => d.sound?.level ?? d.sensors?.sound_level).filter(v => v !== undefined);
+      const allSame = soundReadings.length > 5 && soundReadings.every(v => v === soundReadings[0]);
+      if (allSame) {
+        sensors.sound = { status: 'warning', lastValue: soundLevel, issue: 'Stuck value' };
+        dataQualityScore -= 10;
+        issues.push({
+          id: `${venueId}-sound-stuck`,
+          severity: 'warning',
+          venueId,
+          venueName,
+          title: 'Sound sensor may be stuck',
+          description: `Same value (${soundLevel} dB) for last ${soundReadings.length} readings`,
+          recommendation: 'Sensor may need restart or replacement',
+          timestamp: now,
+        });
+      }
+    } else {
+      sensors.sound = { status: 'offline' };
+    }
+
+    // Light analysis
+    const lightLevel = latest.light?.lux ?? latest.sensors?.light_level;
+    if (lightLevel !== undefined) {
+      sensors.light = { status: 'ok', lastValue: Math.round(lightLevel) };
+    } else {
+      sensors.light = { status: 'offline' };
+    }
+
+    // Song detection analysis
+    if (latest.currentSong) {
+      sensors.song = { status: 'ok', lastValue: latest.currentSong };
+    } else {
+      // Check if any songs in last 24h
+      const songsDetected = sorted.filter(d => d.currentSong).length;
+      if (songsDetected > 0) {
+        sensors.song = { status: 'ok', lastValue: `${songsDetected} songs today` };
+      } else {
+        sensors.song = { status: 'warning', issue: 'No songs detected' };
+      }
+    }
+
+    // Determine overall status
+    const criticalIssues = issues.filter(i => i.severity === 'critical').length;
+    const warningIssues = issues.filter(i => i.severity === 'warning').length;
+    
+    if (criticalIssues > 0) status = 'critical';
+    else if (warningIssues > 0) status = 'warning';
+    else status = 'healthy';
+
+    return {
+      venueId,
+      venueName,
+      status,
+      lastDataTime,
+      lastDataAgo: formatDistanceToNow(lastDataTime, { addSuffix: true }),
+      dataQualityScore: Math.max(0, Math.min(100, dataQualityScore)),
+      issues,
+      sensors,
+      latestData: {
+        occupancy: occ?.current,
+        entries: occ?.entries,
+        exits: occ?.exits,
+        capacity: occ?.capacity,
+        soundLevel: soundLevel,
+        lightLevel: lightLevel,
+        currentSong: latest.currentSong,
+      },
+    };
+  } catch (error) {
+    console.error(`Error analyzing ${venueId}:`, error);
+    return {
+      venueId,
+      venueName,
+      status: 'offline',
+      lastDataTime: null,
+      lastDataAgo: 'Error',
+      dataQualityScore: 0,
+      issues: [{
+        id: `${venueId}-error`,
+        severity: 'critical',
+        venueId,
+        venueName,
+        title: 'Error fetching data',
+        description: 'Could not retrieve data for this venue',
+        recommendation: 'Check API connectivity',
+        timestamp: new Date(),
+      }],
+      sensors: {
+        occupancy: { status: 'unknown' },
+        sound: { status: 'unknown' },
+        light: { status: 'unknown' },
+        song: { status: 'unknown' },
+      },
+      latestData: {},
+    };
+  }
+}
+
+// ============ COMPONENTS ============
+
+function StatusBadge({ status }: { status: VenueHealth['status'] }) {
+  const config = {
+    healthy: { icon: CheckCircle, color: 'text-green-400', bg: 'bg-green-500/20', label: 'Healthy' },
+    warning: { icon: AlertTriangle, color: 'text-yellow-400', bg: 'bg-yellow-500/20', label: 'Warning' },
+    critical: { icon: XCircle, color: 'text-red-400', bg: 'bg-red-500/20', label: 'Critical' },
+    offline: { icon: WifiOff, color: 'text-gray-400', bg: 'bg-gray-500/20', label: 'Offline' },
+    demo: { icon: Zap, color: 'text-purple-400', bg: 'bg-purple-500/20', label: 'Demo' },
+  };
+  const { icon: Icon, color, bg, label } = config[status];
+  
   return (
-    <div className="glass-card p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <Activity className="w-5 h-5 text-green-400" />
-          <h3 className="text-lg font-bold text-white">Live Data Monitor</h3>
-          {isLive && (
-            <span className="flex items-center gap-1 px-2 py-0.5 bg-green-500/20 rounded-full">
-              <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-              <span className="text-xs text-green-400">LIVE</span>
+    <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${bg} ${color}`}>
+      <Icon className="w-3 h-3" />
+      {label}
+    </span>
+  );
+}
+
+function SensorIndicator({ status, value }: { status: SensorStatus['status']; value?: string | number }) {
+  const colors = {
+    ok: 'bg-green-400',
+    warning: 'bg-yellow-400',
+    error: 'bg-red-400',
+    offline: 'bg-gray-600',
+    unknown: 'bg-gray-700',
+  };
+  
+  return (
+    <div className="flex items-center gap-1">
+      <span className={`w-2.5 h-2.5 rounded-full ${colors[status]}`} />
+      {value !== undefined && (
+        <span className="text-xs text-gray-400 truncate max-w-[60px]">{value}</span>
+      )}
+    </div>
+  );
+}
+
+function ScoreRing({ score }: { score: number }) {
+  const color = score >= 80 ? 'text-green-400' : score >= 50 ? 'text-yellow-400' : 'text-red-400';
+  const strokeColor = score >= 80 ? 'stroke-green-400' : score >= 50 ? 'stroke-yellow-400' : 'stroke-red-400';
+  
+  return (
+    <div className="relative w-12 h-12">
+      <svg className="w-full h-full -rotate-90">
+        <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="4" className="text-gray-700" />
+        <circle 
+          cx="24" cy="24" r="20" fill="none" strokeWidth="4" 
+          className={strokeColor}
+          strokeDasharray={`${score * 1.26} 126`}
+          strokeLinecap="round"
+        />
+      </svg>
+      <span className={`absolute inset-0 flex items-center justify-center text-xs font-bold ${color}`}>
+        {score}
+      </span>
+    </div>
+  );
+}
+
+function VenueHealthRow({ health, onClick }: { health: VenueHealth; onClick: () => void }) {
+  return (
+    <motion.button
+      onClick={onClick}
+      className="w-full flex items-center gap-4 p-4 bg-gray-800/50 hover:bg-gray-800 rounded-lg transition-all text-left"
+      whileHover={{ scale: 1.01 }}
+      whileTap={{ scale: 0.99 }}
+    >
+      <ScoreRing score={health.dataQualityScore} />
+      
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="font-medium text-white truncate">{health.venueName}</span>
+          <StatusBadge status={health.status} />
+        </div>
+        <div className="flex items-center gap-4 text-xs text-gray-400">
+          <span className="flex items-center gap-1">
+            <Clock className="w-3 h-3" />
+            {health.lastDataAgo}
+          </span>
+          {health.issues.length > 0 && (
+            <span className="flex items-center gap-1 text-yellow-400">
+              <AlertTriangle className="w-3 h-3" />
+              {health.issues.length} issue{health.issues.length !== 1 ? 's' : ''}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsLive(!isLive)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
-              isLive 
-                ? 'bg-red-500/20 text-red-400 border border-red-500/30' 
-                : 'bg-green-500/20 text-green-400 border border-green-500/30'
-            }`}
-          >
-            {isLive ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            {isLive ? 'Stop' : 'Start Live'}
-          </button>
-          <button
-            onClick={fetchLatestData}
-            disabled={loading}
-            className="btn-secondary text-sm"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+      </div>
+
+      <div className="hidden md:flex items-center gap-6">
+        <div className="flex items-center gap-3">
+          <div className="text-center">
+            <SensorIndicator status={health.sensors.occupancy.status} value={health.latestData.occupancy} />
+            <span className="text-[10px] text-gray-500">Occ</span>
+          </div>
+          <div className="text-center">
+            <SensorIndicator status={health.sensors.sound.status} value={health.latestData.soundLevel ? `${health.latestData.soundLevel}dB` : undefined} />
+            <span className="text-[10px] text-gray-500">Sound</span>
+          </div>
+          <div className="text-center">
+            <SensorIndicator status={health.sensors.light.status} />
+            <span className="text-[10px] text-gray-500">Light</span>
+          </div>
+          <div className="text-center">
+            <SensorIndicator status={health.sensors.song.status} />
+            <span className="text-[10px] text-gray-500">Song</span>
+          </div>
         </div>
       </div>
 
-      {lastFetch && (
-        <p className="text-xs text-gray-500 mb-3">
-          Last fetch: {format(lastFetch, 'HH:mm:ss')}
-        </p>
-      )}
-
-      <div className="bg-gray-900/50 rounded-lg p-3 font-mono text-xs max-h-[400px] overflow-y-auto">
-        {readings.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            {venueId ? 'No recent data. Click "Start Live" to begin monitoring.' : 'Select a venue to monitor'}
-          </div>
-        ) : (
-          <div className="space-y-1">
-            {readings.map((reading, i) => (
-              <div key={i} className="flex items-start gap-3 py-1 border-b border-gray-800 last:border-0">
-                <span className="text-cyan-400 flex-shrink-0">{formatTime(reading.timestamp)}</span>
-                <span className="text-gray-400">|</span>
-                <div className="flex flex-wrap gap-3">
-                  {reading.occupancy && (
-                    <span className="text-green-400">
-                      occ: {reading.occupancy.current} 
-                      <span className="text-gray-500"> (in:{reading.occupancy.entries} out:{reading.occupancy.exits})</span>
-                    </span>
-                  )}
-                  {reading.sound?.level !== undefined && (
-                    <span className="text-yellow-400">sound: {reading.sound.level}dB</span>
-                  )}
-                  {reading.light?.lux !== undefined && (
-                    <span className="text-orange-400">light: {reading.light.lux}lux</span>
-                  )}
-                  {reading.currentSong && (
-                    <span className="text-purple-400">song: "{reading.currentSong}"</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+      <ChevronRight className="w-5 h-5 text-gray-500" />
+    </motion.button>
   );
 }
 
-// ============ DATA SOURCE TRANSPARENCY ============
-
-function DataSourceTransparency({ venueId }: { venueId: string }) {
-  const [sources, setSources] = useState<DataSourceInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const analyzeDataSources = useCallback(async () => {
-    if (!venueId) return;
-    setLoading(true);
-    try {
-      const now = new Date();
-      const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-      
-      const data = await dynamoDBService.getSensorDataByDateRange(venueId, dayAgo, now, 1000);
-      
-      const dataPoints = data?.length || 0;
-      const latestReading = data?.[0];
-      const lastUpdate = latestReading?.timestamp || 'No data';
-      
-      // Calculate metrics from data
-      let totalEntries = 0;
-      let totalExits = 0;
-      let soundReadings: number[] = [];
-      let songs: string[] = [];
-      
-      data?.forEach(d => {
-        if (d.occupancy) {
-          totalEntries = Math.max(totalEntries, d.occupancy.entries || 0);
-          totalExits = Math.max(totalExits, d.occupancy.exits || 0);
-        }
-        if (d.sound?.level) soundReadings.push(d.sound.level);
-        if (d.currentSong) songs.push(d.currentSong);
-      });
-      
-      const avgSound = soundReadings.length > 0 
-        ? Math.round(soundReadings.reduce((a, b) => a + b, 0) / soundReadings.length)
-        : 0;
-      const uniqueSongs = new Set(songs).size;
-      
-      setSources([
-        {
-          metric: 'Current Occupancy',
-          value: latestReading?.occupancy?.current ?? 'N/A',
-          source: `IoT Sensor (rpi-${venueId}-001)`,
-          calculation: 'entries - exits (cumulative since bar day start)',
-          lastUpdate,
-          confidence: dataPoints > 100 ? 'high' : dataPoints > 10 ? 'medium' : 'low',
-          dataPoints,
-        },
-        {
-          metric: 'Total Entries Today',
-          value: totalEntries,
-          source: 'Occupancy sensor (beam counter)',
-          calculation: 'Cumulative count since 3am bar day reset',
-          lastUpdate,
-          confidence: dataPoints > 50 ? 'high' : 'medium',
-          dataPoints,
-        },
-        {
-          metric: 'Average Sound Level',
-          value: `${avgSound} dB`,
-          source: 'SPL meter on RPi',
-          calculation: `Average of ${soundReadings.length} readings over 24h`,
-          lastUpdate,
-          confidence: soundReadings.length > 100 ? 'high' : 'medium',
-          dataPoints: soundReadings.length,
-        },
-        {
-          metric: 'Songs Detected',
-          value: uniqueSongs,
-          source: 'Audio fingerprinting (Shazam API)',
-          calculation: 'Unique songs identified in sensor data',
-          lastUpdate,
-          confidence: songs.length > 50 ? 'high' : 'medium',
-          dataPoints: songs.length,
-        },
-        {
-          metric: 'Retention Rate',
-          value: 'Calculated',
-          source: 'Derived from occupancy data',
-          calculation: '(crowd at song end / crowd at song start) × 100',
-          lastUpdate,
-          confidence: dataPoints > 200 ? 'high' : 'medium',
-          dataPoints,
-        },
-      ]);
-    } catch (error) {
-      console.error('Error analyzing data sources:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [venueId]);
-
-  useEffect(() => {
-    if (venueId) {
-      analyzeDataSources();
-    }
-  }, [venueId, analyzeDataSources]);
-
-  const getConfidenceBadge = (confidence: 'high' | 'medium' | 'low') => {
-    switch (confidence) {
-      case 'high':
-        return <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">HIGH</span>;
-      case 'medium':
-        return <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-xs rounded-full">MEDIUM</span>;
-      case 'low':
-        return <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs rounded-full">LOW</span>;
-    }
+function IssueCard({ issue }: { issue: Issue }) {
+  const severityConfig = {
+    critical: { icon: XCircle, color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/30' },
+    warning: { icon: AlertTriangle, color: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' },
+    info: { icon: AlertCircle, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
   };
+  const config = severityConfig[issue.severity];
+  const Icon = config.icon;
 
   return (
-    <div className="glass-card p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <Database className="w-5 h-5 text-cyan-400" />
-          <h3 className="text-lg font-bold text-white">Data Source Transparency</h3>
+    <div className={`p-4 rounded-lg ${config.bg} border ${config.border}`}>
+      <div className="flex items-start gap-3">
+        <Icon className={`w-5 h-5 ${config.color} flex-shrink-0 mt-0.5`} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className={`font-medium ${config.color}`}>{issue.title}</span>
+            <span className="text-xs text-gray-500">— {issue.venueName}</span>
+          </div>
+          <p className="text-sm text-gray-400 mb-2">{issue.description}</p>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-gray-500">→</span>
+            <span className="text-gray-300">{issue.recommendation}</span>
+          </div>
         </div>
-        <button
-          onClick={analyzeDataSources}
-          disabled={loading || !venueId}
-          className="btn-secondary text-sm"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </button>
       </div>
+    </div>
+  );
+}
 
-      {!venueId ? (
-        <div className="text-center py-8 text-gray-500">Select a venue to analyze</div>
-      ) : (
-        <div className="space-y-4">
-          {sources.map((source, i) => (
-            <div key={i} className="p-4 bg-gray-800/50 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-white font-medium">{source.metric}</span>
-                <span className="text-2xl font-bold text-cyan-400">{source.value}</span>
-              </div>
-              <div className="space-y-1 text-xs">
-                <div className="flex items-center gap-2 text-gray-400">
-                  <span className="text-gray-500">Source:</span>
-                  <span className="text-purple-400">{source.source}</span>
-                </div>
-                {source.calculation && (
-                  <div className="flex items-start gap-2 text-gray-400">
-                    <span className="text-gray-500">Calculation:</span>
-                    <span className="text-gray-300">{source.calculation}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-700">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-3 h-3 text-gray-500" />
-                    <span className="text-gray-500">
-                      {source.lastUpdate !== 'No data' 
-                        ? format(new Date(source.lastUpdate), 'MMM d, h:mm a')
-                        : 'No data'
-                      }
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-500">{source.dataPoints} data points</span>
-                    {getConfidenceBadge(source.confidence)}
-                  </div>
-                </div>
-              </div>
-            </div>
+function SensorGrid({ healthData }: { healthData: VenueHealth[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-gray-400 border-b border-gray-700">
+            <th className="pb-3 font-medium">Venue</th>
+            <th className="pb-3 font-medium text-center">Occupancy</th>
+            <th className="pb-3 font-medium text-center">Sound</th>
+            <th className="pb-3 font-medium text-center">Light</th>
+            <th className="pb-3 font-medium text-center">Song</th>
+            <th className="pb-3 font-medium text-right">Last Seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {healthData.map((health) => (
+            <tr key={health.venueId} className="border-b border-gray-800 hover:bg-gray-800/50">
+              <td className="py-3">
+                <span className="text-white">{health.venueName}</span>
+              </td>
+              <td className="py-3 text-center">
+                <SensorIndicator 
+                  status={health.sensors.occupancy.status} 
+                  value={health.latestData.occupancy}
+                />
+              </td>
+              <td className="py-3 text-center">
+                <SensorIndicator 
+                  status={health.sensors.sound.status}
+                  value={health.latestData.soundLevel ? `${Math.round(health.latestData.soundLevel)}dB` : undefined}
+                />
+              </td>
+              <td className="py-3 text-center">
+                <SensorIndicator 
+                  status={health.sensors.light.status}
+                  value={health.latestData.lightLevel ? `${Math.round(health.latestData.lightLevel)}` : undefined}
+                />
+              </td>
+              <td className="py-3 text-center">
+                <SensorIndicator 
+                  status={health.sensors.song.status}
+                />
+              </td>
+              <td className="py-3 text-right text-gray-400 text-xs">
+                {health.lastDataAgo}
+              </td>
+            </tr>
           ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============ SIDE-BY-SIDE COMPARISON ============
-
-function SideBySideComparison({ venueId }: { venueId: string }) {
-  const [rawData, setRawData] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-
-  const fetchComparison = useCallback(async () => {
-    if (!venueId) return;
-    setLoading(true);
-    try {
-      const now = new Date();
-      const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      
-      const data = await dynamoDBService.getSensorDataByDateRange(venueId, hourAgo, now, 100);
-      
-      if (data && data.length > 0) {
-        const latest = data[0];
-        
-        // Calculate derived values
-        let totalSongs = 0;
-        const songSet = new Set<string>();
-        data.forEach(d => {
-          if (d.currentSong) songSet.add(d.currentSong);
-        });
-        totalSongs = songSet.size;
-        
-        setRawData({
-          timestamp: latest.timestamp,
-          occupancy: latest.occupancy?.current,
-          entries: latest.occupancy?.entries,
-          exits: latest.occupancy?.exits,
-          soundLevel: latest.sound?.level,
-          lightLux: latest.light?.lux,
-          currentSong: latest.currentSong,
-          artist: latest.artist,
-          songsThisHour: totalSongs,
-          dataPoints: data.length,
-        });
-      }
-    } catch (error) {
-      console.error('Error fetching comparison data:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [venueId]);
-
-  useEffect(() => {
-    if (venueId) {
-      fetchComparison();
-    }
-  }, [venueId, fetchComparison]);
-
-  const CompareRow = ({ 
-    label, 
-    raw, 
-    display, 
-    match 
-  }: { 
-    label: string; 
-    raw: string | number | null | undefined; 
-    display: string | number | null | undefined;
-    match: boolean | null;
-  }) => (
-    <div className="flex items-center py-2 border-b border-gray-700 last:border-0">
-      <div className="w-1/4 text-sm text-gray-400">{label}</div>
-      <div className="w-1/3 text-center">
-        <span className="font-mono text-cyan-400">{raw ?? 'null'}</span>
-      </div>
-      <div className="w-1/3 text-center">
-        <span className="font-mono text-purple-400">{display ?? '—'}</span>
-      </div>
-      <div className="w-16 text-center">
-        {match === null ? (
-          <span className="text-gray-500">—</span>
-        ) : match ? (
-          <CheckCircle className="w-4 h-4 text-green-400 mx-auto" />
-        ) : (
-          <XCircle className="w-4 h-4 text-red-400 mx-auto" />
-        )}
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="glass-card p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <GitCompare className="w-5 h-5 text-purple-400" />
-          <h3 className="text-lg font-bold text-white">Side-by-Side Comparison</h3>
-        </div>
-        <button
-          onClick={fetchComparison}
-          disabled={loading || !venueId}
-          className="btn-secondary text-sm"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </button>
-      </div>
-
-      {!venueId ? (
-        <div className="text-center py-8 text-gray-500">Select a venue to compare</div>
-      ) : !rawData ? (
-        <div className="text-center py-8 text-gray-500">
-          {loading ? 'Loading...' : 'No data available'}
-        </div>
-      ) : (
-        <div className="bg-gray-900/50 rounded-lg p-4">
-          {/* Header */}
-          <div className="flex items-center py-2 border-b border-gray-600 mb-2">
-            <div className="w-1/4 text-xs text-gray-500 font-medium">METRIC</div>
-            <div className="w-1/3 text-center text-xs text-cyan-400 font-medium">RAW DATA</div>
-            <div className="w-1/3 text-center text-xs text-purple-400 font-medium">UI DISPLAY</div>
-            <div className="w-16 text-center text-xs text-gray-500 font-medium">MATCH</div>
-          </div>
-
-          <CompareRow 
-            label="Occupancy" 
-            raw={rawData.occupancy} 
-            display={rawData.occupancy ?? '—'} 
-            match={rawData.occupancy !== undefined ? true : null}
-          />
-          <CompareRow 
-            label="Entries" 
-            raw={rawData.entries} 
-            display={rawData.entries ?? '—'} 
-            match={rawData.entries !== undefined ? true : null}
-          />
-          <CompareRow 
-            label="Exits" 
-            raw={rawData.exits} 
-            display={rawData.exits ?? '—'} 
-            match={rawData.exits !== undefined ? true : null}
-          />
-          <CompareRow 
-            label="Sound (dB)" 
-            raw={rawData.soundLevel} 
-            display={rawData.soundLevel ? `${Math.round(rawData.soundLevel)} dB` : '—'} 
-            match={rawData.soundLevel !== undefined ? true : null}
-          />
-          <CompareRow 
-            label="Light (lux)" 
-            raw={rawData.lightLux} 
-            display={rawData.lightLux ? `${Math.round(rawData.lightLux)}` : '—'} 
-            match={rawData.lightLux !== undefined ? true : null}
-          />
-          <CompareRow 
-            label="Current Song" 
-            raw={rawData.currentSong} 
-            display={rawData.currentSong || '—'} 
-            match={rawData.currentSong ? true : null}
-          />
-          <CompareRow 
-            label="Artist" 
-            raw={rawData.artist} 
-            display={rawData.artist || '—'} 
-            match={rawData.artist ? true : null}
-          />
-
-          <div className="mt-4 pt-3 border-t border-gray-600 flex items-center justify-between text-xs text-gray-500">
-            <span>Data points in last hour: {rawData.dataPoints}</span>
-            <span>Last update: {format(new Date(rawData.timestamp), 'HH:mm:ss')}</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============ HISTORICAL DATA AUDIT ============
-
-function HistoricalDataAudit({ venueId }: { venueId: string }) {
-  const [metric, setMetric] = useState<'occupancy' | 'sound' | 'songs'>('occupancy');
-  const [dateRange, setDateRange] = useState<'24h' | '7d' | '30d'>('7d');
-  const [results, setResults] = useState<Array<{ date: string; value: number | string; anomaly?: boolean }>>([]);
-  const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState<{ min: number; max: number; avg: number; gaps: number } | null>(null);
-
-  const runAudit = useCallback(async () => {
-    if (!venueId) return;
-    setLoading(true);
-    try {
-      const now = new Date();
-      let startDate: Date;
-      
-      switch (dateRange) {
-        case '24h':
-          startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-          break;
-        case '7d':
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case '30d':
-          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        default:
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      }
-
-      const data = await dynamoDBService.getSensorDataByDateRange(venueId, startDate, now, 5000);
-      
-      if (!data || data.length === 0) {
-        setResults([]);
-        setStats(null);
-        return;
-      }
-
-      // Group by day and calculate metric
-      const dayMap = new Map<string, number[]>();
-      
-      data.forEach(d => {
-        const day = format(new Date(d.timestamp), 'MMM d');
-        if (!dayMap.has(day)) dayMap.set(day, []);
-        
-        let value: number | undefined;
-        switch (metric) {
-          case 'occupancy':
-            value = d.occupancy?.current;
-            break;
-          case 'sound':
-            value = d.sound?.level;
-            break;
-          case 'songs':
-            value = d.currentSong ? 1 : 0;
-            break;
-        }
-        
-        if (value !== undefined) {
-          dayMap.get(day)!.push(value);
-        }
-      });
-
-      // Calculate daily aggregates
-      const dailyResults: Array<{ date: string; value: number | string; anomaly?: boolean }> = [];
-      let allValues: number[] = [];
-      
-      dayMap.forEach((values, day) => {
-        let aggregate: number;
-        if (metric === 'songs') {
-          aggregate = values.reduce((a, b) => a + b, 0); // Sum of songs
-        } else {
-          aggregate = values.length > 0 
-            ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
-            : 0;
-        }
-        allValues.push(aggregate);
-        dailyResults.push({ date: day, value: aggregate });
-      });
-
-      // Detect anomalies (values outside 2 standard deviations)
-      if (allValues.length > 3) {
-        const mean = allValues.reduce((a, b) => a + b, 0) / allValues.length;
-        const stdDev = Math.sqrt(
-          allValues.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / allValues.length
-        );
-        
-        dailyResults.forEach(r => {
-          const val = typeof r.value === 'number' ? r.value : 0;
-          if (Math.abs(val - mean) > 2 * stdDev) {
-            r.anomaly = true;
-          }
-        });
-      }
-
-      // Calculate stats
-      const min = Math.min(...allValues);
-      const max = Math.max(...allValues);
-      const avg = Math.round(allValues.reduce((a, b) => a + b, 0) / allValues.length);
-      
-      // Count gaps (days with 0 data)
-      const gaps = dailyResults.filter(r => r.value === 0).length;
-
-      setResults(dailyResults.reverse()); // Oldest first
-      setStats({ min, max, avg, gaps });
-    } catch (error) {
-      console.error('Error running audit:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [venueId, metric, dateRange]);
-
-  useEffect(() => {
-    if (venueId) {
-      runAudit();
-    }
-  }, [venueId, metric, dateRange, runAudit]);
-
-  return (
-    <div className="glass-card p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <History className="w-5 h-5 text-amber-400" />
-          <h3 className="text-lg font-bold text-white">Historical Data Audit</h3>
-        </div>
-      </div>
-
-      {/* Controls */}
-      <div className="flex flex-wrap gap-3 mb-4">
-        <select
-          value={metric}
-          onChange={(e) => setMetric(e.target.value as any)}
-          className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm"
-        >
-          <option value="occupancy">Occupancy (avg)</option>
-          <option value="sound">Sound Level (avg dB)</option>
-          <option value="songs">Songs Detected (count)</option>
-        </select>
-        
-        <select
-          value={dateRange}
-          onChange={(e) => setDateRange(e.target.value as any)}
-          className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm"
-        >
-          <option value="24h">Last 24 Hours</option>
-          <option value="7d">Last 7 Days</option>
-          <option value="30d">Last 30 Days</option>
-        </select>
-
-        <button
-          onClick={runAudit}
-          disabled={loading || !venueId}
-          className="btn-primary text-sm"
-        >
-          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-          Run Audit
-        </button>
-      </div>
-
-      {/* Stats Summary */}
-      {stats && (
-        <div className="grid grid-cols-4 gap-3 mb-4">
-          <div className="p-3 bg-gray-800/50 rounded-lg text-center">
-            <div className="text-xl font-bold text-white">{stats.min}</div>
-            <div className="text-xs text-gray-400">Min</div>
-          </div>
-          <div className="p-3 bg-gray-800/50 rounded-lg text-center">
-            <div className="text-xl font-bold text-white">{stats.max}</div>
-            <div className="text-xs text-gray-400">Max</div>
-          </div>
-          <div className="p-3 bg-gray-800/50 rounded-lg text-center">
-            <div className="text-xl font-bold text-cyan-400">{stats.avg}</div>
-            <div className="text-xs text-gray-400">Average</div>
-          </div>
-          <div className="p-3 bg-gray-800/50 rounded-lg text-center">
-            <div className={`text-xl font-bold ${stats.gaps > 0 ? 'text-red-400' : 'text-green-400'}`}>
-              {stats.gaps}
-            </div>
-            <div className="text-xs text-gray-400">Data Gaps</div>
-          </div>
-        </div>
-      )}
-
-      {/* Results Table */}
-      {!venueId ? (
-        <div className="text-center py-8 text-gray-500">Select a venue to audit</div>
-      ) : results.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          {loading ? 'Running audit...' : 'No data found for this period'}
-        </div>
-      ) : (
-        <div className="bg-gray-900/50 rounded-lg p-3 max-h-[300px] overflow-y-auto">
-          <div className="space-y-1">
-            {results.map((r, i) => (
-              <div 
-                key={i} 
-                className={`flex items-center justify-between py-2 px-3 rounded ${
-                  r.anomaly ? 'bg-red-500/10 border border-red-500/30' : ''
-                }`}
-              >
-                <span className="text-gray-400">{r.date}</span>
-                <div className="flex items-center gap-2">
-                  <span className={`font-mono ${r.anomaly ? 'text-red-400' : 'text-white'}`}>
-                    {r.value}
-                  </span>
-                  {r.anomaly && (
-                    <AlertTriangle className="w-4 h-4 text-red-400" />
-                  )}
-                  {r.value === 0 && (
-                    <span className="text-xs text-yellow-400">NO DATA</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -751,8 +551,65 @@ function HistoricalDataAudit({ venueId }: { venueId: string }) {
 // ============ MAIN PAGE ============
 
 export function DataAccuracy() {
-  const { venues, loading } = useAdminData();
-  const [selectedVenueId, setSelectedVenueId] = useState<string>('');
+  const { venues, loading: venuesLoading } = useAdminData();
+  const [healthData, setHealthData] = useState<VenueHealth[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedVenue, setSelectedVenue] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'overview' | 'issues' | 'sensors'>('overview');
+
+  // Analyze all venues
+  const analyzeAllVenues = useCallback(async () => {
+    if (venues.length === 0) return;
+    
+    setLoading(true);
+    try {
+      const results = await Promise.all(
+        venues.map(v => analyzeVenueHealth(v))
+      );
+      
+      // Sort: critical first, then warning, then healthy, then demo
+      results.sort((a, b) => {
+        const order = { critical: 0, warning: 1, offline: 2, healthy: 3, demo: 4 };
+        return order[a.status] - order[b.status];
+      });
+      
+      setHealthData(results);
+    } catch (error) {
+      console.error('Error analyzing venues:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [venues]);
+
+  useEffect(() => {
+    if (!venuesLoading && venues.length > 0) {
+      analyzeAllVenues();
+    }
+  }, [venues, venuesLoading, analyzeAllVenues]);
+
+  // Aggregate stats
+  const stats = useMemo(() => {
+    const healthy = healthData.filter(h => h.status === 'healthy').length;
+    const warning = healthData.filter(h => h.status === 'warning').length;
+    const critical = healthData.filter(h => h.status === 'critical').length;
+    const offline = healthData.filter(h => h.status === 'offline').length;
+    const totalIssues = healthData.reduce((sum, h) => sum + h.issues.length, 0);
+    const avgScore = healthData.length > 0 
+      ? Math.round(healthData.reduce((sum, h) => sum + h.dataQualityScore, 0) / healthData.length)
+      : 0;
+    
+    return { healthy, warning, critical, offline, totalIssues, avgScore };
+  }, [healthData]);
+
+  // All issues across venues
+  const allIssues = useMemo(() => {
+    return healthData
+      .flatMap(h => h.issues)
+      .sort((a, b) => {
+        const order = { critical: 0, warning: 1, info: 2 };
+        return order[a.severity] - order[b.severity];
+      });
+  }, [healthData]);
 
   return (
     <div className="min-h-screen p-4 md:p-6 lg:p-8">
@@ -761,46 +618,263 @@ export function DataAccuracy() {
         animate={{ opacity: 1, y: 0 }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold gradient-text mb-2">📊 Data Accuracy Tools</h1>
-            <p className="text-gray-400">Verify data integrity and accuracy for each venue</p>
+            <h1 className="text-3xl font-bold gradient-text mb-2">📊 Data Command Center</h1>
+            <p className="text-gray-400">Real-time health monitoring for all venues</p>
+          </div>
+          <button
+            onClick={analyzeAllVenues}
+            disabled={loading}
+            className="btn-primary flex items-center gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh All
+          </button>
+        </div>
+
+        {/* Stats Overview */}
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
+          <div className="glass-card p-4 text-center">
+            <div className="text-3xl font-bold text-green-400">{stats.healthy}</div>
+            <div className="text-xs text-gray-400">Healthy</div>
+          </div>
+          <div className="glass-card p-4 text-center">
+            <div className="text-3xl font-bold text-yellow-400">{stats.warning}</div>
+            <div className="text-xs text-gray-400">Warning</div>
+          </div>
+          <div className="glass-card p-4 text-center">
+            <div className="text-3xl font-bold text-red-400">{stats.critical}</div>
+            <div className="text-xs text-gray-400">Critical</div>
+          </div>
+          <div className="glass-card p-4 text-center">
+            <div className="text-3xl font-bold text-gray-400">{stats.offline}</div>
+            <div className="text-xs text-gray-400">Offline</div>
+          </div>
+          <div className="glass-card p-4 text-center">
+            <div className="text-3xl font-bold text-orange-400">{stats.totalIssues}</div>
+            <div className="text-xs text-gray-400">Issues</div>
+          </div>
+          <div className="glass-card p-4 text-center">
+            <div className={`text-3xl font-bold ${stats.avgScore >= 80 ? 'text-green-400' : stats.avgScore >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
+              {stats.avgScore}%
+            </div>
+            <div className="text-xs text-gray-400">Avg Score</div>
           </div>
         </div>
 
-        {/* Venue Selector */}
-        <div className="glass-card p-4 mb-6">
-          <div className="flex items-center gap-4">
-            <label className="text-sm text-gray-400">Select Venue:</label>
-            <select
-              value={selectedVenueId}
-              onChange={(e) => setSelectedVenueId(e.target.value)}
-              className="flex-1 max-w-md px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
-              disabled={loading}
+        {/* Tab Navigation */}
+        <div className="flex gap-2 mb-6">
+          {[
+            { id: 'overview', label: 'All Venues', icon: BarChart3 },
+            { id: 'issues', label: `Issues (${stats.totalIssues})`, icon: AlertTriangle },
+            { id: 'sensors', label: 'Sensor Grid', icon: Activity },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                activeTab === tab.id
+                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                  : 'bg-gray-800 text-gray-400 hover:text-white'
+              }`}
             >
-              <option value="">-- Select a venue --</option>
-              {venues.map(v => (
-                <option key={v.venueId} value={v.venueId}>
-                  {v.venueName} ({v.venueId})
-                </option>
-              ))}
-            </select>
-            {selectedVenueId && (
-              <div className="flex items-center gap-2 text-sm">
-                <Wifi className="w-4 h-4 text-green-400" />
-                <span className="text-green-400">Connected</span>
-              </div>
-            )}
-          </div>
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </button>
+          ))}
         </div>
 
-        {/* Tools Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <LiveDataMonitor venueId={selectedVenueId} />
-          <DataSourceTransparency venueId={selectedVenueId} />
-          <SideBySideComparison venueId={selectedVenueId} />
-          <HistoricalDataAudit venueId={selectedVenueId} />
-        </div>
+        {/* Content */}
+        <AnimatePresence mode="wait">
+          {activeTab === 'overview' && (
+            <motion.div
+              key="overview"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-3"
+            >
+              {loading ? (
+                <div className="glass-card p-12 text-center">
+                  <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mx-auto mb-4" />
+                  <p className="text-gray-400">Analyzing {venues.length} venues...</p>
+                </div>
+              ) : healthData.length === 0 ? (
+                <div className="glass-card p-12 text-center">
+                  <Shield className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+                  <p className="text-gray-400">No venues found</p>
+                </div>
+              ) : (
+                healthData.map(health => (
+                  <VenueHealthRow 
+                    key={health.venueId} 
+                    health={health}
+                    onClick={() => setSelectedVenue(health.venueId)}
+                  />
+                ))
+              )}
+            </motion.div>
+          )}
+
+          {activeTab === 'issues' && (
+            <motion.div
+              key="issues"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-3"
+            >
+              {allIssues.length === 0 ? (
+                <div className="glass-card p-12 text-center">
+                  <CheckCircle className="w-12 h-12 text-green-400 mx-auto mb-4" />
+                  <p className="text-green-400 font-medium">All Systems Operational</p>
+                  <p className="text-gray-500 text-sm mt-1">No issues detected across all venues</p>
+                </div>
+              ) : (
+                allIssues.map(issue => (
+                  <IssueCard key={issue.id} issue={issue} />
+                ))
+              )}
+            </motion.div>
+          )}
+
+          {activeTab === 'sensors' && (
+            <motion.div
+              key="sensors"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="glass-card p-6"
+            >
+              <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                <Activity className="w-5 h-5 text-cyan-400" />
+                Sensor Status Grid
+              </h3>
+              {loading ? (
+                <div className="text-center py-8">
+                  <RefreshCw className="w-6 h-6 text-cyan-400 animate-spin mx-auto" />
+                </div>
+              ) : (
+                <SensorGrid healthData={healthData} />
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Selected Venue Detail Modal */}
+        <AnimatePresence>
+          {selectedVenue && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+              onClick={() => setSelectedVenue(null)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-gray-900 rounded-2xl border border-gray-700 p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto"
+                onClick={e => e.stopPropagation()}
+              >
+                {(() => {
+                  const venue = healthData.find(h => h.venueId === selectedVenue);
+                  if (!venue) return null;
+                  
+                  return (
+                    <>
+                      <div className="flex items-center justify-between mb-6">
+                        <div>
+                          <h2 className="text-2xl font-bold text-white">{venue.venueName}</h2>
+                          <p className="text-sm text-gray-400">{venue.venueId}</p>
+                        </div>
+                        <StatusBadge status={venue.status} />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="p-4 bg-gray-800 rounded-lg">
+                          <div className="text-sm text-gray-400 mb-1">Data Quality Score</div>
+                          <div className={`text-3xl font-bold ${venue.dataQualityScore >= 80 ? 'text-green-400' : venue.dataQualityScore >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
+                            {venue.dataQualityScore}%
+                          </div>
+                        </div>
+                        <div className="p-4 bg-gray-800 rounded-lg">
+                          <div className="text-sm text-gray-400 mb-1">Last Data</div>
+                          <div className="text-lg font-medium text-white">{venue.lastDataAgo}</div>
+                        </div>
+                      </div>
+
+                      <div className="mb-6">
+                        <h3 className="text-sm font-medium text-gray-400 mb-3">SENSOR STATUS</h3>
+                        <div className="grid grid-cols-4 gap-3">
+                          {Object.entries(venue.sensors).map(([key, sensor]) => (
+                            <div key={key} className="p-3 bg-gray-800 rounded-lg text-center">
+                              <SensorIndicator status={sensor.status} />
+                              <div className="text-xs text-gray-400 mt-1 capitalize">{key}</div>
+                              {sensor.lastValue && (
+                                <div className="text-xs text-gray-500 mt-1 truncate">{sensor.lastValue}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {venue.issues.length > 0 && (
+                        <div className="mb-6">
+                          <h3 className="text-sm font-medium text-gray-400 mb-3">ISSUES ({venue.issues.length})</h3>
+                          <div className="space-y-2">
+                            {venue.issues.map(issue => (
+                              <IssueCard key={issue.id} issue={issue} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-400 mb-3">LATEST VALUES</h3>
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div className="flex justify-between p-2 bg-gray-800 rounded">
+                            <span className="text-gray-400">Occupancy</span>
+                            <span className="text-white">{venue.latestData.occupancy ?? '—'}</span>
+                          </div>
+                          <div className="flex justify-between p-2 bg-gray-800 rounded">
+                            <span className="text-gray-400">Capacity</span>
+                            <span className="text-white">{venue.latestData.capacity ?? '—'}</span>
+                          </div>
+                          <div className="flex justify-between p-2 bg-gray-800 rounded">
+                            <span className="text-gray-400">Entries</span>
+                            <span className="text-white">{venue.latestData.entries ?? '—'}</span>
+                          </div>
+                          <div className="flex justify-between p-2 bg-gray-800 rounded">
+                            <span className="text-gray-400">Exits</span>
+                            <span className="text-white">{venue.latestData.exits ?? '—'}</span>
+                          </div>
+                          <div className="flex justify-between p-2 bg-gray-800 rounded">
+                            <span className="text-gray-400">Sound</span>
+                            <span className="text-white">{venue.latestData.soundLevel ? `${Math.round(venue.latestData.soundLevel)} dB` : '—'}</span>
+                          </div>
+                          <div className="flex justify-between p-2 bg-gray-800 rounded">
+                            <span className="text-gray-400">Light</span>
+                            <span className="text-white">{venue.latestData.lightLevel ? `${Math.round(venue.latestData.lightLevel)} lux` : '—'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedVenue(null)}
+                        className="w-full mt-6 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg text-white font-medium transition-colors"
+                      >
+                        Close
+                      </button>
+                    </>
+                  );
+                })()}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
     </div>
   );
