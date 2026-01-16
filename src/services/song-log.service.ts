@@ -35,9 +35,9 @@ export interface PlaylistSong {
 export interface GenreStats {
   genre: string;
   plays: number;
-  avgDwellTime: number; // average dwell time during genre plays
+  avgRetention: number; // average retention rate during genre plays (100% = neutral, >100% = crowd grew)
   avgOccupancy: number;
-  totalMinutes: number; // total playtime
+  totalMinutes: number; // estimated total playtime
   performanceScore: number;
 }
 
@@ -863,7 +863,7 @@ class SongLogService {
       results.push({
         genre,
         plays: stats.plays,
-        avgDwellTime: Math.round(avgRetention), // Using retention as proxy
+        avgRetention: Math.round(avgRetention * 10) / 10, // Actual retention rate percentage
         avgOccupancy: Math.round(avgCrowd),
         totalMinutes: stats.plays * 3.5, // Estimate 3.5 min per song
         performanceScore: Math.round(Math.min(100, avgRetention))
@@ -938,10 +938,10 @@ class SongLogService {
       results.push({
         genre,
         plays: stats.plays,
-        avgDwellTime: 45, // Default estimate
-        avgOccupancy: 30, // Default estimate
+        avgRetention: 0, // No retention data available without sensor readings
+        avgOccupancy: 0, // No occupancy data available without sensor readings
         totalMinutes: stats.plays * 3.5, // Estimate 3.5 min per song
-        performanceScore: Math.min(100, Math.round(50 + (stats.plays / 10) * 5)) // Score based on plays
+        performanceScore: 0 // No performance data without sensor correlation
       });
     });
     
@@ -1017,7 +1017,7 @@ class SongLogService {
           tracks: playlist.map(song => ({
             name: song.song,
             artist: song.artist,
-            performanceScore: song.performanceScore,
+            retentionRate: song.retentionRate ?? 100,
             genre: song.genre
           }))
         }, null, 2);
@@ -1028,15 +1028,14 @@ class SongLogService {
       case 'csv':
       default:
         // CSV format
-        const headers = ['Position', 'Song', 'Artist', 'Plays', 'Performance Score', 'Genre', 'Reason'];
+        const headers = ['Position', 'Song', 'Artist', 'Plays', 'Retention Rate (%)', 'Genre'];
         const rows = playlist.map(song => [
           song.position,
           song.song,
           song.artist,
           song.plays,
-          song.performanceScore,
-          song.genre || 'Unknown',
-          song.reason
+          song.retentionRate ?? 100, // Default to 100% if no data
+          song.genre || 'Unknown'
         ]);
         content = [
           headers.join(','),

@@ -140,23 +140,29 @@ class AIReportService {
     // Top genres
     if (genreStats.length > 0) {
       const topGenre = genreStats[0];
+      const topRetentionDisplay = topGenre.avgRetention >= 100 
+        ? `+${(topGenre.avgRetention - 100).toFixed(1)}%` 
+        : `${(topGenre.avgRetention - 100).toFixed(1)}%`;
       insights.push({
         category: 'Top Genre',
         title: topGenre.genre,
-        description: `${topGenre.plays} songs played. Average dwell time: ${topGenre.avgDwellTime.toFixed(0)} min.`,
+        description: `${topGenre.plays} songs played. Retention: ${topRetentionDisplay}.`,
         trend: 'up',
-        value: `${topGenre.avgDwellTime.toFixed(0)}m dwell`
+        value: `${topRetentionDisplay} retention`
       });
 
-      // Genre that keeps people longest
-      const longestDwell = [...genreStats].sort((a, b) => b.avgDwellTime - a.avgDwellTime)[0];
-      if (longestDwell.genre !== topGenre.genre) {
+      // Genre with best retention (people stay/more come in)
+      const bestRetention = [...genreStats].sort((a, b) => b.avgRetention - a.avgRetention)[0];
+      if (bestRetention.genre !== topGenre.genre && bestRetention.avgRetention > 0) {
+        const retentionDisplay = bestRetention.avgRetention >= 100 
+          ? `+${(bestRetention.avgRetention - 100).toFixed(1)}%` 
+          : `${(bestRetention.avgRetention - 100).toFixed(1)}%`;
         insights.push({
-          category: 'Best for Dwell',
-          title: longestDwell.genre,
-          description: `Guests stay ${longestDwell.avgDwellTime.toFixed(0)} min on average when this genre plays.`,
+          category: 'Best Retention',
+          title: bestRetention.genre,
+          description: `Crowd grows ${retentionDisplay} on average when this genre plays.`,
           trend: 'up',
-          value: `${longestDwell.avgDwellTime.toFixed(0)}m avg`
+          value: `${retentionDisplay}`
         });
       }
     }
@@ -180,12 +186,19 @@ class AIReportService {
     }
     
     if (genreStats.length > 0) {
-      const bestDwellGenre = [...genreStats].sort((a, b) => b.avgDwellTime - a.avgDwellTime)[0];
-      recommendations.push(`${bestDwellGenre.genre} music keeps guests longest (${bestDwellGenre.avgDwellTime.toFixed(0)} min avg). Play more during peak hours.`);
+      const bestRetentionGenre = [...genreStats].sort((a, b) => b.avgRetention - a.avgRetention)[0];
+      if (bestRetentionGenre.avgRetention > 0) {
+        const retentionDisplay = bestRetentionGenre.avgRetention >= 100 
+          ? `+${(bestRetentionGenre.avgRetention - 100).toFixed(1)}%` 
+          : `${(bestRetentionGenre.avgRetention - 100).toFixed(1)}%`;
+        recommendations.push(`${bestRetentionGenre.genre} music has best retention (${retentionDisplay}). Play more during peak hours.`);
+      }
       
       if (genreStats.length > 3) {
-        const lowPerformers = genreStats.slice(-2);
-        recommendations.push(`Consider reducing ${lowPerformers.map(g => g.genre).join(' and ')} - lower dwell times observed.`);
+        const lowPerformers = genreStats.filter(g => g.avgRetention > 0 && g.avgRetention < 100).slice(0, 2);
+        if (lowPerformers.length > 0) {
+          recommendations.push(`Consider adjusting ${lowPerformers.map(g => g.genre).join(' and ')} - crowd decreased during these genres.`);
+        }
       }
     }
 
@@ -201,8 +214,10 @@ class AIReportService {
       summary += `"${topSongs[0].song}" was your top performer. `;
     }
     if (genreStats.length > 0) {
-      const bestGenre = [...genreStats].sort((a, b) => b.avgDwellTime - a.avgDwellTime)[0];
-      summary += `${bestGenre.genre} music correlates with longest guest stays.`;
+      const bestGenre = [...genreStats].sort((a, b) => b.avgRetention - a.avgRetention)[0];
+      if (bestGenre.avgRetention > 0) {
+        summary += `${bestGenre.genre} music correlates with best crowd retention.`;
+      }
     }
     if (topSongs.length === 0) {
       summary = 'Music analytics data not yet available. Continue playing music to build your profile.';

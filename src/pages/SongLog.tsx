@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Music, Download, Clock, TrendingUp, RefreshCw, Zap, ListMusic, 
   Calendar, FileText, FileJson, ChevronDown, Disc3,
-  BarChart3, Users, ShieldCheck, Timer
+  BarChart3, Users, ShieldCheck
 } from 'lucide-react';
 import { format } from 'date-fns';
 import songLogService, { 
@@ -87,10 +87,10 @@ export function SongLog() {
     }
   }, [timeRange, dataLoaded, loadAnalytics]);
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     songLogService.clearCache();
     setDataLoaded(false);
-    loadSongs();
+    await loadSongs();
   };
 
   const handleExport = async () => {
@@ -208,9 +208,9 @@ export function SongLog() {
                 <ShieldCheck className="w-6 h-6 text-emerald-400" />
                 <h3 className="text-xl font-semibold text-white">Highest Retention</h3>
               </div>
-              <div className="flex items-center gap-1 text-xs text-emerald-400">
+              <div className="flex items-center gap-1 text-xs text-emerald-400" title="Retention calculated from actual crowd changes during each song">
                 <TrendingUp className="w-3 h-3" />
-                <span>100% Accurate</span>
+                <span>Real Data</span>
               </div>
             </div>
             <p className="text-xs text-warm-400 mb-4">Songs where people stayed or more came in</p>
@@ -405,7 +405,7 @@ export function SongLog() {
               <Disc3 className="w-5 h-5 text-purple-400" />
               <h3 className="text-xl font-semibold text-white">Top Genres</h3>
             </div>
-            <p className="text-xs text-warm-400 mb-4">Genre breakdown with dwell time impact</p>
+            <p className="text-xs text-warm-400 mb-4">Genre breakdown with retention impact</p>
 
             <div className="space-y-3 max-h-[350px] overflow-y-auto custom-scrollbar">
               {analyticsLoading && !genreStats.length ? (
@@ -430,22 +430,33 @@ export function SongLog() {
                       <span className="text-purple-400 font-bold">{genre.plays} plays</span>
                     </div>
                     <div className="flex items-center gap-4 text-xs text-warm-400">
-                      <div className="flex items-center gap-1">
-                        <Timer className="w-3 h-3" />
-                        <span>~{genre.avgDwellTime} min dwell</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Users className="w-3 h-3" />
-                        <span>Avg {genre.avgOccupancy} people</span>
-                      </div>
+                      {genre.avgRetention > 0 && (
+                        <div className="flex items-center gap-1">
+                          <TrendingUp className="w-3 h-3" />
+                          <span className={genre.avgRetention >= 100 ? 'text-emerald-400' : 'text-amber-400'}>
+                            {genre.avgRetention >= 100 ? '+' : ''}{(genre.avgRetention - 100).toFixed(1)}% retention
+                          </span>
+                        </div>
+                      )}
+                      {genre.avgOccupancy > 0 && (
+                        <div className="flex items-center gap-1">
+                          <Users className="w-3 h-3" />
+                          <span>Avg {genre.avgOccupancy} people</span>
+                        </div>
+                      )}
+                      {genre.avgRetention === 0 && genre.avgOccupancy === 0 && (
+                        <span className="text-warm-500">Play count only</span>
+                      )}
                     </div>
-                    {/* Performance bar */}
-                    <div className="mt-2 h-1.5 bg-purple-500/20 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-gradient-to-r from-purple-400 to-pink-400 rounded-full transition-all"
-                        style={{ width: `${genre.performanceScore}%` }}
-                      />
-                    </div>
+                    {/* Performance bar - only show if we have real performance data */}
+                    {genre.performanceScore > 0 && (
+                      <div className="mt-2 h-1.5 bg-purple-500/20 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-purple-400 to-pink-400 rounded-full transition-all"
+                          style={{ width: `${genre.performanceScore}%` }}
+                        />
+                      </div>
+                    )}
                   </motion.div>
                 ))
               ) : (

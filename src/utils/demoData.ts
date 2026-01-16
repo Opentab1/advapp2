@@ -1325,25 +1325,25 @@ export function getDemoTopSongs(limit: number = 10): Array<{ song: string; artis
 
 /**
  * Get demo genre stats - IMPRESSIVE NUMBERS
- * Shows which genres drive the best crowd engagement
+ * Shows which genres drive the best crowd retention
  */
 export function getDemoGenreStats(): Array<{
   genre: string;
   plays: number;
-  avgDwellTime: number;
+  avgRetention: number; // Retention rate percentage (100% = neutral, >100% = crowd grew)
   avgOccupancy: number;
   totalMinutes: number;
   performanceScore: number;
 }> {
   return [
-    { genre: 'Country', plays: 487, avgDwellTime: 72, avgOccupancy: 385, totalMinutes: 1461, performanceScore: 96 },
-    { genre: 'Hip Hop', plays: 412, avgDwellTime: 65, avgOccupancy: 410, totalMinutes: 1236, performanceScore: 94 },
-    { genre: 'Pop', plays: 385, avgDwellTime: 58, avgOccupancy: 365, totalMinutes: 1155, performanceScore: 91 },
-    { genre: 'Electronic', plays: 298, avgDwellTime: 78, avgOccupancy: 425, totalMinutes: 894, performanceScore: 95 },
-    { genre: 'Rock', plays: 245, avgDwellTime: 62, avgOccupancy: 345, totalMinutes: 735, performanceScore: 88 },
-    { genre: 'Latin', plays: 198, avgDwellTime: 68, avgOccupancy: 395, totalMinutes: 594, performanceScore: 92 },
-    { genre: 'R&B', plays: 165, avgDwellTime: 55, avgOccupancy: 320, totalMinutes: 495, performanceScore: 85 },
-    { genre: 'Alternative', plays: 124, avgDwellTime: 60, avgOccupancy: 295, totalMinutes: 372, performanceScore: 82 },
+    { genre: 'Country', plays: 487, avgRetention: 106.2, avgOccupancy: 385, totalMinutes: 1461, performanceScore: 96 },
+    { genre: 'Hip Hop', plays: 412, avgRetention: 104.8, avgOccupancy: 410, totalMinutes: 1236, performanceScore: 94 },
+    { genre: 'Pop', plays: 385, avgRetention: 102.5, avgOccupancy: 365, totalMinutes: 1155, performanceScore: 91 },
+    { genre: 'Electronic', plays: 298, avgRetention: 108.1, avgOccupancy: 425, totalMinutes: 894, performanceScore: 95 },
+    { genre: 'Rock', plays: 245, avgRetention: 101.8, avgOccupancy: 345, totalMinutes: 735, performanceScore: 88 },
+    { genre: 'Latin', plays: 198, avgRetention: 105.5, avgOccupancy: 395, totalMinutes: 594, performanceScore: 92 },
+    { genre: 'R&B', plays: 165, avgRetention: 100.3, avgOccupancy: 320, totalMinutes: 495, performanceScore: 85 },
+    { genre: 'Alternative', plays: 124, avgRetention: 99.8, avgOccupancy: 295, totalMinutes: 372, performanceScore: 82 },
   ];
 }
 
