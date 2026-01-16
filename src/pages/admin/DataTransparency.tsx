@@ -1,18 +1,13 @@
 /**
- * DataTransparency - See every number, every step, verify it yourself
+ * DataTransparency - See every number at every step, verify it yourself
  * 
- * This is NOT automated validation. This is a transparent view where you can:
- * 1. See the raw DynamoDB data (actual JSON)
- * 2. See what we extract from it
- * 3. See the formula we use
- * 4. See the actual inputs plugged in
- * 5. See the calculated result
- * 6. See what the customer sees
- * 
- * You can pull out a calculator and verify every step yourself.
+ * Shows:
+ * 1. Last 10 raw DynamoDB records (so you can see data is flowing)
+ * 2. Last 3 readings for each metric (so you can see it's live)
+ * 3. Full calculation breakdown for each reading
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Database,
@@ -23,33 +18,54 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
-  Check
+  Check,
+  Clock
 } from 'lucide-react';
 import { useAdminData } from '../../hooks/useAdminData';
 import dynamoDBService from '../../services/dynamodb.service';
 import { format } from 'date-fns';
 
-interface MetricTrace {
-  name: string;
-  description: string;
+interface MetricReading {
+  timestamp: string;
+  timeAgo: string;
   rawData: any;
   extractions: { field: string; path: string; value: any }[];
-  formula: string;
   inputs: { name: string; value: number | string; source: string }[];
   calculation: string;
   result: number | string;
   displayedAs: string;
-  customerSees: string;
+}
+
+interface MetricTrace {
+  name: string;
+  description: string;
+  formula: string;
+  readings: MetricReading[];
+}
+
+function formatTimeAgo(timestamp: string): string {
+  const now = new Date();
+  const then = new Date(timestamp);
+  const diffMs = now.getTime() - then.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  
+  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffMin < 60) return `${diffMin}m ago`;
+  return format(then, 'h:mm a');
 }
 
 export function DataTransparency() {
   const { venues, loading: venuesLoading } = useAdminData();
   const [selectedVenue, setSelectedVenue] = useState<string>('');
   const [loading, setLoading] = useState(false);
-  const [rawData, setRawData] = useState<any>(null);
+  const [rawRecords, setRawRecords] = useState<any[]>([]);
   const [traces, setTraces] = useState<MetricTrace[]>([]);
   const [expandedTrace, setExpandedTrace] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const refreshInterval = useRef<NodeJS.Timeout | null>(null);
 
   const copyToClipboard = (text: string, field: string) => {
     navigator.clipboard.writeText(text);
@@ -64,283 +80,237 @@ export function DataTransparency() {
     try {
       const now = new Date();
       const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      const dayStart = new Date(now);
-      dayStart.setHours(3, 0, 0, 0); // Bar day starts at 3 AM
-      if (now < dayStart) {
-        dayStart.setDate(dayStart.getDate() - 1);
-      }
       
-      // Get raw data from DynamoDB
+      // Get raw data from DynamoDB - fetch more to have context
       const data = await dynamoDBService.getSensorDataByDateRange(
         selectedVenue, 
-        dayStart, 
+        hourAgo, 
         now, 
-        500
+        100
       );
       
       if (!data || data.length === 0) {
-        setRawData(null);
+        setRawRecords([]);
         setTraces([]);
+        setLastRefresh(new Date());
         return;
       }
 
-      // Sort by timestamp descending
+      // Sort by timestamp descending (newest first)
       const sorted = [...data].sort((a, b) => 
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       );
       
-      const latest = sorted[0];
-      const todayData = sorted;
+      // Store last 10 raw records for display
+      setRawRecords(sorted.slice(0, 10));
       
-      // Store raw data for display
-      setRawData(latest);
+      // Get last 3 for metric calculations
+      const last3 = sorted.slice(0, 3);
       
-      // Build metric traces
+      // Build metric traces with last 3 readings each
       const metricTraces: MetricTrace[] = [];
 
       // ========== 1. CURRENT OCCUPANCY ==========
-      const occCurrent = latest.occupancy?.current;
-      const occEntries = latest.occupancy?.entries;
-      const occExits = latest.occupancy?.exits;
-      const occCapacity = latest.occupancy?.capacity;
-      
       metricTraces.push({
         name: 'Current Occupancy',
         description: 'How many people are in the venue right now',
-        rawData: latest.occupancy,
-        extractions: [
-          { field: 'current', path: 'occupancy.current', value: occCurrent },
-          { field: 'entries', path: 'occupancy.entries', value: occEntries },
-          { field: 'exits', path: 'occupancy.exits', value: occExits },
-          { field: 'capacity', path: 'occupancy.capacity', value: occCapacity },
-        ],
         formula: 'current = entries - exits',
-        inputs: [
-          { name: 'entries', value: occEntries ?? 'null', source: 'occupancy.entries' },
-          { name: 'exits', value: occExits ?? 'null', source: 'occupancy.exits' },
-        ],
-        calculation: `${occEntries ?? '?'} - ${occExits ?? '?'} = ${(occEntries ?? 0) - (occExits ?? 0)}`,
-        result: (occEntries ?? 0) - (occExits ?? 0),
-        displayedAs: String(occCurrent ?? 'null'),
-        customerSees: occCurrent !== undefined && occCurrent !== null ? `${occCurrent} people` : '—',
+        readings: last3.map(record => {
+          const entries = record.occupancy?.entries;
+          const exits = record.occupancy?.exits;
+          const current = record.occupancy?.current;
+          const calculated = (entries ?? 0) - (exits ?? 0);
+          
+          return {
+            timestamp: record.timestamp,
+            timeAgo: formatTimeAgo(record.timestamp),
+            rawData: record.occupancy,
+            extractions: [
+              { field: 'entries', path: 'occupancy.entries', value: entries },
+              { field: 'exits', path: 'occupancy.exits', value: exits },
+              { field: 'current', path: 'occupancy.current', value: current },
+            ],
+            inputs: [
+              { name: 'entries', value: entries ?? 'null', source: 'occupancy.entries' },
+              { name: 'exits', value: exits ?? 'null', source: 'occupancy.exits' },
+            ],
+            calculation: `${entries ?? '?'} - ${exits ?? '?'} = ${calculated}`,
+            result: calculated,
+            displayedAs: current !== undefined ? `${current}` : '—',
+          };
+        }),
       });
 
       // ========== 2. OCCUPANCY PERCENTAGE ==========
-      const occPercent = occCapacity && occCapacity > 0 
-        ? Math.round((occCurrent ?? 0) / occCapacity * 100) 
-        : null;
-      
       metricTraces.push({
-        name: 'Occupancy Percentage',
-        description: 'Current occupancy as % of capacity',
-        rawData: { current: occCurrent, capacity: occCapacity },
-        extractions: [
-          { field: 'current', path: 'occupancy.current', value: occCurrent },
-          { field: 'capacity', path: 'occupancy.capacity', value: occCapacity },
-        ],
+        name: 'Occupancy %',
+        description: 'Current occupancy as percentage of capacity',
         formula: 'percentage = (current / capacity) × 100',
-        inputs: [
-          { name: 'current', value: occCurrent ?? 'null', source: 'occupancy.current' },
-          { name: 'capacity', value: occCapacity ?? 'null', source: 'occupancy.capacity' },
-        ],
-        calculation: `(${occCurrent ?? '?'} / ${occCapacity ?? '?'}) × 100 = ${occPercent ?? '?'}`,
-        result: occPercent ?? 'N/A',
-        displayedAs: occPercent !== null ? `${occPercent}%` : 'N/A',
-        customerSees: occPercent !== null ? `${occPercent}%` : '—',
+        readings: last3.map(record => {
+          const current = record.occupancy?.current ?? 0;
+          const capacity = record.occupancy?.capacity ?? 200;
+          const percent = capacity > 0 ? Math.round((current / capacity) * 100) : 0;
+          
+          return {
+            timestamp: record.timestamp,
+            timeAgo: formatTimeAgo(record.timestamp),
+            rawData: { current, capacity },
+            extractions: [
+              { field: 'current', path: 'occupancy.current', value: current },
+              { field: 'capacity', path: 'occupancy.capacity', value: capacity },
+            ],
+            inputs: [
+              { name: 'current', value: current, source: 'occupancy.current' },
+              { name: 'capacity', value: capacity, source: 'occupancy.capacity' },
+            ],
+            calculation: `(${current} / ${capacity}) × 100 = ${percent}`,
+            result: percent,
+            displayedAs: `${percent}%`,
+          };
+        }),
       });
 
       // ========== 3. SOUND LEVEL ==========
-      const rawSound = latest.sound?.level ?? latest.sensors?.sound_level ?? latest.decibels;
-      
       metricTraces.push({
         name: 'Sound Level',
-        description: 'Current decibel reading from microphone',
-        rawData: { 
-          'sound.level': latest.sound?.level,
-          'sensors.sound_level': latest.sensors?.sound_level,
-          'decibels': latest.decibels
-        },
-        extractions: [
-          { field: 'sound.level', path: 'sound.level', value: latest.sound?.level },
-          { field: 'sensors.sound_level', path: 'sensors.sound_level', value: latest.sensors?.sound_level },
-          { field: 'decibels', path: 'decibels', value: latest.decibels },
-        ],
-        formula: 'First non-null of: sound.level → sensors.sound_level → decibels',
-        inputs: [
-          { name: 'sound.level', value: latest.sound?.level ?? 'null', source: 'sound.level' },
-          { name: 'sensors.sound_level', value: latest.sensors?.sound_level ?? 'null', source: 'sensors.sound_level' },
-          { name: 'decibels', value: latest.decibels ?? 'null', source: 'decibels' },
-        ],
-        calculation: `First non-null = ${rawSound ?? 'null'}`,
-        result: rawSound ?? 'N/A',
-        displayedAs: rawSound !== undefined ? `${Math.round(rawSound)} dB` : 'N/A',
-        customerSees: rawSound !== undefined ? `${Math.round(rawSound)} dB` : '—',
+        description: 'Decibel reading from microphone',
+        formula: 'First non-null: sound.level → sensors.sound_level → decibels',
+        readings: last3.map(record => {
+          const v1 = record.sound?.level;
+          const v2 = record.sensors?.sound_level;
+          const v3 = record.decibels;
+          const value = v1 ?? v2 ?? v3;
+          
+          return {
+            timestamp: record.timestamp,
+            timeAgo: formatTimeAgo(record.timestamp),
+            rawData: { 'sound.level': v1, 'sensors.sound_level': v2, 'decibels': v3 },
+            extractions: [
+              { field: 'sound.level', path: 'sound.level', value: v1 },
+              { field: 'sensors.sound_level', path: 'sensors.sound_level', value: v2 },
+              { field: 'decibels', path: 'decibels', value: v3 },
+            ],
+            inputs: [
+              { name: 'sound.level', value: v1 ?? 'null', source: 'sound.level' },
+              { name: 'sensors.sound_level', value: v2 ?? 'null', source: 'sensors.sound_level' },
+              { name: 'decibels', value: v3 ?? 'null', source: 'decibels' },
+            ],
+            calculation: `First non-null = ${value ?? 'null'}`,
+            result: value ?? 'N/A',
+            displayedAs: value !== undefined ? `${Math.round(value)} dB` : '—',
+          };
+        }),
       });
 
       // ========== 4. LIGHT LEVEL ==========
-      const rawLight = latest.light?.lux ?? latest.sensors?.light_level;
-      
       metricTraces.push({
         name: 'Light Level',
-        description: 'Current lux reading from light sensor',
-        rawData: { 
-          'light.lux': latest.light?.lux,
-          'sensors.light_level': latest.sensors?.light_level,
-        },
-        extractions: [
-          { field: 'light.lux', path: 'light.lux', value: latest.light?.lux },
-          { field: 'sensors.light_level', path: 'sensors.light_level', value: latest.sensors?.light_level },
-        ],
-        formula: 'First non-null of: light.lux → sensors.light_level',
-        inputs: [
-          { name: 'light.lux', value: latest.light?.lux ?? 'null', source: 'light.lux' },
-          { name: 'sensors.light_level', value: latest.sensors?.light_level ?? 'null', source: 'sensors.light_level' },
-        ],
-        calculation: `First non-null = ${rawLight ?? 'null'}`,
-        result: rawLight ?? 'N/A',
-        displayedAs: rawLight !== undefined ? `${Math.round(rawLight)} lux` : 'N/A',
-        customerSees: rawLight !== undefined ? `${Math.round(rawLight)} lux` : '—',
+        description: 'Lux reading from light sensor',
+        formula: 'First non-null: light.lux → sensors.light_level',
+        readings: last3.map(record => {
+          const v1 = record.light?.lux;
+          const v2 = record.sensors?.light_level;
+          const value = v1 ?? v2;
+          
+          return {
+            timestamp: record.timestamp,
+            timeAgo: formatTimeAgo(record.timestamp),
+            rawData: { 'light.lux': v1, 'sensors.light_level': v2 },
+            extractions: [
+              { field: 'light.lux', path: 'light.lux', value: v1 },
+              { field: 'sensors.light_level', path: 'sensors.light_level', value: v2 },
+            ],
+            inputs: [
+              { name: 'light.lux', value: v1 ?? 'null', source: 'light.lux' },
+              { name: 'sensors.light_level', value: v2 ?? 'null', source: 'sensors.light_level' },
+            ],
+            calculation: `First non-null = ${value ?? 'null'}`,
+            result: value ?? 'N/A',
+            displayedAs: value !== undefined ? `${Math.round(value)} lux` : '—',
+          };
+        }),
       });
 
       // ========== 5. CURRENT SONG ==========
-      const currentSong = latest.currentSong ?? latest.spotify?.current_song;
-      const artist = latest.artist ?? latest.spotify?.artist;
-      
       metricTraces.push({
         name: 'Current Song',
-        description: 'Currently detected song playing',
-        rawData: { 
-          currentSong: latest.currentSong,
-          artist: latest.artist,
-          'spotify.current_song': latest.spotify?.current_song,
-          'spotify.artist': latest.spotify?.artist,
-        },
-        extractions: [
-          { field: 'currentSong', path: 'currentSong', value: latest.currentSong },
-          { field: 'artist', path: 'artist', value: latest.artist },
-        ],
-        formula: 'Direct extraction, no calculation',
-        inputs: [
-          { name: 'currentSong', value: currentSong ?? 'null', source: 'currentSong OR spotify.current_song' },
-          { name: 'artist', value: artist ?? 'null', source: 'artist OR spotify.artist' },
-        ],
-        calculation: 'N/A (direct value)',
-        result: currentSong ? `${currentSong} - ${artist}` : 'No song',
-        displayedAs: currentSong ? `${currentSong} - ${artist}` : 'No song playing',
-        customerSees: currentSong ? `"${currentSong}" by ${artist}` : 'No song detected',
+        description: 'Currently detected song',
+        formula: 'Direct extraction from currentSong + artist',
+        readings: last3.map(record => {
+          const song = record.currentSong ?? record.spotify?.current_song;
+          const artist = record.artist ?? record.spotify?.artist;
+          
+          return {
+            timestamp: record.timestamp,
+            timeAgo: formatTimeAgo(record.timestamp),
+            rawData: { currentSong: record.currentSong, artist: record.artist },
+            extractions: [
+              { field: 'currentSong', path: 'currentSong', value: song },
+              { field: 'artist', path: 'artist', value: artist },
+            ],
+            inputs: [
+              { name: 'song', value: song ?? 'null', source: 'currentSong' },
+              { name: 'artist', value: artist ?? 'null', source: 'artist' },
+            ],
+            calculation: song ? `"${song}" by ${artist}` : 'No song detected',
+            result: song ? `${song} - ${artist}` : 'None',
+            displayedAs: song ? `${song}` : '—',
+          };
+        }),
       });
 
-      // ========== 6. AVERAGE STAY (Today) ==========
-      if (todayData.length > 1) {
-        const firstReading = todayData[todayData.length - 1];
-        const lastReading = todayData[0];
-        
-        const startEntries = firstReading.occupancy?.entries ?? 0;
-        const endEntries = lastReading.occupancy?.entries ?? 0;
-        const startExits = firstReading.occupancy?.exits ?? 0;
-        const endExits = lastReading.occupancy?.exits ?? 0;
-        
-        const totalNewGuests = endEntries - startEntries;
-        const totalExits = endExits - startExits;
-        
-        const startTime = new Date(firstReading.timestamp);
-        const endTime = new Date(lastReading.timestamp);
-        const durationMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
-        
-        // Simplified avg stay calculation
-        let avgStayMinutes: number | null = null;
-        if (totalExits > 0 && totalNewGuests > 0) {
-          // Average time = total person-minutes / exits
-          // Approximation: if exits happened evenly, avg stay ≈ duration * (entries/exits) / 2
-          avgStayMinutes = Math.round(durationMinutes * (totalNewGuests / totalExits) / 2);
-        }
-
-        metricTraces.push({
-          name: 'Average Stay (Today)',
-          description: 'Estimated average time guests stay',
-          rawData: {
-            firstReading: { 
-              timestamp: firstReading.timestamp, 
-              entries: startEntries, 
-              exits: startExits 
-            },
-            lastReading: { 
-              timestamp: lastReading.timestamp, 
-              entries: endEntries, 
-              exits: endExits 
-            },
-            dataPoints: todayData.length
-          },
-          extractions: [
-            { field: 'First reading entries', path: `data[${todayData.length - 1}].occupancy.entries`, value: startEntries },
-            { field: 'Last reading entries', path: 'data[0].occupancy.entries', value: endEntries },
-            { field: 'First reading exits', path: `data[${todayData.length - 1}].occupancy.exits`, value: startExits },
-            { field: 'Last reading exits', path: 'data[0].occupancy.exits', value: endExits },
-          ],
-          formula: 'avgStay ≈ duration × (newGuests / exits) / 2',
-          inputs: [
-            { name: 'duration', value: `${durationMinutes} min`, source: 'lastTimestamp - firstTimestamp' },
-            { name: 'newGuests', value: totalNewGuests, source: 'endEntries - startEntries' },
-            { name: 'totalExits', value: totalExits, source: 'endExits - startExits' },
-          ],
-          calculation: `${durationMinutes} × (${totalNewGuests} / ${totalExits}) / 2 = ${avgStayMinutes ?? 'N/A'}`,
-          result: avgStayMinutes ?? 'N/A',
-          displayedAs: avgStayMinutes ? `${avgStayMinutes} min` : 'N/A',
-          customerSees: avgStayMinutes ? `${avgStayMinutes} min` : '—',
-        });
-      }
-
-      // ========== 7. TOTAL GUESTS TODAY ==========
-      if (todayData.length > 1) {
-        const firstReading = todayData[todayData.length - 1];
-        const lastReading = todayData[0];
-        
-        const startEntries = firstReading.occupancy?.entries ?? 0;
-        const endEntries = lastReading.occupancy?.entries ?? 0;
-        const totalNewGuests = endEntries - startEntries;
-
-        metricTraces.push({
-          name: 'Total Guests Today',
-          description: 'Number of people who entered since day start',
-          rawData: {
-            firstReading: { timestamp: firstReading.timestamp, entries: startEntries },
-            lastReading: { timestamp: lastReading.timestamp, entries: endEntries },
-          },
-          extractions: [
-            { field: 'Day start entries', path: 'firstReading.occupancy.entries', value: startEntries },
-            { field: 'Current entries', path: 'lastReading.occupancy.entries', value: endEntries },
-          ],
-          formula: 'totalGuests = currentEntries - dayStartEntries',
-          inputs: [
-            { name: 'currentEntries', value: endEntries, source: 'Latest occupancy.entries' },
-            { name: 'dayStartEntries', value: startEntries, source: 'First reading today occupancy.entries' },
-          ],
-          calculation: `${endEntries} - ${startEntries} = ${totalNewGuests}`,
-          result: totalNewGuests,
-          displayedAs: String(totalNewGuests),
-          customerSees: `${totalNewGuests} guests`,
-        });
-      }
-
-      // ========== 8. DATA TIMESTAMP ==========
+      // ========== 6. ENTRIES (cumulative) ==========
       metricTraces.push({
-        name: 'Data Timestamp',
-        description: 'When this data was recorded',
-        rawData: { timestamp: latest.timestamp },
-        extractions: [
-          { field: 'timestamp', path: 'timestamp', value: latest.timestamp },
-        ],
-        formula: 'Direct extraction, formatted for display',
-        inputs: [
-          { name: 'raw timestamp', value: latest.timestamp, source: 'timestamp' },
-        ],
-        calculation: 'Format as readable date/time',
-        result: latest.timestamp,
-        displayedAs: format(new Date(latest.timestamp), 'MMM d, yyyy h:mm:ss a'),
-        customerSees: format(new Date(latest.timestamp), 'h:mm a'),
+        name: 'Total Entries',
+        description: 'Cumulative entry count from sensor',
+        formula: 'Direct from occupancy.entries (cumulative)',
+        readings: last3.map(record => {
+          const entries = record.occupancy?.entries;
+          
+          return {
+            timestamp: record.timestamp,
+            timeAgo: formatTimeAgo(record.timestamp),
+            rawData: { entries },
+            extractions: [
+              { field: 'entries', path: 'occupancy.entries', value: entries },
+            ],
+            inputs: [
+              { name: 'entries', value: entries ?? 'null', source: 'occupancy.entries' },
+            ],
+            calculation: `Direct value = ${entries ?? 'null'}`,
+            result: entries ?? 'N/A',
+            displayedAs: entries !== undefined ? `${entries}` : '—',
+          };
+        }),
+      });
+
+      // ========== 7. EXITS (cumulative) ==========
+      metricTraces.push({
+        name: 'Total Exits',
+        description: 'Cumulative exit count from sensor',
+        formula: 'Direct from occupancy.exits (cumulative)',
+        readings: last3.map(record => {
+          const exits = record.occupancy?.exits;
+          
+          return {
+            timestamp: record.timestamp,
+            timeAgo: formatTimeAgo(record.timestamp),
+            rawData: { exits },
+            extractions: [
+              { field: 'exits', path: 'occupancy.exits', value: exits },
+            ],
+            inputs: [
+              { name: 'exits', value: exits ?? 'null', source: 'occupancy.exits' },
+            ],
+            calculation: `Direct value = ${exits ?? 'null'}`,
+            result: exits ?? 'N/A',
+            displayedAs: exits !== undefined ? `${exits}` : '—',
+          };
+        }),
       });
 
       setTraces(metricTraces);
+      setLastRefresh(new Date());
       
     } catch (error) {
       console.error('Error loading data:', error);
@@ -348,6 +318,21 @@ export function DataTransparency() {
       setLoading(false);
     }
   };
+
+  // Auto-refresh every 15 seconds when enabled
+  useEffect(() => {
+    if (autoRefresh && selectedVenue) {
+      refreshInterval.current = setInterval(() => {
+        loadData();
+      }, 15000);
+    }
+    
+    return () => {
+      if (refreshInterval.current) {
+        clearInterval(refreshInterval.current);
+      }
+    };
+  }, [autoRefresh, selectedVenue]);
 
   useEffect(() => {
     if (selectedVenue) {
@@ -369,7 +354,7 @@ export function DataTransparency() {
           </p>
         </div>
 
-        {/* Venue Selector */}
+        {/* Controls */}
         <div className="glass-card p-4 mb-6">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex-1 min-w-[200px]">
@@ -391,15 +376,34 @@ export function DataTransparency() {
               </select>
             </div>
             
-            <button
-              onClick={loadData}
-              disabled={loading || !selectedVenue}
-              className="btn-primary flex items-center gap-2"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              Refresh Data
-            </button>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoRefresh}
+                  onChange={(e) => setAutoRefresh(e.target.checked)}
+                  className="w-4 h-4 rounded bg-gray-700 border-gray-600"
+                />
+                Auto-refresh (15s)
+              </label>
+              
+              <button
+                onClick={loadData}
+                disabled={loading || !selectedVenue}
+                className="btn-primary flex items-center gap-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
           </div>
+          
+          {lastRefresh && (
+            <div className="mt-3 text-xs text-gray-500 flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              Last refreshed: {format(lastRefresh, 'h:mm:ss a')}
+            </div>
+          )}
         </div>
 
         {!selectedVenue ? (
@@ -407,40 +411,97 @@ export function DataTransparency() {
             <Database className="w-12 h-12 text-gray-600 mx-auto mb-4" />
             <p className="text-gray-400">Select a venue to see the data pipeline</p>
           </div>
-        ) : loading ? (
+        ) : loading && rawRecords.length === 0 ? (
           <div className="glass-card p-12 text-center">
             <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mx-auto mb-4" />
             <p className="text-gray-400">Loading data...</p>
           </div>
-        ) : !rawData ? (
+        ) : rawRecords.length === 0 ? (
           <div className="glass-card p-12 text-center">
             <Database className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-            <p className="text-gray-400">No data found for this venue today</p>
+            <p className="text-gray-400">No data found for this venue in the last hour</p>
           </div>
         ) : (
-          <div className="space-y-4">
-            {/* Raw Data Preview */}
+          <div className="space-y-6">
+            {/* Raw Data - Last 10 Records */}
             <div className="glass-card p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Database className="w-5 h-5 text-blue-400" />
-                  <h2 className="text-lg font-bold text-white">Raw DynamoDB Record</h2>
+                  <h2 className="text-lg font-bold text-white">Raw DynamoDB Records</h2>
+                  <span className="text-sm text-gray-400">(Last 10)</span>
                 </div>
                 <button
-                  onClick={() => copyToClipboard(JSON.stringify(rawData, null, 2), 'raw')}
+                  onClick={() => copyToClipboard(JSON.stringify(rawRecords, null, 2), 'raw')}
                   className="text-xs text-gray-400 hover:text-white flex items-center gap-1"
                 >
                   {copiedField === 'raw' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  {copiedField === 'raw' ? 'Copied!' : 'Copy JSON'}
+                  {copiedField === 'raw' ? 'Copied!' : 'Copy All'}
                 </button>
               </div>
-              <pre className="text-xs text-gray-300 bg-black/50 p-4 rounded-lg overflow-x-auto max-h-64 overflow-y-auto font-mono">
-                {JSON.stringify(rawData, null, 2)}
-              </pre>
+              
+              {/* Scrollable table of records */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-400 border-b border-gray-700">
+                      <th className="pb-2 pr-4">Timestamp</th>
+                      <th className="pb-2 pr-4">Entries</th>
+                      <th className="pb-2 pr-4">Exits</th>
+                      <th className="pb-2 pr-4">Current</th>
+                      <th className="pb-2 pr-4">Sound</th>
+                      <th className="pb-2 pr-4">Light</th>
+                      <th className="pb-2">Song</th>
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono">
+                    {rawRecords.map((record, i) => (
+                      <tr key={i} className={`border-b border-gray-800 ${i === 0 ? 'bg-cyan-500/5' : ''}`}>
+                        <td className="py-2 pr-4 text-gray-300">
+                          {format(new Date(record.timestamp), 'h:mm:ss a')}
+                          {i === 0 && <span className="ml-2 text-xs text-cyan-400">(latest)</span>}
+                        </td>
+                        <td className="py-2 pr-4 text-white">{record.occupancy?.entries ?? '—'}</td>
+                        <td className="py-2 pr-4 text-white">{record.occupancy?.exits ?? '—'}</td>
+                        <td className="py-2 pr-4 text-white">{record.occupancy?.current ?? '—'}</td>
+                        <td className="py-2 pr-4 text-white">
+                          {(record.sound?.level ?? record.sensors?.sound_level ?? record.decibels) !== undefined 
+                            ? Math.round(record.sound?.level ?? record.sensors?.sound_level ?? record.decibels)
+                            : '—'}
+                        </td>
+                        <td className="py-2 pr-4 text-white">
+                          {(record.light?.lux ?? record.sensors?.light_level) !== undefined
+                            ? Math.round(record.light?.lux ?? record.sensors?.light_level)
+                            : '—'}
+                        </td>
+                        <td className="py-2 text-white truncate max-w-[150px]">
+                          {record.currentSong || '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Full JSON expandable */}
+              <details className="mt-4">
+                <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-300">
+                  View full JSON (click to expand)
+                </summary>
+                <pre className="mt-2 text-xs text-gray-300 bg-black/50 p-4 rounded-lg overflow-x-auto max-h-64 overflow-y-auto font-mono">
+                  {JSON.stringify(rawRecords, null, 2)}
+                </pre>
+              </details>
             </div>
 
-            {/* Metric Traces */}
+            {/* Metric Traces - Each showing last 3 readings */}
             <div className="space-y-3">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Calculator className="w-5 h-5 text-cyan-400" />
+                Metric Calculations
+                <span className="text-sm text-gray-400 font-normal">(Last 3 readings each)</span>
+              </h2>
+              
               {traces.map((trace) => (
                 <div key={trace.name} className="glass-card overflow-hidden">
                   {/* Header */}
@@ -456,9 +517,16 @@ export function DataTransparency() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <div className="text-sm text-gray-400">Customer sees</div>
-                        <div className="text-lg font-bold text-white">{trace.customerSees}</div>
+                      {/* Show last 3 values inline */}
+                      <div className="flex items-center gap-2">
+                        {trace.readings.map((r, i) => (
+                          <div key={i} className={`text-center px-3 py-1 rounded ${i === 0 ? 'bg-cyan-500/20' : 'bg-gray-800'}`}>
+                            <div className={`text-xs ${i === 0 ? 'text-cyan-400' : 'text-gray-500'}`}>{r.timeAgo}</div>
+                            <div className={`font-mono font-bold ${i === 0 ? 'text-white' : 'text-gray-400'}`}>
+                              {r.displayedAs}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                       {expandedTrace === trace.name ? (
                         <ChevronDown className="w-5 h-5 text-gray-400" />
@@ -470,130 +538,70 @@ export function DataTransparency() {
 
                   {/* Expanded Details */}
                   {expandedTrace === trace.name && (
-                    <div className="border-t border-gray-700 p-4 space-y-4">
-                      {/* Step 1: Raw Data */}
-                      <div className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 text-sm font-bold">1</div>
-                          <div className="flex-1 w-px bg-gray-700 my-2"></div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <Database className="w-4 h-4 text-blue-400" />
-                            <span className="font-medium text-blue-400">Raw Data from DynamoDB</span>
-                          </div>
-                          <pre className="text-xs text-gray-300 bg-black/50 p-3 rounded-lg overflow-x-auto font-mono">
-                            {JSON.stringify(trace.rawData, null, 2)}
-                          </pre>
-                        </div>
+                    <div className="border-t border-gray-700 p-4">
+                      {/* Formula */}
+                      <div className="mb-4 p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
+                        <div className="text-xs text-cyan-400 mb-1">FORMULA</div>
+                        <code className="text-cyan-300 font-mono">{trace.formula}</code>
                       </div>
-
-                      {/* Step 2: Extraction */}
-                      <div className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 text-sm font-bold">2</div>
-                          <div className="flex-1 w-px bg-gray-700 my-2"></div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <ArrowDown className="w-4 h-4 text-purple-400" />
-                            <span className="font-medium text-purple-400">Values We Extract</span>
-                          </div>
-                          <div className="bg-black/50 p-3 rounded-lg space-y-1">
-                            {trace.extractions.map((ext, i) => (
-                              <div key={i} className="flex items-center gap-2 text-sm font-mono">
-                                <span className="text-gray-500">{ext.path}</span>
-                                <span className="text-gray-400">→</span>
-                                <span className={ext.value !== null && ext.value !== undefined ? 'text-green-400' : 'text-red-400'}>
-                                  {ext.value !== null && ext.value !== undefined ? String(ext.value) : 'null'}
-                                </span>
-                              </div>
+                      
+                      {/* Readings table */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-gray-400 border-b border-gray-700">
+                              <th className="pb-2 pr-4">Time</th>
+                              <th className="pb-2 pr-4">Raw Values</th>
+                              <th className="pb-2 pr-4">Calculation</th>
+                              <th className="pb-2 pr-4">Result</th>
+                              <th className="pb-2">Displayed</th>
+                            </tr>
+                          </thead>
+                          <tbody className="font-mono">
+                            {trace.readings.map((reading, i) => (
+                              <tr key={i} className={`border-b border-gray-800 ${i === 0 ? 'bg-cyan-500/5' : ''}`}>
+                                <td className="py-3 pr-4">
+                                  <div className="text-gray-300">{format(new Date(reading.timestamp), 'h:mm:ss a')}</div>
+                                  <div className="text-xs text-gray-500">{reading.timeAgo}</div>
+                                </td>
+                                <td className="py-3 pr-4">
+                                  <div className="space-y-1">
+                                    {reading.extractions.map((ext, j) => (
+                                      <div key={j} className="text-xs">
+                                        <span className="text-gray-500">{ext.path}:</span>
+                                        <span className={`ml-1 ${ext.value !== null && ext.value !== undefined ? 'text-green-400' : 'text-red-400'}`}>
+                                          {ext.value !== null && ext.value !== undefined ? String(ext.value) : 'null'}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </td>
+                                <td className="py-3 pr-4">
+                                  <code className="text-orange-300">{reading.calculation}</code>
+                                </td>
+                                <td className="py-3 pr-4">
+                                  <span className="text-white font-bold">{String(reading.result)}</span>
+                                </td>
+                                <td className="py-3">
+                                  <span className={`px-2 py-1 rounded ${i === 0 ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-300'}`}>
+                                    {reading.displayedAs}
+                                  </span>
+                                </td>
+                              </tr>
                             ))}
-                          </div>
-                        </div>
+                          </tbody>
+                        </table>
                       </div>
-
-                      {/* Step 3: Formula */}
-                      <div className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-sm font-bold">3</div>
-                          <div className="flex-1 w-px bg-gray-700 my-2"></div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <Calculator className="w-4 h-4 text-cyan-400" />
-                            <span className="font-medium text-cyan-400">Formula We Apply</span>
-                          </div>
-                          <div className="bg-black/50 p-3 rounded-lg">
-                            <code className="text-cyan-300 font-mono">{trace.formula}</code>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Step 4: Inputs */}
-                      <div className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className="w-8 h-8 rounded-full bg-yellow-500/20 flex items-center justify-center text-yellow-400 text-sm font-bold">4</div>
-                          <div className="flex-1 w-px bg-gray-700 my-2"></div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="font-medium text-yellow-400">Actual Inputs</span>
-                          </div>
-                          <div className="bg-black/50 p-3 rounded-lg space-y-1">
-                            {trace.inputs.map((input, i) => (
-                              <div key={i} className="flex items-center gap-2 text-sm">
-                                <span className="text-yellow-300 font-mono">{input.name}</span>
-                                <span className="text-gray-400">=</span>
-                                <span className="text-white font-bold font-mono">{String(input.value)}</span>
-                                <span className="text-gray-500 text-xs">({input.source})</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Step 5: Calculation */}
-                      <div className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className="w-8 h-8 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 text-sm font-bold">5</div>
-                          <div className="flex-1 w-px bg-gray-700 my-2"></div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="font-medium text-orange-400">The Math</span>
-                          </div>
-                          <div className="bg-black/50 p-3 rounded-lg">
-                            <code className="text-orange-300 font-mono text-lg">{trace.calculation}</code>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Step 6: Result */}
-                      <div className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center text-green-400 text-sm font-bold">6</div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <Monitor className="w-4 h-4 text-green-400" />
-                            <span className="font-medium text-green-400">What Customer Sees</span>
-                          </div>
-                          <div className="bg-green-500/10 border border-green-500/30 p-4 rounded-lg">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="text-sm text-gray-400">Calculated Result</div>
-                                <div className="text-xl font-bold text-white font-mono">{String(trace.result)}</div>
-                              </div>
-                              <div className="text-4xl">→</div>
-                              <div className="text-right">
-                                <div className="text-sm text-gray-400">Displayed As</div>
-                                <div className="text-2xl font-bold text-green-400">{trace.customerSees}</div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      
+                      {/* Full raw data for this metric */}
+                      <details className="mt-4">
+                        <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-300">
+                          View raw data for all 3 readings
+                        </summary>
+                        <pre className="mt-2 text-xs text-gray-300 bg-black/50 p-3 rounded-lg overflow-x-auto font-mono">
+                          {JSON.stringify(trace.readings.map(r => ({ timestamp: r.timestamp, data: r.rawData })), null, 2)}
+                        </pre>
+                      </details>
                     </div>
                   )}
                 </div>
