@@ -53,12 +53,11 @@ export function Analytics() {
     if (insights.rawData.length > 0) {
       const exportData = insights.rawData.map(d => ({
         timestamp: d.timestamp.toISOString(),
+        score: d.score,
         decibels: d.decibels,
         light: d.light,
-        indoorTemp: d.temperature,
-        outdoorTemp: 0,
-        humidity: 0,
-        occupancy: { current: d.occupancy, entries: 0, exits: 0 },
+        temperature: d.temperature,
+        occupancy: d.occupancy,
       }));
       apiService.exportToCSV(exportData as any, true, venueName);
     }

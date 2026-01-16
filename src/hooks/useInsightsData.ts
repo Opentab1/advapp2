@@ -359,21 +359,16 @@ function processSummary(
   // Calculate current period metrics
   let totalScore = 0;
   let scoreCount = 0;
-  let hoursInZone = 0;
-  let totalPeakHours = 0;
-  let peakStartHour = 24;
-  let peakEndHour = 0;
   
   // Group by hour for peak detection
   const hourlyScores: Record<number, number[]> = {};
   
-  // Sort data by timestamp to calculate actual time intervals
+  // Sort data by timestamp
   const sortedData = [...data].sort((a, b) => 
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
   
-  sortedData.forEach((d, idx) => {
-    // Pass timestamp for accurate historical scoring
+  sortedData.forEach((d) => {
     const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score !== null) {
       totalScore += score;
@@ -382,51 +377,48 @@ function processSummary(
       const hour = new Date(d.timestamp).getHours();
       if (!hourlyScores[hour]) hourlyScores[hour] = [];
       hourlyScores[hour].push(score);
-      
-      // Count ACTUAL hours in zone based on real time intervals
-      if (score >= 70 && idx > 0) {
-        const prevTime = new Date(sortedData[idx - 1].timestamp).getTime();
-        const currTime = new Date(d.timestamp).getTime();
-        const intervalHours = (currTime - prevTime) / (1000 * 60 * 60);
-        // Only count reasonable intervals (< 4 hours, to skip data gaps)
-        if (intervalHours < 4) {
-          hoursInZone += intervalHours;
-        }
-      }
     }
   });
   
-  // Determine requested days for this time range
   const requestedDays = timeRange === 'last_night' ? 1 : 
                         timeRange === '7d' ? 7 : 
                         timeRange === '14d' ? 14 : 30;
   
-  // Use shared helper that handles both hourly aggregated and raw data correctly
   const guestResult = calculateTotalGuests(data, requestedDays);
   const totalGuests = guestResult.count;
   const guestsIsEstimate = guestResult.isEstimate;
   
-  // Find peak hours (business hours 4pm-2am typically)
-  // Collect all hours that qualify as "peak" (score >= 70 during evening/night)
-  const peakHoursList: number[] = [];
+  // Find peak hours - simply the hours with highest average scores
+  // No arbitrary threshold - just find the busiest/best performing hours
+  const hourlyAvgs: Array<{ hour: number; avgScore: number }> = [];
   Object.entries(hourlyScores).forEach(([hourStr, scores]) => {
     const hour = parseInt(hourStr);
     const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-    // Peak hours are typically 4pm (16) through 2am, with score >= 70
-    if (avgScore >= 70 && (hour >= 16 || hour <= 2)) {
-      peakHoursList.push(hour);
-      totalPeakHours++;
-    }
+    hourlyAvgs.push({ hour, avgScore });
   });
   
+  // Sort by score descending to find best hours
+  hourlyAvgs.sort((a, b) => b.avgScore - a.avgScore);
+  
+  // Get top performing hours (take hours that are within 10 points of the best)
+  const topHours: number[] = [];
+  if (hourlyAvgs.length > 0) {
+    const bestScore = hourlyAvgs[0].avgScore;
+    hourlyAvgs.forEach(h => {
+      if (h.avgScore >= bestScore - 10) {
+        topHours.push(h.hour);
+      }
+    });
+  }
+  
   // Sort peak hours accounting for midnight wraparound
-  // Convert to "evening time" where 0-6am becomes 24-30
-  const sortedPeakHours = peakHoursList
+  const sortedPeakHours = topHours
     .map(h => h <= 6 ? h + 24 : h)
     .sort((a, b) => a - b);
   
+  let peakStartHour = 24;
+  let peakEndHour = 0;
   if (sortedPeakHours.length > 0) {
-    // Convert back from "evening time"
     peakStartHour = sortedPeakHours[0] >= 24 ? sortedPeakHours[0] - 24 : sortedPeakHours[0];
     peakEndHour = sortedPeakHours[sortedPeakHours.length - 1] >= 24 
       ? sortedPeakHours[sortedPeakHours.length - 1] - 24 
@@ -435,12 +427,11 @@ function processSummary(
   
   const avgScore = scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0;
   
-  // Calculate previous period metrics for delta
+  // Calculate previous period metrics
   let prevTotalScore = 0;
   let prevScoreCount = 0;
   
   previousData.forEach(d => {
-    // Pass timestamp for accurate historical scoring
     const { score } = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
     if (score !== null) {
       prevTotalScore += score;
@@ -448,7 +439,6 @@ function processSummary(
     }
   });
   
-  // Calculate previous period guests using the same correct method
   const prevGuestResult = calculateTotalGuests(previousData, requestedDays);
   const prevTotalGuests = prevGuestResult.count;
   
@@ -456,19 +446,18 @@ function processSummary(
   const scoreDelta = prevAvgScore > 0 ? Math.round(((avgScore - prevAvgScore) / prevAvgScore) * 100) : 0;
   const guestsDelta = prevTotalGuests > 0 ? Math.round(((totalGuests - prevTotalGuests) / prevTotalGuests) * 100) : 0;
   
-  // Use shared helper for avg stay calculation (handles both data types correctly)
+  // Avg stay calculation
   let avgStayMinutes = calculatePeriodAvgStay(data);
   let prevAvgStay = calculatePeriodAvgStay(previousData);
   
-  // DEMO: Always show a number, never null
+  // DEMO: Always show a number
   if (avgStayMinutes === null && isDemoAccount(venueId)) {
-    avgStayMinutes = 98; // ~1.5 hours for a busy venue
+    avgStayMinutes = 98;
   }
   if (prevAvgStay === null && isDemoAccount(venueId)) {
-    prevAvgStay = 92; // Previous period slightly lower
+    prevAvgStay = 92;
   }
   
-  // Calculate delta only if both values exist
   const avgStayDelta = (avgStayMinutes !== null && prevAvgStay !== null && prevAvgStay > 0)
     ? Math.round(((avgStayMinutes - prevAvgStay) / prevAvgStay) * 100)
     : null;
@@ -477,38 +466,13 @@ function processSummary(
   const formatHour = (h: number) => h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h-12}pm`;
   const peakHours = peakStartHour < 24 ? `${formatHour(peakStartHour)} - ${formatHour(peakEndHour)}` : 'N/A';
   
-  // Generate summary text
-  let summaryText = '';
-  if (avgScore >= 80) {
-    summaryText = `Strong ${timeRange === 'last_night' ? 'night' : 'period'}. `;
-  } else if (avgScore >= 65) {
-    summaryText = `Solid ${timeRange === 'last_night' ? 'night' : 'period'}. `;
-  } else {
-    summaryText = `Room for improvement. `;
+  // Simple summary text - just the facts
+  let summaryText = `Peak hours: ${peakHours}.`;
+  if (avgStayMinutes !== null) {
+    summaryText += ` Avg stay: ~${avgStayMinutes} min.`;
   }
-  
-  // Only mention dwell time if we have real data
-  if (avgStayDelta !== null && avgStayDelta > 0) {
-    summaryText += `Avg stay up ${avgStayDelta}%, `;
-  }
-  
-  // Calculate actual time spent during peak hours (hours where we have data)
-  // This makes the comparison meaningful: "X hours in zone out of Y total peak hours"
-  const actualPeakHours = peakHoursList.length > 0 
-    ? Math.round((peakHoursList.length / Object.keys(hourlyScores).length) * hoursInZone * 10) / 10
-    : 0;
-  
-  // Use hoursInZone (actual time at score >= 70) vs total data hours
-  const totalDataHours = sortedData.length > 1 
-    ? (new Date(sortedData[sortedData.length - 1].timestamp).getTime() - 
-       new Date(sortedData[0].timestamp).getTime()) / (1000 * 60 * 60)
-    : 0;
-  
-  if (hoursInZone > 0) {
-    const zonePercentage = totalDataHours > 0 ? Math.round((hoursInZone / totalDataHours) * 100) : 0;
-    summaryText += `You were in the zone ${zonePercentage}% of the time (${hoursInZone.toFixed(1)} hours).`;
-  } else {
-    summaryText += `Limited time in optimal zone.`;
+  if (guestsDelta !== 0) {
+    summaryText += ` Guests ${guestsDelta > 0 ? 'up' : 'down'} ${Math.abs(guestsDelta)}% vs previous.`;
   }
   
   return {
@@ -521,8 +485,8 @@ function processSummary(
     guestsDelta,
     summaryText,
     peakHours,
-    timeInZoneHours: Math.round(hoursInZone * 10) / 10,
-    totalPeakHours: peakHoursList.length, // Number of unique peak hours
+    timeInZoneHours: 0, // Removed - was using arbitrary threshold
+    totalPeakHours: topHours.length,
   };
 }
 
