@@ -55,16 +55,11 @@ export interface PulseData {
   timeBlockLabel: string;
   
   // Historical comparison (YOUR best block for this day/time)
-  bestNight: import('../services/historical-scoring.service').BestBlockData | null;
+  bestNight: import('../services/venue-learning.service').BestNightProfile | null;
   isLearning: boolean;
   learningConfidence: number; // 0-100
   weeksOfData: number;
-  proximityToBest: {
-    occupancyMatch: number;
-    soundMatch: number;
-    lightMatch: number;
-    genreMatch: number;
-  } | null;
+  proximityToBest: number | null; // Average match score (0-100)
   
   // Legacy fields for backward compatibility
   isUsingHistoricalData: boolean;
@@ -515,7 +510,19 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
             : 'Learning...' 
         },
       },
-      bestNight: historicalScore.bestBlock,
+      // Map BestBlockData to BestNightProfile format for backward compatibility
+      bestNight: historicalScore.bestBlock ? {
+        date: historicalScore.bestBlock.date,
+        dayOfWeek: historicalScore.bestBlock.day.charAt(0).toUpperCase() + historicalScore.bestBlock.day.slice(1), // "saturday" -> "Saturday"
+        timeSlot: historicalScore.bestBlock.block as any,
+        totalGuests: historicalScore.bestBlock.totalEntries,
+        peakOccupancy: historicalScore.bestBlock.peakOccupancy,
+        avgDwellMinutes: historicalScore.bestBlock.retentionRate, // Using retention as proxy
+        avgSound: historicalScore.bestBlock.avgSound,
+        avgLight: historicalScore.bestBlock.avgLight,
+        detectedGenres: historicalScore.bestBlock.topGenres,
+        peakHour: undefined, // Not tracked in new format
+      } : null,
       isUsingHistoricalData: !historicalScore.isLearning,
       proximityToBest: cvb ? Math.round((cvb.occupancyMatch + cvb.soundMatch + cvb.lightMatch + cvb.genreMatch) / 4) : null,
       detectedGenres: [],
@@ -701,11 +708,11 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     timeBlockLabel: historicalScore ? getTimeBlockLabel(historicalScore.currentBlock.block) : '',
     
     // Historical comparison (YOUR best block for this day/time)
-    bestNight: pulseScoreResult.bestNight,
+    bestNight: pulseScoreResult.bestNight as any, // Mapped to BestNightProfile format
     isLearning: historicalScore?.isLearning ?? true,
     learningConfidence: historicalScore?.confidence ?? 0,
     weeksOfData: historicalScore?.weeksOfData ?? 0,
-    proximityToBest: historicalScore?.currentVsBest ?? null,
+    proximityToBest: pulseScoreResult.proximityToBest, // Already a number
     
     // Legacy fields for backward compatibility
     isUsingHistoricalData: pulseScoreResult.isUsingHistoricalData,
