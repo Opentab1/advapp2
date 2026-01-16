@@ -14,14 +14,15 @@
  * - All supporting metrics
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { calculatePulseScore, getDwellTimeScore, formatDwellTime, getReputationScore } from '../utils/scoring';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { getDwellTimeScore, formatDwellTime, getReputationScore } from '../utils/scoring';
 import { POLLING_INTERVALS, DATA_FRESHNESS } from '../utils/constants';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import googleReviewsService, { GoogleReviewsData } from '../services/google-reviews.service';
 import venueSettingsService from '../services/venue-settings.service';
 import weatherService, { WeatherData } from '../services/weather.service';
+import historicalScoringService, { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
 import { isDemoAccount } from '../utils/demoData';
 import type { SensorData, OccupancyMetrics } from '../types';
 
@@ -49,15 +50,24 @@ export interface PulseData {
   crowdScore: number;
   musicScore: number;
   
-  // Time slot
+  // Time block (3-hour blocks)
   timeSlot: string;
+  timeBlockLabel: string;
   
-  // Best Night comparison (YOUR historical best)
-  bestNight: import('../services/venue-learning.service').BestNightProfile | null;
+  // Historical comparison (YOUR best block for this day/time)
+  bestNight: import('../services/historical-scoring.service').BestBlockData | null;
+  isLearning: boolean;
+  learningConfidence: number; // 0-100
+  weeksOfData: number;
+  proximityToBest: {
+    occupancyMatch: number;
+    soundMatch: number;
+    lightMatch: number;
+    genreMatch: number;
+  } | null;
+  
+  // Legacy fields for backward compatibility
   isUsingHistoricalData: boolean;
-  proximityToBest: number | null;
-  
-  // Music detection
   detectedGenres: string[];
   bestNightGenres: string[];
   
@@ -371,21 +381,147 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     return 100;
   }, [effectiveOccupancy.peakOccupancy]);
 
-  // Calculate Pulse Score - now uses effectiveOccupancy and estimatedCapacity
+  // Calculate Pulse Score - 100% historically based
+  // Compares current conditions to YOUR best block for this day/time
+  const [historicalScore, setHistoricalScore] = useState<HistoricalScoreResult | null>(null);
+  const scoreCalculationRef = useRef<number>(0);
+  
+  useEffect(() => {
+    const calculationId = ++scoreCalculationRef.current;
+    
+    async function calculateHistoricalScore() {
+      if (!venueId) return;
+      
+      // For demo account, generate a good-looking score
+      if (isDemoAccount(venueId)) {
+        const demoScore: HistoricalScoreResult = {
+          score: 82,
+          isLearning: false,
+          confidence: 100,
+          weeksOfData: 12,
+          bestBlock: {
+            date: '2025-12-14',
+            day: 'saturday',
+            block: 'prime',
+            avgOccupancy: 95,
+            peakOccupancy: 127,
+            avgSound: 76,
+            avgLight: 85,
+            totalEntries: 245,
+            totalExits: 198,
+            retentionRate: 81,
+            topGenres: ['hip-hop', 'pop', 'r&b'],
+            songCount: 48,
+            bestScore: 78,
+            dataPoints: 36,
+          },
+          currentVsBest: {
+            occupancyMatch: 85,
+            soundMatch: 88,
+            lightMatch: 79,
+            genreMatch: 90,
+          },
+          status: 'good',
+          statusLabel: 'Close to Your Best',
+          currentBlock: { day: 'saturday', block: 'prime' },
+        };
+        setHistoricalScore(demoScore);
+        return;
+      }
+      
+      try {
+        const result = await historicalScoringService.calculateScore(venueId, {
+          occupancy: effectiveOccupancy.current,
+          sound: sensorData?.decibels ?? null,
+          light: sensorData?.light ?? null,
+          currentSong: sensorData?.currentSong ?? null,
+          artist: sensorData?.artist ?? null,
+        });
+        
+        // Only update if this is still the latest calculation
+        if (calculationId === scoreCalculationRef.current) {
+          setHistoricalScore(result);
+        }
+      } catch (error) {
+        console.error('Error calculating historical score:', error);
+      }
+    }
+    
+    calculateHistoricalScore();
+  }, [venueId, effectiveOccupancy.current, sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist]);
+  
+  // Build pulseScoreResult from historical score for backward compatibility
   const pulseScoreResult = useMemo(() => {
-    return calculatePulseScore(
-      sensorData?.decibels,
-      sensorData?.light,
-      null, // indoorTemp - removed
-      null, // outdoorTemp - removed
-      sensorData?.currentSong,
-      sensorData?.artist,
-      venueId,
-      undefined, // timestamp
-      effectiveOccupancy.current, // currentOccupancy for crowd scoring
-      estimatedCapacity // for crowd scoring
-    );
-  }, [sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist, venueId, effectiveOccupancy.current, estimatedCapacity]);
+    if (!historicalScore) {
+      return {
+        score: 50,
+        status: 'good' as const,
+        statusLabel: 'Loading...',
+        color: '#FFB800',
+        timeSlot: 'evening' as any,
+        factors: {
+          sound: { score: 50, value: null, inRange: false, message: 'Loading...' },
+          light: { score: 50, value: null, inRange: false, message: 'Loading...' },
+          crowd: { score: 50, value: null, inRange: false, message: 'Loading...' },
+          music: { score: 50, value: null, inRange: false, message: 'Loading...' },
+        },
+        bestNight: null,
+        isUsingHistoricalData: false,
+        proximityToBest: null,
+        detectedGenres: [],
+        bestNightGenres: [],
+      };
+    }
+    
+    const cvb = historicalScore.currentVsBest;
+    
+    return {
+      score: historicalScore.score,
+      status: historicalScore.status === 'needs_work' ? 'poor' as const : historicalScore.status,
+      statusLabel: historicalScore.statusLabel,
+      color: historicalScore.score >= 85 ? '#00DC82' : historicalScore.score >= 60 ? '#FFB800' : '#FF4444',
+      timeSlot: `${historicalScore.currentBlock.day}_${historicalScore.currentBlock.block}` as any,
+      factors: {
+        sound: { 
+          score: cvb?.soundMatch ?? 50, 
+          value: sensorData?.decibels ?? null, 
+          inRange: (cvb?.soundMatch ?? 0) >= 80, 
+          message: historicalScore.bestBlock 
+            ? `vs ${historicalScore.bestBlock.avgSound}dB on your best` 
+            : 'Learning...' 
+        },
+        light: { 
+          score: cvb?.lightMatch ?? 50, 
+          value: sensorData?.light ?? null, 
+          inRange: (cvb?.lightMatch ?? 0) >= 80, 
+          message: historicalScore.bestBlock 
+            ? `vs ${historicalScore.bestBlock.avgLight} lux on your best` 
+            : 'Learning...' 
+        },
+        crowd: { 
+          score: cvb?.occupancyMatch ?? 50, 
+          value: effectiveOccupancy.current, 
+          inRange: (cvb?.occupancyMatch ?? 0) >= 80, 
+          message: historicalScore.bestBlock 
+            ? `vs ${historicalScore.bestBlock.peakOccupancy} on your best` 
+            : 'Learning...' 
+        },
+        music: { 
+          score: cvb?.genreMatch ?? 80, 
+          value: sensorData?.currentSong ?? null, 
+          inRange: (cvb?.genreMatch ?? 0) >= 80, 
+          message: historicalScore.bestBlock?.topGenres?.length 
+            ? `Best nights: ${historicalScore.bestBlock.topGenres.join(', ')}` 
+            : 'Learning...' 
+        },
+      },
+      bestNight: historicalScore.bestBlock,
+      isUsingHistoricalData: !historicalScore.isLearning,
+      proximityToBest: cvb ? Math.round((cvb.occupancyMatch + cvb.soundMatch + cvb.lightMatch + cvb.genreMatch) / 4) : null,
+      detectedGenres: [],
+      bestNightGenres: historicalScore.bestBlock?.topGenres ?? [],
+    };
+  }, [historicalScore, sensorData?.decibels, sensorData?.light, sensorData?.currentSong, effectiveOccupancy.current]);
 
   // ============ DWELL TIME CALCULATION ============
   // Using Occupancy Integration method (more accurate than Little's Law)
@@ -560,15 +696,19 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     crowdScore: pulseScoreResult.factors.crowd.score,
     musicScore: pulseScoreResult.factors.music.score,
     
-    // Time slot
+    // Time block (3-hour blocks)
     timeSlot: pulseScoreResult.timeSlot,
+    timeBlockLabel: historicalScore ? getTimeBlockLabel(historicalScore.currentBlock.block) : '',
     
-    // Best Night comparison (YOUR historical best)
+    // Historical comparison (YOUR best block for this day/time)
     bestNight: pulseScoreResult.bestNight,
-    isUsingHistoricalData: pulseScoreResult.isUsingHistoricalData,
-    proximityToBest: pulseScoreResult.proximityToBest,
+    isLearning: historicalScore?.isLearning ?? true,
+    learningConfidence: historicalScore?.confidence ?? 0,
+    weeksOfData: historicalScore?.weeksOfData ?? 0,
+    proximityToBest: historicalScore?.currentVsBest ?? null,
     
-    // Music detection
+    // Legacy fields for backward compatibility
+    isUsingHistoricalData: pulseScoreResult.isUsingHistoricalData,
     detectedGenres: pulseScoreResult.detectedGenres,
     bestNightGenres: pulseScoreResult.bestNightGenres,
     
