@@ -213,11 +213,14 @@ function getPeriodMs(range: InsightsTimeRange): number {
 /**
  * Calculate total guests from sensor data.
  * 
- * Counter is CUMULATIVE ALL-TIME (never resets).
- * DynamoDB stores: entries = all-time total entries
+ * IMPORTANT: Handles TWO different data formats:
  * 
- * Calculation is simple:
- *   Guests for period = entries_now - entries_at_period_start
+ * 1. RAW DATA: entries = cumulative all-time counter
+ *    → Calculation: latest.entries - earliest.entries
+ * 
+ * 2. HOURLY AGGREGATED DATA: entries = total entries DURING that hour
+ *    → Calculation: SUM of all entries values
+ *    → Identified by _hourlyAggregate flag
  * 
  * Period starts at 3am (bar day boundary).
  */
@@ -235,6 +238,17 @@ function calculateTotalGuests(
     return { count: 0, isEstimate: false };
   }
   
+  // Check if this is hourly aggregated data
+  const isHourlyData = (withEntries[0] as any)._hourlyAggregate === true;
+  
+  if (isHourlyData) {
+    // HOURLY DATA: entries = total entries during that hour
+    // Sum all entries values
+    const totalGuests = withEntries.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+    return { count: totalGuests, isEstimate: false };
+  }
+  
+  // RAW DATA: entries = cumulative all-time counter
   if (withEntries.length === 1) {
     // Only one data point - can't calculate difference
     return { count: 0, isEstimate: true };
@@ -257,13 +271,24 @@ function calculateTotalGuests(
  * Calculate total entries for a period (used for avg stay calculation)
  * Returns the RAW entry count without extrapolation.
  * 
- * Counter is cumulative all-time, so: entries = latest - earliest
+ * Handles both raw data (cumulative) and hourly data (per-hour totals).
  */
 function calculatePeriodEntries(periodData: SensorData[]): number {
   const withEntries = periodData
     .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   
+  if (withEntries.length === 0) return 0;
+  
+  // Check if this is hourly aggregated data
+  const isHourlyData = (withEntries[0] as any)._hourlyAggregate === true;
+  
+  if (isHourlyData) {
+    // HOURLY DATA: Sum all entries
+    return withEntries.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+  }
+  
+  // RAW DATA: latest - earliest
   if (withEntries.length < 2) return 0;
   
   const earliest = withEntries[0];

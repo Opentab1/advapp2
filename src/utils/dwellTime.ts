@@ -72,15 +72,24 @@ export function calculateDwellTimeFromHistory(
     .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   
-  if (entryData.length < 2) {
+  if (entryData.length === 0) {
     return null;
   }
 
-  // Simple calculation: latest entries - earliest entries
-  // Counter is cumulative all-time (never resets)
-  const earliest = entryData[0];
-  const latest = entryData[entryData.length - 1];
-  const totalEntries = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
+  // Check if this is hourly aggregated data
+  const isHourlyData = (entryData[0] as any)._hourlyAggregate === true;
+  
+  let totalEntries: number;
+  if (isHourlyData) {
+    // HOURLY DATA: Sum all entries
+    totalEntries = entryData.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+  } else {
+    // RAW DATA: latest - earliest
+    if (entryData.length < 2) return null;
+    const earliest = entryData[0];
+    const latest = entryData[entryData.length - 1];
+    totalEntries = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
+  }
 
   return calculateDwellTime(avgOccupancy, totalEntries, timeRangeHours);
 }
@@ -154,23 +163,35 @@ export function calculateRecentDwellTime(
 
   const avgOccupancy = occupancyValues.reduce((sum, val) => sum + val, 0) / occupancyValues.length;
 
-  // Get entries - both hourly and raw data use cumulative counters
+  // Get entries data
   const entryData = recentData.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0);
   
-  if (entryData.length < 2) {
-    console.log('📊 Dwell time: Not enough entry data');
+  if (entryData.length === 0) {
+    console.log('📊 Dwell time: No entry data');
     return null;
   }
 
-  // Simple calculation: latest entries - earliest entries
-  // Counter is cumulative all-time (never resets)
   const sortedEntryData = [...entryData].sort((a, b) => 
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
   
-  const earliest = sortedEntryData[0];
-  const latest = sortedEntryData[sortedEntryData.length - 1];
-  const totalEntries = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
+  // Check if this is hourly aggregated data
+  const isHourlyData = (sortedEntryData[0] as any)._hourlyAggregate === true;
+  
+  let totalEntries: number;
+  if (isHourlyData) {
+    // HOURLY DATA: Sum all entries
+    totalEntries = sortedEntryData.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+  } else {
+    // RAW DATA: latest - earliest
+    if (sortedEntryData.length < 2) {
+      console.log('📊 Dwell time: Not enough raw data points');
+      return null;
+    }
+    const earliest = sortedEntryData[0];
+    const latest = sortedEntryData[sortedEntryData.length - 1];
+    totalEntries = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
+  }
 
   // Calculate actual time span
   const firstTime = new Date(recentData[0].timestamp).getTime();

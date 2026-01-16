@@ -87,25 +87,33 @@ export function calculateBarDayOccupancy(
   const latest = sorted[sorted.length - 1];
   const latestCurrent = latest.occupancy?.current || 0;
   
-  // Simple calculation: latest - earliest
-  // Counter is cumulative all-time (never resets)
-  const firstEntries = first.occupancy?.entries || 0;
-  const firstExits = first.occupancy?.exits || 0;
-  const latestEntries = latest.occupancy?.entries || 0;
-  const latestExits = latest.occupancy?.exits || 0;
+  // Check if this is hourly aggregated data
+  const isHourlyData = (first as any)._hourlyAggregate === true;
   
-  const barDayEntries = Math.max(0, latestEntries - firstEntries);
-  const barDayExits = Math.max(0, latestExits - firstExits);
+  let barDayEntries: number;
+  let barDayExits: number;
   
-  console.log('📊 Bar day calculation (simple subtraction):', {
+  if (isHourlyData) {
+    // HOURLY DATA: Sum all entries/exits
+    barDayEntries = sorted.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+    barDayExits = sorted.reduce((sum, d) => sum + (d.occupancy?.exits || 0), 0);
+  } else {
+    // RAW DATA: latest - earliest
+    const firstEntries = first.occupancy?.entries || 0;
+    const firstExits = first.occupancy?.exits || 0;
+    const latestEntries = latest.occupancy?.entries || 0;
+    const latestExits = latest.occupancy?.exits || 0;
+    
+    barDayEntries = Math.max(0, latestEntries - firstEntries);
+    barDayExits = Math.max(0, latestExits - firstExits);
+  }
+  
+  console.log('📊 Bar day calculation:', {
     barDayStart: barDayStart.toISOString(),
     firstReading: first.timestamp,
     latestReading: latest.timestamp,
-    firstEntries,
-    latestEntries,
+    isHourlyData,
     barDayEntries,
-    firstExits,
-    latestExits,
     barDayExits,
     currentOccupancy: latestCurrent
   });
@@ -240,18 +248,29 @@ export function aggregateOccupancyByBarDay(
       continue;
     }
     
-    // Simple calculation: latest - earliest for this bar day
-    // Counter is cumulative all-time (never resets)
-    const firstReading = barDayData[0];
-    const lastReading = barDayData[barDayData.length - 1];
+    // Check if this is hourly aggregated data
+    const isHourlyData = (barDayData[0] as any)._hourlyAggregate === true;
     
-    const firstEntries = firstReading.occupancy?.entries || 0;
-    const lastEntries = lastReading.occupancy?.entries || 0;
-    const firstExits = firstReading.occupancy?.exits || 0;
-    const lastExits = lastReading.occupancy?.exits || 0;
+    let dayEntries: number;
+    let dayExits: number;
     
-    const dayEntries = Math.max(0, lastEntries - firstEntries);
-    const dayExits = Math.max(0, lastExits - firstExits);
+    if (isHourlyData) {
+      // HOURLY DATA: Sum all entries/exits for this bar day
+      dayEntries = barDayData.reduce((sum, d) => sum + (d.occupancy?.entries || 0), 0);
+      dayExits = barDayData.reduce((sum, d) => sum + (d.occupancy?.exits || 0), 0);
+    } else {
+      // RAW DATA: latest - earliest for this bar day
+      const firstReading = barDayData[0];
+      const lastReading = barDayData[barDayData.length - 1];
+      
+      const firstEntries = firstReading.occupancy?.entries || 0;
+      const lastEntries = lastReading.occupancy?.entries || 0;
+      const firstExits = firstReading.occupancy?.exits || 0;
+      const lastExits = lastReading.occupancy?.exits || 0;
+      
+      dayEntries = Math.max(0, lastEntries - firstEntries);
+      dayExits = Math.max(0, lastExits - firstExits);
+    }
     
     dailyBreakdown.push({ 
       date: barDay.label, 
