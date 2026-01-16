@@ -27,6 +27,9 @@ import Events from './pages/Events';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import type { TabId } from './components/common/TabNav';
 
+// Components
+import { ErrorBoundary } from './components/ErrorBoundary';
+
 // Services & Hooks
 import authService from './services/auth.service';
 import { usePulseScore, useWeather, useDataConnection } from './stores/pulseStore';
@@ -56,22 +59,29 @@ function ProtectedDashboard() {
     window.location.replace('/login');
   };
   
-  // Render active tab content
+  // Render active tab content with error boundary per tab
   const renderTabContent = () => {
+    let content;
     switch (activeTab) {
       case 'live':
-        return <Live />;
+        content = <Live />;
+        break;
       case 'analytics':
-        return <Analytics />;
+        content = <Analytics />;
+        break;
       case 'songs':
-        return <SongLog />;
+        content = <SongLog />;
+        break;
       case 'events':
-        return <Events />;
+        content = <Events />;
+        break;
       case 'settings':
-        return <Settings />;
+        content = <Settings />;
+        break;
       default:
-        return <Live />;
+        content = <Live />;
     }
+    return <ErrorBoundary key={activeTab}>{content}</ErrorBoundary>;
   };
   
   return (
@@ -168,7 +178,9 @@ function App() {
               isAdmin() ? (
                 <Navigate to="/admin" replace />
               ) : (
-                <ProtectedDashboard />
+                <ErrorBoundary>
+                  <ProtectedDashboard />
+                </ErrorBoundary>
               )
             ) : (
               <Navigate to="/login" replace />
@@ -181,7 +193,9 @@ function App() {
           element={
             isAuthenticated ? (
               isAdmin() ? (
-                <AdminPortal />
+                <ErrorBoundary>
+                  <AdminPortal />
+                </ErrorBoundary>
               ) : (
                 <Navigate to="/" replace />
               )
