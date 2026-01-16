@@ -6,6 +6,7 @@ import { VenuesManagement } from './VenuesManagement';
 import { UsersManagement } from './UsersManagement';
 import { TeamManagement } from './TeamManagement';
 import { DevicesManagement } from './DevicesManagement';
+import { DataTransparency } from './DataTransparency';
 import { DataAccuracy } from './DataAccuracy';
 import { DataValidator } from './DataValidator';
 import { AuditLog } from './AuditLog';
@@ -60,6 +61,7 @@ export function AdminPortal() {
           {activeTab === 'users' && <UsersManagement />}
           {activeTab === 'team' && <TeamManagement />}
           {activeTab === 'devices' && <DevicesManagement />}
+          {activeTab === 'transparency' && <DataTransparency />}
           {activeTab === 'data-health' && <DataAccuracy />}
           {activeTab === 'data-validator' && <DataValidator />}
           {activeTab === 'audit' && <AuditLog />}

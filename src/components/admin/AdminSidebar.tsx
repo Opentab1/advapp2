@@ -11,7 +11,8 @@ import {
   LogOut,
   LucideIcon,
   ShieldCheck,
-  Search
+  Search,
+  FlaskConical
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -33,6 +34,7 @@ const navItems: NavItem[] = [
   { id: 'users', label: 'Users', icon: Users },
   { id: 'team', label: 'Team', icon: UserCog },
   { id: 'devices', label: 'Devices', icon: Wifi },
+  { id: 'transparency', label: 'Data Transparency', icon: FlaskConical },
   { id: 'data-health', label: 'Data Health', icon: ShieldCheck },
   { id: 'data-validator', label: 'Accuracy Check', icon: Search },
   { id: 'audit', label: 'Audit Log', icon: ScrollText },
