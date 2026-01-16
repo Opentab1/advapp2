@@ -15,7 +15,8 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getDwellTimeScore, formatDwellTime, getReputationScore, calculatePulseScore } from '../utils/scoring';
+import { getDwellTimeScore, formatDwellTime, getReputationScore, calculatePulseScore, getCurrentTimeSlot } from '../utils/scoring';
+import venueLearningService from '../services/venue-learning.service';
 import { POLLING_INTERVALS, DATA_FRESHNESS } from '../utils/constants';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
@@ -377,8 +378,50 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     return 100;
   }, [effectiveOccupancy.peakOccupancy]);
 
+  // Track learning data availability to trigger score recalculation
+  const [learningVersion, setLearningVersion] = useState(0);
+  
+  // Check for learning data periodically and trigger recalc when it becomes available
+  useEffect(() => {
+    if (!venueId) return;
+    
+    // Check if learning data exists
+    const learning = venueLearningService.getLearning(venueId);
+    const timeSlot = getCurrentTimeSlot();
+    const bestNight = learning?.bestNights?.[timeSlot];
+    
+    if (bestNight) {
+      console.log(`🏆 Historical data available for ${timeSlot}:`, bestNight.date);
+      setLearningVersion(v => v + 1);
+    }
+    
+    // Also check after a delay (in case learning is still loading)
+    const timer = setTimeout(() => {
+      const updatedLearning = venueLearningService.getLearning(venueId);
+      const updatedBestNight = updatedLearning?.bestNights?.[timeSlot];
+      if (updatedBestNight && !bestNight) {
+        console.log(`🏆 Historical data NOW available for ${timeSlot}:`, updatedBestNight.date);
+        setLearningVersion(v => v + 1);
+      }
+    }, 3000); // Check again after 3 seconds
+    
+    return () => clearTimeout(timer);
+  }, [venueId, sensorData]); // Re-check when venueId or sensor data changes
+  
   // Calculate Pulse Score - uses the original working scoring function
+  // Now includes learningVersion as dependency to recalculate when historical data loads
   const pulseScoreResult = useMemo(() => {
+    // Log what data is available
+    const learning = venueLearningService.getLearning(venueId);
+    const timeSlot = getCurrentTimeSlot();
+    const bestNight = learning?.bestNights?.[timeSlot];
+    
+    if (bestNight) {
+      console.log(`📊 Scoring with YOUR best ${timeSlot}: Sound ${bestNight.avgSound}dB, Light ${bestNight.avgLight} lux`);
+    } else {
+      console.log(`📊 No historical data for ${timeSlot} yet - using defaults`);
+    }
+    
     return calculatePulseScore(
       sensorData?.decibels,
       sensorData?.light,
@@ -391,7 +434,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       effectiveOccupancy.current, // currentOccupancy for crowd scoring
       estimatedCapacity // for crowd scoring
     );
-  }, [sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist, venueId, effectiveOccupancy.current, estimatedCapacity]);
+  }, [sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist, venueId, effectiveOccupancy.current, estimatedCapacity, learningVersion]);
   
 
   // ============ DWELL TIME CALCULATION ============
@@ -569,13 +612,13 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     // Time slot
     timeSlot: pulseScoreResult.timeSlot,
-    timeBlockLabel: '', // Will be implemented with historical scoring later
+    timeBlockLabel: pulseScoreResult.timeSlot.charAt(0).toUpperCase() + pulseScoreResult.timeSlot.slice(1),
     
-    // Historical comparison (will be implemented with historical scoring later)
+    // Historical comparison - now properly populated from learning service
     bestNight: pulseScoreResult.bestNight,
-    isLearning: true, // Always learning until historical scoring is implemented
-    learningConfidence: 0,
-    weeksOfData: 0,
+    isLearning: !pulseScoreResult.isUsingHistoricalData, // Not learning if we have historical data
+    learningConfidence: pulseScoreResult.bestNight?.confidence ?? 0,
+    weeksOfData: venueLearningService.getLearning(venueId)?.weeksOfData ?? 0,
     proximityToBest: pulseScoreResult.proximityToBest,
     
     // Legacy fields for backward compatibility
