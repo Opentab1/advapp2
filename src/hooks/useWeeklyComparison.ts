@@ -124,22 +124,19 @@ function calculateWeekStats(data: SensorData[]): WeekData {
   // Average Pulse Score
   const avgPulseScore = scoredData.reduce((sum, d) => sum + d.pulseScore, 0) / scoredData.length;
   
-  // Total visitors - sum all deltas to handle counter resets
+  // Total visitors: latest entries - earliest entries
+  // Counter is cumulative all-time (never resets)
   const sortedData = [...data].sort((a, b) => 
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
   
-  const withEntries = sortedData.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
+  const withEntries = sortedData.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0);
   
   let totalVisitors = 0;
-  for (let i = 1; i < withEntries.length; i++) {
-    const prev = withEntries[i - 1].occupancy!.entries;
-    const curr = withEntries[i].occupancy!.entries;
-    if (curr > prev) {
-      totalVisitors += (curr - prev);
-    } else if (curr < prev) {
-      totalVisitors += curr; // Counter reset
-    }
+  if (withEntries.length >= 2) {
+    const earliest = withEntries[0];
+    const latest = withEntries[withEntries.length - 1];
+    totalVisitors = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
   }
   
   // Peak occupancy

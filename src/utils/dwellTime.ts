@@ -69,24 +69,18 @@ export function calculateDwellTimeFromHistory(
 
   // Get entries data sorted by timestamp
   const entryData = data
-    .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0)
+    .filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   
   if (entryData.length < 2) {
     return null;
   }
 
-  // Sum all deltas to handle counter resets
-  let totalEntries = 0;
-  for (let i = 1; i < entryData.length; i++) {
-    const prev = entryData[i - 1].occupancy!.entries;
-    const curr = entryData[i].occupancy!.entries;
-    if (curr > prev) {
-      totalEntries += (curr - prev);
-    } else if (curr < prev) {
-      totalEntries += curr; // Counter reset
-    }
-  }
+  // Simple calculation: latest entries - earliest entries
+  // Counter is cumulative all-time (never resets)
+  const earliest = entryData[0];
+  const latest = entryData[entryData.length - 1];
+  const totalEntries = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
 
   return calculateDwellTime(avgOccupancy, totalEntries, timeRangeHours);
 }
@@ -161,28 +155,22 @@ export function calculateRecentDwellTime(
   const avgOccupancy = occupancyValues.reduce((sum, val) => sum + val, 0) / occupancyValues.length;
 
   // Get entries - both hourly and raw data use cumulative counters
-  const entryData = recentData.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries > 0);
+  const entryData = recentData.filter(d => d.occupancy?.entries !== undefined && d.occupancy.entries >= 0);
   
   if (entryData.length < 2) {
     console.log('📊 Dwell time: Not enough entry data');
     return null;
   }
 
-  // Sum all deltas to handle counter resets (sorted data required)
+  // Simple calculation: latest entries - earliest entries
+  // Counter is cumulative all-time (never resets)
   const sortedEntryData = [...entryData].sort((a, b) => 
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
   
-  let totalEntries = 0;
-  for (let i = 1; i < sortedEntryData.length; i++) {
-    const prev = sortedEntryData[i - 1].occupancy!.entries;
-    const curr = sortedEntryData[i].occupancy!.entries;
-    if (curr > prev) {
-      totalEntries += (curr - prev);
-    } else if (curr < prev) {
-      totalEntries += curr; // Counter reset
-    }
-  }
+  const earliest = sortedEntryData[0];
+  const latest = sortedEntryData[sortedEntryData.length - 1];
+  const totalEntries = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
 
   // Calculate actual time span
   const firstTime = new Date(recentData[0].timestamp).getTime();

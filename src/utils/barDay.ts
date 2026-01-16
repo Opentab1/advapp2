@@ -87,40 +87,24 @@ export function calculateBarDayOccupancy(
   const latest = sorted[sorted.length - 1];
   const latestCurrent = latest.occupancy?.current || 0;
   
-  // Sum all deltas to handle counter resets
-  let barDayEntries = 0;
-  let barDayExits = 0;
+  // Simple calculation: latest - earliest
+  // Counter is cumulative all-time (never resets)
+  const firstEntries = first.occupancy?.entries || 0;
+  const firstExits = first.occupancy?.exits || 0;
+  const latestEntries = latest.occupancy?.entries || 0;
+  const latestExits = latest.occupancy?.exits || 0;
   
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = sorted[i - 1];
-    const curr = sorted[i];
-    
-    const prevEntries = prev.occupancy?.entries || 0;
-    const currEntries = curr.occupancy?.entries || 0;
-    const prevExits = prev.occupancy?.exits || 0;
-    const currExits = curr.occupancy?.exits || 0;
-    
-    if (currEntries > prevEntries) {
-      barDayEntries += (currEntries - prevEntries);
-    } else if (currEntries < prevEntries) {
-      barDayEntries += currEntries; // Counter reset
-    }
-    
-    if (currExits > prevExits) {
-      barDayExits += (currExits - prevExits);
-    } else if (currExits < prevExits) {
-      barDayExits += currExits; // Counter reset
-    }
-  }
+  const barDayEntries = Math.max(0, latestEntries - firstEntries);
+  const barDayExits = Math.max(0, latestExits - firstExits);
   
-  console.log('📊 Bar day calculation (delta method):', {
+  console.log('📊 Bar day calculation (simple subtraction):', {
     barDayStart: barDayStart.toISOString(),
     firstReading: first.timestamp,
     latestReading: latest.timestamp,
-    startEntries,
+    firstEntries,
     latestEntries,
     barDayEntries,
-    startExits,
+    firstExits,
     latestExits,
     barDayExits,
     currentOccupancy: latestCurrent
@@ -256,31 +240,18 @@ export function aggregateOccupancyByBarDay(
       continue;
     }
     
-    // Sum all deltas to handle counter resets
-    let dayEntries = 0;
-    let dayExits = 0;
+    // Simple calculation: latest - earliest for this bar day
+    // Counter is cumulative all-time (never resets)
+    const firstReading = barDayData[0];
+    const lastReading = barDayData[barDayData.length - 1];
     
-    for (let i = 1; i < barDayData.length; i++) {
-      const prev = barDayData[i - 1];
-      const curr = barDayData[i];
-      
-      const prevEntries = prev.occupancy?.entries || 0;
-      const currEntries = curr.occupancy?.entries || 0;
-      const prevExits = prev.occupancy?.exits || 0;
-      const currExits = curr.occupancy?.exits || 0;
-      
-      if (currEntries > prevEntries) {
-        dayEntries += (currEntries - prevEntries);
-      } else if (currEntries < prevEntries) {
-        dayEntries += currEntries; // Counter reset
-      }
-      
-      if (currExits > prevExits) {
-        dayExits += (currExits - prevExits);
-      } else if (currExits < prevExits) {
-        dayExits += currExits; // Counter reset
-      }
-    }
+    const firstEntries = firstReading.occupancy?.entries || 0;
+    const lastEntries = lastReading.occupancy?.entries || 0;
+    const firstExits = firstReading.occupancy?.exits || 0;
+    const lastExits = lastReading.occupancy?.exits || 0;
+    
+    const dayEntries = Math.max(0, lastEntries - firstEntries);
+    const dayExits = Math.max(0, lastExits - firstExits);
     
     dailyBreakdown.push({ 
       date: barDay.label, 

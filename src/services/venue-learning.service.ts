@@ -744,22 +744,17 @@ class VenueLearningService {
       for (const [dateKey, nightData] of Object.entries(byNight)) {
         if (nightData.length < 3) continue; // Need at least 3 data points per night
         
-        // Calculate total guests using delta method
+        // Calculate total guests: latest entries - earliest entries
+        // Counter is cumulative all-time (never resets)
         const withEntries = nightData.filter(d => d.occupancy?.entries !== undefined && d.occupancy?.entries !== null);
         let totalGuests = 0;
         if (withEntries.length >= 2) {
           const sorted = [...withEntries].sort((a, b) => 
             new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
           );
-          for (let i = 1; i < sorted.length; i++) {
-            const prev = sorted[i - 1].occupancy!.entries;
-            const curr = sorted[i].occupancy!.entries;
-            if (curr > prev) {
-              totalGuests += (curr - prev);
-            } else if (curr < prev) {
-              totalGuests += curr; // Counter reset
-            }
-          }
+          const earliest = sorted[0];
+          const latest = sorted[sorted.length - 1];
+          totalGuests = Math.max(0, latest.occupancy!.entries - earliest.occupancy!.entries);
         }
         
         // Peak occupancy
