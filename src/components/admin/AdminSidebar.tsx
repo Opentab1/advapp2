@@ -12,7 +12,8 @@ import {
   LucideIcon,
   ShieldCheck,
   Search,
-  FlaskConical
+  FlaskConical,
+  Mail
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { id: 'data-validator', label: 'Accuracy Check', icon: Search },
   { id: 'audit', label: 'Audit Log', icon: ScrollText },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+  { id: 'email-reporting', label: 'Email Reports', icon: Mail },
   { id: 'settings', label: 'Settings', icon: Settings }
 ];
 

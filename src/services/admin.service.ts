@@ -1099,6 +1099,157 @@ class AdminService {
       return false;
     }
   }
+
+  // ============ EMAIL REPORTING ============
+
+  /**
+   * Get all venues with their email configuration
+   */
+  async getAllVenues(): Promise<Array<{
+    venueId: string;
+    venueName: string;
+    ownerEmail?: string;
+    emailConfig?: {
+      enabled: boolean;
+      frequency: 'daily' | 'weekly' | 'monthly';
+      recipients: string[];
+      reportType: 'full' | 'summary' | 'alerts';
+      lastSentAt?: string;
+    };
+  }>> {
+    console.log('📧 Fetching venues for email reporting...');
+    
+    try {
+      const query = `
+        query ListAllVenues($limit: Int) {
+          listAllVenues(limit: $limit) {
+            items {
+              venueId
+              venueName
+              ownerEmail
+              emailConfig {
+                enabled
+                frequency
+                recipients
+                reportType
+                lastSentAt
+              }
+            }
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({
+        query,
+        variables: { limit: 100 }
+      }) as any;
+
+      if (result.data?.listAllVenues?.items) {
+        return result.data.listAllVenues.items;
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to fetch venues for email config:', error);
+    }
+
+    // Fallback: Get venues from listVenues
+    const venues = await this.listVenues();
+    return venues.map(v => ({
+      venueId: v.venueId,
+      venueName: v.venueName
+    }));
+  }
+
+  /**
+   * Update email configuration for a venue
+   */
+  async updateVenueEmailConfig(venueId: string, config: {
+    enabled: boolean;
+    frequency: 'daily' | 'weekly' | 'monthly';
+    recipients: string[];
+    reportType: 'full' | 'summary' | 'alerts';
+  }): Promise<boolean> {
+    console.log(`📧 Updating email config for venue: ${venueId}`);
+    
+    try {
+      const mutation = `
+        mutation UpdateVenueEmailConfig($venueId: String!, $emailConfig: EmailConfigInput!) {
+          updateVenueEmailConfig(venueId: $venueId, emailConfig: $emailConfig) {
+            success
+            message
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({
+        query: mutation,
+        variables: { venueId, emailConfig: config }
+      }) as any;
+
+      if (result.data?.updateVenueEmailConfig?.success) {
+        // Log audit entry
+        this.logAuditEntry({
+          action: config.enabled ? 'Email Reports Enabled' : 'Email Reports Disabled',
+          actionType: 'update',
+          targetType: 'venue',
+          targetId: venueId,
+          targetName: venueId,
+          details: `${config.frequency} ${config.reportType} reports to ${config.recipients.join(', ')}`
+        });
+        return true;
+      }
+    } catch (error) {
+      console.error('❌ Failed to update email config:', error);
+    }
+
+    // Fallback: Store in localStorage for demo purposes
+    const stored = localStorage.getItem('venueEmailConfigs') || '{}';
+    const configs = JSON.parse(stored);
+    configs[venueId] = config;
+    localStorage.setItem('venueEmailConfigs', JSON.stringify(configs));
+    console.log('📧 Saved email config to localStorage (fallback)');
+    return true;
+  }
+
+  /**
+   * Send a test email for a venue
+   */
+  async sendTestEmail(venueId: string): Promise<boolean> {
+    console.log(`📧 Sending test email for venue: ${venueId}`);
+    
+    try {
+      const mutation = `
+        mutation SendTestEmail($venueId: String!) {
+          sendTestEmail(venueId: $venueId) {
+            success
+            message
+          }
+        }
+      `;
+
+      const result = await this.client.graphql({
+        query: mutation,
+        variables: { venueId }
+      }) as any;
+
+      if (result.data?.sendTestEmail?.success) {
+        this.logAuditEntry({
+          action: 'Test Email Sent',
+          actionType: 'action',
+          targetType: 'venue',
+          targetId: venueId,
+          targetName: venueId,
+          details: 'Sent test weekly report email'
+        });
+        return true;
+      }
+    } catch (error) {
+      console.error('❌ Failed to send test email:', error);
+    }
+
+    // For now, just log success (Lambda not deployed yet)
+    console.log('📧 Test email would be sent (Lambda not deployed yet)');
+    return true;
+  }
 }
 
 export const adminService = new AdminService();

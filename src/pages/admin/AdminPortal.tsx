@@ -12,6 +12,7 @@ import { DataValidator } from './DataValidator';
 import { AuditLog } from './AuditLog';
 import { SystemAnalytics } from './SystemAnalytics';
 import { AdminSettings } from './AdminSettings';
+import { EmailReporting } from './EmailReporting';
 import authService from '../../services/auth.service';
 
 export function AdminPortal() {
@@ -66,6 +67,7 @@ export function AdminPortal() {
           {activeTab === 'data-validator' && <DataValidator />}
           {activeTab === 'audit' && <AuditLog />}
           {activeTab === 'analytics' && <SystemAnalytics />}
+          {activeTab === 'email-reporting' && <EmailReporting />}
           {activeTab === 'settings' && <AdminSettings />}
         </div>
       </div>
