@@ -3,11 +3,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Calendar, TrendingUp, TrendingDown, Plus,
   X, Save, Trash2, Music, Mic, Trophy,
-  Gamepad2, PartyPopper, Tag, RefreshCw, BarChart3
+  Gamepad2, PartyPopper, Tag, RefreshCw, BarChart3, Upload
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import dynamoDBService from '../../services/dynamodb.service';
 import authService from '../../services/auth.service';
+import { CSVImport } from '../common/CSVImport';
 
 // Events API endpoint
 const EVENTS_API = 'https://4unsp74svc.execute-api.us-east-2.amazonaws.com/prod/events';
@@ -42,6 +43,7 @@ export function EventROITracker() {
   const [events, setEvents] = useState<LoggedEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showCSVImport, setShowCSVImport] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string>('all');
   
   const user = authService.getStoredUser();
@@ -242,6 +244,67 @@ export function EventROITracker() {
     }
   };
 
+  const handleCSVImport = async (data: Record<string, string>[]): Promise<{ success: number; failed: number }> => {
+    if (!venueId) return { success: 0, failed: data.length };
+    
+    let success = 0;
+    let failed = 0;
+    
+    for (const row of data) {
+      try {
+        if (row.name && row.date) {
+          // Map event type
+          let eventType = row.type?.toLowerCase() || 'other';
+          const validTypes = ['dj', 'live_band', 'trivia', 'karaoke', 'sports', 'theme', 'other'];
+          if (!validTypes.includes(eventType)) {
+            // Try to match partial names
+            if (eventType.includes('dj')) eventType = 'dj';
+            else if (eventType.includes('band') || eventType.includes('live')) eventType = 'live_band';
+            else if (eventType.includes('trivia')) eventType = 'trivia';
+            else if (eventType.includes('karaoke')) eventType = 'karaoke';
+            else if (eventType.includes('sport')) eventType = 'sports';
+            else if (eventType.includes('theme')) eventType = 'theme';
+            else eventType = 'other';
+          }
+          
+          // Format date if needed
+          let formattedDate = row.date;
+          if (row.date.includes('/')) {
+            const parts = row.date.split('/');
+            if (parts.length === 3) {
+              formattedDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+            }
+          }
+          
+          const response = await fetch(`${EVENTS_API}/${venueId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: row.name,
+              date: formattedDate,
+              type: eventType,
+              notes: row.notes || null
+            })
+          });
+          
+          if (response.ok) {
+            success++;
+          } else {
+            failed++;
+          }
+        } else {
+          failed++;
+        }
+      } catch (error) {
+        console.error('Error importing event:', error);
+        failed++;
+      }
+    }
+    
+    await loadEvents();
+    return { success, failed };
+  };
+
   const filteredEvents = typeFilter === 'all' 
     ? events 
     : events.filter(e => e.type === typeFilter);
@@ -282,15 +345,26 @@ export function EventROITracker() {
           <p className="text-sm text-warm-400 mt-1">Track which events drive the most guests</p>
         </div>
         
-        <motion.button
-          onClick={() => setShowAddModal(true)}
-          className="btn-primary flex items-center gap-2"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-        >
-          <Plus className="w-4 h-4" />
-          Log Event
-        </motion.button>
+        <div className="flex items-center gap-2">
+          <motion.button
+            onClick={() => setShowCSVImport(true)}
+            className="btn-secondary flex items-center gap-2"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <Upload className="w-4 h-4" />
+            Import
+          </motion.button>
+          <motion.button
+            onClick={() => setShowAddModal(true)}
+            className="btn-primary flex items-center gap-2"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <Plus className="w-4 h-4" />
+            Log Event
+          </motion.button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -439,6 +513,24 @@ export function EventROITracker() {
           <AddEventModal
             onClose={() => setShowAddModal(false)}
             onSave={handleAddEvent}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* CSV Import Modal */}
+      <AnimatePresence>
+        {showCSVImport && (
+          <CSVImport
+            title="Import Events"
+            description="Upload a CSV file with your past events to analyze their performance."
+            templateColumns={['name', 'date', 'type', 'notes']}
+            templateExample={[
+              ['DJ Mike Friday Night', '2026-01-17', 'dj', 'Great turnout'],
+              ['Trivia Tuesday', '2026-01-14', 'trivia', 'Full house'],
+              ['Live Band - The Rockers', '2026-01-11', 'live_band', ''],
+            ]}
+            onImport={handleCSVImport}
+            onClose={() => setShowCSVImport(false)}
           />
         )}
       </AnimatePresence>

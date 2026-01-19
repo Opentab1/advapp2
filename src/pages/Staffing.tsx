@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Users, Calendar, Clock, Plus, X, Save, Trash2,
-  TrendingUp, TrendingDown, RefreshCw, BarChart3, User
+  TrendingUp, TrendingDown, RefreshCw, BarChart3, User, Upload
 } from 'lucide-react';
-import { format, parseISO, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks, subWeeks } from 'date-fns';
+import { format, parseISO, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks } from 'date-fns';
 import dynamoDBService from '../services/dynamodb.service';
 import authService from '../services/auth.service';
 import { PullToRefresh } from '../components/common/PullToRefresh';
+import { CSVImport } from '../components/common/CSVImport';
 
 // API endpoints
 const API_BASE = 'https://4unsp74svc.execute-api.us-east-2.amazonaws.com/prod';
@@ -67,6 +68,7 @@ export function Staffing() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [showAddStaff, setShowAddStaff] = useState(false);
   const [showAddShift, setShowAddShift] = useState<string | null>(null); // date string
+  const [showCSVImport, setShowCSVImport] = useState(false);
   
   const user = authService.getStoredUser();
   const venueId = user?.venueId;
@@ -316,6 +318,108 @@ export function Staffing() {
     }
   };
 
+  const handleCSVImport = async (data: Record<string, string>[]): Promise<{ success: number; failed: number }> => {
+    if (!venueId) return { success: 0, failed: data.length };
+    
+    let success = 0;
+    let failed = 0;
+    
+    for (const row of data) {
+      try {
+        // Check if it's a staff member or shift based on columns
+        if (row.name && row.role) {
+          // It's a staff member
+          const role = row.role.toLowerCase();
+          const validRole = ['bartender', 'server', 'door', 'manager', 'other'].includes(role) 
+            ? role 
+            : 'other';
+          
+          await fetch(`${STAFF_API}/${venueId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: row.name,
+              role: validRole,
+              color: ROLE_COLORS[validRole]
+            })
+          });
+          success++;
+        } else if (row.date && row.staffname && row.starttime && row.endtime) {
+          // It's a shift - need to find or create staff member
+          let staffMember = staff.find(s => 
+            s.name.toLowerCase() === row.staffname.toLowerCase()
+          );
+          
+          if (!staffMember) {
+            // Create staff member first
+            const role = (row.role?.toLowerCase() || 'other') as StaffMember['role'];
+            const validRole = ['bartender', 'server', 'door', 'manager', 'other'].includes(role) 
+              ? role 
+              : 'other';
+            
+            const res = await fetch(`${STAFF_API}/${venueId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: row.staffname,
+                role: validRole,
+                color: ROLE_COLORS[validRole]
+              })
+            });
+            
+            if (res.ok) {
+              const newStaff = await res.json();
+              staffMember = {
+                id: newStaff.staffId,
+                name: newStaff.name,
+                role: newStaff.role,
+                color: newStaff.color
+              };
+            }
+          }
+          
+          if (staffMember) {
+            // Format date if needed (handle common formats)
+            let formattedDate = row.date;
+            if (row.date.includes('/')) {
+              const parts = row.date.split('/');
+              if (parts.length === 3) {
+                // Assume MM/DD/YYYY or DD/MM/YYYY
+                formattedDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+              }
+            }
+            
+            await fetch(`${SHIFTS_API}/${venueId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                staffId: staffMember.id,
+                staffName: staffMember.name,
+                role: staffMember.role,
+                date: formattedDate,
+                startTime: row.starttime,
+                endTime: row.endtime
+              })
+            });
+            success++;
+          } else {
+            failed++;
+          }
+        } else {
+          failed++;
+        }
+      } catch (error) {
+        console.error('Error importing row:', error);
+        failed++;
+      }
+    }
+    
+    // Reload data after import
+    await loadData();
+    
+    return { success, failed };
+  };
+
   const getShiftsForDay = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
     return shifts.filter(s => s.date === dateStr);
@@ -378,15 +482,26 @@ export function Staffing() {
                     <User className="w-5 h-5 text-primary" />
                     Team Members
                   </h2>
-                  <motion.button
-                    onClick={() => setShowAddStaff(true)}
-                    className="btn-primary text-sm flex items-center gap-1"
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add Staff
-                  </motion.button>
+                  <div className="flex items-center gap-2">
+                    <motion.button
+                      onClick={() => setShowCSVImport(true)}
+                      className="btn-secondary text-sm flex items-center gap-1"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <Upload className="w-4 h-4" />
+                      Import CSV
+                    </motion.button>
+                    <motion.button
+                      onClick={() => setShowAddStaff(true)}
+                      className="btn-primary text-sm flex items-center gap-1"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Staff
+                    </motion.button>
+                  </div>
                 </div>
                 
                 {staff.length === 0 ? (
@@ -566,6 +681,24 @@ export function Staffing() {
               staff={staff}
               onClose={() => setShowAddShift(null)}
               onSave={handleAddShift}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* CSV Import Modal */}
+        <AnimatePresence>
+          {showCSVImport && (
+            <CSVImport
+              title="Import Schedule"
+              description="Upload a CSV file with your staff schedule. You can import staff members, shifts, or both."
+              templateColumns={['staffname', 'role', 'date', 'starttime', 'endtime']}
+              templateExample={[
+                ['Sarah Johnson', 'bartender', '2026-01-20', '18:00', '02:00'],
+                ['Mike Smith', 'server', '2026-01-20', '17:00', '23:00'],
+                ['Lisa Chen', 'door', '2026-01-21', '20:00', '02:00'],
+              ]}
+              onImport={handleCSVImport}
+              onClose={() => setShowCSVImport(false)}
             />
           )}
         </AnimatePresence>
