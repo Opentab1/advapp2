@@ -11,3 +11,4 @@ export { SummaryBreakdownModal } from './SummaryBreakdownModal';
 export { SweetSpotModal } from './SweetSpotModal';
 export { TrendModal } from './TrendModal';
 export { RawDataView } from './RawDataView';
+export { YearOverYear } from './YearOverYear';

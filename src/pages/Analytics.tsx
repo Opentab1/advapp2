@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { BarChart3, Calendar } from 'lucide-react';
 import {
   InsightsHeader,
   SummaryCard,
@@ -11,6 +12,7 @@ import {
   TrendModal,
   RawDataView,
 } from '../components/analytics';
+import { YearOverYear } from '../components/analytics/YearOverYear';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { ErrorState } from '../components/common/LoadingState';
 import { useInsightsData } from '../hooks/useInsightsData';
@@ -20,11 +22,13 @@ import { haptic } from '../utils/haptics';
 import type { InsightsTimeRange, MetricType } from '../types/insights';
 
 type ModalType = 'summary' | 'sweetspot' | 'trend' | null;
+type AnalyticsTab = 'overview' | 'yoy';
 
 export function Analytics() {
   const user = authService.getStoredUser();
   const venueName = user?.venueName || 'Venue';
   
+  const [activeTab, setActiveTab] = useState<AnalyticsTab>('overview');
   const [timeRange, setTimeRange] = useState<InsightsTimeRange>('7d');
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [showRawData, setShowRawData] = useState(false);
@@ -81,15 +85,45 @@ export function Analytics() {
     <>
       <PullToRefresh onRefresh={handleRefresh} disabled={insights.loading}>
         <div className="space-y-5 pb-20">
-          <InsightsHeader timeRange={timeRange} onTimeRangeChange={setTimeRange} loading={insights.loading} onRefresh={handleRefresh} />
-          <motion.div className="space-y-4" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <SummaryCard data={insights.summary} timeRange={timeRange} loading={insights.loading} onTapDetails={() => handleOpenModal('summary')} />
-              <SweetSpotCard data={insights.sweetSpot} loading={insights.loading} onTapDetails={() => handleOpenModal('sweetspot')} />
+          {/* Tab Navigation */}
+          <div className="flex items-center justify-between">
+            <div className="flex gap-2">
+              {[
+                { id: 'overview' as const, label: 'Overview', icon: BarChart3 },
+                { id: 'yoy' as const, label: 'Year-over-Year', icon: Calendar },
+              ].map((tab) => (
+                <motion.button
+                  key={tab.id}
+                  onClick={() => { haptic('selection'); setActiveTab(tab.id); }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+                    activeTab === tab.id
+                      ? 'bg-primary/20 border border-primary/50 text-white'
+                      : 'bg-warm-800 border border-warm-700 text-warm-400 hover:text-white'
+                  }`}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  <tab.icon className="w-4 h-4" />
+                  {tab.label}
+                </motion.button>
+              ))}
             </div>
-            <TrendCard data={insights.trend} timeRange={timeRange} loading={insights.loading} onTapDetails={() => handleOpenModal('trend')} />
-            <ExportButton onDownloadCSV={handleExportCSV} onEmailSummary={() => alert('Coming soon')} onCopyLink={() => { navigator.clipboard.writeText(window.location.href); alert('Copied'); }} disabled={insights.loading || insights.rawData.length === 0} />
-          </motion.div>
+          </div>
+
+          {activeTab === 'overview' ? (
+            <>
+              <InsightsHeader timeRange={timeRange} onTimeRangeChange={setTimeRange} loading={insights.loading} onRefresh={handleRefresh} />
+              <motion.div className="space-y-4" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <SummaryCard data={insights.summary} timeRange={timeRange} loading={insights.loading} onTapDetails={() => handleOpenModal('summary')} />
+                  <SweetSpotCard data={insights.sweetSpot} loading={insights.loading} onTapDetails={() => handleOpenModal('sweetspot')} />
+                </div>
+                <TrendCard data={insights.trend} timeRange={timeRange} loading={insights.loading} onTapDetails={() => handleOpenModal('trend')} />
+                <ExportButton onDownloadCSV={handleExportCSV} onEmailSummary={() => alert('Coming soon')} onCopyLink={() => { navigator.clipboard.writeText(window.location.href); alert('Copied'); }} disabled={insights.loading || insights.rawData.length === 0} />
+              </motion.div>
+            </>
+          ) : (
+            <YearOverYear />
+          )}
         </div>
       </PullToRefresh>
       <AnimatePresence>

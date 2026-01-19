@@ -21,6 +21,7 @@ import { Live } from './pages/Live';
 import { Analytics } from './pages/Analytics';
 import { Settings } from './pages/Settings';
 import { SongLog } from './pages/SongLog';
+import { Staffing } from './pages/Staffing';
 import Events from './pages/Events';
 
 // Layout
@@ -74,6 +75,9 @@ function ProtectedDashboard() {
         break;
       case 'events':
         content = <Events />;
+        break;
+      case 'staffing':
+        content = <Staffing />;
         break;
       case 'settings':
         content = <Settings />;

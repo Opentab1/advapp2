@@ -9,9 +9,13 @@ import {
   Star,
   Clock,
   RefreshCw,
+  BarChart3,
 } from 'lucide-react';
 import { eventsService, EventSuggestion, VenueVibe } from '../services/events.service';
+import { EventROITracker } from '../components/events/EventROITracker';
 import authService from '../services/auth.service';
+
+type EventsTab = 'suggestions' | 'performance';
 
 // ============ COMPONENTS ============
 
@@ -235,6 +239,7 @@ export default function Events() {
   const user = authService.getStoredUser();
   const venueId = user?.venueId || 'theshowcaselounge';
   
+  const [activeTab, setActiveTab] = useState<EventsTab>('suggestions');
   const [vibe, setVibe] = useState<VenueVibe | null>(null);
   const [suggestions, setSuggestions] = useState<EventSuggestion[]>([]);
   const [quickWins, setQuickWins] = useState<EventSuggestion[]>([]);
@@ -280,8 +285,40 @@ export default function Events() {
             Beta
           </span>
         </div>
-        <p className="text-sm text-gray-400">Event ideas tailored to your venue's vibe</p>
+        <p className="text-sm text-gray-400">Event ideas and performance tracking</p>
       </div>
+      
+      {/* Tab Navigation */}
+      <div className="px-5 mb-4">
+        <div className="flex gap-2">
+          {[
+            { id: 'suggestions' as const, label: 'Ideas', icon: Sparkles },
+            { id: 'performance' as const, label: 'Past Events', icon: BarChart3 },
+          ].map((tab) => (
+            <motion.button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+                activeTab === tab.id
+                  ? 'bg-purple-500/20 border border-purple-500/50 text-white'
+                  : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
+              }`}
+              whileTap={{ scale: 0.95 }}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </motion.button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === 'performance' ? (
+        <div className="px-5">
+          <EventROITracker />
+        </div>
+      ) : (
+        <>
+        {/* Suggestions Tab Content */}
       
       {/* Vibe Profile */}
       <div className="px-5 mb-6">
@@ -314,7 +351,7 @@ export default function Events() {
             <span className="text-xs text-gray-500">Low effort, high reward</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {quickWins.map((event, i) => (
+            {quickWins.map((event) => (
               <QuickWinCard key={event.id} event={event} />
             ))}
           </div>
@@ -369,6 +406,8 @@ export default function Events() {
           🚧 This feature is in beta — we're still refining the recommendations
         </p>
       </div>
+        </>
+      )}
     </div>
   );
 }

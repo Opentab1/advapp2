@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Key, MapPin, Check, Building2,
-  User, Info, CloudSun, Sliders, Users, Save
+  User, Info, CloudSun, Sliders, Users, Save, CreditCard
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
@@ -11,10 +11,11 @@ import { getUserRoleDisplay } from '../utils/userRoles';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { AddressSettings } from '../components/AddressSettings';
 import { CalibrationSettings } from '../components/CalibrationSettings';
+import { POSIntegration } from '../components/settings/POSIntegration';
 import { haptic } from '../utils/haptics';
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'calibration' | 'about'>('account');
+  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'about'>('account');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [savedAddress, setSavedAddress] = useState<VenueAddress | null>(null);
   const [capacity, setCapacity] = useState<number | ''>('');
@@ -65,6 +66,7 @@ export function Settings() {
           {[
             { id: 'account' as const, label: 'Account', icon: User },
             { id: 'venue' as const, label: 'Venue', icon: MapPin },
+            { id: 'integrations' as const, label: 'Integrations', icon: CreditCard },
             { id: 'calibration' as const, label: 'Calibration', icon: Sliders },
             { id: 'about' as const, label: 'About', icon: Info },
           ].map((tab) => (
@@ -284,6 +286,17 @@ export function Settings() {
                   </p>
                 </div>
               </div>
+            </motion.div>
+          )}
+
+          {/* Integrations Tab */}
+          {activeTab === 'integrations' && (
+            <motion.div
+              className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <POSIntegration />
             </motion.div>
           )}
 
