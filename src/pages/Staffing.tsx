@@ -9,8 +9,10 @@ import dynamoDBService from '../services/dynamodb.service';
 import authService from '../services/auth.service';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 
-// Staff API endpoint
-const STAFF_API = 'https://4unsp74svc.execute-api.us-east-2.amazonaws.com/prod/staff';
+// API endpoints
+const API_BASE = 'https://4unsp74svc.execute-api.us-east-2.amazonaws.com/prod';
+const STAFF_API = `${API_BASE}/staff`;
+const SHIFTS_API = `${API_BASE}/shifts`;
 
 interface StaffMember {
   id: string;
@@ -79,19 +81,38 @@ export function Staffing() {
     setLoading(true);
     
     try {
-      // Load staff and shifts from localStorage for now
-      // TODO: Replace with API calls when backend is ready
-      const storedStaff = localStorage.getItem(`staff_${venueId}`);
-      const storedShifts = localStorage.getItem(`shifts_${venueId}`);
+      // Load staff and shifts from API
+      const [staffRes, shiftsRes] = await Promise.all([
+        fetch(`${STAFF_API}/${venueId}`),
+        fetch(`${SHIFTS_API}/${venueId}`)
+      ]);
       
-      setStaff(storedStaff ? JSON.parse(storedStaff) : []);
-      setShifts(storedShifts ? JSON.parse(storedShifts) : []);
+      const staffData = staffRes.ok ? await staffRes.json() : [];
+      const shiftsData = shiftsRes.ok ? await shiftsRes.json() : [];
+      
+      // Map API response to local format
+      const mappedStaff: StaffMember[] = staffData.map((s: { staffId: string; name: string; role: string; color?: string }) => ({
+        id: s.staffId,
+        name: s.name,
+        role: s.role as StaffMember['role'],
+        color: s.color || ROLE_COLORS[s.role] || ROLE_COLORS.other
+      }));
+      
+      const mappedShifts: Shift[] = shiftsData.map((s: { shiftId: string; staffId: string; staffName: string; role: string; date: string; startTime: string; endTime: string }) => ({
+        id: s.shiftId,
+        staffId: s.staffId,
+        staffName: s.staffName,
+        role: s.role,
+        date: s.date,
+        startTime: s.startTime,
+        endTime: s.endTime
+      }));
+      
+      setStaff(mappedStaff);
+      setShifts(mappedShifts);
       
       // Calculate performance metrics
-      await calculatePerformance(
-        storedStaff ? JSON.parse(storedStaff) : [],
-        storedShifts ? JSON.parse(storedShifts) : []
-      );
+      await calculatePerformance(mappedStaff, mappedShifts);
     } catch (error) {
       console.error('Error loading staffing data:', error);
     } finally {
@@ -213,56 +234,86 @@ export function Staffing() {
     }
   };
 
-  const handleAddStaff = (name: string, role: StaffMember['role']) => {
-    const newStaff: StaffMember = {
-      id: `staff_${Date.now()}`,
-      name,
-      role,
-      color: ROLE_COLORS[role]
-    };
+  const handleAddStaff = async (name: string, role: StaffMember['role']) => {
+    if (!venueId) return;
     
-    const updated = [...staff, newStaff];
-    setStaff(updated);
-    localStorage.setItem(`staff_${venueId}`, JSON.stringify(updated));
-    setShowAddStaff(false);
+    try {
+      const response = await fetch(`${STAFF_API}/${venueId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, role, color: ROLE_COLORS[role] })
+      });
+      
+      if (!response.ok) throw new Error('Failed to add staff');
+      
+      setShowAddStaff(false);
+      loadData();
+    } catch (error) {
+      console.error('Error adding staff:', error);
+      alert('Failed to add staff member. Please try again.');
+    }
   };
 
-  const handleDeleteStaff = (staffId: string) => {
+  const handleDeleteStaff = async (staffId: string) => {
+    if (!venueId) return;
     if (!confirm('Delete this staff member and all their shifts?')) return;
     
-    const updatedStaff = staff.filter(s => s.id !== staffId);
-    const updatedShifts = shifts.filter(s => s.staffId !== staffId);
-    
-    setStaff(updatedStaff);
-    setShifts(updatedShifts);
-    localStorage.setItem(`staff_${venueId}`, JSON.stringify(updatedStaff));
-    localStorage.setItem(`shifts_${venueId}`, JSON.stringify(updatedShifts));
+    try {
+      // Delete staff member
+      await fetch(`${STAFF_API}/${venueId}/${staffId}`, { method: 'DELETE' });
+      
+      // Delete all their shifts
+      const staffShifts = shifts.filter(s => s.staffId === staffId);
+      await Promise.all(
+        staffShifts.map(s => fetch(`${SHIFTS_API}/${venueId}/${s.id}`, { method: 'DELETE' }))
+      );
+      
+      loadData();
+    } catch (error) {
+      console.error('Error deleting staff:', error);
+      alert('Failed to delete staff member. Please try again.');
+    }
   };
 
-  const handleAddShift = (staffId: string, date: string, startTime: string, endTime: string) => {
+  const handleAddShift = async (staffId: string, date: string, startTime: string, endTime: string) => {
+    if (!venueId) return;
+    
     const staffMember = staff.find(s => s.id === staffId);
     if (!staffMember) return;
     
-    const newShift: Shift = {
-      id: `shift_${Date.now()}`,
-      staffId,
-      staffName: staffMember.name,
-      role: staffMember.role,
-      date,
-      startTime,
-      endTime
-    };
-    
-    const updated = [...shifts, newShift];
-    setShifts(updated);
-    localStorage.setItem(`shifts_${venueId}`, JSON.stringify(updated));
-    setShowAddShift(null);
+    try {
+      const response = await fetch(`${SHIFTS_API}/${venueId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          staffId,
+          staffName: staffMember.name,
+          role: staffMember.role,
+          date,
+          startTime,
+          endTime
+        })
+      });
+      
+      if (!response.ok) throw new Error('Failed to add shift');
+      
+      setShowAddShift(null);
+      loadData();
+    } catch (error) {
+      console.error('Error adding shift:', error);
+      alert('Failed to add shift. Please try again.');
+    }
   };
 
-  const handleDeleteShift = (shiftId: string) => {
-    const updated = shifts.filter(s => s.id !== shiftId);
-    setShifts(updated);
-    localStorage.setItem(`shifts_${venueId}`, JSON.stringify(updated));
+  const handleDeleteShift = async (shiftId: string) => {
+    if (!venueId) return;
+    
+    try {
+      await fetch(`${SHIFTS_API}/${venueId}/${shiftId}`, { method: 'DELETE' });
+      loadData();
+    } catch (error) {
+      console.error('Error deleting shift:', error);
+    }
   };
 
   const getShiftsForDay = (date: Date) => {
