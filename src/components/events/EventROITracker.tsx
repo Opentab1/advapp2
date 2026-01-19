@@ -9,6 +9,9 @@ import { format, parseISO } from 'date-fns';
 import dynamoDBService from '../../services/dynamodb.service';
 import authService from '../../services/auth.service';
 
+// Events API endpoint
+const EVENTS_API = 'https://4unsp74svc.execute-api.us-east-2.amazonaws.com/prod/events';
+
 // Event types with icons
 const EVENT_TYPES = [
   { id: 'dj', label: 'DJ Night', icon: Music, color: 'text-purple-400' },
@@ -49,9 +52,20 @@ export function EventROITracker() {
     setLoading(true);
     
     try {
-      // Load events from localStorage (would be DynamoDB in production)
-      const stored = localStorage.getItem(`events_${venueId}`);
-      let storedEvents: LoggedEvent[] = stored ? JSON.parse(stored) : [];
+      // Load events from API
+      const response = await fetch(`${EVENTS_API}/${venueId}`);
+      if (!response.ok) throw new Error('Failed to fetch events');
+      
+      const apiEvents = await response.json();
+      
+      // Map API response to LoggedEvent format
+      const storedEvents: LoggedEvent[] = apiEvents.map((e: { eventId: string; date: string; name: string; type: string; notes?: string }) => ({
+        id: e.eventId,
+        date: e.date,
+        name: e.name,
+        type: e.type,
+        notes: e.notes
+      }));
       
       // Calculate ROI metrics for each event
       const eventsWithMetrics = await Promise.all(
@@ -185,30 +199,47 @@ export function EventROITracker() {
     }
   };
 
-  const handleAddEvent = (event: Omit<LoggedEvent, 'id'>) => {
-    const newEvent: LoggedEvent = {
-      ...event,
-      id: `event_${Date.now()}`
-    };
+  const handleAddEvent = async (event: Omit<LoggedEvent, 'id'>) => {
+    if (!venueId) return;
     
-    const stored = localStorage.getItem(`events_${venueId}`);
-    const existingEvents: LoggedEvent[] = stored ? JSON.parse(stored) : [];
-    existingEvents.push(newEvent);
-    localStorage.setItem(`events_${venueId}`, JSON.stringify(existingEvents));
-    
-    setShowAddModal(false);
-    loadEvents();
+    try {
+      const response = await fetch(`${EVENTS_API}/${venueId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: event.name,
+          date: event.date,
+          type: event.type,
+          notes: event.notes
+        })
+      });
+      
+      if (!response.ok) throw new Error('Failed to create event');
+      
+      setShowAddModal(false);
+      loadEvents();
+    } catch (error) {
+      console.error('Error creating event:', error);
+      alert('Failed to save event. Please try again.');
+    }
   };
 
-  const handleDeleteEvent = (eventId: string) => {
+  const handleDeleteEvent = async (eventId: string) => {
+    if (!venueId) return;
     if (!confirm('Delete this event?')) return;
     
-    const stored = localStorage.getItem(`events_${venueId}`);
-    let existingEvents: LoggedEvent[] = stored ? JSON.parse(stored) : [];
-    existingEvents = existingEvents.filter(e => e.id !== eventId);
-    localStorage.setItem(`events_${venueId}`, JSON.stringify(existingEvents));
-    
-    loadEvents();
+    try {
+      const response = await fetch(`${EVENTS_API}/${venueId}/${eventId}`, {
+        method: 'DELETE'
+      });
+      
+      if (!response.ok) throw new Error('Failed to delete event');
+      
+      loadEvents();
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      alert('Failed to delete event. Please try again.');
+    }
   };
 
   const filteredEvents = typeFilter === 'all' 
