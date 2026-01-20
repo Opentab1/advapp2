@@ -13,6 +13,7 @@ import { AuditLog } from './AuditLog';
 import { SystemAnalytics } from './SystemAnalytics';
 import { AdminSettings } from './AdminSettings';
 import { EmailReporting } from './EmailReporting';
+import { FeatureControls } from './FeatureControls';
 import authService from '../../services/auth.service';
 
 export function AdminPortal() {
@@ -62,6 +63,7 @@ export function AdminPortal() {
           {activeTab === 'users' && <UsersManagement />}
           {activeTab === 'team' && <TeamManagement />}
           {activeTab === 'devices' && <DevicesManagement />}
+          {activeTab === 'feature-controls' && <FeatureControls />}
           {activeTab === 'transparency' && <DataTransparency />}
           {activeTab === 'data-health' && <DataAccuracy />}
           {activeTab === 'data-validator' && <DataValidator />}
