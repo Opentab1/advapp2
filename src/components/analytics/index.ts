@@ -2,13 +2,18 @@
  * Analytics Components - Barrel export
  */
 
-// New WHOOP-style components
+// New report-style components
+export { PeriodSummary } from './PeriodSummary';
+export { DailyBreakdown } from './DailyBreakdown';
+export { HourlyHeatmap } from './HourlyHeatmap';
+export { EnvironmentalSummary } from './EnvironmentalSummary';
+export { GuestsTrend } from './GuestsTrend';
+export { TimeRangePicker } from './TimeRangePicker';
+
+// Legacy components (kept for potential future use)
 export { InsightsHero } from './InsightsHero';
 export { ActionableInsight, generateInsights } from './ActionableInsight';
-export { TimeRangePicker } from './TimeRangePicker';
 export { DwellCorrelation } from './DwellCorrelation';
-
-// Legacy components (still used for drill-downs)
 export { InsightsHeader } from './InsightsHeader';
 export { SummaryCard } from './SummaryCard';
 export { SweetSpotCard } from './SweetSpotCard';
