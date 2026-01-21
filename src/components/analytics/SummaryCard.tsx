@@ -6,8 +6,9 @@
  */
 
 import { motion } from 'framer-motion';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, HelpCircle } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
+import { Tooltip } from '../common/Tooltip';
 import type { InsightsSummary, InsightsTimeRange } from '../../types/insights';
 
 interface SummaryCardProps {
@@ -27,14 +28,23 @@ function getTimeRangeTitle(range: InsightsTimeRange): string {
   }
 }
 
+// Tooltip content for each metric
+const METRIC_TOOLTIPS = {
+  score: 'Pulse Score: Weighted average of Sound (40%), Light (25%), Crowd (20%), and Music (15%) factors based on your venue\'s optimal ranges.',
+  avgStay: 'Estimated from entry/exit sensor patterns. Shows how long guests typically stay. May vary based on sensor uptime and data quality.',
+  guests: 'Total unique entries during this period, calculated from the cumulative entry counter on your sensor.',
+};
+
 function MetricBox({ 
   value, 
   label, 
-  delta 
+  delta,
+  tooltip,
 }: { 
   value: string; 
   label: string; 
   delta?: number;
+  tooltip?: string;
 }) {
   const deltaColor = delta === undefined || delta === 0 
     ? 'text-warm-400' 
@@ -51,7 +61,14 @@ function MetricBox({
   return (
     <div className="flex-1 text-center">
       <div className="text-2xl font-bold text-white">{value}</div>
-      <div className="text-xs text-warm-400 mt-0.5">{label}</div>
+      <div className="text-xs text-warm-400 mt-0.5 flex items-center justify-center gap-1">
+        {label}
+        {tooltip && (
+          <Tooltip content={tooltip} showIcon={true} position="top">
+            <span></span>
+          </Tooltip>
+        )}
+      </div>
       {deltaText && (
         <div className={`text-xs font-medium mt-0.5 ${deltaColor}`}>
           {deltaText}
@@ -100,18 +117,21 @@ export function SummaryCard({ data, timeRange, loading, onTapDetails }: SummaryC
           value={data.score.toString()}
           label="Score"
           delta={data.scoreDelta}
+          tooltip={METRIC_TOOLTIPS.score}
         />
         <div className="w-px bg-whoop-divider" />
         <MetricBox
           value={data.avgStayMinutes !== null ? `~${data.avgStayMinutes}m` : '—'}
           label="~Avg Stay"
           delta={data.avgStayDelta ?? undefined}
+          tooltip={METRIC_TOOLTIPS.avgStay}
         />
         <div className="w-px bg-whoop-divider" />
         <MetricBox
           value={data.guestsIsEstimate ? `~${data.totalGuests}` : data.totalGuests.toString()}
           label={data.guestsIsEstimate ? '~Guests' : 'Guests'}
           delta={data.guestsDelta}
+          tooltip={METRIC_TOOLTIPS.guests}
         />
       </div>
 

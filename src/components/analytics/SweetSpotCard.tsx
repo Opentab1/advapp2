@@ -8,7 +8,16 @@
 import { motion } from 'framer-motion';
 import { Target, ChevronRight } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
+import { Tooltip } from '../common/Tooltip';
 import type { SweetSpotData } from '../../types/insights';
+
+// Tooltip content
+const SWEETSPOT_TOOLTIPS = {
+  optimalRange: 'The sound/light range where your venue has the highest average Pulse Score, based on your actual sensor data.',
+  avgScore: 'Average Pulse Score when operating within this optimal range.',
+  scoreDiff: 'How much higher your Pulse Score is when you hit the sweet spot vs when you don\'t.',
+  hitPercentage: 'Percentage of time your venue operates within the optimal range.',
+};
 
 interface SweetSpotCardProps {
   data: SweetSpotData | null;
@@ -54,12 +63,23 @@ export function SweetSpotCard({ data, loading, onTapDetails }: SweetSpotCardProp
             <Target className="w-5 h-5 text-teal" />
           </div>
           <div>
-            <div className="text-lg font-bold text-teal">{data.optimalRange}</div>
-            <div className="text-sm text-warm-300">
-              Avg Score: <span className="text-white font-semibold">{data.optimalScore}</span>
+            <div className="text-lg font-bold text-teal flex items-center gap-1">
+              {data.optimalRange}
+              <Tooltip content={SWEETSPOT_TOOLTIPS.optimalRange} position="right">
+                <span></span>
+              </Tooltip>
             </div>
-            <div className="text-xs text-warm-400">
+            <div className="text-sm text-warm-300 flex items-center gap-1">
+              Avg Score: <span className="text-white font-semibold">{data.optimalScore}</span>
+              <Tooltip content={SWEETSPOT_TOOLTIPS.avgScore} position="right">
+                <span></span>
+              </Tooltip>
+            </div>
+            <div className="text-xs text-warm-400 flex items-center gap-1">
               (+{scoreDiff} vs outside range)
+              <Tooltip content={SWEETSPOT_TOOLTIPS.scoreDiff} position="right">
+                <span></span>
+              </Tooltip>
             </div>
           </div>
         </div>
@@ -67,8 +87,11 @@ export function SweetSpotCard({ data, loading, onTapDetails }: SweetSpotCardProp
 
       {/* Hit Percentage */}
       <div className="flex items-center justify-between">
-        <span className="text-sm text-warm-300">
+        <span className="text-sm text-warm-300 flex items-center gap-1">
           You hit this <span className="text-white font-semibold">{data.hitPercentage}%</span> of the time
+          <Tooltip content={SWEETSPOT_TOOLTIPS.hitPercentage} position="top">
+            <span></span>
+          </Tooltip>
         </span>
         
         {/* Tap hint */}

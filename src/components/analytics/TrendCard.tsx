@@ -8,7 +8,16 @@
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, ChevronRight, Star, AlertCircle } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
+import { Tooltip } from '../common/Tooltip';
 import type { TrendData, InsightsTimeRange } from '../../types/insights';
+
+// Tooltip content
+const TREND_TOOLTIPS = {
+  avgStay: 'Estimated average time guests spend at your venue, calculated from entry/exit patterns.',
+  guests: 'Total number of guests who entered during this period.',
+  bestDay: 'Day with the highest average Pulse Score based on sound, light, and crowd conditions.',
+  worstDay: 'Day with the lowest average Pulse Score - potential area for improvement.',
+};
 
 interface TrendCardProps {
   data: TrendData | null;
@@ -61,7 +70,12 @@ export function TrendCard({ data, timeRange, loading, onTapDetails }: TrendCardP
         {/* Only show Avg Stay if we have real data */}
         {data.avgStay !== null && (
           <div className="flex items-center justify-between">
-            <span className="text-sm text-warm-400">~Avg Stay</span>
+            <span className="text-sm text-warm-400 flex items-center gap-1">
+              ~Avg Stay
+              <Tooltip content={TREND_TOOLTIPS.avgStay} position="right">
+                <span></span>
+              </Tooltip>
+            </span>
             <div className="flex items-center gap-2">
               <span className="text-white font-semibold">~{data.avgStay} min</span>
               {data.avgStayDelta !== null && data.avgStayDelta !== 0 && (
@@ -77,7 +91,12 @@ export function TrendCard({ data, timeRange, loading, onTapDetails }: TrendCardP
         )}
         
         <div className="flex items-center justify-between">
-          <span className="text-sm text-warm-400">{data.guestsIsEstimate ? '~Guests' : 'Guests'}</span>
+          <span className="text-sm text-warm-400 flex items-center gap-1">
+            {data.guestsIsEstimate ? '~Guests' : 'Guests'}
+            <Tooltip content={TREND_TOOLTIPS.guests} position="right">
+              <span></span>
+            </Tooltip>
+          </span>
           <div className="flex items-center gap-2">
             <span className="text-white font-semibold">{data.guestsIsEstimate ? '~' : ''}{data.totalGuests.toLocaleString()}</span>
             {data.guestsDelta !== 0 && (

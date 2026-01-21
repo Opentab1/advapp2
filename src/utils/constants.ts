@@ -190,9 +190,9 @@ export const GENRE_KEYWORDS: Record<string, string[]> = {
 // ============ SCORE THRESHOLDS ============
 
 export const SCORE_THRESHOLDS = {
-  optimal: 85,   // 85+ = Green, Optimal
-  good: 60,      // 60-84 = Yellow/Amber, Good
-  // Below 60 = Red, Needs Adjustment
+  optimal: 80,   // 80+ = Green, Optimal (was 85, felt too aggressive)
+  good: 50,      // 50-79 = Yellow/Amber, Good (was 60)
+  // Below 50 = Red, Needs Adjustment
 } as const;
 
 // ============ OCCUPANCY THRESHOLDS ============

@@ -29,9 +29,26 @@ import type {
 
 // ============ TIME RANGE MAPPING ============
 
+/**
+ * Get the most recent bar day boundary (3am)
+ * Bar day runs from 3am to 3am (so "last night" is previous 3am to most recent 3am)
+ */
+function getMostRecent3am(): Date {
+  const now = new Date();
+  const today3am = new Date(now);
+  today3am.setHours(3, 0, 0, 0);
+  
+  // If we haven't reached 3am yet today, use yesterday's 3am as the end
+  if (now < today3am) {
+    today3am.setDate(today3am.getDate() - 1);
+  }
+  
+  return today3am;
+}
+
 function mapTimeRange(range: InsightsTimeRange): TimeRange {
   switch (range) {
-    case 'last_night': return '24h';
+    case 'last_night': return '24h'; // Will be overridden by custom fetch
     case '7d': return '7d';
     case '14d': return '14d';
     case '30d': return '30d';
@@ -71,35 +88,67 @@ export function useInsightsData(timeRange: InsightsTimeRange): InsightsData {
     setError(null);
     
     try {
-      // Fetch current period
-      const apiRange = mapTimeRange(timeRange);
-      const result = await apiService.getHistoricalData(venueId, apiRange);
-      
-      if (result?.data) {
-        setRawSensorData(result.data);
-      } else {
-        setRawSensorData([]);
-      }
-      
-      // Fetch previous period for comparison
-      // For simplicity, fetch double the range and split
-      const extendedRange = timeRange === 'last_night' ? '7d' : 
-                           timeRange === '7d' ? '14d' : 
-                           timeRange === '14d' ? '30d' : '90d';
-      const extendedResult = await apiService.getHistoricalData(venueId, extendedRange as TimeRange);
-      
-      if (extendedResult?.data) {
-        // Split into current and previous periods
-        const now = new Date();
-        const periodMs = getPeriodMs(timeRange);
-        const cutoff = new Date(now.getTime() - periodMs);
-        const previousCutoff = new Date(cutoff.getTime() - periodMs);
+      // For "last_night", use bar day boundaries (3am-3am)
+      // This ensures "Last Night" actually shows last night's data, not rolling 24h
+      if (timeRange === 'last_night') {
+        const mostRecent3am = getMostRecent3am();
+        const previous3am = new Date(mostRecent3am);
+        previous3am.setDate(previous3am.getDate() - 1);
         
-        const previous = extendedResult.data.filter(d => {
-          const ts = new Date(d.timestamp);
-          return ts >= previousCutoff && ts < cutoff;
-        });
-        setPreviousPeriodData(previous);
+        // Fetch last 7 days to get both current and previous nights
+        const result = await apiService.getHistoricalData(venueId, '7d');
+        
+        if (result?.data) {
+          // Filter to just last night (previous 3am to most recent 3am)
+          const lastNightData = result.data.filter(d => {
+            const ts = new Date(d.timestamp);
+            return ts >= previous3am && ts < mostRecent3am;
+          });
+          setRawSensorData(lastNightData);
+          
+          // Get the night before for comparison
+          const twoDaysAgo3am = new Date(previous3am);
+          twoDaysAgo3am.setDate(twoDaysAgo3am.getDate() - 1);
+          
+          const previousNightData = result.data.filter(d => {
+            const ts = new Date(d.timestamp);
+            return ts >= twoDaysAgo3am && ts < previous3am;
+          });
+          setPreviousPeriodData(previousNightData);
+          
+          console.log(`📊 Last Night: ${previous3am.toLocaleDateString()} 3am - ${mostRecent3am.toLocaleDateString()} 3am (${lastNightData.length} readings)`);
+        } else {
+          setRawSensorData([]);
+        }
+      } else {
+        // Standard time range handling
+        const apiRange = mapTimeRange(timeRange);
+        const result = await apiService.getHistoricalData(venueId, apiRange);
+        
+        if (result?.data) {
+          setRawSensorData(result.data);
+        } else {
+          setRawSensorData([]);
+        }
+        
+        // Fetch previous period for comparison
+        const extendedRange = timeRange === '7d' ? '14d' : 
+                             timeRange === '14d' ? '30d' : '90d';
+        const extendedResult = await apiService.getHistoricalData(venueId, extendedRange as TimeRange);
+        
+        if (extendedResult?.data) {
+          // Split into current and previous periods
+          const now = new Date();
+          const periodMs = getPeriodMs(timeRange);
+          const cutoff = new Date(now.getTime() - periodMs);
+          const previousCutoff = new Date(cutoff.getTime() - periodMs);
+          
+          const previous = extendedResult.data.filter(d => {
+            const ts = new Date(d.timestamp);
+            return ts >= previousCutoff && ts < cutoff;
+          });
+          setPreviousPeriodData(previous);
+        }
       }
       
     } catch (err: any) {
@@ -556,7 +605,8 @@ function processSweetSpot(data: SensorData[], variable: SweetSpotVariable): Swee
   });
   
   // Find optimal bucket (highest avg score with sufficient samples)
-  const minSamples = Math.max(5, data.length * 0.05); // At least 5% of data
+  // Reduced from 5% to 2% to include more valid buckets with smaller samples
+  const minSamples = Math.max(10, data.length * 0.02); // At least 2% of data, min 10 samples
   let optimalIdx = 0;
   let maxScore = 0;
   buckets.forEach((b, idx) => {
@@ -791,18 +841,43 @@ function processHourlyData(data: SensorData[]): HourlyData[] {
 
 function processFactorScores(data: SensorData[]): FactorScore[] {
   let soundSum = 0, lightSum = 0, crowdSum = 0;
-  let count = 0;
+  let soundCount = 0, lightCount = 0, crowdCount = 0;
+  
+  // Estimate capacity from max observed occupancy (with buffer)
+  const maxObserved = Math.max(...data.map(d => d.occupancy?.current || 0));
+  const estimatedCapacity = Math.max(100, Math.ceil(maxObserved * 1.2)); // 20% buffer
   
   data.forEach(d => {
-    // Pass timestamp for accurate historical scoring
-    const result = calculatePulseScore(d.decibels, d.light, d.indoorTemp, d.outdoorTemp, null, null, null, d.timestamp);
-    soundSum += result.factors.sound.score;
-    lightSum += result.factors.light.score;
-    crowdSum += result.factors.crowd.score;
-    count++;
+    // Pass timestamp and occupancy for accurate scoring
+    const result = calculatePulseScore(
+      d.decibels, 
+      d.light, 
+      d.indoorTemp, 
+      d.outdoorTemp, 
+      null, // currentSong
+      null, // artist
+      null, // venueId
+      d.timestamp,
+      d.occupancy?.current || null, // Pass actual occupancy
+      estimatedCapacity
+    );
+    
+    // Only count factors with actual data
+    if (d.decibels !== undefined && d.decibels > 0) {
+      soundSum += result.factors.sound.score;
+      soundCount++;
+    }
+    if (d.light !== undefined && d.light >= 0) {
+      lightSum += result.factors.light.score;
+      lightCount++;
+    }
+    if (d.occupancy?.current !== undefined && d.occupancy.current >= 0) {
+      crowdSum += result.factors.crowd.score;
+      crowdCount++;
+    }
   });
   
-  if (count === 0) return [];
+  if (soundCount === 0 && lightCount === 0 && crowdCount === 0) return [];
   
   const getLabel = (score: number): string => {
     if (score >= 80) return 'In range';
@@ -810,12 +885,23 @@ function processFactorScores(data: SensorData[]): FactorScore[] {
     return 'Needs adjustment';
   };
   
-  // Return factors that match our Pulse Score calculation
-  return [
-    { factor: 'sound', score: Math.round(soundSum / count), label: getLabel(soundSum / count) },
-    { factor: 'light', score: Math.round(lightSum / count), label: getLabel(lightSum / count) },
-    { factor: 'crowd', score: Math.round(crowdSum / count), label: getLabel(crowdSum / count) },
-  ];
+  const factors: FactorScore[] = [];
+  
+  // Only include factors with actual data
+  if (soundCount > 0) {
+    const avgSound = Math.round(soundSum / soundCount);
+    factors.push({ factor: 'sound', score: avgSound, label: getLabel(avgSound) });
+  }
+  if (lightCount > 0) {
+    const avgLight = Math.round(lightSum / lightCount);
+    factors.push({ factor: 'light', score: avgLight, label: getLabel(avgLight) });
+  }
+  if (crowdCount > 0) {
+    const avgCrowd = Math.round(crowdSum / crowdCount);
+    factors.push({ factor: 'crowd', score: avgCrowd, label: getLabel(avgCrowd) });
+  }
+  
+  return factors;
 }
 
 function processComparison(
