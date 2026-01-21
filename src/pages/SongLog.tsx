@@ -13,6 +13,7 @@ import songLogService, {
   AnalyticsTimeRange 
 } from '../services/song-log.service';
 import authService from '../services/auth.service';
+import { useDisplayName } from '../hooks/useDisplayName';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { haptic } from '../utils/haptics';
 import type { SongLogEntry } from '../types';
@@ -129,15 +130,20 @@ export function SongLog() {
     await loadSongs();
   };
 
+  // Use display name for exports (custom name if set by admin)
+  const { displayName } = useDisplayName();
+  
   const handleExport = async () => {
     const user = authService.getStoredUser();
-    const venueName = user?.venueName || user?.email?.split('@')[0] || undefined;
+    // Use display name for export file naming
+    const venueName = displayName || user?.venueName || user?.email?.split('@')[0] || undefined;
     await songLogService.exportAllToCSV(venueName);
   };
 
   const handleExportPlaylist = async (format: ExportFormat) => {
     const user = authService.getStoredUser();
-    const venueName = user?.venueName || user?.email?.split('@')[0] || undefined;
+    // Use display name for export file naming
+    const venueName = displayName || user?.venueName || user?.email?.split('@')[0] || undefined;
     await songLogService.exportPlaylist(format, timeRange, venueName);
     setShowExportMenu(false);
   };

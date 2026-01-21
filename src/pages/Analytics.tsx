@@ -16,6 +16,7 @@ import { YearOverYear } from '../components/analytics/YearOverYear';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { ErrorState } from '../components/common/LoadingState';
 import { useInsightsData } from '../hooks/useInsightsData';
+import { useDisplayName } from '../hooks/useDisplayName';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import { haptic } from '../utils/haptics';
@@ -26,7 +27,9 @@ type AnalyticsTab = 'overview' | 'yoy';
 
 export function Analytics() {
   const user = authService.getStoredUser();
-  const venueName = user?.venueName || 'Venue';
+  // Use display name for exports (custom name if set by admin)
+  const { displayName } = useDisplayName();
+  const venueName = displayName || user?.venueName || 'Venue';
   
   const [activeTab, setActiveTab] = useState<AnalyticsTab>('overview');
   const [timeRange, setTimeRange] = useState<InsightsTimeRange>('7d');

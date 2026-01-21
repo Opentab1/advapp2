@@ -13,6 +13,7 @@ import { AddressSettings } from '../components/AddressSettings';
 import { CalibrationSettings } from '../components/CalibrationSettings';
 import { POSIntegration } from '../components/settings/POSIntegration';
 import { haptic } from '../utils/haptics';
+import { useDisplayName } from '../hooks/useDisplayName';
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'about'>('account');
@@ -22,6 +23,9 @@ export function Settings() {
   const [capacitySaving, setCapacitySaving] = useState(false);
   const [capacitySaved, setCapacitySaved] = useState(false);
   const user = authService.getStoredUser();
+  
+  // Use display name (custom name if set by admin, otherwise venueId/venueName)
+  const { displayName } = useDisplayName();
 
   useEffect(() => {
     // Load saved address and capacity
@@ -109,7 +113,7 @@ export function Settings() {
                   <label className="block text-sm font-medium text-warm-300 mb-2">Venue</label>
                   <input
                     type="text"
-                    value={user?.venueName || 'Not configured'}
+                    value={displayName || 'Not configured'}
                     disabled
                     className="w-full px-4 py-2 bg-warm-900 border border-warm-700 rounded-lg text-warm-400 cursor-not-allowed"
                   />
@@ -267,7 +271,7 @@ export function Settings() {
                     <label className="block text-sm font-medium text-warm-300 mb-2">Venue Name</label>
                     <input
                       type="text"
-                      value={user?.venueName || 'Not configured'}
+                      value={displayName || 'Not configured'}
                       disabled
                       className="w-full px-4 py-2 bg-warm-900 border border-warm-700 rounded-lg text-warm-400 cursor-not-allowed"
                     />

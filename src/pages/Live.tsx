@@ -42,6 +42,7 @@ import { usePulseData } from '../hooks/usePulseData';
 import { useActions } from '../hooks/useActions';
 import { useIntelligence } from '../hooks/useIntelligence';
 import { useVenueLearning } from '../hooks/useVenueLearning';
+import { useDisplayName } from '../hooks/useDisplayName';
 import sportsService from '../services/sports.service';
 import authService from '../services/auth.service';
 import staffService from '../services/staff.service';
@@ -71,8 +72,11 @@ interface CelebrationState {
 
 export function Live() {
   const user = authService.getStoredUser();
-  const venueName = user?.venueName || 'Your Venue';
   const venueId = user?.venueId || '';
+  
+  // Use display name (custom name if set by admin, otherwise venueId/venueName)
+  const { displayName } = useDisplayName();
+  const venueName = displayName || user?.venueName || 'Your Venue';
   
   // Modal state
   const [activeModal, setActiveModal] = useState<ModalType>(null);

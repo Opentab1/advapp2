@@ -11,8 +11,13 @@ themeService.loadTheme();
 // Expose diagnostic services on window for console debugging
 import songLogService from './services/song-log.service';
 import dynamoDBService from './services/dynamodb.service';
+import displaySettingsService from './services/display-settings.service';
 (window as any).songLogService = songLogService;
 (window as any).dynamoDBService = dynamoDBService;
+(window as any).displaySettingsService = displaySettingsService;
+
+// Pre-load display settings for venue name overrides
+displaySettingsService.initialize().catch(console.warn);
 
 // Register service worker for PWA
 if ('serviceWorker' in navigator) {
