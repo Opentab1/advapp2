@@ -426,7 +426,14 @@ class SongLogService {
       // Extract songs from sensor data
       const songs = this.extractSongsFromSensorData(uniqueData);
       
-      console.log(`🎵 Extracted ${songs.length} unique songs from ${uniqueData.length} sensor readings (${chunks} chunks, ${totalReadings} total fetched)`);
+      console.log(`🎵 ═══════════════════════════════════════════════════════`);
+      console.log(`🎵 SONG EXTRACTION COMPLETE`);
+      console.log(`🎵 ═══════════════════════════════════════════════════════`);
+      console.log(`🎵 Total sensor readings fetched: ${totalReadings.toLocaleString()}`);
+      console.log(`🎵 Unique readings (deduped):     ${uniqueData.length.toLocaleString()}`);
+      console.log(`🎵 Unique song plays detected:    ${songs.length.toLocaleString()}`);
+      console.log(`🎵 Time range: last ${days} days (${chunks} chunks)`);
+      console.log(`🎵 ═══════════════════════════════════════════════════════`);
       
       // Cache the results
       this.dynamoDBSongs = songs;
@@ -571,6 +578,46 @@ class SongLogService {
     this.dynamoDBSongs = [];
     this.lastDynamoDBFetch = 0;
     this.analyticsCache.clear();
+  }
+  
+  /**
+   * Diagnostic method - run from browser console to verify song counts
+   * Usage: songLogService.runDiagnostic()
+   */
+  async runDiagnostic(): Promise<void> {
+    console.log('');
+    console.log('🎵 ═══════════════════════════════════════════════════════');
+    console.log('🎵 SONG COUNT DIAGNOSTIC');
+    console.log('🎵 ═══════════════════════════════════════════════════════');
+    
+    const user = authService.getStoredUser();
+    console.log(`🎵 Venue ID: ${user?.venueId || 'Unknown'}`);
+    console.log(`🎵 Cache TTL: ${this.DYNAMODB_CACHE_TTL / 1000}s`);
+    console.log(`🎵 Cache age: ${this.lastDynamoDBFetch ? ((Date.now() - this.lastDynamoDBFetch) / 1000).toFixed(0) + 's' : 'Empty'}`);
+    console.log(`🎵 Cached songs: ${this.dynamoDBSongs.length}`);
+    console.log('');
+    
+    // Force refresh
+    console.log('🎵 Forcing full refresh...');
+    this.clearCache();
+    
+    const songs = await this.fetchSongsFromDynamoDB(365);
+    
+    console.log('');
+    console.log('🎵 ═══════════════════════════════════════════════════════');
+    console.log(`🎵 FINAL COUNT: ${songs.length.toLocaleString()} unique song plays`);
+    console.log('🎵 ═══════════════════════════════════════════════════════');
+    
+    if (songs.length > 0) {
+      // Show date range
+      const oldest = songs[songs.length - 1];
+      const newest = songs[0];
+      console.log(`🎵 Oldest song: ${oldest.songName} (${oldest.timestamp})`);
+      console.log(`🎵 Newest song: ${newest.songName} (${newest.timestamp})`);
+    }
+    
+    console.log('');
+    console.log('🎵 To export all songs, run: songLogService.exportAllToCSV()');
   }
   
   /**

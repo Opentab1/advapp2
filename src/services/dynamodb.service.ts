@@ -589,6 +589,7 @@ class DynamoDBService {
   /**
    * Get sensor data for a specific date range (used for chunked fetching like song history)
    * Returns raw sensor data between absolute start and end times
+   * Now properly handles pagination to get ALL data, not just the first page
    */
   async getSensorDataByDateRange(venueId: string, startTime: Date, endTime: Date, limit: number = 10000): Promise<SensorData[]> {
     console.log(`🔍 Fetching sensor data for date range: ${startTime.toISOString()} to ${endTime.toISOString()}`);
@@ -609,26 +610,48 @@ class DynamoDBService {
 
       const client = this.getClient();
       
-      const response = await client.graphql({
-        query: listSensorData,
-        variables: { 
-          venueId, 
-          startTime: startTime.toISOString(),
-          endTime: endTime.toISOString(),
-          limit
-        },
-        authMode: 'userPool'
-      }) as any;
-
-      if (response?.errors && response.errors.length > 0) {
-        console.error('❌ GraphQL errors:', response.errors);
-        throw new Error(`GraphQL error: ${response.errors.map((e: any) => e.message).join(', ')}`);
-      }
-
-      const items = response?.data?.listSensorData?.items || [];
-      console.log(`✅ Retrieved ${items.length} items for date range`);
+      // Use pagination to fetch ALL data, not just the first page
+      let allItems: any[] = [];
+      let nextToken: string | null = null;
+      let pageCount = 0;
+      const maxPages = 50; // Safety limit to prevent infinite loops
+      const pageSize = Math.min(limit, 1000); // Use reasonable page size
       
-      return items.map((item: any) => this.transformDynamoDBData(item));
+      do {
+        pageCount++;
+        
+        const response = await client.graphql({
+          query: listSensorData,
+          variables: { 
+            venueId, 
+            startTime: startTime.toISOString(),
+            endTime: endTime.toISOString(),
+            limit: pageSize,
+            nextToken: nextToken
+          },
+          authMode: 'userPool'
+        }) as any;
+
+        if (response?.errors && response.errors.length > 0) {
+          console.error('❌ GraphQL errors:', response.errors);
+          throw new Error(`GraphQL error: ${response.errors.map((e: any) => e.message).join(', ')}`);
+        }
+
+        const items = response?.data?.listSensorData?.items || [];
+        allItems = allItems.concat(items);
+        nextToken = response?.data?.listSensorData?.nextToken || null;
+        
+        console.log(`   Page ${pageCount}: ${items.length} items (total: ${allItems.length})`);
+        
+      } while (nextToken && pageCount < maxPages);
+      
+      if (nextToken && pageCount >= maxPages) {
+        console.warn(`⚠️ Reached max page limit (${maxPages}), some data may be missing`);
+      }
+      
+      console.log(`✅ Retrieved ${allItems.length} total items for date range (${pageCount} pages)`);
+      
+      return allItems.map((item: any) => this.transformDynamoDBData(item));
     } catch (error: any) {
       // Log detailed error info for debugging
       console.error('❌ Error fetching sensor data by date range:', {

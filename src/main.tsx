@@ -8,6 +8,12 @@ import './index.css';
 import themeService from './services/theme.service';
 themeService.loadTheme();
 
+// Expose diagnostic services on window for console debugging
+import songLogService from './services/song-log.service';
+import dynamoDBService from './services/dynamodb.service';
+(window as any).songLogService = songLogService;
+(window as any).dynamoDBService = dynamoDBService;
+
 // Register service worker for PWA
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

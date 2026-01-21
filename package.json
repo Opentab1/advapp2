@@ -27,6 +27,8 @@
     "react-router-dom": "^6.21.1"
   },
   "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.972.0",
+    "@aws-sdk/lib-dynamodb": "^3.972.0",
     "@capacitor/android": "^5.6.0",
     "@capacitor/cli": "^5.6.0",
     "@capacitor/core": "^5.6.0",
