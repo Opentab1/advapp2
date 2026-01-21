@@ -23,6 +23,9 @@ import authService from '../services/auth.service';
 import googleReviewsService, { GoogleReviewsData } from '../services/google-reviews.service';
 import venueSettingsService from '../services/venue-settings.service';
 import weatherService, { WeatherData } from '../services/weather.service';
+
+// Track if we've initialized venue settings from cloud
+let venueSettingsInitialized = false;
 // Historical scoring will be re-implemented properly
 // import { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
 import { isDemoAccount } from '../utils/demoData';
@@ -283,6 +286,17 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     const loadAllData = async () => {
       setLoading(true);
+      
+      // Initialize venue settings from cloud FIRST (so weather has address)
+      if (!venueSettingsInitialized) {
+        try {
+          await venueSettingsService.initializeForVenue(venueId);
+          venueSettingsInitialized = true;
+          console.log('✅ Venue settings initialized from cloud');
+        } catch (error) {
+          console.warn('⚠️ Could not initialize venue settings from cloud:', error);
+        }
+      }
       
       // Fetch in parallel
       await Promise.all([

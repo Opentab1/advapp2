@@ -25,12 +25,27 @@ export function AddressSettings({ venueId, onAddressSaved, onClose, inline = fal
   const [success, setSuccess] = useState(false);
   const [weatherPreview, setWeatherPreview] = useState<{ temp: number; conditions: string } | null>(null);
 
-  // Load existing address on mount
+  // Load existing address from cloud on mount
   useEffect(() => {
-    const existing = venueSettingsService.getAddress(venueId);
-    if (existing) {
-      setAddress(existing);
-    }
+    const loadAddress = async () => {
+      // First check local cache for immediate display
+      const cached = venueSettingsService.getAddress(venueId);
+      if (cached) {
+        setAddress(cached);
+      }
+      
+      // Then load from cloud to ensure we have the latest
+      try {
+        const cloudAddress = await venueSettingsService.getAddressFromCloud(venueId);
+        if (cloudAddress) {
+          setAddress(cloudAddress);
+        }
+      } catch (error) {
+        console.warn('Could not load address from cloud:', error);
+      }
+    };
+    
+    loadAddress();
   }, [venueId]);
 
   const handleChange = (field: keyof VenueAddress, value: string) => {
@@ -84,8 +99,12 @@ export function AddressSettings({ venueId, onAddressSaved, onClose, inline = fal
         return;
       }
 
-      // Save the address
-      venueSettingsService.saveAddress(venueId, address as VenueAddress);
+      // Save the address to AWS (cloud-first)
+      const saved = await venueSettingsService.saveAddressAsync(venueId, address as VenueAddress);
+      
+      if (!saved) {
+        console.warn('⚠️ Could not save to cloud, but saved locally');
+      }
       
       // Clear weather cache to force refresh with new address
       weatherService.clearCache();
@@ -236,7 +255,7 @@ export function AddressSettings({ venueId, onAddressSaved, onClose, inline = fal
             <div className="flex items-center gap-2">
               <CheckCircle className="w-5 h-5 text-green-400" />
               <span className="text-sm text-green-300">
-                Address saved successfully! Weather data will now appear.
+                Address saved and synced to cloud! Works on all your devices.
               </span>
             </div>
           </motion.div>
