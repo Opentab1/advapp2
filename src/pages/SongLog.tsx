@@ -28,14 +28,50 @@ export function SongLog() {
   const [loading, setLoading] = useState(true);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [totalSongs, setTotalSongs] = useState(0);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [timeRange, setTimeRange] = useState<AnalyticsTimeRange>('30d');
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
 
+  // Subscribe to progressive loading updates
+  useEffect(() => {
+    let lastCount = 0;
+    let stableCount = 0;
+    
+    const unsubscribe = songLogService.onProgressUpdate((newCount) => {
+      console.log(`🎵 Progressive update: ${newCount} songs`);
+      setTotalSongs(newCount);
+      
+      // Track if we're still receiving updates
+      if (newCount > lastCount) {
+        setIsLoadingMore(true);
+        stableCount = 0;
+      } else {
+        stableCount++;
+        // If count hasn't changed for 2 updates, we're done
+        if (stableCount >= 2) {
+          setIsLoadingMore(false);
+        }
+      }
+      lastCount = newCount;
+    });
+    
+    // Set a timeout to stop the loading indicator after max wait
+    const timeout = setTimeout(() => {
+      setIsLoadingMore(false);
+    }, 60000); // Max 60 seconds for background loading
+    
+    return () => {
+      unsubscribe();
+      clearTimeout(timeout);
+    };
+  }, []);
+
   const loadSongs = useCallback(async () => {
     setLoading(true);
+    setIsLoadingMore(true);
     try {
-      // Fetch all songs from DynamoDB + localStorage
+      // Fetch songs - now uses progressive loading (recent first, then background)
       const allSongs = await songLogService.getAllSongs();
       setSongs(allSongs.slice(0, 200)); // Show first 200 in list
       setTotalSongs(allSongs.length);
@@ -45,7 +81,7 @@ export function SongLog() {
       setTopSongs(top);
       
       setDataLoaded(true);
-      console.log(`🎵 Loaded ${allSongs.length} songs`);
+      console.log(`🎵 Initial load: ${allSongs.length} songs (more loading in background)`);
     } catch (error) {
       console.error('Error loading songs:', error);
       setDataLoaded(true); // Mark as loaded even on error to show empty state
@@ -139,8 +175,20 @@ export function SongLog() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
             <h2 className="text-3xl font-bold gradient-text">Song Analytics</h2>
-            <p className="text-sm text-warm-400 mt-1">
-              {loading ? 'Loading songs...' : `${totalSongs.toLocaleString()} songs tracked`}
+            <p className="text-sm text-warm-400 mt-1 flex items-center gap-2">
+              {loading ? (
+                'Loading songs...'
+              ) : (
+                <>
+                  <span>{totalSongs.toLocaleString()} songs tracked</span>
+                  {isLoadingMore && (
+                    <span className="flex items-center gap-1 text-xs text-primary">
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      loading more...
+                    </span>
+                  )}
+                </>
+              )}
             </p>
           </div>
           
@@ -588,9 +636,14 @@ export function SongLog() {
             
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div className="p-4 rounded-lg bg-warm-800">
-                <div className="text-2xl font-bold text-primary">{totalSongs.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-primary flex items-center gap-2">
+                  {totalSongs.toLocaleString()}
+                  {isLoadingMore && <RefreshCw className="w-4 h-4 animate-spin text-primary/50" />}
+                </div>
                 <div className="text-sm text-warm-400">Songs Detected</div>
-                <div className="text-xs text-warm-500 mt-1">All available</div>
+                <div className="text-xs text-warm-500 mt-1">
+                  {isLoadingMore ? 'Loading history...' : 'All available'}
+                </div>
               </div>
               <div className="p-4 rounded-lg bg-warm-800">
                 <div className="text-2xl font-bold text-purple-400">{genreStats.length}</div>

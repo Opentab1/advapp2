@@ -196,7 +196,11 @@ class SongLogService {
   private readonly MAX_SONGS = 500;
   private dynamoDBSongs: SongLogEntry[] = [];
   private lastDynamoDBFetch: number = 0;
-  private readonly DYNAMODB_CACHE_TTL = 30000; // 30 second cache for fresher data
+  private readonly DYNAMODB_CACHE_TTL = 5 * 60 * 1000; // 5 minute cache - song history doesn't change fast
+  
+  // Progressive loading state
+  private isLoadingMore: boolean = false;
+  private progressiveLoadCallbacks: Set<(count: number) => void> = new Set();
   
   // Cache for different time ranges
   private analyticsCache: Map<AnalyticsTimeRange, {
@@ -492,9 +496,26 @@ class SongLogService {
   }
   
   /**
+   * Register a callback to be notified when more songs are loaded (progressive loading)
+   */
+  onProgressUpdate(callback: (count: number) => void): () => void {
+    this.progressiveLoadCallbacks.add(callback);
+    return () => this.progressiveLoadCallbacks.delete(callback);
+  }
+  
+  /**
+   * Notify all registered callbacks of progress update
+   */
+  private notifyProgressUpdate(count: number): void {
+    this.progressiveLoadCallbacks.forEach(cb => cb(count));
+  }
+
+  /**
    * Get all songs - combines DynamoDB and localStorage
    * DynamoDB is the primary source, localStorage is supplementary
    * Returns demo data for demo accounts
+   * 
+   * NEW: Uses progressive loading - returns recent songs fast, loads rest in background
    */
   async getAllSongs(limit?: number): Promise<SongLogEntry[]> {
     // Check for demo account
@@ -512,33 +533,122 @@ class SongLogService {
       return limit ? entries.slice(0, limit) : entries;
     }
     
-    // Fetch from DynamoDB - get ALL available data (365 days)
-    const dynamoSongs = await this.fetchSongsFromDynamoDB(365);
+    // If we have cached data that's still valid, return it immediately
+    const nowTime = Date.now();
+    if (this.dynamoDBSongs.length > 0 && (nowTime - this.lastDynamoDBFetch) < this.DYNAMODB_CACHE_TTL) {
+      console.log('🎵 Using cached songs (cache valid for', Math.round((this.DYNAMODB_CACHE_TTL - (nowTime - this.lastDynamoDBFetch)) / 1000), 'more seconds)');
+      return limit ? this.dynamoDBSongs.slice(0, limit) : this.dynamoDBSongs;
+    }
     
-    // Load localStorage songs
-    this.loadSongs();
+    // PROGRESSIVE LOADING: Fetch recent 14 days first for fast UI
+    console.log('🎵 Progressive loading: fetching recent 14 days first...');
+    const recentSongs = await this.fetchSongsFromDynamoDB(14);
     
-    // Combine and deduplicate
-    const allSongs = [...dynamoSongs];
+    // Return recent songs immediately, then load the rest in background
+    if (!this.isLoadingMore) {
+      this.loadRemainingInBackground(14, 365);
+    }
     
-    // Add localStorage songs that aren't already in DynamoDB
-    for (const localSong of this.songs) {
-      const exists = allSongs.some(s => 
-        s.songName === localSong.songName && 
-        s.artist === localSong.artist &&
-        Math.abs(new Date(s.timestamp).getTime() - new Date(localSong.timestamp).getTime()) < 5 * 60 * 1000
-      );
-      if (!exists) {
-        allSongs.push(localSong);
+    return limit ? recentSongs.slice(0, limit) : recentSongs;
+  }
+  
+  /**
+   * Load remaining historical songs in background after initial fast load
+   */
+  private async loadRemainingInBackground(alreadyLoadedDays: number, totalDays: number): Promise<void> {
+    if (this.isLoadingMore) {
+      console.log('🎵 Background loading already in progress');
+      return;
+    }
+    
+    this.isLoadingMore = true;
+    console.log(`🎵 Background: loading days ${alreadyLoadedDays + 1} to ${totalDays}...`);
+    
+    try {
+      const user = authService.getStoredUser();
+      const venueId = user?.venueId;
+      
+      if (!venueId || isDemoAccount(venueId)) {
+        this.isLoadingMore = false;
+        return;
+      }
+      
+      // Fetch older data in chunks
+      const allOlderSensorData: SensorData[] = [];
+      const chunkSizeDays = 7; // Larger chunks for background loading
+      const now = new Date();
+      
+      // Start from where we left off
+      const startDaysAgo = alreadyLoadedDays;
+      const chunks = Math.ceil((totalDays - startDaysAgo) / chunkSizeDays);
+      
+      for (let i = 0; i < chunks; i++) {
+        const chunkEndDaysAgo = startDaysAgo + (i * chunkSizeDays);
+        const chunkStartDaysAgo = Math.min(startDaysAgo + ((i + 1) * chunkSizeDays), totalDays);
+        
+        const chunkEnd = new Date(now.getTime() - chunkEndDaysAgo * 24 * 60 * 60 * 1000);
+        const chunkStart = new Date(now.getTime() - chunkStartDaysAgo * 24 * 60 * 60 * 1000);
+        
+        try {
+          const chunkData = await dynamoDBService.getSensorDataByDateRange(
+            venueId, 
+            chunkStart, 
+            chunkEnd, 
+            20000
+          );
+          
+          if (chunkData && chunkData.length > 0) {
+            allOlderSensorData.push(...chunkData);
+            
+            // Extract and merge songs incrementally
+            const olderSongs = this.extractSongsFromSensorData(allOlderSensorData);
+            this.mergeSongsIntoCache(olderSongs);
+            
+            // Notify listeners of updated count
+            this.notifyProgressUpdate(this.dynamoDBSongs.length);
+            console.log(`🎵 Background: loaded chunk ${i + 1}/${chunks}, total songs now: ${this.dynamoDBSongs.length}`);
+          }
+        } catch (chunkError) {
+          console.warn(`⚠️ Background chunk ${i + 1} failed:`, chunkError);
+        }
+        
+        // Small delay between chunks to not overwhelm
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
+      console.log(`🎵 Background loading complete. Total songs: ${this.dynamoDBSongs.length}`);
+      this.notifyProgressUpdate(this.dynamoDBSongs.length);
+      
+    } catch (error) {
+      console.error('❌ Background loading failed:', error);
+    } finally {
+      this.isLoadingMore = false;
+    }
+  }
+  
+  /**
+   * Merge newly loaded songs into the cache, avoiding duplicates
+   */
+  private mergeSongsIntoCache(newSongs: SongLogEntry[]): void {
+    const existingKeys = new Set(
+      this.dynamoDBSongs.map(s => `${s.songName}|${s.artist}|${s.timestamp}`)
+    );
+    
+    for (const song of newSongs) {
+      const key = `${song.songName}|${song.artist}|${song.timestamp}`;
+      if (!existingKeys.has(key)) {
+        this.dynamoDBSongs.push(song);
+        existingKeys.add(key);
       }
     }
     
-    // Sort by timestamp descending (newest first)
-    allSongs.sort((a, b) => 
+    // Keep sorted by timestamp (newest first)
+    this.dynamoDBSongs.sort((a, b) => 
       new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
     
-    return limit ? allSongs.slice(0, limit) : allSongs;
+    // Update cache timestamp
+    this.lastDynamoDBFetch = Date.now();
   }
   
   /**
