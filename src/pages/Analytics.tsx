@@ -18,7 +18,7 @@ import { RefreshCw, Download, Calendar } from 'lucide-react';
 import {
   PeriodSummary,
   DailyBreakdown,
-  HourlyHeatmap,
+  RawMetrics,
   EnvironmentalSummary,
   GuestsTrend,
   TimeRangePicker,
@@ -166,8 +166,8 @@ export function Analytics() {
             loading={insights.loading}
           />
           
-          {/* Hourly Heatmap */}
-          <HourlyHeatmap 
+          {/* Raw Metrics - entries, exits, dB, lux, score, top songs */}
+          <RawMetrics 
             data={rawSensorData as any}
             loading={insights.loading}
           />

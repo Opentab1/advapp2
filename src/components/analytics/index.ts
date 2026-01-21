@@ -5,10 +5,11 @@
 // New report-style components
 export { PeriodSummary } from './PeriodSummary';
 export { DailyBreakdown } from './DailyBreakdown';
-export { HourlyHeatmap } from './HourlyHeatmap';
+export { RawMetrics } from './RawMetrics';
 export { EnvironmentalSummary } from './EnvironmentalSummary';
 export { GuestsTrend } from './GuestsTrend';
 export { TimeRangePicker } from './TimeRangePicker';
+export { HourlyHeatmap } from './HourlyHeatmap';
 
 // Legacy components (kept for potential future use)
 export { InsightsHero } from './InsightsHero';
