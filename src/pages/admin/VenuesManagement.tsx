@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Building2, 
   Plus, 
@@ -28,11 +28,22 @@ import {
   Clock,
   AlertTriangle,
   Ban,
-  Settings
+  Settings,
+  X,
+  Save,
+  Mail,
+  User
 } from 'lucide-react';
 import { CreateVenueModal, VenueFormData } from '../../components/admin/CreateVenueModal';
 import { RPiConfigGenerator } from '../../components/admin/RPiConfigGenerator';
 import adminService, { AdminVenue, CreateVenueInput } from '../../services/admin.service';
+
+// Display settings stored separately from system data
+interface VenueDisplaySettings {
+  displayName?: string;
+  ownerName?: string;
+  ownerEmail?: string;
+}
 
 export function VenuesManagement() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -40,10 +51,26 @@ export function VenuesManagement() {
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name'>('newest');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showConfigGenerator, setShowConfigGenerator] = useState<AdminVenue | null>(null);
+  const [showEditModal, setShowEditModal] = useState<AdminVenue | null>(null);
   const [, setIsCreating] = useState(false);
   const [venues, setVenues] = useState<AdminVenue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [displaySettings, setDisplaySettings] = useState<Record<string, VenueDisplaySettings>>({});
+
+  // Load display settings from localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem('admin_venue_display_settings');
+    if (stored) {
+      setDisplaySettings(JSON.parse(stored));
+    }
+  }, []);
+
+  const saveDisplaySettings = (venueId: string, settings: VenueDisplaySettings) => {
+    const updated = { ...displaySettings, [venueId]: settings };
+    setDisplaySettings(updated);
+    localStorage.setItem('admin_venue_display_settings', JSON.stringify(updated));
+  };
 
   // Fetch venues
   const fetchVenues = useCallback(async () => {
@@ -318,12 +345,34 @@ export function VenuesManagement() {
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-xl font-bold text-white">{venue.venueName}</h3>
+                      <h3 className="text-xl font-bold text-white">
+                        {displaySettings[venue.venueId]?.displayName || venue.venueName}
+                      </h3>
                       {getStatusBadge(venue.status)}
                     </div>
                     <div className="text-sm text-gray-400 mb-1">
                       ID: <span className="text-purple-400 font-mono">{venue.venueId}</span>
+                      {displaySettings[venue.venueId]?.displayName && (
+                        <span className="ml-2 text-gray-500">(System: {venue.venueName})</span>
+                      )}
                     </div>
+                    {/* Owner Info */}
+                    {(displaySettings[venue.venueId]?.ownerName || displaySettings[venue.venueId]?.ownerEmail) && (
+                      <div className="flex items-center gap-4 text-sm text-gray-400 mb-1">
+                        {displaySettings[venue.venueId]?.ownerName && (
+                          <span className="flex items-center gap-1">
+                            <User className="w-3 h-3" />
+                            {displaySettings[venue.venueId]?.ownerName}
+                          </span>
+                        )}
+                        {displaySettings[venue.venueId]?.ownerEmail && (
+                          <span className="flex items-center gap-1">
+                            <Mail className="w-3 h-3" />
+                            {displaySettings[venue.venueId]?.ownerEmail}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <div className="flex items-center gap-4 text-xs text-gray-500">
                       <span className="flex items-center gap-1">
                         <Clock className="w-3 h-3" />
@@ -373,9 +422,12 @@ export function VenuesManagement() {
                     <Eye className="w-4 h-4" />
                     View
                   </button>
-                  <button className="btn-secondary text-sm flex items-center gap-1">
+                  <button 
+                    onClick={() => setShowEditModal(venue)}
+                    className="btn-secondary text-sm flex items-center gap-1"
+                  >
                     <Edit className="w-4 h-4" />
-                    Edit
+                    Edit Display
                   </button>
                   <button 
                     onClick={() => handleGenerateConfig(venue)}
@@ -428,6 +480,147 @@ export function VenuesManagement() {
           mqttTopic={showConfigGenerator.mqttTopic || `pulse/sensors/${showConfigGenerator.venueId}`}
         />
       )}
+
+      {/* Edit Display Settings Modal */}
+      <AnimatePresence>
+        {showEditModal && (
+          <EditDisplayModal
+            venue={showEditModal}
+            currentSettings={displaySettings[showEditModal.venueId] || {}}
+            onClose={() => setShowEditModal(null)}
+            onSave={(settings) => {
+              saveDisplaySettings(showEditModal.venueId, settings);
+              setShowEditModal(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+// Edit Display Settings Modal
+function EditDisplayModal({
+  venue,
+  currentSettings,
+  onClose,
+  onSave
+}: {
+  venue: AdminVenue;
+  currentSettings: VenueDisplaySettings;
+  onClose: () => void;
+  onSave: (settings: VenueDisplaySettings) => void;
+}) {
+  const [displayName, setDisplayName] = useState(currentSettings.displayName || '');
+  const [ownerName, setOwnerName] = useState(currentSettings.ownerName || '');
+  const [ownerEmail, setOwnerEmail] = useState(currentSettings.ownerEmail || '');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave({
+      displayName: displayName.trim() || undefined,
+      ownerName: ownerName.trim() || undefined,
+      ownerEmail: ownerEmail.trim() || undefined
+    });
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="glass-card p-6 w-full max-w-md"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-xl font-bold text-white">Edit Display Settings</h3>
+            <p className="text-sm text-gray-400 mt-1">
+              System ID: <span className="text-purple-400 font-mono">{venue.venueId}</span>
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-6">
+          <p className="text-sm text-amber-300">
+            These are display-only settings. They won't affect data flow from RPi devices.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">
+              <Building2 className="w-4 h-4 inline mr-1" />
+              Display Name
+            </label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder={venue.venueName}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Leave blank to use system name: {venue.venueName}
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">
+              <User className="w-4 h-4 inline mr-1" />
+              Owner Name
+            </label>
+            <input
+              type="text"
+              value={ownerName}
+              onChange={(e) => setOwnerName(e.target.value)}
+              placeholder="e.g., John Smith"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">
+              <Mail className="w-4 h-4 inline mr-1" />
+              Owner Email
+            </label>
+            <input
+              type="email"
+              value={ownerEmail}
+              onChange={(e) => setOwnerEmail(e.target.value)}
+              placeholder="e.g., owner@venue.com"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="flex-1 btn-primary flex items-center justify-center gap-2"
+            >
+              <Save className="w-4 h-4" />
+              Save Changes
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>
   );
 }
