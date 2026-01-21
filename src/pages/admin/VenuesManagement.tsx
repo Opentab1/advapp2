@@ -45,6 +45,9 @@ interface VenueDisplaySettings {
   ownerEmail?: string;
 }
 
+// API endpoint for display settings
+const DISPLAY_SETTINGS_API = 'https://7ox6y1t1f1.execute-api.us-east-2.amazonaws.com/display-settings';
+
 export function VenuesManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'suspended'>('all');
@@ -58,18 +61,41 @@ export function VenuesManagement() {
   const [error, setError] = useState<string | null>(null);
   const [displaySettings, setDisplaySettings] = useState<Record<string, VenueDisplaySettings>>({});
 
-  // Load display settings from localStorage
-  useEffect(() => {
-    const stored = localStorage.getItem('admin_venue_display_settings');
-    if (stored) {
-      setDisplaySettings(JSON.parse(stored));
+  // Load display settings from API
+  const fetchDisplaySettings = useCallback(async () => {
+    try {
+      const response = await fetch(DISPLAY_SETTINGS_API);
+      if (response.ok) {
+        const data = await response.json();
+        setDisplaySettings(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch display settings:', err);
     }
   }, []);
 
-  const saveDisplaySettings = (venueId: string, settings: VenueDisplaySettings) => {
-    const updated = { ...displaySettings, [venueId]: settings };
-    setDisplaySettings(updated);
-    localStorage.setItem('admin_venue_display_settings', JSON.stringify(updated));
+  useEffect(() => {
+    fetchDisplaySettings();
+  }, [fetchDisplaySettings]);
+
+  const saveDisplaySettings = async (venueId: string, settings: VenueDisplaySettings): Promise<boolean> => {
+    try {
+      const response = await fetch(`${DISPLAY_SETTINGS_API}/${venueId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+      
+      if (response.ok) {
+        // Update local state
+        setDisplaySettings(prev => ({ ...prev, [venueId]: settings }));
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to save display settings:', err);
+      return false;
+    }
   };
 
   // Fetch venues
@@ -488,9 +514,13 @@ export function VenuesManagement() {
             venue={showEditModal}
             currentSettings={displaySettings[showEditModal.venueId] || {}}
             onClose={() => setShowEditModal(null)}
-            onSave={(settings) => {
-              saveDisplaySettings(showEditModal.venueId, settings);
-              setShowEditModal(null);
+            onSave={async (settings) => {
+              const success = await saveDisplaySettings(showEditModal.venueId, settings);
+              if (success) {
+                setShowEditModal(null);
+              } else {
+                alert('Failed to save display settings. Please try again.');
+              }
             }}
           />
         )}
@@ -509,19 +539,25 @@ function EditDisplayModal({
   venue: AdminVenue;
   currentSettings: VenueDisplaySettings;
   onClose: () => void;
-  onSave: (settings: VenueDisplaySettings) => void;
+  onSave: (settings: VenueDisplaySettings) => Promise<void>;
 }) {
   const [displayName, setDisplayName] = useState(currentSettings.displayName || '');
   const [ownerName, setOwnerName] = useState(currentSettings.ownerName || '');
   const [ownerEmail, setOwnerEmail] = useState(currentSettings.ownerEmail || '');
+  const [saving, setSaving] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave({
-      displayName: displayName.trim() || undefined,
-      ownerName: ownerName.trim() || undefined,
-      ownerEmail: ownerEmail.trim() || undefined
-    });
+    setSaving(true);
+    try {
+      await onSave({
+        displayName: displayName.trim() || undefined,
+        ownerName: ownerName.trim() || undefined,
+        ownerEmail: ownerEmail.trim() || undefined
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -607,16 +643,27 @@ function EditDisplayModal({
             <button
               type="button"
               onClick={onClose}
+              disabled={saving}
               className="flex-1 btn-secondary"
             >
               Cancel
             </button>
             <button
               type="submit"
+              disabled={saving}
               className="flex-1 btn-primary flex items-center justify-center gap-2"
             >
-              <Save className="w-4 h-4" />
-              Save Changes
+              {saving ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Save Changes
+                </>
+              )}
             </button>
           </div>
         </form>
