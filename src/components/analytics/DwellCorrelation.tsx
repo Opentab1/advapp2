@@ -1,25 +1,34 @@
 /**
- * DwellCorrelation - Shows how metrics impact guest dwell time
+ * DwellCorrelation - Dual-axis charts showing metric vs dwell time
  * 
- * "What Keeps Guests Longer?"
- * - Correlation cards: "Guests stay 18% longer when sound is 75-82 dB"
- * - Simple bar charts for each factor
- * - Statistical confidence indicator
+ * Shows time-series with two lines overlaid:
+ * - Metric value (sound/light/crowd) on left Y-axis
+ * - Average stay duration on right Y-axis
+ * 
+ * This lets bar owners visually see the correlation.
  */
 
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { 
-  Clock, 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  Legend,
+  ReferenceLine,
+} from 'recharts';
+import { 
   Volume2, 
   Sun, 
   Users, 
-  ChevronDown,
-  ChevronUp,
+  Clock,
   TrendingUp,
   TrendingDown,
-  AlertCircle,
-  CheckCircle,
+  Minus,
   Info,
 } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
@@ -30,168 +39,201 @@ interface DwellCorrelationProps {
   loading: boolean;
 }
 
-const factorIcons = {
-  sound: Volume2,
-  light: Sun,
-  crowd: Users,
+const factorConfig = {
+  sound: { 
+    icon: Volume2, 
+    color: '#3b82f6', // blue
+    label: 'Sound Level',
+    unit: 'dB',
+  },
+  light: { 
+    icon: Sun, 
+    color: '#eab308', // yellow
+    label: 'Lighting',
+    unit: 'lux',
+  },
+  crowd: { 
+    icon: Users, 
+    color: '#a855f7', // purple
+    label: 'Crowd Size',
+    unit: 'guests',
+  },
 };
 
-const factorColors = {
-  sound: 'text-blue-400',
-  light: 'text-yellow-400',
-  crowd: 'text-purple-400',
-};
+const dwellColor = '#14b8a6'; // teal for dwell time
 
-function CorrelationCard({ 
-  correlation, 
-  expanded, 
-  onToggle 
-}: { 
-  correlation: DwellCorrelationType;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const Icon = factorIcons[correlation.factor];
-  const color = factorColors[correlation.factor];
-  const isPositive = correlation.percentImprovement > 0;
+function CorrelationChart({ correlation }: { correlation: DwellCorrelationType }) {
+  const config = factorConfig[correlation.factor];
+  
+  // Prepare chart data - only include points with valid dwell time
+  const chartData = correlation.dataPoints
+    .filter(d => d.dwellMinutes !== null)
+    .map(d => ({
+      hour: d.hour,
+      metric: d.metricValue,
+      dwell: d.dwellMinutes,
+    }));
+  
+  if (chartData.length < 3) {
+    return (
+      <div className="h-48 flex items-center justify-center text-warm-500 text-sm">
+        Not enough data points for this chart
+      </div>
+    );
+  }
+  
+  // Calculate Y-axis domains
+  const metricValues = chartData.map(d => d.metric).filter(v => v > 0);
+  const dwellValues = chartData.map(d => d.dwell).filter(v => v !== null) as number[];
+  
+  const metricMin = Math.floor(Math.min(...metricValues) * 0.9);
+  const metricMax = Math.ceil(Math.max(...metricValues) * 1.1);
+  const dwellMin = Math.floor(Math.min(...dwellValues) * 0.8);
+  const dwellMax = Math.ceil(Math.max(...dwellValues) * 1.2);
+  
+  // Correlation indicator
+  const CorrelationIcon = correlation.correlationStrength > 0.2 ? TrendingUp : 
+                          correlation.correlationStrength < -0.2 ? TrendingDown : Minus;
+  const correlationColor = correlation.correlationStrength > 0.2 ? 'text-recovery-high' : 
+                           correlation.correlationStrength < -0.2 ? 'text-recovery-low' : 'text-warm-400';
   
   return (
-    <motion.div
-      className="bg-whoop-panel border border-whoop-divider rounded-xl overflow-hidden"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-    >
-      {/* Header - Always visible */}
-      <button
-        onClick={() => { haptic('light'); onToggle(); }}
-        className="w-full p-4 flex items-start gap-3 text-left hover:bg-warm-800/50 transition-colors"
-      >
-        <div className={`w-10 h-10 rounded-full bg-warm-700 flex items-center justify-center ${color}`}>
-          <Icon className="w-5 h-5" />
+    <div className="space-y-3">
+      {/* Chart Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <config.icon className="w-5 h-5" style={{ color: config.color }} />
+          <span className="text-white font-medium">{config.label}</span>
+          <span className="text-warm-500 text-sm">vs Stay Duration</span>
         </div>
-        
-        <div className="flex-1 min-w-0">
-          <div className="text-xs text-warm-400 uppercase tracking-wide mb-0.5">
-            {correlation.label}
-          </div>
-          <div className="text-white font-semibold">
-            Guests stay{' '}
-            <span className={isPositive ? 'text-recovery-high' : 'text-recovery-low'}>
-              {isPositive ? '+' : ''}{correlation.percentImprovement}%
-            </span>
-            {' '}longer
-          </div>
-          <div className="text-sm text-warm-300 mt-0.5">
-            when {correlation.factor} is <span className="text-white">{correlation.optimalRange}</span>
-          </div>
+        <div className={`flex items-center gap-1 text-sm ${correlationColor}`}>
+          <CorrelationIcon className="w-4 h-4" />
+          <span>r = {correlation.correlationStrength.toFixed(2)}</span>
         </div>
-        
-        <div className="flex-shrink-0 mt-1">
-          {expanded ? (
-            <ChevronUp className="w-5 h-5 text-warm-500" />
-          ) : (
-            <ChevronDown className="w-5 h-5 text-warm-500" />
-          )}
-        </div>
-      </button>
+      </div>
       
-      {/* Expanded chart */}
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="px-4 pb-4 pt-0 border-t border-whoop-divider">
-              {/* Bar chart */}
-              <div className="space-y-2 mt-3">
-                {correlation.buckets.map((bucket, idx) => {
-                  const maxDwell = Math.max(...correlation.buckets.map(b => b.avgDwellMinutes));
-                  const barWidth = maxDwell > 0 ? (bucket.avgDwellMinutes / maxDwell) * 100 : 0;
-                  
-                  return (
-                    <div key={idx} className="flex items-center gap-2">
-                      <div className="w-24 text-xs text-warm-400 text-right flex-shrink-0">
-                        {bucket.range}
-                      </div>
-                      <div className="flex-1 h-6 bg-warm-800 rounded overflow-hidden relative">
-                        <motion.div
-                          initial={{ width: 0 }}
-                          animate={{ width: `${barWidth}%` }}
-                          transition={{ duration: 0.5, delay: idx * 0.05 }}
-                          className={`h-full rounded ${
-                            bucket.isOptimal 
-                              ? 'bg-gradient-to-r from-recovery-high/80 to-recovery-high' 
-                              : 'bg-warm-600'
-                          }`}
-                        />
-                        <div className="absolute inset-0 flex items-center px-2">
-                          <span className={`text-xs font-medium ${
-                            barWidth > 40 ? 'text-white' : 'text-warm-300'
-                          }`}>
-                            {bucket.avgDwellMinutes}m
-                            {bucket.isOptimal && (
-                              <span className="ml-1 text-recovery-high">★</span>
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="w-16 text-xs text-right flex-shrink-0">
-                        {bucket.percentDiff !== 0 && (
-                          <span className={bucket.percentDiff > 0 ? 'text-recovery-high' : 'text-recovery-low'}>
-                            {bucket.percentDiff > 0 ? '+' : ''}{bucket.percentDiff}%
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              
-              {/* Stats footer */}
-              <div className="flex items-center justify-between mt-4 pt-3 border-t border-warm-700">
-                <div className="flex items-center gap-1 text-xs text-warm-400">
-                  <Clock className="w-3 h-3" />
-                  <span>Avg: {correlation.overallAvgDwell}m overall</span>
-                </div>
-                <div className="flex items-center gap-1 text-xs">
-                  {correlation.confidence === 'high' && (
-                    <>
-                      <CheckCircle className="w-3 h-3 text-recovery-high" />
-                      <span className="text-recovery-high">High confidence</span>
-                    </>
-                  )}
-                  {correlation.confidence === 'medium' && (
-                    <>
-                      <Info className="w-3 h-3 text-recovery-medium" />
-                      <span className="text-recovery-medium">Medium confidence</span>
-                    </>
-                  )}
-                  {correlation.confidence === 'low' && (
-                    <>
-                      <AlertCircle className="w-3 h-3 text-warm-500" />
-                      <span className="text-warm-500">Low confidence</span>
-                    </>
-                  )}
-                </div>
-              </div>
-              
-              <div className="text-xs text-warm-500 mt-2">
-                Based on {correlation.totalSamples.toLocaleString()} guest visits
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
+      {/* Dual-axis Chart */}
+      <div className="h-56 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.5} />
+            
+            <XAxis 
+              dataKey="hour" 
+              tick={{ fill: '#9ca3af', fontSize: 10 }}
+              tickLine={{ stroke: '#4b5563' }}
+              axisLine={{ stroke: '#4b5563' }}
+              interval="preserveStartEnd"
+            />
+            
+            {/* Left Y-axis: Metric */}
+            <YAxis 
+              yAxisId="metric"
+              orientation="left"
+              domain={[metricMin, metricMax]}
+              tick={{ fill: config.color, fontSize: 11 }}
+              tickLine={{ stroke: config.color }}
+              axisLine={{ stroke: config.color }}
+              label={{ 
+                value: config.unit, 
+                angle: -90, 
+                position: 'insideLeft',
+                fill: config.color,
+                fontSize: 11,
+              }}
+            />
+            
+            {/* Right Y-axis: Dwell time */}
+            <YAxis 
+              yAxisId="dwell"
+              orientation="right"
+              domain={[dwellMin, dwellMax]}
+              tick={{ fill: dwellColor, fontSize: 11 }}
+              tickLine={{ stroke: dwellColor }}
+              axisLine={{ stroke: dwellColor }}
+              label={{ 
+                value: 'min', 
+                angle: 90, 
+                position: 'insideRight',
+                fill: dwellColor,
+                fontSize: 11,
+              }}
+            />
+            
+            {/* Reference line for average dwell */}
+            <ReferenceLine 
+              yAxisId="dwell" 
+              y={correlation.overallAvgDwell} 
+              stroke={dwellColor} 
+              strokeDasharray="5 5" 
+              strokeOpacity={0.5}
+            />
+            
+            <Tooltip 
+              contentStyle={{ 
+                backgroundColor: '#1f2937', 
+                border: '1px solid #374151',
+                borderRadius: '8px',
+                fontSize: '12px',
+              }}
+              labelStyle={{ color: '#9ca3af' }}
+              formatter={(value: number, name: string) => {
+                if (name === 'metric') return [`${value} ${config.unit}`, config.label];
+                if (name === 'dwell') return [`${value} min`, 'Avg Stay'];
+                return [value, name];
+              }}
+            />
+            
+            <Legend 
+              wrapperStyle={{ fontSize: '11px' }}
+              formatter={(value) => {
+                if (value === 'metric') return <span style={{ color: config.color }}>{config.label}</span>;
+                if (value === 'dwell') return <span style={{ color: dwellColor }}>Avg Stay</span>;
+                return value;
+              }}
+            />
+            
+            {/* Metric line */}
+            <Line 
+              yAxisId="metric"
+              type="monotone" 
+              dataKey="metric" 
+              stroke={config.color}
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, fill: config.color }}
+            />
+            
+            {/* Dwell time line */}
+            <Line 
+              yAxisId="dwell"
+              type="monotone" 
+              dataKey="dwell" 
+              stroke={dwellColor}
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, fill: dwellColor }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      
+      {/* Insight */}
+      <div className="flex items-start gap-2 p-2 bg-warm-800/50 rounded-lg">
+        <Info className="w-4 h-4 text-warm-500 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-warm-400">
+          {correlation.insight}
+          <span className="text-warm-500 ml-1">
+            ({correlation.totalSamples} data points, {correlation.confidence} confidence)
+          </span>
+        </p>
+      </div>
+    </div>
   );
 }
 
 export function DwellCorrelation({ data, loading }: DwellCorrelationProps) {
-  const [expandedFactor, setExpandedFactor] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'sound' | 'light' | 'crowd'>('sound');
   
   if (loading) {
     return (
@@ -199,21 +241,11 @@ export function DwellCorrelation({ data, loading }: DwellCorrelationProps) {
         <div className="flex items-center gap-2">
           <Clock className="w-5 h-5 text-warm-500" />
           <h2 className="text-sm font-semibold text-warm-400 uppercase tracking-whoop">
-            What Keeps Guests Longer?
+            Metric vs Guest Stay
           </h2>
         </div>
-        <div className="space-y-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-warm-800 rounded-xl p-4 animate-pulse">
-              <div className="flex gap-3">
-                <div className="w-10 h-10 bg-warm-700 rounded-full" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-3 bg-warm-700 rounded w-20" />
-                  <div className="h-5 bg-warm-700 rounded w-48" />
-                </div>
-              </div>
-            </div>
-          ))}
+        <div className="bg-warm-800 rounded-xl p-4 h-72 animate-pulse">
+          <div className="h-full bg-warm-700 rounded" />
         </div>
       </div>
     );
@@ -225,61 +257,87 @@ export function DwellCorrelation({ data, loading }: DwellCorrelationProps) {
         <div className="flex items-center gap-2 mb-3">
           <Clock className="w-5 h-5 text-warm-500" />
           <h2 className="text-sm font-semibold text-warm-400 uppercase tracking-whoop">
-            What Keeps Guests Longer?
+            Metric vs Guest Stay
           </h2>
         </div>
         <p className="text-sm text-warm-400">
-          Not enough data yet. We need more guest visits to calculate meaningful correlations.
+          Not enough data yet. We need more guest traffic to calculate correlations.
         </p>
       </div>
     );
   }
   
-  const correlations = [data.sound, data.light, data.crowd].filter(Boolean) as DwellCorrelationType[];
+  const correlations = {
+    sound: data.sound,
+    light: data.light,
+    crowd: data.crowd,
+  };
   
-  // Sort by impact (highest improvement first)
-  correlations.sort((a, b) => Math.abs(b.percentImprovement) - Math.abs(a.percentImprovement));
+  const activeCorrelation = correlations[activeTab];
+  
+  // Get available tabs (only show tabs with data)
+  const availableTabs = (['sound', 'light', 'crowd'] as const).filter(
+    tab => correlations[tab] !== null
+  );
+  
+  if (availableTabs.length === 0) {
+    return null;
+  }
+  
+  // Ensure active tab has data
+  if (!correlations[activeTab] && availableTabs.length > 0) {
+    setActiveTab(availableTabs[0]);
+  }
   
   return (
-    <div className="space-y-4">
+    <motion.div 
+      className="bg-whoop-panel border border-whoop-divider rounded-xl p-4 space-y-4"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
       {/* Section Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Clock className="w-5 h-5 text-primary" />
           <h2 className="text-sm font-semibold text-warm-400 uppercase tracking-whoop">
-            What Keeps Guests Longer?
+            Metric vs Guest Stay
           </h2>
         </div>
         <div className="text-xs text-warm-500">
-          {data.totalGuestVisits.toLocaleString()} visits analyzed
+          {data.totalDataPoints} hours analyzed
         </div>
       </div>
       
-      {/* Correlation Cards */}
-      <div className="space-y-3">
-        {correlations.map((correlation) => (
-          <CorrelationCard
-            key={correlation.factor}
-            correlation={correlation}
-            expanded={expandedFactor === correlation.factor}
-            onToggle={() => {
-              setExpandedFactor(
-                expandedFactor === correlation.factor ? null : correlation.factor
-              );
-            }}
-          />
-        ))}
+      {/* Tab Selector */}
+      <div className="flex gap-1 p-1 bg-warm-800/50 rounded-lg">
+        {availableTabs.map((tab) => {
+          const config = factorConfig[tab];
+          const Icon = config.icon;
+          const isActive = activeTab === tab;
+          
+          return (
+            <button
+              key={tab}
+              onClick={() => { haptic('selection'); setActiveTab(tab); }}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md transition-all ${
+                isActive
+                  ? 'bg-primary text-white'
+                  : 'text-warm-400 hover:text-white'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{config.label}</span>
+              <span className="sm:hidden">{tab.charAt(0).toUpperCase() + tab.slice(1)}</span>
+            </button>
+          );
+        })}
       </div>
       
-      {/* Disclaimer */}
-      <div className="flex items-start gap-2 p-3 bg-warm-800/50 rounded-lg border border-warm-700">
-        <Info className="w-4 h-4 text-warm-500 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-warm-500">
-          Correlation data shows patterns, not causation. Other factors like day of week, 
-          events, or seasonality may also influence guest behavior.
-        </p>
-      </div>
-    </div>
+      {/* Active Chart */}
+      {activeCorrelation && (
+        <CorrelationChart correlation={activeCorrelation} />
+      )}
+    </motion.div>
   );
 }
 

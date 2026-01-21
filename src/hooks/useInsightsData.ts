@@ -27,6 +27,7 @@ import type {
   SweetSpotVariable,
   DwellCorrelationData,
   DwellCorrelation,
+  CorrelationDataPoint,
 } from '../types/insights';
 
 // ============ TIME RANGE MAPPING ============
@@ -1000,8 +1001,8 @@ function processTrendChartData(data: SensorData[]): Array<{ date: Date; score: n
  * Approach:
  * 1. Group data by hour (time windows)
  * 2. For each hour, calculate avg metric values AND dwell time
- * 3. Bucket by metric ranges, show avg dwell per bucket
- * 4. Find optimal range (longest dwell time)
+ * 3. Return time-series data for dual-axis charts
+ * 4. Calculate correlation coefficient
  */
 function processDwellCorrelations(data: SensorData[]): DwellCorrelationData {
   // Calculate overall average dwell time first
@@ -1013,133 +1014,121 @@ function processDwellCorrelations(data: SensorData[]): DwellCorrelationData {
       light: null,
       crowd: null,
       hasData: false,
-      totalGuestVisits: 0,
+      totalDataPoints: 0,
     };
   }
   
   // Group data by hour to create time windows
   const hourlyWindows: Record<string, {
+    timestamp: Date;
     data: SensorData[];
-    avgSound: number;
-    avgLight: number;
-    avgCrowd: number;
   }> = {};
   
   data.forEach(d => {
-    const hourKey = new Date(d.timestamp).toISOString().slice(0, 13); // YYYY-MM-DDTHH
+    const ts = new Date(d.timestamp);
+    const hourKey = ts.toISOString().slice(0, 13); // YYYY-MM-DDTHH
     if (!hourlyWindows[hourKey]) {
-      hourlyWindows[hourKey] = { data: [], avgSound: 0, avgLight: 0, avgCrowd: 0 };
+      hourlyWindows[hourKey] = { timestamp: ts, data: [] };
     }
     hourlyWindows[hourKey].data.push(d);
   });
   
-  // Calculate averages per hour and estimate dwell for entries in that hour
-  interface HourlyStats {
+  // Calculate metrics per hour
+  interface HourlyPoint {
+    timestamp: Date;
+    hour: string;
     avgSound: number;
     avgLight: number;
     avgCrowd: number;
-    entriesCount: number;
     avgDwell: number | null;
   }
   
-  const hourlyStats: HourlyStats[] = [];
+  const hourlyPoints: HourlyPoint[] = [];
+  
+  // Format hour label
+  const formatHourLabel = (date: Date): string => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const day = days[date.getDay()];
+    const hour = date.getHours();
+    const ampm = hour >= 12 ? 'pm' : 'am';
+    const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+    return `${day} ${hour12}${ampm}`;
+  };
   
   Object.values(hourlyWindows).forEach(window => {
     if (window.data.length < 2) return;
     
     // Calculate average conditions in this hour
-    let soundSum = 0, lightSum = 0, crowdSum = 0, count = 0;
+    let soundSum = 0, soundCount = 0;
+    let lightSum = 0, lightCount = 0;
+    let crowdSum = 0, crowdCount = 0;
+    
     window.data.forEach(d => {
-      if (d.decibels) { soundSum += d.decibels; }
-      if (d.light !== undefined) { lightSum += d.light; }
-      if (d.occupancy?.current !== undefined) { crowdSum += d.occupancy.current; }
-      count++;
+      if (d.decibels && d.decibels > 0) { soundSum += d.decibels; soundCount++; }
+      if (d.light !== undefined && d.light >= 0) { lightSum += d.light; lightCount++; }
+      if (d.occupancy?.current !== undefined) { crowdSum += d.occupancy.current; crowdCount++; }
     });
     
-    if (count === 0) return;
+    // Need at least some valid data
+    if (soundCount === 0 && lightCount === 0 && crowdCount === 0) return;
     
-    // Calculate entries that happened in this hour
-    const sorted = [...window.data].sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-    const firstEntry = sorted[0].occupancy?.entries ?? 0;
-    const lastEntry = sorted[sorted.length - 1].occupancy?.entries ?? 0;
-    const entriesInHour = Math.max(0, lastEntry - firstEntry);
-    
-    if (entriesInHour < 1) return;
-    
-    // Estimate dwell time for this hour's cohort
+    // Estimate dwell time for this hour
     const hourDwell = calculatePeriodAvgStay(window.data);
     
-    hourlyStats.push({
-      avgSound: soundSum / count,
-      avgLight: lightSum / count,
-      avgCrowd: crowdSum / count,
-      entriesCount: entriesInHour,
+    hourlyPoints.push({
+      timestamp: window.timestamp,
+      hour: formatHourLabel(window.timestamp),
+      avgSound: soundCount > 0 ? Math.round(soundSum / soundCount) : 0,
+      avgLight: lightCount > 0 ? Math.round(lightSum / lightCount) : 0,
+      avgCrowd: crowdCount > 0 ? Math.round(crowdSum / crowdCount) : 0,
       avgDwell: hourDwell,
     });
   });
   
-  // Filter to hours with valid dwell data
-  const validStats = hourlyStats.filter(h => h.avgDwell !== null && h.avgDwell > 0);
+  // Sort by timestamp
+  hourlyPoints.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   
-  if (validStats.length < 3) {
+  // Filter to points with valid dwell data for correlation
+  const validPoints = hourlyPoints.filter(h => h.avgDwell !== null && h.avgDwell > 0);
+  
+  if (validPoints.length < 5) {
     return {
       sound: null,
       light: null,
       crowd: null,
       hasData: false,
-      totalGuestVisits: 0,
+      totalDataPoints: 0,
     };
   }
   
-  const totalGuestVisits = validStats.reduce((sum, h) => sum + h.entriesCount, 0);
-  
-  // Process each factor
-  const soundCorrelation = processFactorDwellCorrelation(
-    validStats,
+  // Build correlations for each factor
+  const soundCorrelation = buildFactorCorrelation(
+    hourlyPoints,
+    validPoints,
     'sound',
     'Sound Level',
     'dB',
     h => h.avgSound,
-    [
-      { min: 0, max: 65, label: '< 65 dB' },
-      { min: 65, max: 72, label: '65-72 dB' },
-      { min: 72, max: 78, label: '72-78 dB' },
-      { min: 78, max: 85, label: '78-85 dB' },
-      { min: 85, max: 999, label: '85+ dB' },
-    ],
     overallAvgDwell
   );
   
-  const lightCorrelation = processFactorDwellCorrelation(
-    validStats,
+  const lightCorrelation = buildFactorCorrelation(
+    hourlyPoints,
+    validPoints,
     'light',
     'Lighting',
     'lux',
     h => h.avgLight,
-    [
-      { min: 0, max: 30, label: '< 30 lux' },
-      { min: 30, max: 60, label: '30-60 lux' },
-      { min: 60, max: 100, label: '60-100 lux' },
-      { min: 100, max: 999, label: '100+ lux' },
-    ],
     overallAvgDwell
   );
   
-  const crowdCorrelation = processFactorDwellCorrelation(
-    validStats,
+  const crowdCorrelation = buildFactorCorrelation(
+    hourlyPoints,
+    validPoints,
     'crowd',
     'Crowd Size',
     'guests',
     h => h.avgCrowd,
-    [
-      { min: 0, max: 25, label: '< 25 guests' },
-      { min: 25, max: 50, label: '25-50 guests' },
-      { min: 50, max: 100, label: '50-100 guests' },
-      { min: 100, max: 200, label: '100-200 guests' },
-      { min: 200, max: 9999, label: '200+ guests' },
-    ],
     overallAvgDwell
   );
   
@@ -1148,97 +1137,100 @@ function processDwellCorrelations(data: SensorData[]): DwellCorrelationData {
     light: lightCorrelation,
     crowd: crowdCorrelation,
     hasData: soundCorrelation !== null || lightCorrelation !== null || crowdCorrelation !== null,
-    totalGuestVisits,
+    totalDataPoints: hourlyPoints.length,
   };
 }
 
-interface BucketRange {
-  min: number;
-  max: number;
-  label: string;
+/**
+ * Calculate Pearson correlation coefficient
+ */
+function calculateCorrelation(x: number[], y: number[]): number {
+  if (x.length !== y.length || x.length < 3) return 0;
+  
+  const n = x.length;
+  const sumX = x.reduce((a, b) => a + b, 0);
+  const sumY = y.reduce((a, b) => a + b, 0);
+  const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
+  const sumX2 = x.reduce((sum, xi) => sum + xi * xi, 0);
+  const sumY2 = y.reduce((sum, yi) => sum + yi * yi, 0);
+  
+  const numerator = n * sumXY - sumX * sumY;
+  const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+  
+  if (denominator === 0) return 0;
+  return numerator / denominator;
 }
 
-function processFactorDwellCorrelation(
-  hourlyStats: Array<{ avgDwell: number | null; entriesCount: number }>,
+interface HourlyPoint {
+  timestamp: Date;
+  hour: string;
+  avgSound: number;
+  avgLight: number;
+  avgCrowd: number;
+  avgDwell: number | null;
+}
+
+function buildFactorCorrelation(
+  allPoints: HourlyPoint[],
+  validPoints: HourlyPoint[],
   factor: 'sound' | 'light' | 'crowd',
   label: string,
   unit: string,
-  getValue: (h: any) => number,
-  bucketRanges: BucketRange[],
+  getValue: (h: HourlyPoint) => number,
   overallAvgDwell: number
 ): DwellCorrelation | null {
-  // Bucket the data
-  const bucketData: Record<string, { dwellSum: number; count: number; entries: number }> = {};
-  bucketRanges.forEach(r => {
-    bucketData[r.label] = { dwellSum: 0, count: 0, entries: 0 };
-  });
+  // Build data points for the chart
+  const dataPoints = allPoints.map(h => ({
+    timestamp: h.timestamp,
+    hour: h.hour,
+    metricValue: getValue(h),
+    dwellMinutes: h.avgDwell,
+  }));
   
-  hourlyStats.forEach(h => {
-    const value = getValue(h);
-    if (value === undefined || value === null || h.avgDwell === null) return;
-    
-    const bucket = bucketRanges.find(r => value >= r.min && value < r.max);
-    if (bucket) {
-      bucketData[bucket.label].dwellSum += h.avgDwell * h.entriesCount;
-      bucketData[bucket.label].count += h.entriesCount;
-      bucketData[bucket.label].entries += h.entriesCount;
-    }
-  });
+  // Calculate correlation using valid points only
+  const metricValues = validPoints.map(h => getValue(h));
+  const dwellValues = validPoints.map(h => h.avgDwell as number);
   
-  // Convert to buckets array
-  const buckets = bucketRanges.map(r => {
-    const bd = bucketData[r.label];
-    const avgDwell = bd.count > 0 ? Math.round(bd.dwellSum / bd.count) : 0;
-    const percentDiff = overallAvgDwell > 0 
-      ? Math.round(((avgDwell - overallAvgDwell) / overallAvgDwell) * 100)
-      : 0;
-    
-    return {
-      range: r.label,
-      avgDwellMinutes: avgDwell,
-      sampleCount: bd.entries,
-      percentDiff,
-      isOptimal: false, // Set below
-    };
-  });
+  // Filter out zero metric values for correlation calculation
+  const pairedData = metricValues
+    .map((m, i) => ({ metric: m, dwell: dwellValues[i] }))
+    .filter(p => p.metric > 0);
   
-  // Find optimal bucket (highest dwell time with sufficient samples)
-  const minSamples = Math.max(5, hourlyStats.reduce((sum, h) => sum + h.entriesCount, 0) * 0.05);
-  let optimalIdx = -1;
-  let maxDwell = 0;
+  if (pairedData.length < 5) return null;
   
-  buckets.forEach((b, idx) => {
-    if (b.sampleCount >= minSamples && b.avgDwellMinutes > maxDwell) {
-      maxDwell = b.avgDwellMinutes;
-      optimalIdx = idx;
-    }
-  });
+  const correlationStrength = calculateCorrelation(
+    pairedData.map(p => p.metric),
+    pairedData.map(p => p.dwell)
+  );
   
-  if (optimalIdx === -1) {
-    // No bucket has enough samples
-    return null;
+  // Calculate average metric
+  const avgMetric = pairedData.reduce((sum, p) => sum + p.metric, 0) / pairedData.length;
+  
+  // Generate insight based on correlation
+  let insight = '';
+  if (correlationStrength > 0.3) {
+    insight = `Higher ${factor} levels tend to correlate with longer stays`;
+  } else if (correlationStrength < -0.3) {
+    insight = `Lower ${factor} levels tend to correlate with longer stays`;
+  } else {
+    insight = `${label} shows weak correlation with stay duration`;
   }
   
-  buckets[optimalIdx].isOptimal = true;
-  
-  const totalSamples = buckets.reduce((sum, b) => sum + b.sampleCount, 0);
-  const percentImprovement = buckets[optimalIdx].percentDiff;
-  
-  // Determine confidence based on sample size
+  // Determine confidence
   let confidence: 'high' | 'medium' | 'low' = 'low';
-  if (totalSamples >= 200) confidence = 'high';
-  else if (totalSamples >= 50) confidence = 'medium';
+  if (pairedData.length >= 50) confidence = 'high';
+  else if (pairedData.length >= 20) confidence = 'medium';
   
   return {
     factor,
     label,
     unit,
-    buckets: buckets.filter(b => b.sampleCount > 0), // Only show buckets with data
+    dataPoints,
     overallAvgDwell,
-    optimalRange: buckets[optimalIdx].range,
-    optimalDwell: buckets[optimalIdx].avgDwellMinutes,
-    percentImprovement,
-    totalSamples,
+    overallAvgMetric: Math.round(avgMetric),
+    correlationStrength: Math.round(correlationStrength * 100) / 100,
+    insight,
+    totalSamples: pairedData.length,
     confidence,
   };
 }

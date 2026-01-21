@@ -146,25 +146,24 @@ export interface InsightsData {
 
 // ============ DWELL CORRELATION ============
 
-export interface DwellCorrelationBucket {
-  range: string;                   // "75-82 dB"
-  avgDwellMinutes: number;
-  sampleCount: number;             // Number of guest visits in this bucket
-  percentDiff: number;             // % difference vs overall average
-  isOptimal: boolean;              // Highest dwell time bucket
+export interface CorrelationDataPoint {
+  timestamp: Date;
+  hour: string;                    // "Mon 9pm"
+  metricValue: number;             // Sound dB, Light lux, or Crowd count
+  dwellMinutes: number | null;     // Avg dwell for that time period
 }
 
 export interface DwellCorrelation {
   factor: 'sound' | 'light' | 'crowd';
   label: string;                   // "Sound Level"
   unit: string;                    // "dB", "lux", "guests"
-  buckets: DwellCorrelationBucket[];
+  dataPoints: CorrelationDataPoint[];
   overallAvgDwell: number;
-  optimalRange: string;
-  optimalDwell: number;
-  percentImprovement: number;      // How much longer guests stay in optimal range
-  totalSamples: number;            // Total guest visits analyzed
-  confidence: 'high' | 'medium' | 'low';  // Based on sample size
+  overallAvgMetric: number;
+  correlationStrength: number;     // -1 to 1 (positive = higher metric = longer stay)
+  insight: string;                 // "Higher sound levels correlate with longer stays"
+  totalSamples: number;
+  confidence: 'high' | 'medium' | 'low';
 }
 
 export interface DwellCorrelationData {
@@ -172,7 +171,7 @@ export interface DwellCorrelationData {
   light: DwellCorrelation | null;
   crowd: DwellCorrelation | null;
   hasData: boolean;
-  totalGuestVisits: number;
+  totalDataPoints: number;
 }
 
 // ============ HELPER TYPES ============
