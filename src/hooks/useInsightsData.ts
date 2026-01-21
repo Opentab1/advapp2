@@ -25,6 +25,8 @@ import type {
   RawDataPoint,
   InsightsData,
   SweetSpotVariable,
+  DwellCorrelationData,
+  DwellCorrelation,
 } from '../types/insights';
 
 // ============ TIME RANGE MAPPING ============
@@ -230,6 +232,12 @@ export function useInsightsData(timeRange: InsightsTimeRange): InsightsData {
     });
   }, [rawSensorData]);
   
+  // Level 2: Dwell time correlations (metrics → how long guests stay)
+  const dwellCorrelations = useMemo((): DwellCorrelationData | null => {
+    if (rawSensorData.length === 0) return null;
+    return processDwellCorrelations(rawSensorData);
+  }, [rawSensorData]);
+  
   return {
     loading,
     error,
@@ -241,6 +249,7 @@ export function useInsightsData(timeRange: InsightsTimeRange): InsightsData {
     factorScores,
     comparison,
     trendChartData,
+    dwellCorrelations,
     rawData,
     refresh: fetchData,
   };
@@ -982,6 +991,256 @@ function processTrendChartData(data: SensorData[]): Array<{ date: Date; score: n
       guests: calculateTotalGuests(metrics.rawData, 1).count, // Use shared helper for correct calculation
     }))
     .sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+// ============ DWELL CORRELATION PROCESSING ============
+/**
+ * Correlate environmental metrics with dwell time.
+ * 
+ * Approach:
+ * 1. Group data by hour (time windows)
+ * 2. For each hour, calculate avg metric values AND dwell time
+ * 3. Bucket by metric ranges, show avg dwell per bucket
+ * 4. Find optimal range (longest dwell time)
+ */
+function processDwellCorrelations(data: SensorData[]): DwellCorrelationData {
+  // Calculate overall average dwell time first
+  const overallAvgDwell = calculatePeriodAvgStay(data);
+  
+  if (overallAvgDwell === null) {
+    return {
+      sound: null,
+      light: null,
+      crowd: null,
+      hasData: false,
+      totalGuestVisits: 0,
+    };
+  }
+  
+  // Group data by hour to create time windows
+  const hourlyWindows: Record<string, {
+    data: SensorData[];
+    avgSound: number;
+    avgLight: number;
+    avgCrowd: number;
+  }> = {};
+  
+  data.forEach(d => {
+    const hourKey = new Date(d.timestamp).toISOString().slice(0, 13); // YYYY-MM-DDTHH
+    if (!hourlyWindows[hourKey]) {
+      hourlyWindows[hourKey] = { data: [], avgSound: 0, avgLight: 0, avgCrowd: 0 };
+    }
+    hourlyWindows[hourKey].data.push(d);
+  });
+  
+  // Calculate averages per hour and estimate dwell for entries in that hour
+  interface HourlyStats {
+    avgSound: number;
+    avgLight: number;
+    avgCrowd: number;
+    entriesCount: number;
+    avgDwell: number | null;
+  }
+  
+  const hourlyStats: HourlyStats[] = [];
+  
+  Object.values(hourlyWindows).forEach(window => {
+    if (window.data.length < 2) return;
+    
+    // Calculate average conditions in this hour
+    let soundSum = 0, lightSum = 0, crowdSum = 0, count = 0;
+    window.data.forEach(d => {
+      if (d.decibels) { soundSum += d.decibels; }
+      if (d.light !== undefined) { lightSum += d.light; }
+      if (d.occupancy?.current !== undefined) { crowdSum += d.occupancy.current; }
+      count++;
+    });
+    
+    if (count === 0) return;
+    
+    // Calculate entries that happened in this hour
+    const sorted = [...window.data].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    const firstEntry = sorted[0].occupancy?.entries ?? 0;
+    const lastEntry = sorted[sorted.length - 1].occupancy?.entries ?? 0;
+    const entriesInHour = Math.max(0, lastEntry - firstEntry);
+    
+    if (entriesInHour < 1) return;
+    
+    // Estimate dwell time for this hour's cohort
+    const hourDwell = calculatePeriodAvgStay(window.data);
+    
+    hourlyStats.push({
+      avgSound: soundSum / count,
+      avgLight: lightSum / count,
+      avgCrowd: crowdSum / count,
+      entriesCount: entriesInHour,
+      avgDwell: hourDwell,
+    });
+  });
+  
+  // Filter to hours with valid dwell data
+  const validStats = hourlyStats.filter(h => h.avgDwell !== null && h.avgDwell > 0);
+  
+  if (validStats.length < 3) {
+    return {
+      sound: null,
+      light: null,
+      crowd: null,
+      hasData: false,
+      totalGuestVisits: 0,
+    };
+  }
+  
+  const totalGuestVisits = validStats.reduce((sum, h) => sum + h.entriesCount, 0);
+  
+  // Process each factor
+  const soundCorrelation = processFactorDwellCorrelation(
+    validStats,
+    'sound',
+    'Sound Level',
+    'dB',
+    h => h.avgSound,
+    [
+      { min: 0, max: 65, label: '< 65 dB' },
+      { min: 65, max: 72, label: '65-72 dB' },
+      { min: 72, max: 78, label: '72-78 dB' },
+      { min: 78, max: 85, label: '78-85 dB' },
+      { min: 85, max: 999, label: '85+ dB' },
+    ],
+    overallAvgDwell
+  );
+  
+  const lightCorrelation = processFactorDwellCorrelation(
+    validStats,
+    'light',
+    'Lighting',
+    'lux',
+    h => h.avgLight,
+    [
+      { min: 0, max: 30, label: '< 30 lux' },
+      { min: 30, max: 60, label: '30-60 lux' },
+      { min: 60, max: 100, label: '60-100 lux' },
+      { min: 100, max: 999, label: '100+ lux' },
+    ],
+    overallAvgDwell
+  );
+  
+  const crowdCorrelation = processFactorDwellCorrelation(
+    validStats,
+    'crowd',
+    'Crowd Size',
+    'guests',
+    h => h.avgCrowd,
+    [
+      { min: 0, max: 25, label: '< 25 guests' },
+      { min: 25, max: 50, label: '25-50 guests' },
+      { min: 50, max: 100, label: '50-100 guests' },
+      { min: 100, max: 200, label: '100-200 guests' },
+      { min: 200, max: 9999, label: '200+ guests' },
+    ],
+    overallAvgDwell
+  );
+  
+  return {
+    sound: soundCorrelation,
+    light: lightCorrelation,
+    crowd: crowdCorrelation,
+    hasData: soundCorrelation !== null || lightCorrelation !== null || crowdCorrelation !== null,
+    totalGuestVisits,
+  };
+}
+
+interface BucketRange {
+  min: number;
+  max: number;
+  label: string;
+}
+
+function processFactorDwellCorrelation(
+  hourlyStats: Array<{ avgDwell: number | null; entriesCount: number }>,
+  factor: 'sound' | 'light' | 'crowd',
+  label: string,
+  unit: string,
+  getValue: (h: any) => number,
+  bucketRanges: BucketRange[],
+  overallAvgDwell: number
+): DwellCorrelation | null {
+  // Bucket the data
+  const bucketData: Record<string, { dwellSum: number; count: number; entries: number }> = {};
+  bucketRanges.forEach(r => {
+    bucketData[r.label] = { dwellSum: 0, count: 0, entries: 0 };
+  });
+  
+  hourlyStats.forEach(h => {
+    const value = getValue(h);
+    if (value === undefined || value === null || h.avgDwell === null) return;
+    
+    const bucket = bucketRanges.find(r => value >= r.min && value < r.max);
+    if (bucket) {
+      bucketData[bucket.label].dwellSum += h.avgDwell * h.entriesCount;
+      bucketData[bucket.label].count += h.entriesCount;
+      bucketData[bucket.label].entries += h.entriesCount;
+    }
+  });
+  
+  // Convert to buckets array
+  const buckets = bucketRanges.map(r => {
+    const bd = bucketData[r.label];
+    const avgDwell = bd.count > 0 ? Math.round(bd.dwellSum / bd.count) : 0;
+    const percentDiff = overallAvgDwell > 0 
+      ? Math.round(((avgDwell - overallAvgDwell) / overallAvgDwell) * 100)
+      : 0;
+    
+    return {
+      range: r.label,
+      avgDwellMinutes: avgDwell,
+      sampleCount: bd.entries,
+      percentDiff,
+      isOptimal: false, // Set below
+    };
+  });
+  
+  // Find optimal bucket (highest dwell time with sufficient samples)
+  const minSamples = Math.max(5, hourlyStats.reduce((sum, h) => sum + h.entriesCount, 0) * 0.05);
+  let optimalIdx = -1;
+  let maxDwell = 0;
+  
+  buckets.forEach((b, idx) => {
+    if (b.sampleCount >= minSamples && b.avgDwellMinutes > maxDwell) {
+      maxDwell = b.avgDwellMinutes;
+      optimalIdx = idx;
+    }
+  });
+  
+  if (optimalIdx === -1) {
+    // No bucket has enough samples
+    return null;
+  }
+  
+  buckets[optimalIdx].isOptimal = true;
+  
+  const totalSamples = buckets.reduce((sum, b) => sum + b.sampleCount, 0);
+  const percentImprovement = buckets[optimalIdx].percentDiff;
+  
+  // Determine confidence based on sample size
+  let confidence: 'high' | 'medium' | 'low' = 'low';
+  if (totalSamples >= 200) confidence = 'high';
+  else if (totalSamples >= 50) confidence = 'medium';
+  
+  return {
+    factor,
+    label,
+    unit,
+    buckets: buckets.filter(b => b.sampleCount > 0), // Only show buckets with data
+    overallAvgDwell,
+    optimalRange: buckets[optimalIdx].range,
+    optimalDwell: buckets[optimalIdx].avgDwellMinutes,
+    percentImprovement,
+    totalSamples,
+    confidence,
+  };
 }
 
 export default useInsightsData;

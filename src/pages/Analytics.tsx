@@ -18,6 +18,7 @@ import {
   ActionableInsight,
   generateInsights,
   TimeRangePicker,
+  DwellCorrelation,
   SummaryBreakdownModal,
   SweetSpotModal,
   TrendModal,
@@ -251,6 +252,12 @@ export function Analytics() {
                 )}
               </div>
               
+              {/* Dwell Time Correlations - What keeps guests longer */}
+              <DwellCorrelation 
+                data={insights.dwellCorrelations} 
+                loading={insights.loading} 
+              />
+              
               {/* Deep Dive Prompt */}
               {!insights.loading && (
                 <motion.div
@@ -260,7 +267,7 @@ export function Analytics() {
                   className="text-center pt-4"
                 >
                   <p className="text-sm text-warm-500">
-                    Tap any insight for details
+                    Tap any card for details
                   </p>
                 </motion.div>
               )}

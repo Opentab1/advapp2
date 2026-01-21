@@ -6,6 +6,7 @@
 export { InsightsHero } from './InsightsHero';
 export { ActionableInsight, generateInsights } from './ActionableInsight';
 export { TimeRangePicker } from './TimeRangePicker';
+export { DwellCorrelation } from './DwellCorrelation';
 
 // Legacy components (still used for drill-downs)
 export { InsightsHeader } from './InsightsHeader';
