@@ -9,23 +9,25 @@
  */
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, BarChart2, Music, Settings, Sparkles, Users, LucideIcon } from 'lucide-react';
+import { Zap, BarChart2, Music, Settings, Sparkles, Users, Smartphone, LucideIcon } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 
-export type TabId = 'live' | 'analytics' | 'songs' | 'events' | 'staffing' | 'settings';
+export type TabId = 'live' | 'analytics' | 'songs' | 'events' | 'staffing' | 'leads' | 'settings';
 
 interface Tab {
   id: TabId;
   label: string;
   icon: LucideIcon;
+  beta?: boolean;
 }
 
 const TABS: Tab[] = [
   { id: 'live', label: 'Live', icon: Zap },
-  { id: 'analytics', label: 'Analytics', icon: BarChart2 },
+  { id: 'analytics', label: 'Results', icon: BarChart2 },
   { id: 'songs', label: 'Songs', icon: Music },
   { id: 'events', label: 'Events', icon: Sparkles },
   { id: 'staffing', label: 'Staffing', icon: Users },
+  { id: 'leads', label: 'Leads', icon: Smartphone, beta: true },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -117,6 +119,11 @@ function TabButton({ tab, isActive, onClick, variant = 'mobile' }: TabButtonProp
         
         <Icon className="w-5 h-5 relative z-10 flex-shrink-0" />
         <span className="text-sm font-medium relative z-10">{tab.label}</span>
+        {tab.beta && (
+          <span className="text-[9px] font-bold bg-primary/20 text-primary px-1.5 py-0.5 rounded-full relative z-10">
+            BETA
+          </span>
+        )}
       </motion.button>
     );
   }
@@ -149,6 +156,11 @@ function TabButton({ tab, isActive, onClick, variant = 'mobile' }: TabButtonProp
           />
         )}
       </AnimatePresence>
+      
+      {/* Beta dot indicator */}
+      {tab.beta && (
+        <div className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full z-20" />
+      )}
       
       {/* Icon with bounce on active */}
       <motion.div

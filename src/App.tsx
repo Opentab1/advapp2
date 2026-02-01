@@ -22,6 +22,7 @@ import { Analytics } from './pages/Analytics';
 import { Settings } from './pages/Settings';
 import { SongLog } from './pages/SongLog';
 import { Staffing } from './pages/Staffing';
+import { Leads } from './pages/Leads';
 import Events from './pages/Events';
 
 // Layout
@@ -78,6 +79,9 @@ function ProtectedDashboard() {
         break;
       case 'staffing':
         content = <Staffing />;
+        break;
+      case 'leads':
+        content = <Leads />;
         break;
       case 'settings':
         content = <Settings />;
