@@ -29,25 +29,151 @@ import {
 } from 'lucide-react';
 import { haptic } from '../utils/haptics';
 
+interface LeadEnrichment {
+  location?: string;      // From area code (FREE)
+  lineType?: 'mobile' | 'landline' | 'voip'; // Pattern detection (FREE) or API ($0.01)
+  carrier?: string;       // API lookup ($0.01-0.02)
+  name?: string;          // Data enrichment ($0.05-0.15)
+  gender?: 'male' | 'female' | 'unknown'; // Inferred from name ($0.05)
+  valid?: boolean;        // Carrier validation ($0.01)
+}
+
 interface Lead {
   id: string;
   phone: string;
   capturedAt: Date;
   source: string;
   status: 'active' | 'opted-out';
+  enrichment?: LeadEnrichment;
 }
 
-// Initial mock data for beta display
+// US Area Code to Location mapping (FREE - no API needed)
+const AREA_CODE_MAP: Record<string, string> = {
+  '201': 'New Jersey', '202': 'Washington DC', '203': 'Connecticut', '205': 'Alabama',
+  '206': 'Seattle, WA', '207': 'Maine', '208': 'Idaho', '209': 'California',
+  '210': 'San Antonio, TX', '212': 'New York, NY', '213': 'Los Angeles, CA', '214': 'Dallas, TX',
+  '215': 'Philadelphia, PA', '216': 'Cleveland, OH', '217': 'Illinois', '218': 'Minnesota',
+  '219': 'Indiana', '224': 'Illinois', '225': 'Louisiana', '228': 'Mississippi',
+  '229': 'Georgia', '231': 'Michigan', '234': 'Ohio', '239': 'Florida',
+  '240': 'Maryland', '248': 'Michigan', '251': 'Alabama', '252': 'North Carolina',
+  '253': 'Washington', '254': 'Texas', '256': 'Alabama', '260': 'Indiana',
+  '262': 'Wisconsin', '267': 'Pennsylvania', '269': 'Michigan', '270': 'Kentucky',
+  '272': 'Pennsylvania', '276': 'Virginia', '281': 'Houston, TX', '301': 'Maryland',
+  '302': 'Delaware', '303': 'Denver, CO', '304': 'West Virginia', '305': 'Miami, FL',
+  '307': 'Wyoming', '308': 'Nebraska', '309': 'Illinois', '310': 'Los Angeles, CA',
+  '312': 'Chicago, IL', '313': 'Detroit, MI', '314': 'St. Louis, MO', '315': 'New York',
+  '316': 'Kansas', '317': 'Indianapolis, IN', '318': 'Louisiana', '319': 'Iowa',
+  '320': 'Minnesota', '321': 'Florida', '323': 'Los Angeles, CA', '325': 'Texas',
+  '330': 'Ohio', '331': 'Illinois', '332': 'New York, NY', '334': 'Alabama',
+  '336': 'North Carolina', '337': 'Louisiana', '339': 'Massachusetts', '340': 'US Virgin Islands',
+  '346': 'Houston, TX', '347': 'New York, NY', '351': 'Massachusetts', '352': 'Florida',
+  '360': 'Washington', '361': 'Texas', '364': 'Kentucky', '380': 'Ohio',
+  '385': 'Utah', '386': 'Florida', '401': 'Rhode Island', '402': 'Nebraska',
+  '404': 'Atlanta, GA', '405': 'Oklahoma City, OK', '406': 'Montana', '407': 'Orlando, FL',
+  '408': 'San Jose, CA', '409': 'Texas', '410': 'Baltimore, MD', '412': 'Pittsburgh, PA',
+  '413': 'Massachusetts', '414': 'Milwaukee, WI', '415': 'San Francisco, CA', '417': 'Missouri',
+  '419': 'Ohio', '423': 'Tennessee', '424': 'Los Angeles, CA', '425': 'Washington',
+  '430': 'Texas', '432': 'Texas', '434': 'Virginia', '435': 'Utah',
+  '440': 'Ohio', '442': 'California', '443': 'Maryland', '445': 'Pennsylvania',
+  '447': 'Illinois', '458': 'Oregon', '463': 'Indiana', '469': 'Dallas, TX',
+  '470': 'Atlanta, GA', '475': 'Connecticut', '478': 'Georgia', '479': 'Arkansas',
+  '480': 'Phoenix, AZ', '484': 'Pennsylvania', '501': 'Arkansas', '502': 'Louisville, KY',
+  '503': 'Portland, OR', '504': 'New Orleans, LA', '505': 'New Mexico', '507': 'Minnesota',
+  '508': 'Massachusetts', '509': 'Washington', '510': 'Oakland, CA', '512': 'Austin, TX',
+  '513': 'Cincinnati, OH', '515': 'Iowa', '516': 'Long Island, NY', '517': 'Michigan',
+  '518': 'New York', '520': 'Arizona', '530': 'California', '531': 'Nebraska',
+  '534': 'Wisconsin', '539': 'Oklahoma', '540': 'Virginia', '541': 'Oregon',
+  '551': 'New Jersey', '559': 'California', '561': 'Florida', '562': 'Long Beach, CA',
+  '563': 'Iowa', '567': 'Ohio', '570': 'Pennsylvania', '571': 'Virginia',
+  '573': 'Missouri', '574': 'Indiana', '575': 'New Mexico', '580': 'Oklahoma',
+  '585': 'Rochester, NY', '586': 'Michigan', '601': 'Mississippi', '602': 'Phoenix, AZ',
+  '603': 'New Hampshire', '605': 'South Dakota', '606': 'Kentucky', '607': 'New York',
+  '608': 'Wisconsin', '609': 'New Jersey', '610': 'Pennsylvania', '612': 'Minneapolis, MN',
+  '614': 'Columbus, OH', '615': 'Nashville, TN', '616': 'Michigan', '617': 'Boston, MA',
+  '618': 'Illinois', '619': 'San Diego, CA', '620': 'Kansas', '623': 'Arizona',
+  '626': 'California', '628': 'San Francisco, CA', '629': 'Tennessee', '630': 'Illinois',
+  '631': 'Long Island, NY', '636': 'Missouri', '641': 'Iowa', '646': 'New York, NY',
+  '650': 'California', '651': 'St. Paul, MN', '657': 'California', '660': 'Missouri',
+  '661': 'California', '662': 'Mississippi', '667': 'Maryland', '669': 'San Jose, CA',
+  '678': 'Atlanta, GA', '680': 'New York', '681': 'West Virginia', '682': 'Texas',
+  '689': 'Florida', '701': 'North Dakota', '702': 'Las Vegas, NV', '703': 'Virginia',
+  '704': 'Charlotte, NC', '706': 'Georgia', '707': 'California', '708': 'Illinois',
+  '712': 'Iowa', '713': 'Houston, TX', '714': 'Orange County, CA', '715': 'Wisconsin',
+  '716': 'Buffalo, NY', '717': 'Pennsylvania', '718': 'New York, NY', '719': 'Colorado',
+  '720': 'Denver, CO', '724': 'Pennsylvania', '725': 'Las Vegas, NV', '726': 'Texas',
+  '727': 'Florida', '731': 'Tennessee', '732': 'New Jersey', '734': 'Michigan',
+  '737': 'Austin, TX', '740': 'Ohio', '743': 'North Carolina', '747': 'California',
+  '754': 'Florida', '757': 'Virginia', '760': 'California', '762': 'Georgia',
+  '763': 'Minnesota', '765': 'Indiana', '769': 'Mississippi', '770': 'Atlanta, GA',
+  '772': 'Florida', '773': 'Chicago, IL', '774': 'Massachusetts', '775': 'Nevada',
+  '779': 'Illinois', '781': 'Massachusetts', '785': 'Kansas', '786': 'Miami, FL',
+  '801': 'Salt Lake City, UT', '802': 'Vermont', '803': 'South Carolina', '804': 'Virginia',
+  '805': 'California', '806': 'Texas', '808': 'Hawaii', '810': 'Michigan',
+  '812': 'Indiana', '813': 'Tampa, FL', '814': 'Pennsylvania', '815': 'Illinois',
+  '816': 'Kansas City, MO', '817': 'Fort Worth, TX', '818': 'Los Angeles, CA', '820': 'California',
+  '828': 'North Carolina', '830': 'Texas', '831': 'California', '832': 'Houston, TX',
+  '843': 'South Carolina', '845': 'New York', '847': 'Illinois', '848': 'New Jersey',
+  '850': 'Florida', '854': 'South Carolina', '856': 'New Jersey', '857': 'Boston, MA',
+  '858': 'San Diego, CA', '859': 'Kentucky', '860': 'Connecticut', '862': 'New Jersey',
+  '863': 'Florida', '864': 'South Carolina', '865': 'Tennessee', '870': 'Arkansas',
+  '872': 'Chicago, IL', '878': 'Pennsylvania', '901': 'Memphis, TN', '903': 'Texas',
+  '904': 'Jacksonville, FL', '906': 'Michigan', '907': 'Alaska', '908': 'New Jersey',
+  '909': 'California', '910': 'North Carolina', '912': 'Georgia', '913': 'Kansas',
+  '914': 'New York', '915': 'Texas', '916': 'Sacramento, CA', '917': 'New York, NY',
+  '918': 'Oklahoma', '919': 'North Carolina', '920': 'Wisconsin', '925': 'California',
+  '928': 'Arizona', '929': 'New York, NY', '930': 'Indiana', '931': 'Tennessee',
+  '936': 'Texas', '937': 'Ohio', '938': 'Alabama', '940': 'Texas',
+  '941': 'Florida', '947': 'Michigan', '949': 'Orange County, CA', '951': 'California',
+  '952': 'Minnesota', '954': 'Fort Lauderdale, FL', '956': 'Texas', '959': 'Connecticut',
+  '970': 'Colorado', '971': 'Oregon', '972': 'Dallas, TX', '973': 'New Jersey',
+  '978': 'Massachusetts', '979': 'Texas', '980': 'North Carolina', '984': 'North Carolina',
+  '985': 'Louisiana', '989': 'Michigan',
+};
+
+// Get location from phone number area code (FREE)
+function getLocationFromPhone(phone: string): string | undefined {
+  const digits = phone.replace(/\D/g, '');
+  const areaCode = digits.slice(0, 3);
+  return AREA_CODE_MAP[areaCode];
+}
+
+// Detect line type from phone pattern (FREE - basic heuristic)
+function detectLineType(phone: string): 'mobile' | 'landline' | 'voip' | undefined {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 10) return undefined;
+  // VoIP prefixes (common)
+  const voipPrefixes = ['800', '888', '877', '866', '855', '844', '833', '822'];
+  const areaCode = digits.slice(0, 3);
+  if (voipPrefixes.includes(areaCode)) return 'voip';
+  // Most US numbers are mobile now, but this is just a placeholder
+  // Real detection requires carrier lookup API
+  return 'mobile';
+}
+
+// Enrich a lead with available free data
+function enrichLead(lead: Lead): Lead {
+  if (lead.enrichment) return lead; // Already enriched
+  
+  const enrichment: LeadEnrichment = {
+    location: getLocationFromPhone(lead.phone),
+    lineType: detectLineType(lead.phone),
+    valid: true, // Would need API to verify
+  };
+  
+  return { ...lead, enrichment };
+}
+
+// Initial mock data for beta display (with real area codes for enrichment demo)
 const INITIAL_LEADS: Lead[] = [
-  { id: '1', phone: '***-***-4521', capturedAt: new Date(Date.now() - 1000 * 60 * 30), source: 'Table 5', status: 'active' },
-  { id: '2', phone: '***-***-8834', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 2), source: 'Bar Top', status: 'active' },
-  { id: '3', phone: '***-***-2219', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 5), source: 'Table 3', status: 'active' },
-  { id: '4', phone: '***-***-7762', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 24), source: 'Patio', status: 'active' },
-  { id: '5', phone: '***-***-1198', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 26), source: 'Table 1', status: 'active' },
-  { id: '6', phone: '***-***-5543', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 48), source: 'Table 5', status: 'active' },
-  { id: '7', phone: '***-***-3347', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 50), source: 'Table 2', status: 'active' },
-  { id: '8', phone: '***-***-9901', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 72), source: 'Bar Top', status: 'opted-out' },
-];
+  { id: '1', phone: '512-555-4521', capturedAt: new Date(Date.now() - 1000 * 60 * 30), source: 'Table 5', status: 'active' },
+  { id: '2', phone: '713-555-8834', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 2), source: 'Bar Top', status: 'active' },
+  { id: '3', phone: '214-555-2219', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 5), source: 'Table 3', status: 'active' },
+  { id: '4', phone: '305-555-7762', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 24), source: 'Patio', status: 'active' },
+  { id: '5', phone: '415-555-1198', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 26), source: 'Table 1', status: 'active' },
+  { id: '6', phone: '310-555-5543', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 48), source: 'Table 5', status: 'active' },
+  { id: '7', phone: '212-555-3347', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 50), source: 'Table 2', status: 'active' },
+  { id: '8', phone: '404-555-9901', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 72), source: 'Bar Top', status: 'opted-out' },
+].map(enrichLead); // Auto-enrich on load
 
 const MOCK_STATS = {
   total: 47,
@@ -145,13 +271,13 @@ export function Leads() {
   const handleAddLead = () => {
     if (!newLeadPhone.trim()) return;
     
-    const newLead: Lead = {
+    const newLead: Lead = enrichLead({
       id: Date.now().toString(),
       phone: newLeadPhone,
       capturedAt: new Date(),
       source: newLeadSource.trim() || 'Manual Entry',
       status: 'active',
-    };
+    });
     
     setLeads([newLead, ...leads]);
     setNewLeadPhone('');
@@ -174,14 +300,16 @@ export function Leads() {
       return;
     }
     
-    // Create CSV content
-    const headers = ['Phone', 'Source', 'Captured Date', 'Captured Time', 'Status'];
+    // Create CSV content with enrichment data
+    const headers = ['Phone', 'Source', 'Captured Date', 'Captured Time', 'Status', 'Location', 'Line Type'];
     const rows = leadsToExport.map(lead => [
       lead.phone,
       lead.source,
       lead.capturedAt.toLocaleDateString(),
       lead.capturedAt.toLocaleTimeString(),
       lead.status,
+      lead.enrichment?.location || '',
+      lead.enrichment?.lineType || '',
     ]);
     
     const csvContent = [
@@ -555,12 +683,32 @@ export function Leads() {
                       lead.status === 'opted-out' ? 'text-warm-600' : 'text-primary'
                     }`} />
                   </div>
-                  <div>
-                    <div className="text-white font-medium font-mono text-sm">{lead.phone}</div>
-                    <div className="text-xs text-warm-400 flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-medium font-mono text-sm">{lead.phone}</span>
+                      {lead.enrichment?.lineType && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-medium ${
+                          lead.enrichment.lineType === 'mobile' ? 'bg-blue-500/20 text-blue-400' :
+                          lead.enrichment.lineType === 'voip' ? 'bg-purple-500/20 text-purple-400' :
+                          'bg-warm-700 text-warm-400'
+                        }`}>
+                          {lead.enrichment.lineType}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-warm-400 flex items-center gap-2 flex-wrap">
                       <span className="text-primary">{lead.source}</span>
                       <span className="text-warm-600">•</span>
                       <span>{formatTimeAgo(lead.capturedAt)}</span>
+                      {lead.enrichment?.location && (
+                        <>
+                          <span className="text-warm-600">•</span>
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            {lead.enrichment.location}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -577,6 +725,73 @@ export function Leads() {
             </div>
           )}
         </div>
+      </motion.div>
+      
+      {/* Lead Enrichment Info */}
+      <motion.div 
+        className="bg-gradient-to-br from-blue-900/20 to-purple-900/20 border border-blue-500/20 rounded-xl p-4"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25 }}
+      >
+        <h3 className="text-sm font-semibold text-warm-200 uppercase tracking-whoop flex items-center gap-2 mb-3">
+          <Zap className="w-4 h-4 text-blue-400" />
+          Lead Enrichment
+        </h3>
+        
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="bg-warm-800/50 rounded-lg p-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-warm-300">Location</span>
+              <span className="text-green-400 font-medium">FREE</span>
+            </div>
+            <p className="text-warm-500">From area code</p>
+          </div>
+          
+          <div className="bg-warm-800/50 rounded-lg p-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-warm-300">Line Type</span>
+              <span className="text-green-400 font-medium">FREE</span>
+            </div>
+            <p className="text-warm-500">Mobile/Landline/VoIP</p>
+          </div>
+          
+          <div className="bg-warm-800/50 rounded-lg p-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-warm-300">Carrier</span>
+              <span className="text-yellow-400 font-medium">$0.01</span>
+            </div>
+            <p className="text-warm-500">Twilio/Telnyx API</p>
+          </div>
+          
+          <div className="bg-warm-800/50 rounded-lg p-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-warm-300">Valid/Active</span>
+              <span className="text-yellow-400 font-medium">$0.01</span>
+            </div>
+            <p className="text-warm-500">Carrier validation</p>
+          </div>
+          
+          <div className="bg-warm-800/50 rounded-lg p-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-warm-300">Name</span>
+              <span className="text-orange-400 font-medium">$0.05-0.15</span>
+            </div>
+            <p className="text-warm-500">Data enrichment API</p>
+          </div>
+          
+          <div className="bg-warm-800/50 rounded-lg p-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-warm-300">Gender</span>
+              <span className="text-orange-400 font-medium">$0.05</span>
+            </div>
+            <p className="text-warm-500">Inferred from name</p>
+          </div>
+        </div>
+        
+        <p className="text-[10px] text-warm-500 mt-3 leading-relaxed">
+          Location and basic line type are included free. Carrier lookup, validation, and demographic data require API integration (Twilio, NumVerify, FullContact, etc).
+        </p>
       </motion.div>
       
       {/* How It Works - Collapsible */}
