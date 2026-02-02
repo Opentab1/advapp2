@@ -31,11 +31,9 @@ import { haptic } from '../utils/haptics';
 
 interface LeadEnrichment {
   location?: string;      // From area code (FREE)
-  lineType?: 'mobile' | 'landline' | 'voip'; // Pattern detection (FREE) or API ($0.01)
-  carrier?: string;       // API lookup ($0.01-0.02)
-  name?: string;          // Data enrichment ($0.05-0.15)
-  gender?: 'male' | 'female' | 'unknown'; // Inferred from name ($0.05)
-  valid?: boolean;        // Carrier validation ($0.01)
+  lineType?: 'mobile' | 'landline' | 'tollfree'; // Pattern detection (FREE)
+  timezone?: string;      // From area code (FREE)
+  region?: string;        // State/region (FREE)
 }
 
 interface Lead {
@@ -130,6 +128,60 @@ const AREA_CODE_MAP: Record<string, string> = {
   '985': 'Louisiana', '989': 'Michigan',
 };
 
+// Timezone mapping by state/region (FREE)
+const STATE_TIMEZONE_MAP: Record<string, string> = {
+  // Eastern Time
+  'New York': 'ET', 'New Jersey': 'ET', 'Pennsylvania': 'ET', 'Connecticut': 'ET',
+  'Massachusetts': 'ET', 'Rhode Island': 'ET', 'Vermont': 'ET', 'New Hampshire': 'ET',
+  'Maine': 'ET', 'Delaware': 'ET', 'Maryland': 'ET', 'Virginia': 'ET',
+  'West Virginia': 'ET', 'North Carolina': 'ET', 'South Carolina': 'ET',
+  'Georgia': 'ET', 'Florida': 'ET', 'Ohio': 'ET', 'Michigan': 'ET',
+  'Indiana': 'ET', 'Kentucky': 'ET', 'Washington DC': 'ET',
+  // Central Time
+  'Illinois': 'CT', 'Wisconsin': 'CT', 'Minnesota': 'CT', 'Iowa': 'CT',
+  'Missouri': 'CT', 'Arkansas': 'CT', 'Louisiana': 'CT', 'Mississippi': 'CT',
+  'Alabama': 'CT', 'Tennessee': 'CT', 'Oklahoma': 'CT', 'Texas': 'CT',
+  'Kansas': 'CT', 'Nebraska': 'CT', 'South Dakota': 'CT', 'North Dakota': 'CT',
+  // Mountain Time
+  'Montana': 'MT', 'Wyoming': 'MT', 'Colorado': 'MT', 'New Mexico': 'MT',
+  'Utah': 'MT', 'Arizona': 'MT', 'Idaho': 'MT',
+  // Pacific Time
+  'Washington': 'PT', 'Oregon': 'PT', 'California': 'PT', 'Nevada': 'PT',
+  // Other
+  'Alaska': 'AKT', 'Hawaii': 'HT',
+};
+
+// Extract state from location string
+function getStateFromLocation(location: string): string {
+  // Check if location contains a state name
+  for (const state of Object.keys(STATE_TIMEZONE_MAP)) {
+    if (location.includes(state)) return state;
+  }
+  // Check for state abbreviations in city, STATE format
+  const parts = location.split(', ');
+  if (parts.length > 1) {
+    const stateAbbr = parts[parts.length - 1];
+    const stateMap: Record<string, string> = {
+      'NY': 'New York', 'NJ': 'New Jersey', 'PA': 'Pennsylvania', 'CT': 'Connecticut',
+      'MA': 'Massachusetts', 'RI': 'Rhode Island', 'VT': 'Vermont', 'NH': 'New Hampshire',
+      'ME': 'Maine', 'DE': 'Delaware', 'MD': 'Maryland', 'VA': 'Virginia',
+      'WV': 'West Virginia', 'NC': 'North Carolina', 'SC': 'South Carolina',
+      'GA': 'Georgia', 'FL': 'Florida', 'OH': 'Ohio', 'MI': 'Michigan',
+      'IN': 'Indiana', 'KY': 'Kentucky', 'DC': 'Washington DC',
+      'IL': 'Illinois', 'WI': 'Wisconsin', 'MN': 'Minnesota', 'IA': 'Iowa',
+      'MO': 'Missouri', 'AR': 'Arkansas', 'LA': 'Louisiana', 'MS': 'Mississippi',
+      'AL': 'Alabama', 'TN': 'Tennessee', 'OK': 'Oklahoma', 'TX': 'Texas',
+      'KS': 'Kansas', 'NE': 'Nebraska', 'SD': 'South Dakota', 'ND': 'North Dakota',
+      'MT': 'Montana', 'WY': 'Wyoming', 'CO': 'Colorado', 'NM': 'New Mexico',
+      'UT': 'Utah', 'AZ': 'Arizona', 'ID': 'Idaho',
+      'WA': 'Washington', 'OR': 'Oregon', 'CA': 'California', 'NV': 'Nevada',
+      'AK': 'Alaska', 'HI': 'Hawaii',
+    };
+    if (stateMap[stateAbbr]) return stateMap[stateAbbr];
+  }
+  return location;
+}
+
 // Get location from phone number area code (FREE)
 function getLocationFromPhone(phone: string): string | undefined {
   const digits = phone.replace(/\D/g, '');
@@ -137,16 +189,22 @@ function getLocationFromPhone(phone: string): string | undefined {
   return AREA_CODE_MAP[areaCode];
 }
 
-// Detect line type from phone pattern (FREE - basic heuristic)
-function detectLineType(phone: string): 'mobile' | 'landline' | 'voip' | undefined {
+// Get timezone from location (FREE)
+function getTimezoneFromLocation(location: string | undefined): string | undefined {
+  if (!location) return undefined;
+  const state = getStateFromLocation(location);
+  return STATE_TIMEZONE_MAP[state];
+}
+
+// Detect line type from phone pattern (FREE)
+function detectLineType(phone: string): 'mobile' | 'landline' | 'tollfree' | undefined {
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 10) return undefined;
-  // VoIP prefixes (common)
-  const voipPrefixes = ['800', '888', '877', '866', '855', '844', '833', '822'];
+  // Toll-free prefixes
+  const tollFreePrefixes = ['800', '888', '877', '866', '855', '844', '833', '822'];
   const areaCode = digits.slice(0, 3);
-  if (voipPrefixes.includes(areaCode)) return 'voip';
-  // Most US numbers are mobile now, but this is just a placeholder
-  // Real detection requires carrier lookup API
+  if (tollFreePrefixes.includes(areaCode)) return 'tollfree';
+  // Default to mobile (most common nowadays)
   return 'mobile';
 }
 
@@ -154,10 +212,14 @@ function detectLineType(phone: string): 'mobile' | 'landline' | 'voip' | undefin
 function enrichLead(lead: Lead): Lead {
   if (lead.enrichment) return lead; // Already enriched
   
+  const location = getLocationFromPhone(lead.phone);
+  const state = location ? getStateFromLocation(location) : undefined;
+  
   const enrichment: LeadEnrichment = {
-    location: getLocationFromPhone(lead.phone),
+    location,
     lineType: detectLineType(lead.phone),
-    valid: true, // Would need API to verify
+    timezone: getTimezoneFromLocation(location),
+    region: state,
   };
   
   return { ...lead, enrichment };
@@ -301,7 +363,7 @@ export function Leads() {
     }
     
     // Create CSV content with enrichment data
-    const headers = ['Phone', 'Source', 'Captured Date', 'Captured Time', 'Status', 'Location', 'Line Type'];
+    const headers = ['Phone', 'Source', 'Captured Date', 'Captured Time', 'Status', 'Location', 'Region', 'Timezone', 'Line Type'];
     const rows = leadsToExport.map(lead => [
       lead.phone,
       lead.source,
@@ -309,6 +371,8 @@ export function Leads() {
       lead.capturedAt.toLocaleTimeString(),
       lead.status,
       lead.enrichment?.location || '',
+      lead.enrichment?.region || '',
+      lead.enrichment?.timezone || '',
       lead.enrichment?.lineType || '',
     ]);
     
@@ -684,15 +748,20 @@ export function Leads() {
                     }`} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-white font-medium font-mono text-sm">{lead.phone}</span>
                       {lead.enrichment?.lineType && (
                         <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-medium ${
                           lead.enrichment.lineType === 'mobile' ? 'bg-blue-500/20 text-blue-400' :
-                          lead.enrichment.lineType === 'voip' ? 'bg-purple-500/20 text-purple-400' :
+                          lead.enrichment.lineType === 'tollfree' ? 'bg-green-500/20 text-green-400' :
                           'bg-warm-700 text-warm-400'
                         }`}>
-                          {lead.enrichment.lineType}
+                          {lead.enrichment.lineType === 'tollfree' ? 'Toll-Free' : lead.enrichment.lineType}
+                        </span>
+                      )}
+                      {lead.enrichment?.timezone && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 font-medium">
+                          {lead.enrichment.timezone}
                         </span>
                       )}
                     </div>
@@ -727,70 +796,43 @@ export function Leads() {
         </div>
       </motion.div>
       
-      {/* Lead Enrichment Info */}
+      {/* Lead Enrichment Info - All Free */}
       <motion.div 
-        className="bg-gradient-to-br from-blue-900/20 to-purple-900/20 border border-blue-500/20 rounded-xl p-4"
+        className="bg-gradient-to-br from-green-900/20 to-emerald-900/20 border border-green-500/20 rounded-xl p-4"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.25 }}
       >
-        <h3 className="text-sm font-semibold text-warm-200 uppercase tracking-whoop flex items-center gap-2 mb-3">
-          <Zap className="w-4 h-4 text-blue-400" />
-          Lead Enrichment
-        </h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-warm-200 uppercase tracking-whoop flex items-center gap-2">
+            <Zap className="w-4 h-4 text-green-400" />
+            Auto-Enrichment
+          </h3>
+          <span className="text-[10px] font-bold text-green-400 bg-green-500/20 px-2 py-0.5 rounded-full">100% FREE</span>
+        </div>
         
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="bg-warm-800/50 rounded-lg p-2.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-warm-300">Location</span>
-              <span className="text-green-400 font-medium">FREE</span>
-            </div>
-            <p className="text-warm-500">From area code</p>
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <div className="bg-warm-800/50 rounded-lg p-2.5 text-center">
+            <MapPin className="w-4 h-4 text-green-400 mx-auto mb-1" />
+            <span className="text-warm-300 block">Location</span>
+            <span className="text-warm-500 text-[10px]">City/State</span>
           </div>
           
-          <div className="bg-warm-800/50 rounded-lg p-2.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-warm-300">Line Type</span>
-              <span className="text-green-400 font-medium">FREE</span>
-            </div>
-            <p className="text-warm-500">Mobile/Landline/VoIP</p>
+          <div className="bg-warm-800/50 rounded-lg p-2.5 text-center">
+            <Smartphone className="w-4 h-4 text-blue-400 mx-auto mb-1" />
+            <span className="text-warm-300 block">Line Type</span>
+            <span className="text-warm-500 text-[10px]">Mobile/Toll-Free</span>
           </div>
           
-          <div className="bg-warm-800/50 rounded-lg p-2.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-warm-300">Carrier</span>
-              <span className="text-yellow-400 font-medium">$0.01</span>
-            </div>
-            <p className="text-warm-500">Twilio/Telnyx API</p>
-          </div>
-          
-          <div className="bg-warm-800/50 rounded-lg p-2.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-warm-300">Valid/Active</span>
-              <span className="text-yellow-400 font-medium">$0.01</span>
-            </div>
-            <p className="text-warm-500">Carrier validation</p>
-          </div>
-          
-          <div className="bg-warm-800/50 rounded-lg p-2.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-warm-300">Name</span>
-              <span className="text-orange-400 font-medium">$0.05-0.15</span>
-            </div>
-            <p className="text-warm-500">Data enrichment API</p>
-          </div>
-          
-          <div className="bg-warm-800/50 rounded-lg p-2.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-warm-300">Gender</span>
-              <span className="text-orange-400 font-medium">$0.05</span>
-            </div>
-            <p className="text-warm-500">Inferred from name</p>
+          <div className="bg-warm-800/50 rounded-lg p-2.5 text-center">
+            <Users className="w-4 h-4 text-purple-400 mx-auto mb-1" />
+            <span className="text-warm-300 block">Time Zone</span>
+            <span className="text-warm-500 text-[10px]">From area code</span>
           </div>
         </div>
         
         <p className="text-[10px] text-warm-500 mt-3 leading-relaxed">
-          Location and basic line type are included free. Carrier lookup, validation, and demographic data require API integration (Twilio, NumVerify, FullContact, etc).
+          All enrichment is automatic and free. Data is derived from the phone number pattern - no external APIs required.
         </p>
       </motion.div>
       
