@@ -23,19 +23,30 @@ import {
   HelpCircle,
   ExternalLink,
   Filter,
+  Plus,
+  FileDown,
+  Check,
 } from 'lucide-react';
 import { haptic } from '../utils/haptics';
 
-// Mock data for beta display
-const MOCK_LEADS = [
-  { id: '1', phone: '***-***-4521', capturedAt: new Date(Date.now() - 1000 * 60 * 30), source: 'Table 5', status: 'active' as const },
-  { id: '2', phone: '***-***-8834', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 2), source: 'Bar Top', status: 'active' as const },
-  { id: '3', phone: '***-***-2219', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 5), source: 'Table 3', status: 'active' as const },
-  { id: '4', phone: '***-***-7762', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 24), source: 'Patio', status: 'active' as const },
-  { id: '5', phone: '***-***-1198', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 26), source: 'Table 1', status: 'active' as const },
-  { id: '6', phone: '***-***-5543', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 48), source: 'Table 5', status: 'active' as const },
-  { id: '7', phone: '***-***-3347', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 50), source: 'Table 2', status: 'active' as const },
-  { id: '8', phone: '***-***-9901', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 72), source: 'Bar Top', status: 'opted-out' as const },
+interface Lead {
+  id: string;
+  phone: string;
+  capturedAt: Date;
+  source: string;
+  status: 'active' | 'opted-out';
+}
+
+// Initial mock data for beta display
+const INITIAL_LEADS: Lead[] = [
+  { id: '1', phone: '***-***-4521', capturedAt: new Date(Date.now() - 1000 * 60 * 30), source: 'Table 5', status: 'active' },
+  { id: '2', phone: '***-***-8834', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 2), source: 'Bar Top', status: 'active' },
+  { id: '3', phone: '***-***-2219', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 5), source: 'Table 3', status: 'active' },
+  { id: '4', phone: '***-***-7762', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 24), source: 'Patio', status: 'active' },
+  { id: '5', phone: '***-***-1198', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 26), source: 'Table 1', status: 'active' },
+  { id: '6', phone: '***-***-5543', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 48), source: 'Table 5', status: 'active' },
+  { id: '7', phone: '***-***-3347', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 50), source: 'Table 2', status: 'active' },
+  { id: '8', phone: '***-***-9901', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 72), source: 'Bar Top', status: 'opted-out' },
 ];
 
 const MOCK_STATS = {
@@ -73,6 +84,12 @@ export function Leads() {
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [leads, setLeads] = useState<Lead[]>(INITIAL_LEADS);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newLeadPhone, setNewLeadPhone] = useState('');
+  const [newLeadSource, setNewLeadSource] = useState('');
+  const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
+  const [selectAll, setSelectAll] = useState(false);
   
   const weekDelta = MOCK_STATS.lastWeek > 0 
     ? Math.round(((MOCK_STATS.thisWeek - MOCK_STATS.lastWeek) / MOCK_STATS.lastWeek) * 100)
@@ -82,10 +99,10 @@ export function Leads() {
     ? Math.round((MOCK_STATS.total / MOCK_STATS.estimatedVisitors) * 100)
     : 0;
   
-  const activeLeads = MOCK_LEADS.filter(l => l.status === 'active');
+  const activeLeads = leads.filter(l => l.status === 'active');
   
   // Filter leads
-  const filteredLeads = MOCK_LEADS.filter(lead => {
+  const filteredLeads = leads.filter(lead => {
     if (sourceFilter && lead.source !== sourceFilter) return false;
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -94,10 +111,96 @@ export function Leads() {
     return true;
   });
   
+  // Handle select all toggle
+  const handleSelectAll = () => {
+    if (selectAll) {
+      setSelectedLeads(new Set());
+    } else {
+      setSelectedLeads(new Set(filteredLeads.map(l => l.id)));
+    }
+    setSelectAll(!selectAll);
+  };
+  
+  // Handle individual lead selection
+  const handleSelectLead = (id: string) => {
+    const newSelected = new Set(selectedLeads);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedLeads(newSelected);
+    setSelectAll(newSelected.size === filteredLeads.length);
+  };
+  
+  // Format phone number as user types
+  const formatPhoneInput = (value: string) => {
+    const digits = value.replace(/\D/g, '');
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+    return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+  };
+  
+  // Add new lead
+  const handleAddLead = () => {
+    if (!newLeadPhone.trim()) return;
+    
+    const newLead: Lead = {
+      id: Date.now().toString(),
+      phone: newLeadPhone,
+      capturedAt: new Date(),
+      source: newLeadSource.trim() || 'Manual Entry',
+      status: 'active',
+    };
+    
+    setLeads([newLead, ...leads]);
+    setNewLeadPhone('');
+    setNewLeadSource('');
+    setShowAddModal(false);
+    haptic('success');
+  };
+  
+  // Export leads to CSV
   const handleExport = () => {
     haptic('medium');
-    // Mock export - would download CSV in real implementation
-    alert('Export feature coming soon!');
+    
+    // Get leads to export (selected or all filtered)
+    const leadsToExport = selectedLeads.size > 0 
+      ? filteredLeads.filter(l => selectedLeads.has(l.id))
+      : filteredLeads;
+    
+    if (leadsToExport.length === 0) {
+      alert('No leads to export');
+      return;
+    }
+    
+    // Create CSV content
+    const headers = ['Phone', 'Source', 'Captured Date', 'Captured Time', 'Status'];
+    const rows = leadsToExport.map(lead => [
+      lead.phone,
+      lead.source,
+      lead.capturedAt.toLocaleDateString(),
+      lead.capturedAt.toLocaleTimeString(),
+      lead.status,
+    ]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+    
+    // Create and download file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `leads-export-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    haptic('success');
   };
 
   return (
@@ -114,21 +217,102 @@ export function Leads() {
         
         <div className="flex items-center gap-2">
           <motion.button
-            onClick={() => { haptic('light'); setShowHowItWorks(!showHowItWorks); }}
-            className="p-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-400 hover:text-white transition-colors"
+            onClick={() => { haptic('light'); setShowAddModal(true); }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors"
             whileTap={{ scale: 0.95 }}
           >
-            <HelpCircle className="w-4 h-4" />
+            <Plus className="w-4 h-4" />
+            Add
           </motion.button>
           <motion.button
             onClick={handleExport}
-            className="p-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-400 hover:text-white transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-300 text-sm font-medium hover:text-white transition-colors"
             whileTap={{ scale: 0.95 }}
+            title={selectedLeads.size > 0 ? `Export ${selectedLeads.size} selected` : 'Export all'}
           >
-            <Download className="w-4 h-4" />
+            <FileDown className="w-4 h-4" />
+            {selectedLeads.size > 0 ? `(${selectedLeads.size})` : ''}
           </motion.button>
         </div>
       </div>
+      
+      {/* Add Lead Modal */}
+      <AnimatePresence>
+        {showAddModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowAddModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-warm-900 border border-warm-700 rounded-2xl p-6 w-full max-w-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Plus className="w-5 h-5 text-primary" />
+                  Add Lead
+                </h2>
+                <button
+                  onClick={() => setShowAddModal(false)}
+                  className="text-warm-500 hover:text-white p-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-warm-400 mb-2">Phone Number *</label>
+                  <input
+                    type="tel"
+                    placeholder="555-123-4567"
+                    value={newLeadPhone}
+                    onChange={(e) => setNewLeadPhone(formatPhoneInput(e.target.value))}
+                    className="w-full px-4 py-3 bg-warm-800 border border-warm-700 rounded-xl text-white placeholder-warm-500 focus:outline-none focus:border-primary/50 font-mono"
+                    autoFocus
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm text-warm-400 mb-2">Source / Location</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Walk-in, Referral, Event..."
+                    value={newLeadSource}
+                    onChange={(e) => setNewLeadSource(e.target.value)}
+                    className="w-full px-4 py-3 bg-warm-800 border border-warm-700 rounded-xl text-white placeholder-warm-500 focus:outline-none focus:border-primary/50"
+                  />
+                  <p className="text-xs text-warm-500 mt-1">Optional - defaults to "Manual Entry"</p>
+                </div>
+                
+                <div className="flex gap-3 pt-2">
+                  <motion.button
+                    onClick={() => setShowAddModal(false)}
+                    className="flex-1 py-3 rounded-xl bg-warm-800 border border-warm-700 text-warm-300 font-medium hover:text-white transition-colors"
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    Cancel
+                  </motion.button>
+                  <motion.button
+                    onClick={handleAddLead}
+                    disabled={!newLeadPhone.trim()}
+                    className="flex-1 py-3 rounded-xl bg-primary text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    Add Lead
+                  </motion.button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       
       {/* Compact Beta Banner */}
       <AnimatePresence>
@@ -292,10 +476,26 @@ export function Leads() {
         {/* Header with search */}
         <div className="p-4 border-b border-whoop-divider space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-warm-200 uppercase tracking-whoop flex items-center gap-2">
-              <Smartphone className="w-4 h-4 text-primary" />
-              Recent Leads
-            </h3>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSelectAll}
+                className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                  selectAll 
+                    ? 'bg-primary border-primary' 
+                    : selectedLeads.size > 0 
+                      ? 'bg-primary/30 border-primary/50'
+                      : 'border-warm-600 hover:border-warm-500'
+                }`}
+              >
+                {(selectAll || selectedLeads.size > 0) && (
+                  <Check className="w-3 h-3 text-white" />
+                )}
+              </button>
+              <h3 className="text-sm font-semibold text-warm-200 uppercase tracking-whoop flex items-center gap-2">
+                <Smartphone className="w-4 h-4 text-primary" />
+                {selectedLeads.size > 0 ? `${selectedLeads.size} Selected` : 'Recent Leads'}
+              </h3>
+            </div>
             <span className="text-xs text-warm-500">
               {activeLeads.length} active
             </span>
@@ -333,9 +533,21 @@ export function Leads() {
                 transition={{ delay: idx * 0.03 }}
                 className={`p-4 flex items-center justify-between ${
                   lead.status === 'opted-out' ? 'opacity-40' : ''
-                }`}
+                } ${selectedLeads.has(lead.id) ? 'bg-primary/5' : ''}`}
               >
                 <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => handleSelectLead(lead.id)}
+                    className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                      selectedLeads.has(lead.id) 
+                        ? 'bg-primary border-primary' 
+                        : 'border-warm-600 hover:border-warm-500'
+                    }`}
+                  >
+                    {selectedLeads.has(lead.id) && (
+                      <Check className="w-3 h-3 text-white" />
+                    )}
+                  </button>
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                     lead.status === 'opted-out' ? 'bg-warm-800' : 'bg-primary/10'
                   }`}>
