@@ -26,7 +26,12 @@ import {
   Plus,
   FileDown,
   Check,
+  Upload,
+  FileText,
+  AlertCircle,
+  CheckCircle,
 } from 'lucide-react';
+import { useRef } from 'react';
 import { haptic } from '../utils/haptics';
 
 interface LeadEnrichment {
@@ -279,6 +284,13 @@ export function Leads() {
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
   
+  // Bulk upload state
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState(false);
+  const [bulkUploadPreview, setBulkUploadPreview] = useState<Lead[]>([]);
+  const [bulkUploadErrors, setBulkUploadErrors] = useState<string[]>([]);
+  const [bulkUploadSuccess, setBulkUploadSuccess] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const weekDelta = MOCK_STATS.lastWeek > 0 
     ? Math.round(((MOCK_STATS.thisWeek - MOCK_STATS.lastWeek) / MOCK_STATS.lastWeek) * 100)
     : 0;
@@ -394,6 +406,125 @@ export function Leads() {
     
     haptic('success');
   };
+  
+  // Parse phone number from various formats
+  const parsePhoneNumber = (input: string): string | null => {
+    // Remove all non-digit characters
+    const digits = input.replace(/\D/g, '');
+    
+    // Handle different formats
+    if (digits.length === 10) {
+      // Standard US: 5551234567 -> 555-123-4567
+      return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+    } else if (digits.length === 11 && digits.startsWith('1')) {
+      // With country code: 15551234567 -> 555-123-4567
+      return `${digits.slice(1, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}`;
+    }
+    
+    return null; // Invalid format
+  };
+  
+  // Handle CSV file upload
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      processCSV(text);
+    };
+    reader.readAsText(file);
+    
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+  
+  // Process CSV content
+  const processCSV = (csvText: string) => {
+    const lines = csvText.split(/\r?\n/).filter(line => line.trim());
+    const errors: string[] = [];
+    const parsedLeads: Lead[] = [];
+    
+    // Check if first line is a header
+    const firstLine = lines[0]?.toLowerCase() || '';
+    const hasHeader = firstLine.includes('phone') || firstLine.includes('number') || firstLine.includes('mobile');
+    const startIndex = hasHeader ? 1 : 0;
+    
+    for (let i = startIndex; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      
+      // Split by comma, tab, or semicolon
+      const parts = line.split(/[,;\t]/).map(p => p.trim().replace(/^["']|["']$/g, ''));
+      
+      // First column should be phone number
+      const rawPhone = parts[0];
+      const phone = parsePhoneNumber(rawPhone);
+      
+      if (!phone) {
+        errors.push(`Row ${i + 1}: Invalid phone format "${rawPhone}"`);
+        continue;
+      }
+      
+      // Check for duplicates in current batch
+      if (parsedLeads.some(l => l.phone === phone)) {
+        errors.push(`Row ${i + 1}: Duplicate phone "${phone}"`);
+        continue;
+      }
+      
+      // Check for duplicates in existing leads
+      if (leads.some(l => l.phone === phone)) {
+        errors.push(`Row ${i + 1}: Phone "${phone}" already exists`);
+        continue;
+      }
+      
+      // Second column is optional source
+      const source = parts[1] || 'Bulk Import';
+      
+      const newLead = enrichLead({
+        id: `bulk-${Date.now()}-${i}`,
+        phone,
+        capturedAt: new Date(),
+        source,
+        status: 'active',
+      });
+      
+      parsedLeads.push(newLead);
+    }
+    
+    setBulkUploadPreview(parsedLeads);
+    setBulkUploadErrors(errors);
+    setBulkUploadSuccess(false);
+    setShowBulkUploadModal(true);
+  };
+  
+  // Confirm bulk upload
+  const confirmBulkUpload = () => {
+    if (bulkUploadPreview.length === 0) return;
+    
+    setLeads([...bulkUploadPreview, ...leads]);
+    setBulkUploadSuccess(true);
+    haptic('success');
+    
+    // Close modal after brief delay to show success
+    setTimeout(() => {
+      setShowBulkUploadModal(false);
+      setBulkUploadPreview([]);
+      setBulkUploadErrors([]);
+      setBulkUploadSuccess(false);
+    }, 1500);
+  };
+  
+  // Cancel bulk upload
+  const cancelBulkUpload = () => {
+    setShowBulkUploadModal(false);
+    setBulkUploadPreview([]);
+    setBulkUploadErrors([]);
+    setBulkUploadSuccess(false);
+  };
 
   return (
     <div className="space-y-4 pb-24">
@@ -408,6 +539,15 @@ export function Leads() {
         </div>
         
         <div className="flex items-center gap-2">
+          {/* Hidden file input for bulk upload */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.txt"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          
           <motion.button
             onClick={() => { haptic('light'); setShowAddModal(true); }}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors"
@@ -415,6 +555,15 @@ export function Leads() {
           >
             <Plus className="w-4 h-4" />
             Add
+          </motion.button>
+          <motion.button
+            onClick={() => { haptic('light'); fileInputRef.current?.click(); }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-300 text-sm font-medium hover:text-white transition-colors"
+            whileTap={{ scale: 0.95 }}
+            title="Bulk import from CSV"
+          >
+            <Upload className="w-4 h-4" />
+            Import
           </motion.button>
           <motion.button
             onClick={handleExport}
@@ -501,6 +650,180 @@ export function Leads() {
                   </motion.button>
                 </div>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
+      {/* Bulk Upload Modal */}
+      <AnimatePresence>
+        {showBulkUploadModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={cancelBulkUpload}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-warm-900 border border-warm-700 rounded-2xl p-6 w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-primary" />
+                  Bulk Import
+                </h2>
+                <button
+                  onClick={cancelBulkUpload}
+                  className="text-warm-500 hover:text-white p-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              {/* Success State */}
+              {bulkUploadSuccess ? (
+                <motion.div 
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="flex flex-col items-center justify-center py-12"
+                >
+                  <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
+                    <CheckCircle className="w-8 h-8 text-green-400" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white mb-2">Import Complete!</h3>
+                  <p className="text-warm-400">{bulkUploadPreview.length} leads added successfully</p>
+                </motion.div>
+              ) : (
+                <>
+                  {/* Stats Summary */}
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 text-center">
+                      <div className="text-3xl font-bold text-green-400 mb-1">
+                        {bulkUploadPreview.length}
+                      </div>
+                      <div className="text-xs text-warm-400 uppercase tracking-wide">Ready to Import</div>
+                    </div>
+                    <div className={`rounded-xl p-4 text-center ${
+                      bulkUploadErrors.length > 0 
+                        ? 'bg-red-500/10 border border-red-500/20' 
+                        : 'bg-warm-800/50 border border-warm-700'
+                    }`}>
+                      <div className={`text-3xl font-bold mb-1 ${
+                        bulkUploadErrors.length > 0 ? 'text-red-400' : 'text-warm-500'
+                      }`}>
+                        {bulkUploadErrors.length}
+                      </div>
+                      <div className="text-xs text-warm-400 uppercase tracking-wide">Skipped</div>
+                    </div>
+                  </div>
+                  
+                  {/* Preview List */}
+                  {bulkUploadPreview.length > 0 && (
+                    <div className="flex-1 overflow-hidden mb-4">
+                      <h4 className="text-sm text-warm-400 mb-2 flex items-center gap-2">
+                        <FileText className="w-4 h-4" />
+                        Preview (showing first 10)
+                      </h4>
+                      <div className="bg-warm-800/50 rounded-xl border border-warm-700 max-h-40 overflow-y-auto">
+                        {bulkUploadPreview.slice(0, 10).map((lead, idx) => (
+                          <div 
+                            key={lead.id}
+                            className="flex items-center justify-between px-3 py-2 border-b border-warm-700 last:border-b-0"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-warm-500 text-xs w-6">{idx + 1}</span>
+                              <span className="text-white font-mono text-sm">{lead.phone}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs">
+                              {lead.enrichment?.location && (
+                                <span className="text-warm-400">{lead.enrichment.location}</span>
+                              )}
+                              {lead.enrichment?.timezone && (
+                                <span className="text-purple-400 bg-purple-500/20 px-1.5 py-0.5 rounded">
+                                  {lead.enrichment.timezone}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {bulkUploadPreview.length > 10 && (
+                          <div className="px-3 py-2 text-center text-warm-500 text-xs">
+                            + {bulkUploadPreview.length - 10} more leads
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Errors */}
+                  {bulkUploadErrors.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="text-sm text-red-400 mb-2 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4" />
+                        Skipped Rows
+                      </h4>
+                      <div className="bg-red-500/10 rounded-xl border border-red-500/20 max-h-24 overflow-y-auto p-3">
+                        {bulkUploadErrors.slice(0, 5).map((error, idx) => (
+                          <div key={idx} className="text-xs text-red-300 py-0.5">
+                            {error}
+                          </div>
+                        ))}
+                        {bulkUploadErrors.length > 5 && (
+                          <div className="text-xs text-red-400 pt-1">
+                            + {bulkUploadErrors.length - 5} more errors
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Enrichment Info */}
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 mb-4">
+                    <div className="flex items-center gap-2 text-xs text-green-400">
+                      <Zap className="w-4 h-4" />
+                      <span className="font-medium">100% Auto-Enriched</span>
+                    </div>
+                    <p className="text-[10px] text-warm-400 mt-1">
+                      All leads will have location, timezone, and line type added automatically.
+                    </p>
+                  </div>
+                  
+                  {/* Actions */}
+                  <div className="flex gap-3">
+                    <motion.button
+                      onClick={cancelBulkUpload}
+                      className="flex-1 py-3 rounded-xl bg-warm-800 border border-warm-700 text-warm-300 font-medium hover:text-white transition-colors"
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      Cancel
+                    </motion.button>
+                    <motion.button
+                      onClick={confirmBulkUpload}
+                      disabled={bulkUploadPreview.length === 0}
+                      className="flex-1 py-3 rounded-xl bg-primary text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      Import {bulkUploadPreview.length} Leads
+                    </motion.button>
+                  </div>
+                </>
+              )}
+              
+              {/* Format Help */}
+              {!bulkUploadSuccess && bulkUploadPreview.length === 0 && bulkUploadErrors.length === 0 && (
+                <div className="text-center py-8">
+                  <FileText className="w-12 h-12 text-warm-600 mx-auto mb-3" />
+                  <p className="text-warm-400 text-sm mb-2">Drop a CSV file or click Import</p>
+                  <p className="text-warm-500 text-xs">Format: phone number per line, optional source column</p>
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}
