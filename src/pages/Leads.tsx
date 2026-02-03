@@ -1,11 +1,12 @@
 /**
- * Leads Page - NFC Lead Capture Dashboard (BETA)
+ * Leads Page - NFC Lead Capture Dashboard
  * 
  * Premium UI for lead capture via NFC tags.
  * Shows stats, lead list, location breakdown.
+ * Fetches real data from VenueLeads API.
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Users, 
@@ -30,9 +31,13 @@ import {
   FileText,
   AlertCircle,
   CheckCircle,
+  RefreshCw,
 } from 'lucide-react';
-import { useRef } from 'react';
 import { haptic } from '../utils/haptics';
+import authService from '../services/auth.service';
+
+// API endpoint for fetching leads
+const LEADS_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
 
 interface LeadEnrichment {
   location?: string;      // From area code (FREE)
@@ -230,31 +235,20 @@ function enrichLead(lead: Lead): Lead {
   return { ...lead, enrichment };
 }
 
-// Initial mock data for beta display (with real area codes for enrichment demo)
-const INITIAL_LEADS: Lead[] = [
-  { id: '1', phone: '512-555-4521', capturedAt: new Date(Date.now() - 1000 * 60 * 30), source: 'Table 5', status: 'active' },
-  { id: '2', phone: '713-555-8834', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 2), source: 'Bar Top', status: 'active' },
-  { id: '3', phone: '214-555-2219', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 5), source: 'Table 3', status: 'active' },
-  { id: '4', phone: '305-555-7762', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 24), source: 'Patio', status: 'active' },
-  { id: '5', phone: '415-555-1198', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 26), source: 'Table 1', status: 'active' },
-  { id: '6', phone: '310-555-5543', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 48), source: 'Table 5', status: 'active' },
-  { id: '7', phone: '212-555-3347', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 50), source: 'Table 2', status: 'active' },
-  { id: '8', phone: '404-555-9901', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 72), source: 'Bar Top', status: 'opted-out' },
-].map(enrichLead); // Auto-enrich on load
+// Stats interface for API response
+interface LeadStats {
+  total: number;
+  thisWeek: number;
+  lastWeek: number;
+  bySource: { source: string; count: number }[];
+}
 
-const MOCK_STATS = {
-  total: 47,
-  thisWeek: 12,
-  lastWeek: 9,
-  estimatedVisitors: 312,
-  bySource: [
-    { source: 'Table 5', count: 14 },
-    { source: 'Bar Top', count: 11 },
-    { source: 'Table 3', count: 8 },
-    { source: 'Patio', count: 7 },
-    { source: 'Table 1', count: 5 },
-    { source: 'Table 2', count: 2 },
-  ],
+// Default empty stats
+const DEFAULT_STATS: LeadStats = {
+  total: 0,
+  thisWeek: 0,
+  lastWeek: 0,
+  bySource: [],
 };
 
 type TimeRange = '7d' | '14d' | '30d' | 'all';
@@ -272,12 +266,15 @@ function formatTimeAgo(date: Date): string {
 
 export function Leads() {
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
-  const [showBetaBanner, setShowBetaBanner] = useState(true);
+  const [showBetaBanner, setShowBetaBanner] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [leads, setLeads] = useState<Lead[]>(INITIAL_LEADS);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [stats, setStats] = useState<LeadStats>(DEFAULT_STATS);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newLeadPhone, setNewLeadPhone] = useState('');
   const [newLeadSource, setNewLeadSource] = useState('');
@@ -291,13 +288,64 @@ export function Leads() {
   const [bulkUploadSuccess, setBulkUploadSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  const weekDelta = MOCK_STATS.lastWeek > 0 
-    ? Math.round(((MOCK_STATS.thisWeek - MOCK_STATS.lastWeek) / MOCK_STATS.lastWeek) * 100)
+  // Fetch leads from API
+  const fetchLeads = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const user = authService.getStoredUser();
+      const venueId = user?.venueId;
+      
+      if (!venueId) {
+        setError('No venue ID found. Please log in again.');
+        setLoading(false);
+        return;
+      }
+      
+      const response = await fetch(`${LEADS_API}/leads?venueId=${venueId}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch leads');
+      }
+      
+      const data = await response.json();
+      
+      // Transform API response to Lead objects
+      const fetchedLeads: Lead[] = (data.leads || []).map((lead: any) => enrichLead({
+        id: lead.id || lead.phone,
+        phone: lead.phone,
+        capturedAt: new Date(lead.capturedAt),
+        source: lead.source || 'NFC Tap',
+        status: lead.status || 'active',
+      }));
+      
+      setLeads(fetchedLeads);
+      setStats({
+        total: data.total || 0,
+        thisWeek: data.thisWeek || 0,
+        lastWeek: data.lastWeek || 0,
+        bySource: data.bySource || [],
+      });
+      
+    } catch (err) {
+      console.error('Failed to fetch leads:', err);
+      setError('Failed to load leads. The API may not be deployed yet.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  
+  // Fetch leads on mount
+  useEffect(() => {
+    fetchLeads();
+  }, [fetchLeads]);
+  
+  const weekDelta = stats.lastWeek > 0 
+    ? Math.round(((stats.thisWeek - stats.lastWeek) / stats.lastWeek) * 100)
     : 0;
   
-  const conversionRate = MOCK_STATS.estimatedVisitors > 0
-    ? Math.round((MOCK_STATS.total / MOCK_STATS.estimatedVisitors) * 100)
-    : 0;
+  const conversionRate = stats.total > 0 ? Math.round((stats.thisWeek / stats.total) * 100) : 0;
   
   const activeLeads = leads.filter(l => l.status === 'active');
   
@@ -574,8 +622,32 @@ export function Leads() {
             <FileDown className="w-4 h-4" />
             {selectedLeads.size > 0 ? `(${selectedLeads.size})` : ''}
           </motion.button>
+          <motion.button
+            onClick={() => { haptic('light'); fetchLeads(); }}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-300 text-sm font-medium hover:text-white transition-colors"
+            whileTap={{ scale: 0.95 }}
+            title="Refresh leads"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </motion.button>
         </div>
       </div>
+      
+      {/* Error Banner */}
+      {error && (
+        <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-red-400" />
+          <p className="text-red-300 text-sm">{error}</p>
+        </div>
+      )}
+      
+      {/* Loading State */}
+      {loading && leads.length === 0 && (
+        <div className="flex items-center justify-center py-12">
+          <RefreshCw className="w-8 h-8 text-primary animate-spin" />
+        </div>
+      )}
       
       {/* Add Lead Modal */}
       <AnimatePresence>
@@ -887,7 +959,7 @@ export function Leads() {
           {/* Total Leads */}
           <div className="text-center">
             <div className="text-4xl font-bold text-white mb-1">
-              {MOCK_STATS.total}
+              {stats.total}
             </div>
             <div className="text-xs text-warm-400 uppercase tracking-wide">
               Total Leads
@@ -897,7 +969,7 @@ export function Leads() {
           {/* This Week */}
           <div className="text-center border-x border-warm-700">
             <div className="text-4xl font-bold text-white mb-1">
-              {MOCK_STATS.thisWeek}
+              {stats.thisWeek}
             </div>
             <div className="text-xs text-warm-400 uppercase tracking-wide mb-1">
               This Week
@@ -934,12 +1006,12 @@ export function Leads() {
             <MapPin className="w-4 h-4 text-primary" />
             By Location
           </h3>
-          <span className="text-xs text-warm-500">{MOCK_STATS.bySource.length} locations</span>
+          <span className="text-xs text-warm-500">{stats.bySource.length} locations</span>
         </div>
         
         <div className="space-y-2">
-          {MOCK_STATS.bySource.slice(0, 5).map((item, idx) => {
-            const maxCount = Math.max(...MOCK_STATS.bySource.map(s => s.count));
+          {stats.bySource.slice(0, 5).map((item, idx) => {
+            const maxCount = Math.max(...stats.bySource.map(s => s.count), 1);
             const width = (item.count / maxCount) * 100;
             const isFiltered = sourceFilter === item.source;
             

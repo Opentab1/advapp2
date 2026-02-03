@@ -1,9 +1,9 @@
 /**
  * NFCLeadsManagement - Admin page for managing NFC lead capture
- * Deployed: Feb 3, 2026 - Trigger Amplify rebuild
+ * Fetches real data from VenueConfig and VenueLeads APIs
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Smartphone, 
@@ -14,11 +14,36 @@ import {
   Users,
   TrendingUp,
   Zap,
-  ExternalLink
+  ExternalLink,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
+
+// API endpoints
+const VENUE_CONFIG_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
+const LEADS_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
+
+interface VenueWithNFC {
+  venueId: string;
+  name: string;
+  phone: string;
+  leads: number;
+  leadsToday: number;
+  lastLead: string | null;
+}
+
+interface LeadStats {
+  total: number;
+  today: number;
+  thisWeek: number;
+}
 
 export function NFCLeadsManagement() {
   const [copied, setCopied] = useState<string | null>(null);
+  const [venuesWithNFC, setVenuesWithNFC] = useState<VenueWithNFC[]>([]);
+  const [stats, setStats] = useState<LeadStats>({ total: 0, today: 0, thisWeek: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -26,16 +51,55 @@ export function NFCLeadsManagement() {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  // Example venues with Twilio numbers
-  const venuesWithNFC = [
-    { 
-      venueId: 'smstest', 
-      name: 'SMS TEST', 
-      phone: '+18558384995',
-      leads: 0,
-      lastLead: null
+  // Fetch venues with NFC configured and their lead counts
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      // Fetch all venues with Twilio numbers configured
+      const configResponse = await fetch(`${VENUE_CONFIG_API}/venues-with-nfc`);
+      
+      let venues: VenueWithNFC[] = [];
+      let totalLeads = 0;
+      let todayLeads = 0;
+      let weekLeads = 0;
+      
+      if (configResponse.ok) {
+        const configData = await configResponse.json();
+        venues = configData.venues || [];
+        totalLeads = configData.totalLeads || 0;
+        todayLeads = configData.leadsToday || 0;
+        weekLeads = configData.leadsThisWeek || 0;
+      } else {
+        // Fallback: scan VenueConfig for venues with twilioPhoneNumber
+        // This is a backup in case the dedicated endpoint doesn't exist
+        console.log('Falling back to direct venue config scan...');
+        
+        // For now, show empty state - the endpoint needs to be deployed
+        venues = [];
+      }
+      
+      setVenuesWithNFC(venues);
+      setStats({
+        total: totalLeads,
+        today: todayLeads,
+        thisWeek: weekLeads
+      });
+      
+    } catch (err) {
+      console.error('Failed to fetch NFC data:', err);
+      setError('Failed to load NFC lead data. The API endpoint may not be deployed yet.');
+    } finally {
+      setLoading(false);
     }
-  ];
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const conversionRate = stats.total > 0 ? Math.round((stats.thisWeek / stats.total) * 100) : 0;
 
   return (
     <div className="min-h-screen p-4 md:p-6 lg:p-8">
@@ -51,7 +115,25 @@ export function NFCLeadsManagement() {
               Manage NFC tags and SMS lead capture for all venues
             </p>
           </div>
+          <motion.button
+            onClick={fetchData}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </motion.button>
         </div>
+
+        {/* Error Banner */}
+        {error && (
+          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-400" />
+            <p className="text-red-300">{error}</p>
+          </div>
+        )}
 
         {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -61,7 +143,7 @@ export function NFCLeadsManagement() {
                 <Users className="w-6 h-6 text-green-400" />
               </div>
               <div>
-                <div className="text-2xl font-bold text-white">0</div>
+                <div className="text-2xl font-bold text-white">{stats.today}</div>
                 <div className="text-sm text-gray-400">Total Leads Today</div>
               </div>
             </div>
@@ -83,8 +165,8 @@ export function NFCLeadsManagement() {
                 <TrendingUp className="w-6 h-6 text-purple-400" />
               </div>
               <div>
-                <div className="text-2xl font-bold text-white">0%</div>
-                <div className="text-sm text-gray-400">Conversion Rate</div>
+                <div className="text-2xl font-bold text-white">{stats.total}</div>
+                <div className="text-sm text-gray-400">Total Leads</div>
               </div>
             </div>
           </div>
@@ -157,11 +239,16 @@ export function NFCLeadsManagement() {
             <h2 className="text-xl font-bold text-white">Venues with NFC Leads</h2>
           </div>
           
-          {venuesWithNFC.length === 0 ? (
+          {loading ? (
+            <div className="text-center py-8">
+              <RefreshCw className="w-8 h-8 text-gray-400 animate-spin mx-auto mb-3" />
+              <p className="text-gray-400">Loading venues...</p>
+            </div>
+          ) : venuesWithNFC.length === 0 ? (
             <div className="text-center py-8 text-gray-400">
               <Smartphone className="w-12 h-12 mx-auto mb-3 opacity-50" />
               <p>No venues have NFC lead capture configured yet.</p>
-              <p className="text-sm">Go to Venues → Edit Display → NFC Leads to set up.</p>
+              <p className="text-sm">Go to Venues → Edit → NFC Leads to set up.</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -174,7 +261,7 @@ export function NFCLeadsManagement() {
                     </div>
                     <div className="text-right">
                       <div className="text-xl font-bold text-green-400">{venue.leads}</div>
-                      <div className="text-xs text-gray-500">leads</div>
+                      <div className="text-xs text-gray-500">total leads</div>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
