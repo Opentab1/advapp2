@@ -80,10 +80,10 @@ exports.handler = async (event) => {
       .map(([source, count]) => ({ source, count }))
       .sort((a, b) => b.count - a.count);
     
-    // Mask phone numbers for privacy
-    const maskedLeads = leads.map(l => ({
-      id: Buffer.from(l.phoneNumber).toString('base64').slice(0, 8),
-      phone: l.phoneNumber.replace(/(\+1)(\d{3})(\d{3})(\d{4})/, '$1-***-***-$4'),
+    // Return leads with real phone numbers (venue owner owns this data)
+    const formattedLeads = leads.map(l => ({
+      id: Buffer.from(l.phoneNumber).toString('base64').slice(0, 12),
+      phone: l.phoneNumber, // Real phone number for SMS sending
       capturedAt: l.capturedAt,
       source: l.source,
       status: l.status,
@@ -98,7 +98,7 @@ exports.handler = async (event) => {
         thisWeek: thisWeek.length,
         lastWeek: lastWeek.length,
         bySource: sourceStats,
-        leads: maskedLeads,
+        leads: formattedLeads,
       }),
     };
     
