@@ -1,8 +1,8 @@
 /**
- * Leads Page - NFC Lead Capture Dashboard
+ * BringBack Page - Customer Capture Dashboard
  * 
- * Premium UI for lead capture via NFC tags.
- * Shows stats, lead list, location breakdown.
+ * Premium UI for customer capture via BringBack technology.
+ * Shows stats, customer list, location breakdown.
  * Fetches real data from VenueLeads API.
  */
 
@@ -326,7 +326,7 @@ export function Leads() {
         id: lead.id || lead.phone,
         phone: lead.phone,
         capturedAt: new Date(lead.capturedAt),
-        source: lead.source || 'NFC Tap',
+        source: lead.source || 'BringBack',
         status: lead.status || 'active',
       }));
       
@@ -340,7 +340,7 @@ export function Leads() {
       
     } catch (err) {
       console.error('Failed to fetch leads:', err);
-      setError('Failed to load leads. The API may not be deployed yet.');
+      setError('Failed to load customers. The API may not be deployed yet.');
     } finally {
       setLoading(false);
     }
@@ -423,7 +423,7 @@ export function Leads() {
       .map(l => l.phone);
     
     if (phones.length === 0) {
-      alert('No active leads selected');
+      alert('No active customers selected');
       return;
     }
     
@@ -439,7 +439,7 @@ export function Leads() {
     const phones = activeLeads.map(l => l.phone);
     
     if (phones.length === 0) {
-      alert('No active leads to message');
+      alert('No active customers to message');
       return;
     }
     
@@ -527,7 +527,7 @@ export function Leads() {
       : filteredLeads;
     
     if (leadsToExport.length === 0) {
-      alert('No leads to export');
+      alert('No customers to export');
       return;
     }
     
@@ -555,7 +555,7 @@ export function Leads() {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `leads-export-${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `bringback-export-${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -689,10 +689,10 @@ export function Leads() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-white">Leads</h1>
-          <span className="px-2 py-0.5 text-[10px] font-bold bg-primary/20 text-primary border border-primary/30 rounded-full uppercase tracking-wider">
-            Beta
-          </span>
+          <div>
+            <h1 className="text-xl font-bold text-white">BringBack</h1>
+            <p className="text-xs text-warm-400">bring your customers back everytime</p>
+          </div>
         </div>
         
         <div className="flex items-center gap-2">
@@ -747,7 +747,7 @@ export function Leads() {
               disabled={activeLeads.length === 0}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-300 text-sm font-medium hover:text-white transition-colors disabled:opacity-50"
               whileTap={{ scale: 0.95 }}
-              title="Message all active leads"
+              title="Message all active customers"
             >
               <MessageCircle className="w-4 h-4" />
               Message All
@@ -758,7 +758,7 @@ export function Leads() {
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-300 text-sm font-medium hover:text-white transition-colors"
             whileTap={{ scale: 0.95 }}
-            title="Refresh leads"
+            title="Refresh customers"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </motion.button>
@@ -900,7 +900,7 @@ export function Leads() {
                     <CheckCircle className="w-8 h-8 text-green-400" />
                   </div>
                   <h3 className="text-xl font-bold text-white mb-2">Import Complete!</h3>
-                  <p className="text-warm-400">{bulkUploadPreview.length} leads added successfully</p>
+                  <p className="text-warm-400">{bulkUploadPreview.length} customers added successfully</p>
                 </motion.div>
               ) : (
                 <>
@@ -957,7 +957,7 @@ export function Leads() {
                         ))}
                         {bulkUploadPreview.length > 10 && (
                           <div className="px-3 py-2 text-center text-warm-500 text-xs">
-                            + {bulkUploadPreview.length - 10} more leads
+                            + {bulkUploadPreview.length - 10} more customers
                           </div>
                         )}
                       </div>
@@ -993,7 +993,7 @@ export function Leads() {
                       <span className="font-medium">100% Auto-Enriched</span>
                     </div>
                     <p className="text-[10px] text-warm-400 mt-1">
-                      All leads will have location, timezone, and line type added automatically.
+                      All customers will have location, timezone, and line type added automatically.
                     </p>
                   </div>
                   
@@ -1013,7 +1013,7 @@ export function Leads() {
                       whileTap={{ scale: 0.98 }}
                     >
                       <CheckCircle className="w-4 h-4" />
-                      Import {bulkUploadPreview.length} Leads
+                      Import {bulkUploadPreview.length} Customers
                     </motion.button>
                   </div>
                 </>
@@ -1183,7 +1183,7 @@ export function Leads() {
           >
             <div className="flex items-center gap-2 text-sm">
               <Zap className="w-4 h-4 text-primary" />
-              <span className="text-warm-200">NFC lead capture is in beta</span>
+              <span className="text-warm-200">BringBack is in beta</span>
               <span className="text-warm-500">•</span>
               <span className="text-warm-400">Showing sample data</span>
             </div>
@@ -1227,13 +1227,13 @@ export function Leads() {
         animate={{ opacity: 1, y: 0 }}
       >
         <div className="grid grid-cols-3 gap-4">
-          {/* Total Leads */}
+          {/* Total Customers */}
           <div className="text-center">
             <div className="text-4xl font-bold text-white mb-1">
               {stats.total}
             </div>
             <div className="text-xs text-warm-400 uppercase tracking-wide">
-              Total Leads
+              Total Customers
             </div>
           </div>
           
@@ -1351,7 +1351,7 @@ export function Leads() {
               </button>
               <h3 className="text-sm font-semibold text-warm-200 uppercase tracking-whoop flex items-center gap-2">
                 <Smartphone className="w-4 h-4 text-primary" />
-                {selectedLeads.size > 0 ? `${selectedLeads.size} Selected` : 'Recent Leads'}
+                {selectedLeads.size > 0 ? `${selectedLeads.size} Selected` : 'Recent Customers'}
               </h3>
             </div>
             <span className="text-xs text-warm-500">
@@ -1466,7 +1466,7 @@ export function Leads() {
             ))
           ) : (
             <div className="p-8 text-center text-warm-500">
-              No leads found matching your search
+              No customers found matching your search
             </div>
           )}
         </div>
@@ -1546,7 +1546,7 @@ export function Leads() {
               <div className="px-4 pb-4 space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   {[
-                    { step: '1', title: 'Place Tags', desc: 'Put NFC tags on tables, bar, patio' },
+                    { step: '1', title: 'Place Tags', desc: 'Put BringBack tags on tables, bar, patio' },
                     { step: '2', title: 'Guest Taps', desc: 'Opens SMS with pre-filled message' },
                     { step: '3', title: 'Instant Opt-in', desc: 'They hit send, you get the lead' },
                     { step: '4', title: 'Engage', desc: 'Message about specials & events' },
@@ -1568,7 +1568,7 @@ export function Leads() {
                   className="flex items-center justify-center gap-2 w-full py-2 bg-primary/10 border border-primary/30 rounded-lg text-primary text-sm font-medium hover:bg-primary/20 transition-colors"
                 >
                   <ExternalLink className="w-4 h-4" />
-                  Get NFC Tags
+                  Get BringBack Tags
                 </a>
               </div>
             </motion.div>
