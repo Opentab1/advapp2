@@ -14,7 +14,8 @@ import {
   Search,
   FlaskConical,
   Mail,
-  Crown
+  Crown,
+  Smartphone
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -33,6 +34,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'venues', label: 'Venues', icon: Building2 },
+  { id: 'nfc-leads', label: 'NFC Leads', icon: Smartphone },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'team', label: 'Team', icon: UserCog },
   { id: 'devices', label: 'Devices', icon: Wifi },

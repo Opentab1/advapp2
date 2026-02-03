@@ -3,6 +3,7 @@ import { AnimatedBackground } from '../../components/AnimatedBackground';
 import { AdminSidebar } from '../../components/admin/AdminSidebar';
 import { AdminDashboard } from './AdminDashboard';
 import { VenuesManagement } from './VenuesManagement';
+import { NFCLeadsManagement } from './NFCLeadsManagement';
 import { UsersManagement } from './UsersManagement';
 import { TeamManagement } from './TeamManagement';
 import { DevicesManagement } from './DevicesManagement';
@@ -60,6 +61,7 @@ export function AdminPortal() {
         <div className="flex-1 overflow-auto">
           {activeTab === 'dashboard' && <AdminDashboard />}
           {activeTab === 'venues' && <VenuesManagement />}
+          {activeTab === 'nfc-leads' && <NFCLeadsManagement />}
           {activeTab === 'users' && <UsersManagement />}
           {activeTab === 'team' && <TeamManagement />}
           {activeTab === 'devices' && <DevicesManagement />}
