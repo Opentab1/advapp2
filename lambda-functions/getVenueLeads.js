@@ -70,7 +70,7 @@ exports.handler = async (event) => {
     });
     
     // Group by source
-    const bySource: Record<string, number> = {};
+    const bySource = {};
     activeLeads.forEach(l => {
       const source = l.source || 'unknown';
       bySource[source] = (bySource[source] || 0) + 1;
