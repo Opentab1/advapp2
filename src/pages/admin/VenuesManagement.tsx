@@ -32,7 +32,12 @@ import {
   X,
   Save,
   Mail,
-  User
+  User,
+  Phone,
+  MessageSquare,
+  Copy,
+  Smartphone,
+  Zap
 } from 'lucide-react';
 import { CreateVenueModal, VenueFormData } from '../../components/admin/CreateVenueModal';
 import { RPiConfigGenerator } from '../../components/admin/RPiConfigGenerator';
@@ -43,6 +48,11 @@ interface VenueDisplaySettings {
   displayName?: string;
   ownerName?: string;
   ownerEmail?: string;
+  // NFC Lead Capture Settings
+  twilioPhoneNumber?: string;
+  welcomeMessage?: string;
+  returnMessage?: string;
+  nfcEnabled?: boolean;
 }
 
 // API endpoint for display settings
@@ -418,7 +428,7 @@ export function VenuesManagement() {
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-3 gap-4 mb-4">
+                <div className="grid grid-cols-4 gap-4 mb-4">
                   <div className="flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-cyan-400" />
                     <div>
@@ -438,6 +448,15 @@ export function VenuesManagement() {
                     <div>
                       <div className="text-white font-semibold">{venue.deviceCount || 0}</div>
                       <div className="text-xs text-gray-400">Devices</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Smartphone className={`w-4 h-4 ${displaySettings[venue.venueId]?.twilioPhoneNumber ? 'text-green-400' : 'text-gray-600'}`} />
+                    <div>
+                      <div className={`font-semibold ${displaySettings[venue.venueId]?.twilioPhoneNumber ? 'text-white' : 'text-gray-500'}`}>
+                        {displaySettings[venue.venueId]?.twilioPhoneNumber ? 'Active' : 'Not Set'}
+                      </div>
+                      <div className="text-xs text-gray-400">NFC Leads</div>
                     </div>
                   </div>
                 </div>
@@ -544,7 +563,40 @@ function EditDisplayModal({
   const [displayName, setDisplayName] = useState(currentSettings.displayName || '');
   const [ownerName, setOwnerName] = useState(currentSettings.ownerName || '');
   const [ownerEmail, setOwnerEmail] = useState(currentSettings.ownerEmail || '');
+  const [twilioPhoneNumber, setTwilioPhoneNumber] = useState(currentSettings.twilioPhoneNumber || '');
+  const [welcomeMessage, setWelcomeMessage] = useState(currentSettings.welcomeMessage || '');
+  const [returnMessage, setReturnMessage] = useState(currentSettings.returnMessage || '');
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<'basic' | 'nfc'>('basic');
+  const [copied, setCopied] = useState(false);
+
+  // Format phone number as user types
+  const formatPhone = (value: string) => {
+    const digits = value.replace(/\D/g, '');
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+    if (digits.length <= 10) return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+    // With country code
+    if (digits.startsWith('1')) {
+      return `+1-${digits.slice(1, 4)}-${digits.slice(4, 7)}-${digits.slice(7, 11)}`;
+    }
+    return `+${digits.slice(0, 1)}-${digits.slice(1, 4)}-${digits.slice(4, 7)}-${digits.slice(7, 11)}`;
+  };
+
+  // Generate NFC tag URL
+  const getNfcTagUrl = (location: string = 'TABLE1') => {
+    if (!twilioPhoneNumber) return '';
+    const cleanNumber = twilioPhoneNumber.replace(/\D/g, '');
+    const formattedNumber = cleanNumber.startsWith('1') ? `+${cleanNumber}` : `+1${cleanNumber}`;
+    return `sms:${formattedNumber}?body=JOIN ${location.toUpperCase()}`;
+  };
+
+  const copyNfcUrl = (location: string) => {
+    const url = getNfcTagUrl(location);
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -553,7 +605,11 @@ function EditDisplayModal({
       await onSave({
         displayName: displayName.trim() || undefined,
         ownerName: ownerName.trim() || undefined,
-        ownerEmail: ownerEmail.trim() || undefined
+        ownerEmail: ownerEmail.trim() || undefined,
+        twilioPhoneNumber: twilioPhoneNumber.trim() || undefined,
+        welcomeMessage: welcomeMessage.trim() || undefined,
+        returnMessage: returnMessage.trim() || undefined,
+        nfcEnabled: !!twilioPhoneNumber.trim(),
       });
     } finally {
       setSaving(false);
@@ -572,14 +628,14 @@ function EditDisplayModal({
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="glass-card p-6 w-full max-w-md"
+        className="glass-card p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h3 className="text-xl font-bold text-white">Edit Display Settings</h3>
+            <h3 className="text-xl font-bold text-white">Venue Settings</h3>
             <p className="text-sm text-gray-400 mt-1">
-              System ID: <span className="text-purple-400 font-mono">{venue.venueId}</span>
+              <span className="text-purple-400 font-mono">{venue.venueId}</span>
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white">
@@ -587,59 +643,179 @@ function EditDisplayModal({
           </button>
         </div>
 
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-6">
-          <p className="text-sm text-amber-300">
-            These are display-only settings. They won't affect data flow from RPi devices.
-          </p>
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6">
+          <button
+            onClick={() => setActiveTab('basic')}
+            className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all ${
+              activeTab === 'basic'
+                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                : 'bg-white/5 text-gray-400 border border-white/10 hover:text-white'
+            }`}
+          >
+            <Building2 className="w-4 h-4 inline mr-2" />
+            Basic Info
+          </button>
+          <button
+            onClick={() => setActiveTab('nfc')}
+            className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all ${
+              activeTab === 'nfc'
+                ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                : 'bg-white/5 text-gray-400 border border-white/10 hover:text-white'
+            }`}
+          >
+            <Smartphone className="w-4 h-4 inline mr-2" />
+            NFC Leads
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              <Building2 className="w-4 h-4 inline mr-1" />
-              Display Name
-            </label>
-            <input
-              type="text"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder={venue.venueName}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Leave blank to use system name: {venue.venueName}
-            </p>
-          </div>
+          {/* Basic Info Tab */}
+          {activeTab === 'basic' && (
+            <>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">
+                  <Building2 className="w-4 h-4 inline mr-1" />
+                  Display Name
+                </label>
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder={venue.venueName}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                />
+              </div>
 
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              <User className="w-4 h-4 inline mr-1" />
-              Owner Name
-            </label>
-            <input
-              type="text"
-              value={ownerName}
-              onChange={(e) => setOwnerName(e.target.value)}
-              placeholder="e.g., John Smith"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-            />
-          </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">
+                  <User className="w-4 h-4 inline mr-1" />
+                  Owner Name
+                </label>
+                <input
+                  type="text"
+                  value={ownerName}
+                  onChange={(e) => setOwnerName(e.target.value)}
+                  placeholder="e.g., John Smith"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                />
+              </div>
 
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              <Mail className="w-4 h-4 inline mr-1" />
-              Owner Email
-            </label>
-            <input
-              type="email"
-              value={ownerEmail}
-              onChange={(e) => setOwnerEmail(e.target.value)}
-              placeholder="e.g., owner@venue.com"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-            />
-          </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">
+                  <Mail className="w-4 h-4 inline mr-1" />
+                  Owner Email
+                </label>
+                <input
+                  type="email"
+                  value={ownerEmail}
+                  onChange={(e) => setOwnerEmail(e.target.value)}
+                  placeholder="e.g., owner@venue.com"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                />
+              </div>
+            </>
+          )}
 
-          <div className="flex gap-3 pt-4">
+          {/* NFC Leads Tab */}
+          {activeTab === 'nfc' && (
+            <>
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Zap className="w-5 h-5 text-green-400" />
+                  <span className="font-semibold text-green-400">NFC Lead Capture</span>
+                </div>
+                <p className="text-sm text-gray-300">
+                  Customers tap NFC tag → SMS opens pre-filled → They hit Send → Lead captured!
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">
+                  <Phone className="w-4 h-4 inline mr-1" />
+                  Twilio Phone Number *
+                </label>
+                <input
+                  type="tel"
+                  value={twilioPhoneNumber}
+                  onChange={(e) => setTwilioPhoneNumber(formatPhone(e.target.value))}
+                  placeholder="+1-512-555-1234"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500/50 font-mono"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Get a number from <a href="https://console.twilio.com/phone-numbers" target="_blank" rel="noopener noreferrer" className="text-green-400 underline">Twilio Console</a> (~$1/month)
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">
+                  <MessageSquare className="w-4 h-4 inline mr-1" />
+                  Welcome Message
+                </label>
+                <textarea
+                  value={welcomeMessage}
+                  onChange={(e) => setWelcomeMessage(e.target.value)}
+                  placeholder={`Welcome to ${displayName || venue.venueName}! We'll text you about specials & events. Reply STOP anytime.`}
+                  rows={3}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500/50 resize-none"
+                />
+                <p className="text-xs text-gray-500 mt-1">Sent to new subscribers</p>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">
+                  <MessageSquare className="w-4 h-4 inline mr-1" />
+                  Return Visitor Message
+                </label>
+                <textarea
+                  value={returnMessage}
+                  onChange={(e) => setReturnMessage(e.target.value)}
+                  placeholder="Welcome back! You're already on our VIP list."
+                  rows={2}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500/50 resize-none"
+                />
+                <p className="text-xs text-gray-500 mt-1">Sent to returning subscribers</p>
+              </div>
+
+              {/* NFC Tag URLs */}
+              {twilioPhoneNumber && (
+                <div className="border-t border-white/10 pt-4 mt-4">
+                  <label className="block text-sm text-gray-400 mb-3">
+                    <Smartphone className="w-4 h-4 inline mr-1" />
+                    NFC Tag URLs (copy & program)
+                  </label>
+                  <div className="space-y-2">
+                    {['TABLE1', 'TABLE2', 'BAR', 'PATIO'].map((location) => (
+                      <div key={location} className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 w-16">{location}:</span>
+                        <code className="flex-1 text-xs bg-black/30 px-2 py-1.5 rounded text-green-400 font-mono truncate">
+                          {getNfcTagUrl(location)}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => copyNfcUrl(location)}
+                          className="p-1.5 rounded bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {copied && (
+                    <p className="text-xs text-green-400 mt-2 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" />
+                      Copied to clipboard!
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-3">
+                    Use NFC Tools app to write these URLs to your tags
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="flex gap-3 pt-4 border-t border-white/10">
             <button
               type="button"
               onClick={onClose}
