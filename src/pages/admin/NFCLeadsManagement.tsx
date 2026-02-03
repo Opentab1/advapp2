@@ -1,5 +1,6 @@
 /**
  * NFCLeadsManagement - Admin page for managing NFC lead capture
+ * Deployed: Feb 3, 2026 - Trigger Amplify rebuild
  */
 
 import { useState } from 'react';
