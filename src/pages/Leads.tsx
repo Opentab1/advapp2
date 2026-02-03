@@ -32,12 +32,15 @@ import {
   AlertCircle,
   CheckCircle,
   RefreshCw,
+  Send,
+  MessageCircle,
 } from 'lucide-react';
 import { haptic } from '../utils/haptics';
 import authService from '../services/auth.service';
 
 // API endpoint for fetching leads
 const LEADS_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
+const SMS_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
 
 interface LeadEnrichment {
   location?: string;      // From area code (FREE)
@@ -288,6 +291,13 @@ export function Leads() {
   const [bulkUploadSuccess, setBulkUploadSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  // SMS Composer state
+  const [showSmsModal, setShowSmsModal] = useState(false);
+  const [smsRecipients, setSmsRecipients] = useState<string[]>([]);
+  const [smsMessage, setSmsMessage] = useState('');
+  const [smsSending, setSmsSending] = useState(false);
+  const [smsResult, setSmsResult] = useState<{ success: number; failed: number } | null>(null);
+  
   // Fetch leads from API
   const fetchLeads = useCallback(async () => {
     setLoading(true);
@@ -340,6 +350,105 @@ export function Leads() {
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+  
+  // Send SMS to recipients
+  const handleSendSms = async () => {
+    if (!smsMessage.trim() || smsRecipients.length === 0) return;
+    
+    setSmsSending(true);
+    setSmsResult(null);
+    
+    try {
+      const user = authService.getStoredUser();
+      const venueId = user?.venueId;
+      
+      if (!venueId) {
+        alert('No venue ID found. Please log in again.');
+        setSmsSending(false);
+        return;
+      }
+      
+      const response = await fetch(`${SMS_API}/send-sms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          venueId,
+          phoneNumbers: smsRecipients,
+          message: smsMessage.trim()
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        setSmsResult({ success: data.sent, failed: data.failed });
+        haptic('success');
+        
+        // Close modal after 2 seconds on success
+        if (data.failed === 0) {
+          setTimeout(() => {
+            setShowSmsModal(false);
+            setSmsMessage('');
+            setSmsRecipients([]);
+            setSmsResult(null);
+          }, 2000);
+        }
+      } else {
+        alert(data.error || 'Failed to send SMS');
+        haptic('error');
+      }
+    } catch (err) {
+      console.error('Failed to send SMS:', err);
+      alert('Failed to send SMS. Please try again.');
+      haptic('error');
+    } finally {
+      setSmsSending(false);
+    }
+  };
+  
+  // Open SMS composer for single lead
+  const openSmsForLead = (phone: string) => {
+    // Extract actual phone from masked format if needed
+    setSmsRecipients([phone]);
+    setSmsMessage('');
+    setSmsResult(null);
+    setShowSmsModal(true);
+    haptic('light');
+  };
+  
+  // Open SMS composer for selected leads
+  const openSmsForSelected = () => {
+    const phones = filteredLeads
+      .filter(l => selectedLeads.has(l.id) && l.status === 'active')
+      .map(l => l.phone);
+    
+    if (phones.length === 0) {
+      alert('No active leads selected');
+      return;
+    }
+    
+    setSmsRecipients(phones);
+    setSmsMessage('');
+    setSmsResult(null);
+    setShowSmsModal(true);
+    haptic('light');
+  };
+  
+  // Open SMS composer for all active leads
+  const openSmsForAll = () => {
+    const phones = activeLeads.map(l => l.phone);
+    
+    if (phones.length === 0) {
+      alert('No active leads to message');
+      return;
+    }
+    
+    setSmsRecipients(phones);
+    setSmsMessage('');
+    setSmsResult(null);
+    setShowSmsModal(true);
+    haptic('light');
+  };
   
   const weekDelta = stats.lastWeek > 0 
     ? Math.round(((stats.thisWeek - stats.lastWeek) / stats.lastWeek) * 100)
@@ -622,6 +731,28 @@ export function Leads() {
             <FileDown className="w-4 h-4" />
             {selectedLeads.size > 0 ? `(${selectedLeads.size})` : ''}
           </motion.button>
+          {selectedLeads.size > 0 ? (
+            <motion.button
+              onClick={openSmsForSelected}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-500 transition-colors"
+              whileTap={{ scale: 0.95 }}
+              title={`Message ${selectedLeads.size} selected`}
+            >
+              <MessageCircle className="w-4 h-4" />
+              Message ({selectedLeads.size})
+            </motion.button>
+          ) : (
+            <motion.button
+              onClick={openSmsForAll}
+              disabled={activeLeads.length === 0}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-300 text-sm font-medium hover:text-white transition-colors disabled:opacity-50"
+              whileTap={{ scale: 0.95 }}
+              title="Message all active leads"
+            >
+              <MessageCircle className="w-4 h-4" />
+              Message All
+            </motion.button>
+          )}
           <motion.button
             onClick={() => { haptic('light'); fetchLeads(); }}
             disabled={loading}
@@ -894,6 +1025,146 @@ export function Leads() {
                   <FileText className="w-12 h-12 text-warm-600 mx-auto mb-3" />
                   <p className="text-warm-400 text-sm mb-2">Drop a CSV file or click Import</p>
                   <p className="text-warm-500 text-xs">Format: phone number per line, optional source column</p>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
+      {/* SMS Composer Modal */}
+      <AnimatePresence>
+        {showSmsModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => !smsSending && setShowSmsModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-warm-900 border border-warm-700 rounded-2xl p-6 w-full max-w-md"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <MessageCircle className="w-5 h-5 text-primary" />
+                  Send Message
+                </h2>
+                <button
+                  onClick={() => !smsSending && setShowSmsModal(false)}
+                  className="text-warm-500 hover:text-white p-1"
+                  disabled={smsSending}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              {/* Success State */}
+              {smsResult && smsResult.failed === 0 && (
+                <motion.div 
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="flex flex-col items-center justify-center py-8"
+                >
+                  <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
+                    <CheckCircle className="w-8 h-8 text-green-400" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white mb-2">Message Sent!</h3>
+                  <p className="text-warm-400">{smsResult.success} recipient{smsResult.success !== 1 ? 's' : ''}</p>
+                </motion.div>
+              )}
+              
+              {/* Compose Form */}
+              {(!smsResult || smsResult.failed > 0) && (
+                <div className="space-y-4">
+                  {/* Recipients */}
+                  <div>
+                    <label className="block text-sm text-warm-400 mb-2">
+                      To: {smsRecipients.length} recipient{smsRecipients.length !== 1 ? 's' : ''}
+                    </label>
+                    <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto bg-warm-800/50 rounded-lg p-2">
+                      {smsRecipients.slice(0, 10).map((phone, idx) => (
+                        <span key={idx} className="text-xs bg-warm-700 text-warm-300 px-2 py-1 rounded">
+                          {phone}
+                        </span>
+                      ))}
+                      {smsRecipients.length > 10 && (
+                        <span className="text-xs text-warm-500 px-2 py-1">
+                          +{smsRecipients.length - 10} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Message */}
+                  <div>
+                    <label className="block text-sm text-warm-400 mb-2">Message</label>
+                    <textarea
+                      value={smsMessage}
+                      onChange={(e) => setSmsMessage(e.target.value)}
+                      placeholder="Type your message..."
+                      rows={4}
+                      maxLength={1600}
+                      className="w-full px-4 py-3 bg-warm-800 border border-warm-700 rounded-xl text-white placeholder-warm-500 focus:outline-none focus:border-primary/50 resize-none"
+                      autoFocus
+                      disabled={smsSending}
+                    />
+                    <div className="flex justify-between mt-1">
+                      <span className={`text-xs ${smsMessage.length > 160 ? 'text-yellow-400' : 'text-warm-500'}`}>
+                        {smsMessage.length > 160 
+                          ? `${Math.ceil(smsMessage.length / 160)} SMS segments`
+                          : `${smsMessage.length}/160 characters`
+                        }
+                      </span>
+                      <span className="text-xs text-warm-500">
+                        ~${(smsRecipients.length * Math.ceil(Math.max(smsMessage.length, 1) / 160) * 0.0079).toFixed(2)} cost
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* Error display */}
+                  {smsResult && smsResult.failed > 0 && (
+                    <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                      <p className="text-red-300 text-sm">
+                        {smsResult.success} sent, {smsResult.failed} failed
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* Actions */}
+                  <div className="flex gap-3 pt-2">
+                    <motion.button
+                      onClick={() => setShowSmsModal(false)}
+                      disabled={smsSending}
+                      className="flex-1 py-3 rounded-xl bg-warm-800 border border-warm-700 text-warm-300 font-medium hover:text-white transition-colors disabled:opacity-50"
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      Cancel
+                    </motion.button>
+                    <motion.button
+                      onClick={handleSendSms}
+                      disabled={smsSending || !smsMessage.trim()}
+                      className="flex-1 py-3 rounded-xl bg-primary text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      {smsSending ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4" />
+                          Send
+                        </>
+                      )}
+                    </motion.button>
+                  </div>
                 </div>
               )}
             </motion.div>
@@ -1176,10 +1447,20 @@ export function Leads() {
                     </div>
                   </div>
                 </div>
-                {lead.status === 'opted-out' && (
+                {lead.status === 'opted-out' ? (
                   <span className="text-[10px] text-warm-500 bg-warm-800 px-2 py-1 rounded uppercase tracking-wide">
                     Opted out
                   </span>
+                ) : (
+                  <motion.button
+                    onClick={() => openSmsForLead(lead.phone)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-green-600/20 border border-green-600/30 text-green-400 text-xs font-medium hover:bg-green-600/30 transition-colors"
+                    whileTap={{ scale: 0.95 }}
+                    title="Send message"
+                  >
+                    <Send className="w-3 h-3" />
+                    Send
+                  </motion.button>
                 )}
               </motion.div>
             ))
