@@ -34,7 +34,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'venues', label: 'Venues', icon: Building2 },
-  { id: 'nfc-leads', label: 'NFC Leads', icon: Smartphone },
+  { id: 'nfc-leads', label: '📱 NFC Leads', icon: Smartphone },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'team', label: 'Team', icon: UserCog },
   { id: 'devices', label: 'Devices', icon: Wifi },
