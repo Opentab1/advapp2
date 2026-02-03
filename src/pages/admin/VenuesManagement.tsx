@@ -57,6 +57,8 @@ interface VenueDisplaySettings {
 
 // API endpoint for display settings
 const DISPLAY_SETTINGS_API = 'https://7ox6y1t1f1.execute-api.us-east-2.amazonaws.com/display-settings';
+// API endpoint for venue config (Twilio/NFC settings)
+const VENUE_CONFIG_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com/venue';
 
 export function VenuesManagement() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -90,11 +92,32 @@ export function VenuesManagement() {
 
   const saveDisplaySettings = async (venueId: string, settings: VenueDisplaySettings): Promise<boolean> => {
     try {
+      // Save display settings
       const response = await fetch(`${DISPLAY_SETTINGS_API}/${venueId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings)
       });
+      
+      // Also save Twilio/NFC settings to VenueConfig (for Lambda lookup)
+      if (settings.twilioPhoneNumber || settings.welcomeMessage || settings.returnMessage) {
+        try {
+          await fetch(`${VENUE_CONFIG_API}/${venueId}/config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              twilioPhoneNumber: settings.twilioPhoneNumber,
+              welcomeMessage: settings.welcomeMessage,
+              returnMessage: settings.returnMessage,
+              venueName: settings.displayName
+            })
+          });
+          console.log('Venue config updated for NFC lead capture');
+        } catch (configErr) {
+          console.error('Failed to update venue config:', configErr);
+          // Don't fail the whole operation if this fails
+        }
+      }
       
       if (response.ok) {
         // Update local state
