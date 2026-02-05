@@ -429,12 +429,13 @@ export function generateDemoDateRangeData(startTime: Date, endTime: Date): Senso
 
 /**
  * Generate historical data for a time range
+ * IMPRESSIVE DEMO DATA - Shows a thriving, busy venue
  */
 export function generateDemoHistoricalData(venueId: string, range: TimeRange): HistoricalData {
   const now = Date.now();
   const data: SensorData[] = [];
   
-  // Calculate time range
+  // Calculate time range - use tighter intervals for more data points
   let startTime: number;
   let interval: number; // milliseconds between data points
   
@@ -449,27 +450,27 @@ export function generateDemoHistoricalData(venueId: string, range: TimeRange): H
       break;
     case '24h':
       startTime = now - (24 * 60 * 60 * 1000);
-      interval = 15 * 60 * 1000; // 15 minutes
+      interval = 10 * 60 * 1000; // 10 minutes (more data points)
       break;
     case '7d':
       startTime = now - (7 * 24 * 60 * 60 * 1000);
-      interval = 60 * 60 * 1000; // 1 hour
+      interval = 30 * 60 * 1000; // 30 minutes (more data points)
       break;
     case '14d':
       startTime = now - (14 * 24 * 60 * 60 * 1000);
-      interval = 2 * 60 * 60 * 1000; // 2 hours
+      interval = 60 * 60 * 1000; // 1 hour
       break;
     case '30d':
       startTime = now - (30 * 24 * 60 * 60 * 1000);
-      interval = 4 * 60 * 60 * 1000; // 4 hours
+      interval = 2 * 60 * 60 * 1000; // 2 hours
       break;
     case '90d':
       startTime = now - (90 * 24 * 60 * 60 * 1000);
-      interval = 12 * 60 * 60 * 1000; // 12 hours
+      interval = 4 * 60 * 60 * 1000; // 4 hours
       break;
     default:
       startTime = now - (24 * 60 * 60 * 1000);
-      interval = 15 * 60 * 1000;
+      interval = 10 * 60 * 1000;
   }
   
   // Generate data points with proper cumulative entries/exits
@@ -477,6 +478,13 @@ export function generateDemoHistoricalData(venueId: string, range: TimeRange): H
   let cumulativeEntriesHist = 0;
   let cumulativeExitsHist = 0;
   let lastDayOfYear = -1;
+  
+  // Use seeded random for consistent demo data
+  let seed = 12345;
+  const seededRandom = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
   
   for (let timestamp = startTime; timestamp <= now; timestamp += interval) {
     const date = new Date(timestamp);
@@ -492,53 +500,85 @@ export function generateDemoHistoricalData(venueId: string, range: TimeRange): H
     }
     
     // Time periods
-    const isClosedHours = hour >= 2 && hour < 16;
+    const isClosedHours = hour >= 3 && hour < 16;
     const isHappyHour = hour >= 16 && hour < 19;
     const isPrimeTime = hour >= 19 && hour < 23;
-    const isLateNight = hour >= 23 || hour < 2;
+    const isLateNight = hour >= 23 || hour < 3;
     const isWeekend = dayOfWeek === 5 || dayOfWeek === 6;
+    const isThursday = dayOfWeek === 4;
     
-    // Add entries/exits during open hours
+    // IMPRESSIVE GUEST COUNTS - busy venue!
     if (!isClosedHours) {
       let newEntries = 0;
       let newExits = 0;
       
       if (isPrimeTime) {
-        newEntries = 25 + Math.floor(Math.random() * 15); // 25-40 per hour
-        newExits = 10 + Math.floor(Math.random() * 10);   // 10-20 per hour
+        // Peak hours: 40-70 entries per hour, building to capacity
+        newEntries = 40 + Math.floor(seededRandom() * 30);
+        newExits = 15 + Math.floor(seededRandom() * 15);
       } else if (isLateNight) {
-        newEntries = 10 + Math.floor(Math.random() * 10); // Slowing down
-        newExits = 20 + Math.floor(Math.random() * 15);   // People leaving
+        // Late night: still busy, gradual exit
+        newEntries = 20 + Math.floor(seededRandom() * 20);
+        newExits = 30 + Math.floor(seededRandom() * 20);
       } else if (isHappyHour) {
-        newEntries = 30 + Math.floor(Math.random() * 20); // Building crowd
-        newExits = 5 + Math.floor(Math.random() * 5);
+        // Happy hour: rapid build-up
+        newEntries = 50 + Math.floor(seededRandom() * 30);
+        newExits = 10 + Math.floor(seededRandom() * 10);
       }
       
+      // Weekend multiplier - even busier!
       if (isWeekend) {
-        newEntries = Math.floor(newEntries * 1.3); // 30% more on weekends
+        newEntries = Math.floor(newEntries * 1.4);
+      } else if (isThursday) {
+        newEntries = Math.floor(newEntries * 1.2); // College night
       }
+      
+      // Scale entries based on interval (if interval is 30 min, halve the hourly rate)
+      const intervalHours = interval / (60 * 60 * 1000);
+      newEntries = Math.floor(newEntries * intervalHours);
+      newExits = Math.floor(newExits * intervalHours);
       
       cumulativeEntriesHist += newEntries;
       cumulativeExitsHist += newExits;
     }
     
-    // Calculate current occupancy
-    const currentOcc = Math.max(0, Math.min(480, cumulativeEntriesHist - cumulativeExitsHist));
+    // Calculate current occupancy - target high numbers
+    let currentOcc = Math.max(0, cumulativeEntriesHist - cumulativeExitsHist);
     
-    // Generate sound/light based on time
+    // During open hours, ensure minimum crowd for active venue appearance
+    if (!isClosedHours) {
+      if (isPrimeTime) {
+        currentOcc = Math.max(currentOcc, 320 + Math.floor(seededRandom() * 80)); // 320-400 during prime
+      } else if (isLateNight) {
+        currentOcc = Math.max(currentOcc, 200 + Math.floor(seededRandom() * 100)); // 200-300 late night
+      } else if (isHappyHour) {
+        currentOcc = Math.max(currentOcc, 150 + Math.floor(seededRandom() * 80)); // 150-230 happy hour
+      }
+      if (isWeekend && isPrimeTime) {
+        currentOcc = Math.min(480, currentOcc + 50); // Even more on weekends
+      }
+    }
+    currentOcc = Math.min(480, currentOcc);
+    
+    // Generate sound/light based on time and crowd size
     let decibels: number, light: number;
     if (isClosedHours) {
-      decibels = 42 + Math.random() * 5;
-      light = 50 + Math.random() * 30;
+      decibels = 42 + seededRandom() * 5;
+      light = 50 + seededRandom() * 30;
     } else if (isHappyHour) {
-      decibels = 74 + Math.random() * 5;
-      light = 280 + Math.random() * 40;
+      decibels = 74 + seededRandom() * 6;
+      light = 280 + seededRandom() * 40;
     } else if (isPrimeTime) {
-      decibels = 82 + Math.random() * 6 + (isWeekend ? 3 : 0);
-      light = 150 + Math.random() * 50;
+      // Prime time: energetic sound levels
+      decibels = 80 + seededRandom() * 8 + (isWeekend ? 4 : 0);
+      light = 140 + seededRandom() * 50;
+    } else if (isLateNight) {
+      // Late night: loud and club-like
+      decibels = 82 + seededRandom() * 6;
+      light = 100 + seededRandom() * 40;
     } else {
-      decibels = 78 + Math.random() * 5;
-      light = 180 + Math.random() * 40;
+      decibels = 76 + seededRandom() * 5;
+      light = 180 + seededRandom() * 40;
     }
     
     const songInfo = getRandomSongInfo(hour);
@@ -547,20 +587,22 @@ export function generateDemoHistoricalData(venueId: string, range: TimeRange): H
       timestamp: date.toISOString(),
       decibels: Math.round(decibels * 10) / 10,
       light: Math.round(light * 10) / 10,
-      indoorTemp: Math.round((71 + Math.random() * 2) * 10) / 10,
-      outdoorTemp: Math.round((75 + Math.random() * 8 - 4) * 10) / 10,
-      humidity: Math.round((48 + Math.random() * 12) * 10) / 10,
+      indoorTemp: Math.round((70 + seededRandom() * 3) * 10) / 10,
+      outdoorTemp: Math.round((74 + seededRandom() * 10 - 5) * 10) / 10,
+      humidity: Math.round((45 + seededRandom() * 15) * 10) / 10,
       currentSong: songInfo.song,
       artist: songInfo.artist,
       albumArt: songInfo.art,
       occupancy: {
-        current: currentOcc > 0 ? currentOcc : (isClosedHours ? 0 : 350 + Math.floor(Math.random() * 100)),
+        current: isClosedHours ? 0 : currentOcc,
         entries: cumulativeEntriesHist,
         exits: cumulativeExitsHist,
         capacity: DEMO_CAPACITY
       }
     });
   }
+  
+  console.log(`🎭 Demo: Generated ${data.length} historical data points for ${range}`);
   
   return {
     data,
@@ -571,32 +613,45 @@ export function generateDemoHistoricalData(venueId: string, range: TimeRange): H
 
 /**
  * Generate demo occupancy metrics
- * Target: 430 people currently in venue
+ * Target: 430 people currently in venue - IMPRESSIVE NUMBERS!
  */
 export function generateDemoOccupancyMetrics(): OccupancyMetrics {
   const hour = new Date().getHours();
-  const isClosedHours = hour >= 2 && hour < 16;
+  const dayOfWeek = new Date().getDay();
+  const isClosedHours = hour >= 3 && hour < 16;
+  const isWeekend = dayOfWeek === 5 || dayOfWeek === 6;
+  const isPrimeTime = hour >= 19 && hour < 23;
   
-  // Demo always shows ~430 current occupancy (busy venue!)
-  const current = isClosedHours ? 0 : DEMO_TARGET_OCCUPANCY + Math.floor(Math.random() * 20 - 10);
+  // Dynamic current occupancy based on time
+  let current = 0;
+  if (!isClosedHours) {
+    if (isPrimeTime) {
+      current = 380 + Math.floor(Math.random() * 60); // 380-440 during prime
+    } else if (hour >= 23 || hour < 3) {
+      current = 280 + Math.floor(Math.random() * 80); // 280-360 late night
+    } else if (hour >= 16 && hour < 19) {
+      current = 180 + Math.floor(Math.random() * 60); // 180-240 happy hour
+    }
+    if (isWeekend) current = Math.min(475, current + 40); // Boost on weekends
+  }
   
-  // Realistic numbers for a venue that's had 430 people
-  const todayEntries = 892 + Math.floor(Math.random() * 50); // ~900 entries today
-  const todayExits = todayEntries - current; // Math works out to ~430 inside
+  // Impressive daily numbers
+  const todayEntries = 1150 + Math.floor(Math.random() * 100); // 1150-1250 entries today!
+  const todayExits = todayEntries - current;
   
-  // Dwell time for a packed venue - people staying ~2 hours
-  const avgDwellTimeMinutes = 115 + Math.floor(Math.random() * 20); // ~2 hours avg
+  // Great dwell time - people stay and spend
+  const avgDwellTimeMinutes = 95 + Math.floor(Math.random() * 25); // 95-120 min avg
   
   return {
     current,
     todayEntries,
     todayExits,
     todayTotal: todayEntries,
-    peakOccupancy: 458, // Peak was even higher tonight!
-    peakTime: '22:15',
-    sevenDayAvg: 385,
-    fourteenDayAvg: 372,
-    thirtyDayAvg: 358,
+    peakOccupancy: 462, // Peak tonight
+    peakTime: '22:45',
+    sevenDayAvg: 412,     // Strong 7-day average
+    fourteenDayAvg: 398,  // Consistent performance
+    thirtyDayAvg: 385,    // Growing trend
     avgDwellTimeMinutes
   };
 }
@@ -625,23 +680,23 @@ export function generateDemoLocations(): Location[] {
 
 /**
  * Generate demo weekly metrics for AI reports
- * Numbers reflect a high-volume venue with 430+ nightly guests
+ * IMPRESSIVE NUMBERS - thriving high-volume venue
  */
 export function generateDemoWeeklyMetrics(): WeeklyMetrics {
   return {
-    avgComfort: 76.2,
-    avgTemperature: 71.8,
-    avgDecibels: 81.4, // Louder with big crowds
-    avgHumidity: 52.3,
+    avgComfort: 82.5,           // Excellent comfort
+    avgTemperature: 70.8,       // Perfect temp
+    avgDecibels: 79.4,          // Energetic but not overwhelming
+    avgHumidity: 48.5,          // Comfortable humidity
     peakHours: ['9-10 PM', '10-11 PM', '11-12 AM'],
-    totalCustomers: 5847, // ~835/night average
-    totalRevenue: 312500, // ~$53/person average
+    totalCustomers: 8245,       // ~1178/night average - packed!
+    totalRevenue: 485750,       // ~$59/person average - great spend
     topSongs: [
-      { song: 'Blinding Lights', plays: 89 },
-      { song: 'Uptown Funk', plays: 76 },
-      { song: 'Mr. Brightside', plays: 71 },
-      { song: 'Levitating', plays: 68 },
-      { song: 'Don\'t Stop Believin\'', plays: 64 }
+      { song: 'Last Night', plays: 127 },
+      { song: 'Blinding Lights', plays: 118 },
+      { song: 'Uptown Funk', plays: 112 },
+      { song: 'Mr. Brightside', plays: 105 },
+      { song: 'Anti-Hero', plays: 94 }
     ]
   };
 }
