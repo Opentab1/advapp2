@@ -37,10 +37,41 @@ import {
 } from 'lucide-react';
 import { haptic } from '../utils/haptics';
 import authService from '../services/auth.service';
+import { isDemoAccount } from '../utils/demoData';
 
 // API endpoint for fetching leads
 const LEADS_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
 const SMS_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
+
+// Demo data for showcase account
+const DEMO_CUSTOMERS: Lead[] = [
+  { id: '1', phone: '+15125559821', capturedAt: new Date(Date.now() - 1000 * 60 * 30), source: 'Table 5', status: 'active' },
+  { id: '2', phone: '+17135558834', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 2), source: 'Bar Top', status: 'active' },
+  { id: '3', phone: '+12145552219', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 5), source: 'Table 3', status: 'active' },
+  { id: '4', phone: '+13055557762', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 24), source: 'Patio', status: 'active' },
+  { id: '5', phone: '+14155551198', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 26), source: 'Table 1', status: 'active' },
+  { id: '6', phone: '+13105555543', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 48), source: 'Table 5', status: 'active' },
+  { id: '7', phone: '+12125553347', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 50), source: 'Table 2', status: 'active' },
+  { id: '8', phone: '+14045559901', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 72), source: 'Bar Top', status: 'opted-out' },
+  { id: '9', phone: '+19175554421', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 96), source: 'VIP Section', status: 'active' },
+  { id: '10', phone: '+14695558832', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 120), source: 'Table 7', status: 'active' },
+  { id: '11', phone: '+18325551234', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 144), source: 'Patio', status: 'active' },
+  { id: '12', phone: '+16465557890', capturedAt: new Date(Date.now() - 1000 * 60 * 60 * 168), source: 'Bar Top', status: 'active' },
+];
+
+const DEMO_STATS: LeadStats = {
+  total: 47,
+  thisWeek: 12,
+  lastWeek: 9,
+  bySource: [
+    { source: 'Table 5', count: 14 },
+    { source: 'Bar Top', count: 11 },
+    { source: 'Table 3', count: 8 },
+    { source: 'Patio', count: 7 },
+    { source: 'Table 1', count: 5 },
+    { source: 'Table 2', count: 2 },
+  ],
+};
 
 interface LeadEnrichment {
   location?: string;      // From area code (FREE)
@@ -313,6 +344,15 @@ export function Leads() {
         return;
       }
       
+      // Demo account - return fake data
+      if (isDemoAccount(venueId)) {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
+        setLeads(DEMO_CUSTOMERS.map(enrichLead));
+        setStats(DEMO_STATS);
+        setLoading(false);
+        return;
+      }
+      
       const response = await fetch(`${LEADS_API}/leads?venueId=${venueId}`);
       
       if (!response.ok) {
@@ -364,6 +404,24 @@ export function Leads() {
       
       if (!venueId) {
         alert('No venue ID found. Please log in again.');
+        setSmsSending(false);
+        return;
+      }
+      
+      // Demo account - simulate success
+      if (isDemoAccount(venueId)) {
+        await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate sending
+        setSmsResult({ success: smsRecipients.length, failed: 0 });
+        haptic('success');
+        
+        // Close modal after 2 seconds
+        setTimeout(() => {
+          setShowSmsModal(false);
+          setSmsMessage('');
+          setSmsRecipients([]);
+          setSmsResult(null);
+        }, 2000);
+        
         setSmsSending(false);
         return;
       }
