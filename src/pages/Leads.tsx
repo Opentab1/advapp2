@@ -1178,7 +1178,7 @@ export function Leads() {
                         }
                       </span>
                       <span className="text-xs text-warm-500">
-                        ~${(smsRecipients.length * Math.ceil(Math.max(smsMessage.length, 1) / 160) * 0.0079).toFixed(2)} cost
+                        ~${(smsRecipients.length * Math.ceil(Math.max(smsMessage.length, 1) / 160) * 0.02).toFixed(2)} cost
                       </span>
                     </div>
                   </div>
