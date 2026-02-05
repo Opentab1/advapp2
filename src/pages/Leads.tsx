@@ -512,8 +512,6 @@ export function Leads() {
     ? Math.round(((stats.thisWeek - stats.lastWeek) / stats.lastWeek) * 100)
     : 0;
   
-  const conversionRate = stats.total > 0 ? Math.round((stats.thisWeek / stats.total) * 100) : 0;
-  
   const activeLeads = leads.filter(l => l.status === 'active');
   
   // Filter leads
@@ -1284,9 +1282,9 @@ export function Leads() {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           {/* Total Customers */}
-          <div className="text-center">
+          <div className="text-center border-r border-warm-700">
             <div className="text-4xl font-bold text-white mb-1">
               {stats.total}
             </div>
@@ -1296,7 +1294,7 @@ export function Leads() {
           </div>
           
           {/* This Week */}
-          <div className="text-center border-x border-warm-700">
+          <div className="text-center">
             <div className="text-4xl font-bold text-white mb-1">
               {stats.thisWeek}
             </div>
@@ -1309,16 +1307,6 @@ export function Leads() {
                 {weekDelta > 0 ? '+' : ''}{weekDelta}%
               </div>
             )}
-          </div>
-          
-          {/* Conversion Rate */}
-          <div className="text-center">
-            <div className="text-4xl font-bold text-primary mb-1">
-              {conversionRate}%
-            </div>
-            <div className="text-xs text-warm-400 uppercase tracking-wide">
-              Capture Rate
-            </div>
           </div>
         </div>
       </motion.div>
