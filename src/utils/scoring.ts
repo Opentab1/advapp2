@@ -386,17 +386,51 @@ export function calculatePulseScore(
   }
   
   // Calculate factor scores
-  const soundScore = calculateFactorScore(decibels, ranges.sound);
-  const lightScore = calculateFactorScore(light, ranges.light);
+  // Treat 0 as "no data" for sound and light (Pi Zero 2W sends 0 when sensor unavailable)
+  const hasSound = decibels !== null && decibels !== undefined && decibels !== 0;
+  const hasLight = light !== null && light !== undefined && light > 0;
+  
+  const soundScore = hasSound ? calculateFactorScore(decibels, ranges.sound) : 0;
+  const lightScore = hasLight ? calculateFactorScore(light, ranges.light) : 0;
   const crowdScore = calculateCrowdScore(currentOccupancy, capacity, timeSlot);
   const musicResult = calculateMusicScore(currentSong, artist, timeSlot, bestNightGenres);
   
-  // Weighted average
+  // Redistribute weights for missing sensors
+  // If a sensor is missing, redistribute its weight to remaining factors proportionally
+  let soundWeight = FACTOR_WEIGHTS.sound;
+  let lightWeight = FACTOR_WEIGHTS.light;
+  let crowdWeight = FACTOR_WEIGHTS.crowd;
+  let musicWeight = FACTOR_WEIGHTS.music;
+  
+  if (!hasSound && !hasLight) {
+    // No environmental sensors - only crowd and music matter
+    const totalRemaining = crowdWeight + musicWeight;
+    crowdWeight = crowdWeight / totalRemaining;
+    musicWeight = musicWeight / totalRemaining;
+    soundWeight = 0;
+    lightWeight = 0;
+  } else if (!hasSound) {
+    // No sound - redistribute to light, crowd, music
+    const totalRemaining = lightWeight + crowdWeight + musicWeight;
+    lightWeight = lightWeight / totalRemaining;
+    crowdWeight = crowdWeight / totalRemaining;
+    musicWeight = musicWeight / totalRemaining;
+    soundWeight = 0;
+  } else if (!hasLight) {
+    // No light - redistribute to sound, crowd, music
+    const totalRemaining = soundWeight + crowdWeight + musicWeight;
+    soundWeight = soundWeight / totalRemaining;
+    crowdWeight = crowdWeight / totalRemaining;
+    musicWeight = musicWeight / totalRemaining;
+    lightWeight = 0;
+  }
+  
+  // Weighted average with adjusted weights
   const pulseScore = Math.round(
-    (soundScore * FACTOR_WEIGHTS.sound) + 
-    (lightScore * FACTOR_WEIGHTS.light) +
-    (crowdScore * FACTOR_WEIGHTS.crowd) +
-    (musicResult.score * FACTOR_WEIGHTS.music)
+    (soundScore * soundWeight) + 
+    (lightScore * lightWeight) +
+    (crowdScore * crowdWeight) +
+    (musicResult.score * musicWeight)
   );
   
   const status = getScoreStatus(pulseScore);
