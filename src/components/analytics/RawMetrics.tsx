@@ -215,70 +215,100 @@ export function RawMetrics({ data, loading }: RawMetricsProps) {
       {expanded && (
         <div className="p-4 space-y-6">
           
-          {/* Period Totals */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-warm-800/50 rounded-lg p-3">
-              <div className="flex items-center gap-2 text-warm-400 text-xs mb-1">
-                <LogIn className="w-3 h-3" />
-                Total Entries
+          {/* Period Totals - adapt based on available data */}
+          {(() => {
+            // Check what data is available (Pi Zero 2W has no entries/exits or lux)
+            const hasEntriesExits = totals.entries > 0 || totals.exits > 0;
+            const hasSound = totals.avgDb > 0;
+            const hasLux = totals.avgLux > 0;
+            const visibleCards = [hasEntriesExits, hasEntriesExits, hasSound, true].filter(Boolean).length;
+            const gridCols = visibleCards <= 2 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-4';
+            
+            return (
+              <div className={`grid ${gridCols} gap-3`}>
+                {/* Entries - only show if we have entry/exit tracking */}
+                {hasEntriesExits && (
+                  <div className="bg-warm-800/50 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-warm-400 text-xs mb-1">
+                      <LogIn className="w-3 h-3" />
+                      Total Entries
+                    </div>
+                    <div className="text-xl font-bold text-white">{totals.entries.toLocaleString()}</div>
+                  </div>
+                )}
+                {/* Exits - only show if we have entry/exit tracking */}
+                {hasEntriesExits && (
+                  <div className="bg-warm-800/50 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-warm-400 text-xs mb-1">
+                      <LogOut className="w-3 h-3" />
+                      Total Exits
+                    </div>
+                    <div className="text-xl font-bold text-white">{totals.exits.toLocaleString()}</div>
+                  </div>
+                )}
+                {/* Sound - only show if we have sound data */}
+                {hasSound && (
+                  <div className="bg-warm-800/50 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-warm-400 text-xs mb-1">
+                      <Volume2 className="w-3 h-3" />
+                      Avg Sound
+                    </div>
+                    <div className="text-xl font-bold text-white">{totals.avgDb} dB</div>
+                  </div>
+                )}
+                {/* Score - always show */}
+                <div className="bg-warm-800/50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-warm-400 text-xs mb-1">
+                    <Zap className="w-3 h-3" />
+                    Avg Score
+                  </div>
+                  <div className="text-xl font-bold text-white">{totals.avgScore}</div>
+                </div>
               </div>
-              <div className="text-xl font-bold text-white">{totals.entries.toLocaleString()}</div>
-            </div>
-            <div className="bg-warm-800/50 rounded-lg p-3">
-              <div className="flex items-center gap-2 text-warm-400 text-xs mb-1">
-                <LogOut className="w-3 h-3" />
-                Total Exits
-              </div>
-              <div className="text-xl font-bold text-white">{totals.exits.toLocaleString()}</div>
-            </div>
-            <div className="bg-warm-800/50 rounded-lg p-3">
-              <div className="flex items-center gap-2 text-warm-400 text-xs mb-1">
-                <Volume2 className="w-3 h-3" />
-                Avg Sound
-              </div>
-              <div className="text-xl font-bold text-white">{totals.avgDb} dB</div>
-            </div>
-            <div className="bg-warm-800/50 rounded-lg p-3">
-              <div className="flex items-center gap-2 text-warm-400 text-xs mb-1">
-                <Zap className="w-3 h-3" />
-                Avg Score
-              </div>
-              <div className="text-xl font-bold text-white">{totals.avgScore}</div>
-            </div>
-          </div>
+            );
+          })()}
           
           {/* Daily Metrics Table */}
           {rows.length > 0 && (
             <div>
               <h4 className="text-xs text-warm-400 uppercase tracking-wide mb-2">By Day</h4>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-warm-700 text-warm-400">
-                      <th className="text-left p-2 font-medium">Day</th>
-                      <th className="text-right p-2 font-medium">Entries</th>
-                      <th className="text-right p-2 font-medium">Exits</th>
-                      <th className="text-right p-2 font-medium hidden sm:table-cell">Avg dB</th>
-                      <th className="text-right p-2 font-medium hidden sm:table-cell">Avg Lux</th>
-                      <th className="text-right p-2 font-medium">Score</th>
-                      <th className="text-right p-2 font-medium hidden md:table-cell">Peak</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, idx) => (
-                      <tr key={idx} className="border-b border-warm-800 last:border-b-0">
-                        <td className="p-2 text-white">{row.day}</td>
-                        <td className="p-2 text-right text-warm-300">{row.entries}</td>
-                        <td className="p-2 text-right text-warm-300">{row.exits}</td>
-                        <td className="p-2 text-right text-warm-300 hidden sm:table-cell">{row.avgDb > 0 ? `${row.avgDb}` : '—'}</td>
-                        <td className="p-2 text-right text-warm-300 hidden sm:table-cell">{row.avgLux > 0 ? `${row.avgLux}` : '—'}</td>
-                        <td className="p-2 text-right text-white font-medium">{row.avgScore > 0 ? row.avgScore : '—'}</td>
-                        <td className="p-2 text-right text-warm-300 hidden md:table-cell">{row.peakCrowd > 0 ? row.peakCrowd : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              {(() => {
+                // Check what columns have data (hide empty columns for Pi Zero 2W)
+                const hasEntriesExits = totals.entries > 0 || totals.exits > 0;
+                const hasLux = totals.avgLux > 0;
+                const hasDb = totals.avgDb > 0;
+                
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-warm-700 text-warm-400">
+                          <th className="text-left p-2 font-medium">Day</th>
+                          {hasEntriesExits && <th className="text-right p-2 font-medium">Entries</th>}
+                          {hasEntriesExits && <th className="text-right p-2 font-medium">Exits</th>}
+                          {hasDb && <th className="text-right p-2 font-medium hidden sm:table-cell">Avg dB</th>}
+                          {hasLux && <th className="text-right p-2 font-medium hidden sm:table-cell">Avg Lux</th>}
+                          <th className="text-right p-2 font-medium">Score</th>
+                          <th className="text-right p-2 font-medium hidden md:table-cell">Peak</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row, idx) => (
+                          <tr key={idx} className="border-b border-warm-800 last:border-b-0">
+                            <td className="p-2 text-white">{row.day}</td>
+                            {hasEntriesExits && <td className="p-2 text-right text-warm-300">{row.entries}</td>}
+                            {hasEntriesExits && <td className="p-2 text-right text-warm-300">{row.exits}</td>}
+                            {hasDb && <td className="p-2 text-right text-warm-300 hidden sm:table-cell">{row.avgDb > 0 ? `${row.avgDb}` : '—'}</td>}
+                            {hasLux && <td className="p-2 text-right text-warm-300 hidden sm:table-cell">{row.avgLux > 0 ? `${row.avgLux}` : '—'}</td>}
+                            <td className="p-2 text-right text-white font-medium">{row.avgScore > 0 ? row.avgScore : '—'}</td>
+                            <td className="p-2 text-right text-warm-300 hidden md:table-cell">{row.peakCrowd > 0 ? row.peakCrowd : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
             </div>
           )}
           

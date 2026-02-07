@@ -79,36 +79,54 @@ export function LiveStats({
         </div>
       </div>
       
-      {/* Stats Grid */}
-      <div className="grid grid-cols-3 gap-3">
-        {/* Sound with visualizer */}
-        <StatChip
-          icon={Volume2}
-          label="Sound"
-          value={decibels}
-          unit="dB"
-          status={getDecibelStatus(decibels)}
-          extra={<SoundVisualizer level={normalizedSound} height={16} barCount={4} />}
-        />
+      {/* Stats Grid - adapt based on available sensors */}
+      {(() => {
+        // Check which sensors have valid data (Pi Zero 2W sends 0 for unavailable sensors)
+        const hasSound = decibels !== null && decibels !== 0;
+        const hasLight = light !== null && light > 0;
+        const hasCrowd = true; // occupancy.current is always valid (BLE or camera)
         
-        {/* Light */}
-        <StatChip
-          icon={Sun}
-          label="Light"
-          value={light}
-          unit="lux"
-          status={getLightStatus(light)}
-        />
+        const availableStats = [hasSound, hasLight, hasCrowd].filter(Boolean).length;
+        const gridCols = availableStats <= 2 ? 'grid-cols-2' : 'grid-cols-3';
         
-        {/* Crowd */}
-        <StatChip
-          icon={Users}
-          label="Crowd"
-          value={occupancy}
-          unit="people"
-          status="neutral"
-        />
-      </div>
+        return (
+          <div className={`grid ${gridCols} gap-3`}>
+            {/* Sound with visualizer - show if we have sound data */}
+            {hasSound && (
+              <StatChip
+                icon={Volume2}
+                label="Sound"
+                value={decibels}
+                unit="dB"
+                status={getDecibelStatus(decibels)}
+                extra={<SoundVisualizer level={normalizedSound} height={16} barCount={4} />}
+              />
+            )}
+            
+            {/* Light - only show if sensor has data (Pi Zero 2W has no light sensor) */}
+            {hasLight && (
+              <StatChip
+                icon={Sun}
+                label="Light"
+                value={light}
+                unit="lux"
+                status={getLightStatus(light)}
+              />
+            )}
+            
+            {/* Crowd - always show (works via BLE or camera) */}
+            {hasCrowd && (
+              <StatChip
+                icon={Users}
+                label="Crowd"
+                value={occupancy}
+                unit="people"
+                status="neutral"
+              />
+            )}
+          </div>
+        );
+      })()}
       
       {/* Now Playing */}
       {currentSong && (

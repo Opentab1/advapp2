@@ -47,8 +47,8 @@ function processEnvData(data: SensorData[]): EnvStats {
       if (d.decibels > stats.sound.max) stats.sound.max = d.decibels;
     }
     
-    // Light
-    if (d.light !== undefined && d.light >= 0) {
+    // Light - only count if > 0 (Pi Zero 2W sends 0 when no light sensor)
+    if (d.light !== undefined && d.light > 0) {
       lightSum += d.light;
       lightCount++;
       stats.light.hasData = true;

@@ -300,6 +300,8 @@ export function CrowdBreakdownModal({
         </CollapsibleSection>
         
         {/* ============ TRAFFIC DETAILS ============ */}
+        {/* Only show if we have entry/exit tracking (Pi Zero 2W uses BLE, not entry/exit) */}
+        {(todayEntries > 0 || todayExits > 0) && (
         <CollapsibleSection
           title="Traffic Details"
           icon={TrendingUp}
@@ -365,6 +367,7 @@ export function CrowdBreakdownModal({
             )}
           </div>
         </CollapsibleSection>
+        )}
         
         {/* ============ PATTERNS (Level 4 teaser) ============ */}
         <CollapsibleSection

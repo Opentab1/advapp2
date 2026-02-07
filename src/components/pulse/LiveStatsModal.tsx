@@ -89,29 +89,33 @@ export function LiveStatsModal({
             Environment
           </h3>
           <div className="grid grid-cols-2 gap-3">
-            {/* Sound */}
-            <StatCard
-              icon={Volume2}
-              label="Sound Level"
-              value={decibels}
-              unit="dB"
-              status={getStatus(decibels, OPTIMAL_RANGES.sound)}
-              optimal={`${OPTIMAL_RANGES.sound.min}-${OPTIMAL_RANGES.sound.max} dB`}
-              extra={<SoundVisualizer level={normalizedSound} height={20} barCount={5} />}
-            />
+            {/* Sound - show if we have valid data (not 0) */}
+            {decibels !== null && decibels !== 0 && (
+              <StatCard
+                icon={Volume2}
+                label="Sound Level"
+                value={decibels}
+                unit="dB"
+                status={getStatus(decibels, OPTIMAL_RANGES.sound)}
+                optimal={`${OPTIMAL_RANGES.sound.min}-${OPTIMAL_RANGES.sound.max} dB`}
+                extra={<SoundVisualizer level={normalizedSound} height={20} barCount={5} />}
+              />
+            )}
             
-            {/* Light */}
-            <StatCard
-              icon={Sun}
-              label="Light Level"
-              value={light}
-              unit="lux"
-              status={getStatus(light, OPTIMAL_RANGES.light)}
-              optimal={`${OPTIMAL_RANGES.light.min}-${OPTIMAL_RANGES.light.max} lux`}
-            />
+            {/* Light - only show if sensor has data (Pi Zero 2W sends 0) */}
+            {light !== null && light > 0 && (
+              <StatCard
+                icon={Sun}
+                label="Light Level"
+                value={light}
+                unit="lux"
+                status={getStatus(light, OPTIMAL_RANGES.light)}
+                optimal={`${OPTIMAL_RANGES.light.min}-${OPTIMAL_RANGES.light.max} lux`}
+              />
+            )}
             
-            {/* Outdoor Temp */}
-            {outdoorTemp !== null && (
+            {/* Outdoor Temp - only show if we have data */}
+            {outdoorTemp !== null && outdoorTemp > 0 && (
               <StatCard
                 icon={Thermometer}
                 label="Outside"
@@ -148,25 +152,28 @@ export function LiveStatsModal({
               </div>
             </div>
             
-            {/* Entries */}
-            <StatCard
-              icon={UserPlus}
-              label="People In"
-              value={todayEntries}
-              unit="today"
-              status="neutral"
-              iconColor="text-green-500"
-            />
-            
-            {/* Exits */}
-            <StatCard
-              icon={UserMinus}
-              label="People Out"
-              value={todayExits}
-              unit="today"
-              status="neutral"
-              iconColor="text-red-500"
-            />
+            {/* Entries/Exits - only show if tracking is available (Pi Zero 2W uses BLE, not entry/exit counting) */}
+            {(todayEntries > 0 || todayExits > 0) && (
+              <>
+                <StatCard
+                  icon={UserPlus}
+                  label="People In"
+                  value={todayEntries}
+                  unit="today"
+                  status="neutral"
+                  iconColor="text-green-500"
+                />
+                
+                <StatCard
+                  icon={UserMinus}
+                  label="People Out"
+                  value={todayExits}
+                  unit="today"
+                  status="neutral"
+                  iconColor="text-red-500"
+                />
+              </>
+            )}
           </div>
         </section>
 
