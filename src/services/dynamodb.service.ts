@@ -1190,18 +1190,43 @@ class DynamoDBService {
 
   /**
    * Transform DynamoDB item to SensorData format
+   * Handles both formats:
+   * - Old/flat format: { decibels, light, currentSong, artist, ... }
+   * - New/nested format (Pi Zero 2W): { sensors: { sound_level, light_level, ... }, spotify: { current_song, artist, ... }, ... }
    */
   private transformDynamoDBData(item: any): SensorData {
+    // Handle nested sensors object (Pi Zero 2W format)
+    const sensors = item.sensors || {};
+    const spotify = item.spotify || {};
+    
+    // Get sound level - try nested first, then flat
+    const decibels = sensors.sound_level ?? item.decibels ?? 0;
+    
+    // Get light level - try nested first, then flat
+    const light = sensors.light_level ?? item.light ?? 0;
+    
+    // Get temperature - try nested first, then flat
+    const indoorTemp = sensors.indoor_temperature ?? item.indoorTemp ?? 0;
+    const outdoorTemp = sensors.outdoor_temperature ?? item.outdoorTemp ?? 0;
+    
+    // Get humidity - try nested first, then flat
+    const humidity = sensors.humidity ?? item.humidity ?? 0;
+    
+    // Get music info - try nested spotify first, then flat
+    const currentSong = spotify.current_song ?? item.currentSong ?? null;
+    const artist = spotify.artist ?? item.artist ?? null;
+    const albumArt = spotify.album_art ?? item.albumArt ?? null;
+    
     return {
       timestamp: item.timestamp || new Date().toISOString(),
-      decibels: item.decibels || 0,
-      light: item.light || 0,
-      indoorTemp: item.indoorTemp || 0,
-      outdoorTemp: item.outdoorTemp || 0,
-      humidity: item.humidity || 0,
-      currentSong: item.currentSong,
-      albumArt: item.albumArt,
-      artist: item.artist,
+      decibels,
+      light,
+      indoorTemp,
+      outdoorTemp,
+      humidity,
+      currentSong,
+      albumArt,
+      artist,
       occupancy: item.occupancy ? {
         current: item.occupancy.current || 0,
         entries: item.occupancy.entries || 0,
