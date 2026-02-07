@@ -288,33 +288,37 @@ export function PulseBreakdownModal({
           <p className="text-xs text-warm-500 mb-3">Tap any factor for deeper insights →</p>
           
           <div className="space-y-3">
-            {/* Sound Factor - 40% */}
-            <FactorCard
-              icon={Volume2}
-              label="Sound"
-              weight={Math.round(FACTOR_WEIGHTS.sound * 100)}
-              score={soundScore}
-              currentValue={currentDecibels !== null ? `${currentDecibels.toFixed(0)} dB` : '--'}
-              optimalRange={`${ranges.sound.min}-${ranges.sound.max} dB`}
-              insight={soundInsight}
-              onTap={() => setSelectedFactor('sound')}
-              bestNightValue={bestNight ? `${bestNight.avgSound} dB` : undefined}
-              isUsingHistoricalData={isUsingHistoricalData}
-            />
+            {/* Sound Factor - 40% (hide if no sound data) */}
+            {currentDecibels !== null && currentDecibels !== 0 && (
+              <FactorCard
+                icon={Volume2}
+                label="Sound"
+                weight={Math.round(FACTOR_WEIGHTS.sound * 100)}
+                score={soundScore}
+                currentValue={`${currentDecibels.toFixed(0)} dB`}
+                optimalRange={`${ranges.sound.min}-${ranges.sound.max} dB`}
+                insight={soundInsight}
+                onTap={() => setSelectedFactor('sound')}
+                bestNightValue={bestNight ? `${bestNight.avgSound} dB` : undefined}
+                isUsingHistoricalData={isUsingHistoricalData}
+              />
+            )}
             
-            {/* Light Factor - 25% */}
-            <FactorCard
-              icon={Sun}
-              label="Light"
-              weight={Math.round(FACTOR_WEIGHTS.light * 100)}
-              score={lightScore}
-              currentValue={currentLight !== null ? `${currentLight.toFixed(0)} lux` : '--'}
-              optimalRange={`${ranges.light.min}-${ranges.light.max} lux`}
-              insight={lightInsight}
-              onTap={() => setSelectedFactor('light')}
-              bestNightValue={bestNight ? `${bestNight.avgLight} lux` : undefined}
-              isUsingHistoricalData={isUsingHistoricalData}
-            />
+            {/* Light Factor - 25% (hide if no light sensor, e.g., Pi Zero 2W) */}
+            {currentLight !== null && currentLight > 0 && (
+              <FactorCard
+                icon={Sun}
+                label="Light"
+                weight={Math.round(FACTOR_WEIGHTS.light * 100)}
+                score={lightScore}
+                currentValue={`${currentLight.toFixed(0)} lux`}
+                optimalRange={`${ranges.light.min}-${ranges.light.max} lux`}
+                insight={lightInsight}
+                onTap={() => setSelectedFactor('light')}
+                bestNightValue={bestNight ? `${bestNight.avgLight} lux` : undefined}
+                isUsingHistoricalData={isUsingHistoricalData}
+              />
+            )}
             
             {/* Crowd Factor - 20% */}
             <FactorCard
@@ -353,14 +357,18 @@ export function PulseBreakdownModal({
           </div>
           
           <div className="space-y-1.5 text-sm">
-            <div className="flex justify-between text-warm-300">
-              <span>Sound × {Math.round(FACTOR_WEIGHTS.sound * 100)}%</span>
-              <span className="font-medium text-warm-100">{(soundScore * FACTOR_WEIGHTS.sound).toFixed(0)}</span>
-            </div>
-            <div className="flex justify-between text-warm-300">
-              <span>Light × {Math.round(FACTOR_WEIGHTS.light * 100)}%</span>
-              <span className="font-medium text-warm-100">{(lightScore * FACTOR_WEIGHTS.light).toFixed(0)}</span>
-            </div>
+            {currentDecibels !== null && currentDecibels !== 0 && (
+              <div className="flex justify-between text-warm-300">
+                <span>Sound × {Math.round(FACTOR_WEIGHTS.sound * 100)}%</span>
+                <span className="font-medium text-warm-100">{(soundScore * FACTOR_WEIGHTS.sound).toFixed(0)}</span>
+              </div>
+            )}
+            {currentLight !== null && currentLight > 0 && (
+              <div className="flex justify-between text-warm-300">
+                <span>Light × {Math.round(FACTOR_WEIGHTS.light * 100)}%</span>
+                <span className="font-medium text-warm-100">{(lightScore * FACTOR_WEIGHTS.light).toFixed(0)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-warm-300">
               <span>Crowd × {Math.round(FACTOR_WEIGHTS.crowd * 100)}%</span>
               <span className="font-medium text-warm-100">{(crowdScore * FACTOR_WEIGHTS.crowd).toFixed(0)}</span>
