@@ -306,6 +306,7 @@ export function Live() {
           todayEntries={pulseData.todayEntries}
           todayExits={pulseData.todayExits}
           currentOccupancy={pulseData.currentOccupancy}
+          isBLEEstimated={pulseData.isBLEEstimated}
         />
       </motion.div>
       

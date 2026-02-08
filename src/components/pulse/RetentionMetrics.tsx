@@ -31,6 +31,7 @@ interface RetentionMetricsProps {
   todayEntries: number;
   todayExits: number;
   currentOccupancy: number;
+  isBLEEstimated?: boolean; // True if entries/exits are estimated from BLE device
 }
 
 export function RetentionMetrics({
@@ -43,6 +44,7 @@ export function RetentionMetrics({
   todayEntries,
   todayExits,
   currentOccupancy,
+  isBLEEstimated = false,
 }: RetentionMetricsProps) {
   
   // Don't show if no data yet
@@ -183,7 +185,8 @@ export function RetentionMetrics({
             <span className="text-xs text-warm-500">ratio</span>
           </div>
           <p className="text-[10px] text-warm-500 mt-1">
-            {todayEntries} in / {todayExits} out
+            {isBLEEstimated ? `~${todayEntries}` : todayEntries} in / {isBLEEstimated ? `~${todayExits}` : todayExits} out
+            {isBLEEstimated && <span className="text-warm-600 ml-1">(est)</span>}
           </p>
         </div>
       </div>
