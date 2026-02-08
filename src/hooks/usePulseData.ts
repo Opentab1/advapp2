@@ -14,7 +14,7 @@
  * - All supporting metrics
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { getDwellTimeScore, formatDwellTime, getReputationScore, calculatePulseScore, getCurrentTimeSlot } from '../utils/scoring';
 import venueLearningService from '../services/venue-learning.service';
 import { POLLING_INTERVALS, DATA_FRESHNESS } from '../utils/constants';
@@ -84,6 +84,7 @@ export interface PulseData {
   todayExits: number;
   peakOccupancy: number;
   peakTime: string | null;
+  isBLEEstimated: boolean; // True if entries/exits are estimated from BLE occupancy changes
   
   // Dwell time
   dwellTimeMinutes: number | null;
@@ -142,6 +143,13 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   const [todayHistory, setTodayHistory] = useState<SensorData[]>([]); // For dwell time calculation
   const [reviews, setReviews] = useState<GoogleReviewsData | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
+  
+  // BLE device tracking (for Pi Zero 2W that doesn't have entry/exit sensors)
+  // We estimate entries/exits based on changes in occupancy.current
+  const prevOccupancyCurrent = useRef<number | null>(null);
+  const [estimatedEntries, setEstimatedEntries] = useState(0);
+  const [estimatedExits, setEstimatedExits] = useState(0);
+  const [isBLEDevice, setIsBLEDevice] = useState(false);
   
   // ============ DATA FETCHING ============
   
@@ -312,8 +320,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     loadAllData();
   }, [enabled, venueId, fetchLiveData, fetchOccupancy, fetchReviews, fetchWeather]);
   
-  // ============ POLLING ============
-  
+// ============ POLLING ============
+
   useEffect(() => {
     if (!enabled || !venueId) return;
     
@@ -328,6 +336,59 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       clearInterval(occupancyInterval);
     };
   }, [enabled, venueId, pollingInterval, fetchLiveData, fetchOccupancy]);
+  
+  // ============ BLE DEVICE DETECTION & ESTIMATED ENTRIES/EXITS ============
+  // For Pi Zero 2W devices that use BLE for occupancy (no entry/exit sensors)
+  // We estimate entries/exits based on changes in occupancy.current
+  
+  useEffect(() => {
+    if (!sensorData?.occupancy) return;
+    
+    const currentOcc = sensorData.occupancy.current ?? 0;
+    const deviceEntries = sensorData.occupancy.entries ?? 0;
+    const deviceExits = sensorData.occupancy.exits ?? 0;
+    
+    // Detect if this is a BLE-only device (entries and exits are always 0)
+    // A real camera-based device would have entries/exits increasing over time
+    // For BLE devices, they're always 0 but current changes
+    const seemsLikeBLEDevice = (deviceEntries === 0 && deviceExits === 0 && currentOcc > 0);
+    setIsBLEDevice(seemsLikeBLEDevice);
+    
+    if (seemsLikeBLEDevice && prevOccupancyCurrent.current !== null) {
+      const diff = currentOcc - prevOccupancyCurrent.current;
+      
+      if (diff > 0) {
+        // Occupancy went up - estimate entries
+        setEstimatedEntries(prev => prev + diff);
+        console.log(`📈 BLE: Estimated +${diff} entries (${currentOcc} from ${prevOccupancyCurrent.current})`);
+      } else if (diff < 0) {
+        // Occupancy went down - estimate exits
+        setEstimatedExits(prev => prev + Math.abs(diff));
+        console.log(`📉 BLE: Estimated +${Math.abs(diff)} exits (${currentOcc} from ${prevOccupancyCurrent.current})`);
+      }
+    }
+    
+    // Update previous value for next comparison
+    prevOccupancyCurrent.current = currentOcc;
+  }, [sensorData?.occupancy?.current, sensorData?.occupancy?.entries, sensorData?.occupancy?.exits]);
+  
+  // Reset estimated entries/exits at bar day boundary (3 AM)
+  useEffect(() => {
+    const checkDayReset = () => {
+      const now = new Date();
+      // Reset at 3 AM
+      if (now.getHours() === 3 && now.getMinutes() < 5) {
+        console.log('🔄 Resetting BLE estimated entries/exits for new bar day');
+        setEstimatedEntries(0);
+        setEstimatedExits(0);
+        prevOccupancyCurrent.current = null;
+      }
+    };
+    
+    // Check every 5 minutes
+    const interval = setInterval(checkDayReset, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
   
 // ============ COMPUTED VALUES ============
 
@@ -344,25 +405,39 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   // ============ OCCUPANCY CALCULATION ============
   const effectiveOccupancy = useMemo(() => {
     if (!sensorData?.occupancy) {
-      return { current: 0, todayEntries: 0, todayExits: 0, peakOccupancy: 0, peakTime: null };
+      return { current: 0, todayEntries: 0, todayExits: 0, peakOccupancy: 0, peakTime: null, isBLEEstimated: false };
     }
     
     const entries = sensorData.occupancy.entries ?? 0;
     const exits = sensorData.occupancy.exits ?? 0;
+    const current = sensorData.occupancy.current ?? 0;
     
     // Demo account: Use the values directly from generated data
     if (isDemoAccount(venueId)) {
-      const current = sensorData.occupancy.current ?? 0;
       return {
         current,
         todayEntries: entries,
         todayExits: exits,
         peakOccupancy: Math.max(current, 458), // Demo peak
         peakTime: '22:15',
+        isBLEEstimated: false,
       };
     }
     
-    // Real accounts: Calculate from baseline
+    // BLE device (Pi Zero 2W): Use estimated entries/exits from occupancy changes
+    // The device reports current occupancy but entries/exits are always 0
+    if (isBLEDevice) {
+      return {
+        current, // Use the BLE-reported current occupancy directly
+        todayEntries: estimatedEntries,
+        todayExits: estimatedExits,
+        peakOccupancy: current, // Will be tracked via history if needed
+        peakTime: null,
+        isBLEEstimated: true, // Flag so UI can show "~" for estimated
+      };
+    }
+    
+    // Camera-based device: Calculate from baseline
     let todayEntries = 0;
     let todayExits = 0;
     
@@ -372,16 +447,17 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     }
     
     // Currently inside = today's entries - today's exits
-    const current = Math.max(0, todayEntries - todayExits);
+    const calculatedCurrent = Math.max(0, todayEntries - todayExits);
     
     return {
-      current,
+      current: calculatedCurrent,
       todayEntries,
       todayExits,
-      peakOccupancy: current,
+      peakOccupancy: calculatedCurrent,
       peakTime: null,
+      isBLEEstimated: false,
     };
-}, [sensorData?.occupancy, baseline, venueId]);
+}, [sensorData?.occupancy, baseline, venueId, isBLEDevice, estimatedEntries, estimatedExits]);
 
   // Estimate venue capacity based on peak occupancy or default
   const estimatedCapacity = useMemo(() => {
@@ -678,6 +754,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     todayExits: effectiveOccupancy.todayExits,
     peakOccupancy: effectiveOccupancy.peakOccupancy,
     peakTime: effectiveOccupancy.peakTime,
+    isBLEEstimated: effectiveOccupancy.isBLEEstimated,
     
     // Dwell time
     dwellTimeMinutes: effectiveDwellTime,

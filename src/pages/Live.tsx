@@ -414,6 +414,7 @@ export function Live() {
         todayExits={pulseData.todayExits}
         peakOccupancy={pulseData.peakOccupancy}
         peakTime={pulseData.peakTime}
+        isBLEEstimated={pulseData.isBLEEstimated}
       />
       
       {/* Action Detail */}
@@ -447,6 +448,7 @@ export function Live() {
         todayEntries={pulseData.todayEntries}
         todayExits={pulseData.todayExits}
         peakOccupancy={pulseData.peakOccupancy}
+        isBLEEstimated={pulseData.isBLEEstimated}
         currentSong={pulseData.sensorData?.currentSong ?? null}
         artist={pulseData.sensorData?.artist ?? null}
         albumArt={pulseData.sensorData?.albumArt ?? null}

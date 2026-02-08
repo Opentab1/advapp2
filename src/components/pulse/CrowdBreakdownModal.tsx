@@ -42,6 +42,7 @@ interface CrowdBreakdownModalProps {
   todayExits: number;
   peakOccupancy: number;
   peakTime: string | null;
+  isBLEEstimated?: boolean; // True if entries/exits are estimated from BLE device
   // New: hourly data for charts (optional, will generate mock if not provided)
   hourlyData?: HourlyData[];
   // New: historical comparison
@@ -61,6 +62,7 @@ export function CrowdBreakdownModal({
   todayExits,
   peakOccupancy,
   peakTime,
+  isBLEEstimated = false,
   hourlyData: providedHourlyData,
   lastWeekSameDayPeak,
   lastWeekSameDayTotal,
@@ -300,12 +302,12 @@ export function CrowdBreakdownModal({
         </CollapsibleSection>
         
         {/* ============ TRAFFIC DETAILS ============ */}
-        {/* Only show if we have entry/exit tracking (Pi Zero 2W uses BLE, not entry/exit) */}
+        {/* Show for camera devices and BLE-estimated devices */}
         {(todayEntries > 0 || todayExits > 0) && (
         <CollapsibleSection
-          title="Traffic Details"
+          title={isBLEEstimated ? "Traffic Details ~" : "Traffic Details"}
           icon={TrendingUp}
-          subtitle={`${todayEntries} in, ${todayExits} out`}
+          subtitle={isBLEEstimated ? `~${todayEntries} in, ~${todayExits} out (estimated)` : `${todayEntries} in, ${todayExits} out`}
           expanded={expandedSection === 'traffic'}
           onToggle={() => toggleSection('traffic')}
         >

@@ -36,6 +36,7 @@ interface LiveStatsModalProps {
   todayEntries: number;
   todayExits: number;
   peakOccupancy: number;
+  isBLEEstimated?: boolean; // True if entries/exits are estimated from BLE device
   // Music
   currentSong: string | null;
   artist: string | null;
@@ -56,6 +57,7 @@ export function LiveStatsModal({
   todayEntries,
   todayExits,
   peakOccupancy,
+  isBLEEstimated = false,
   currentSong,
   artist,
   albumArt,
@@ -152,23 +154,23 @@ export function LiveStatsModal({
               </div>
             </div>
             
-            {/* Entries/Exits - only show if tracking is available (Pi Zero 2W uses BLE, not entry/exit counting) */}
+            {/* Entries/Exits - show for camera devices and BLE-estimated devices */}
             {(todayEntries > 0 || todayExits > 0) && (
               <>
                 <StatCard
                   icon={UserPlus}
-                  label="People In"
+                  label={isBLEEstimated ? "People In ~" : "People In"}
                   value={todayEntries}
-                  unit="today"
+                  unit={isBLEEstimated ? "estimated" : "today"}
                   status="neutral"
                   iconColor="text-green-500"
                 />
                 
                 <StatCard
                   icon={UserMinus}
-                  label="People Out"
+                  label={isBLEEstimated ? "People Out ~" : "People Out"}
                   value={todayExits}
-                  unit="today"
+                  unit={isBLEEstimated ? "estimated" : "today"}
                   status="neutral"
                   iconColor="text-red-500"
                 />
