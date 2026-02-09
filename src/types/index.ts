@@ -63,6 +63,10 @@ export interface OccupancyData {
   // BLE device breakdown (Pi Zero 2W)
   total_devices?: number;
   device_breakdown?: DeviceBreakdown;
+  // BLE dwell time tracking (Pi Zero 2W)
+  avg_stay_minutes?: number;        // Average time phones stayed before leaving
+  longest_current_minutes?: number; // Longest current visitor duration
+  total_visits_tracked?: number;    // Completed visits recorded
 }
 
 export interface OccupancyMetrics {

@@ -90,6 +90,11 @@ export interface PulseData {
   totalDevices: number | null;
   deviceBreakdown: import('../types').DeviceBreakdown | null;
   
+  // BLE dwell time tracking (Pi Zero 2W)
+  bleDwellTime: number | null;           // avg_stay_minutes from device
+  longestVisitorMinutes: number | null;  // longest_current_minutes
+  totalVisitsTracked: number | null;     // total_visits_tracked
+  
   // Dwell time
   dwellTimeMinutes: number | null;
   dwellTimeFormatted: string;
@@ -628,15 +633,24 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     return avgDwell;
   }, [todayHistory]);
   
-  // DEMO: Always show a number, never null
+  // Use BLE dwell time if available, otherwise use FIFO calculation
   const effectiveDwellTime = useMemo(() => {
+    // Priority 1: BLE device reports avg_stay_minutes directly (Pi Zero 2W)
+    const bleDwellTime = sensorData?.occupancy?.avg_stay_minutes;
+    if (bleDwellTime !== undefined && bleDwellTime > 0) {
+      return Math.round(bleDwellTime);
+    }
+    
+    // Priority 2: FIFO calculation from entries/exits (camera devices)
     if (dwellTimeMinutes !== null) return dwellTimeMinutes;
-    // Demo fallback: realistic avg stay for a busy venue
+    
+    // Priority 3: Demo fallback
     if (isDemoAccount(venueId)) {
       return 95 + Math.floor(Math.random() * 20); // 95-115 minutes
     }
+    
     return null;
-  }, [dwellTimeMinutes, venueId]);
+  }, [sensorData?.occupancy?.avg_stay_minutes, dwellTimeMinutes, venueId]);
   
   const dwellScore = getDwellTimeScore(effectiveDwellTime);
   const dwellTimeFormatted = formatDwellTime(effectiveDwellTime);
@@ -763,6 +777,11 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     // BLE device breakdown
     totalDevices: sensorData?.occupancy?.total_devices ?? null,
     deviceBreakdown: sensorData?.occupancy?.device_breakdown ?? null,
+    
+    // BLE dwell time tracking
+    bleDwellTime: sensorData?.occupancy?.avg_stay_minutes ?? null,
+    longestVisitorMinutes: sensorData?.occupancy?.longest_current_minutes ?? null,
+    totalVisitsTracked: sensorData?.occupancy?.total_visits_tracked ?? null,
     
     // Dwell time
     dwellTimeMinutes: effectiveDwellTime,

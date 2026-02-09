@@ -19,7 +19,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Modal } from '../common/Modal';
 import { 
   Users, UserPlus, UserMinus, TrendingUp, 
-  ChevronRight, Target, Calendar,
+  ChevronRight, Target, Calendar, Clock, Timer,
   BarChart3, AlertCircle, Smartphone, Watch, Headphones, Radio
 } from 'lucide-react';
 import { AnimatedNumber } from '../common/AnimatedNumber';
@@ -47,6 +47,10 @@ interface CrowdBreakdownModalProps {
   // BLE device breakdown
   totalDevices?: number | null;
   deviceBreakdown?: DeviceBreakdown | null;
+  // BLE dwell time tracking
+  bleDwellTime?: number | null;
+  longestVisitorMinutes?: number | null;
+  totalVisitsTracked?: number | null;
   // New: hourly data for charts (optional, will generate mock if not provided)
   hourlyData?: HourlyData[];
   // New: historical comparison
@@ -69,6 +73,9 @@ export function CrowdBreakdownModal({
   isBLEEstimated = false,
   totalDevices,
   deviceBreakdown,
+  bleDwellTime,
+  longestVisitorMinutes,
+  totalVisitsTracked,
   hourlyData: providedHourlyData,
   lastWeekSameDayPeak,
   lastWeekSameDayTotal,
@@ -445,6 +452,33 @@ export function CrowdBreakdownModal({
                         </div>
                       )}
                     </div>
+                    
+                    {/* Dwell time stats within audience profile */}
+                    {(bleDwellTime || longestVisitorMinutes) && (
+                      <div className="pt-3 border-t border-warm-700">
+                        <div className="grid grid-cols-2 gap-2">
+                          {bleDwellTime && bleDwellTime > 0 && (
+                            <div className="bg-warm-700/50 rounded-lg p-2 text-center">
+                              <Clock className="w-3.5 h-3.5 text-primary mx-auto mb-1" />
+                              <div className="text-lg font-bold text-white">{Math.round(bleDwellTime)}<span className="text-xs text-warm-400">m</span></div>
+                              <div className="text-[10px] text-warm-400">Avg Stay</div>
+                            </div>
+                          )}
+                          {longestVisitorMinutes && longestVisitorMinutes > 0 && (
+                            <div className="bg-warm-700/50 rounded-lg p-2 text-center">
+                              <Timer className="w-3.5 h-3.5 text-green-400 mx-auto mb-1" />
+                              <div className="text-lg font-bold text-white">{Math.round(longestVisitorMinutes)}<span className="text-xs text-warm-400">m</span></div>
+                              <div className="text-[10px] text-warm-400">Longest Here</div>
+                            </div>
+                          )}
+                        </div>
+                        {totalVisitsTracked && totalVisitsTracked > 0 && (
+                          <p className="text-[10px] text-warm-500 text-center mt-2">
+                            {totalVisitsTracked} visits tracked today
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </>
                 );
               })()}

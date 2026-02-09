@@ -15,7 +15,7 @@
 import { motion } from 'framer-motion';
 import { 
   Volume2, Sun, Users, UserPlus, UserMinus, 
-  Thermometer, Music, Star, 
+  Thermometer, Music, Star, Clock, Timer,
   ExternalLink, Smartphone, Watch, Tablet, Laptop, Headphones, Radio
 } from 'lucide-react';
 import { BottomSheet } from '../common/BottomSheet';
@@ -41,6 +41,10 @@ interface LiveStatsModalProps {
   // BLE device breakdown
   totalDevices?: number | null;
   deviceBreakdown?: DeviceBreakdown | null;
+  // BLE dwell time tracking
+  bleDwellTime?: number | null;
+  longestVisitorMinutes?: number | null;
+  totalVisitsTracked?: number | null;
   // Music
   currentSong: string | null;
   artist: string | null;
@@ -64,6 +68,9 @@ export function LiveStatsModal({
   isBLEEstimated = false,
   totalDevices,
   deviceBreakdown,
+  bleDwellTime,
+  longestVisitorMinutes,
+  totalVisitsTracked,
   currentSong,
   artist,
   albumArt,
@@ -277,6 +284,49 @@ export function LiveStatsModal({
                   </>
                 );
               })()}
+            </div>
+          </section>
+        )}
+        
+        {/* ============ DWELL TIME (BLE) ============ */}
+        {(bleDwellTime || longestVisitorMinutes) && (
+          <section>
+            <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
+              Visit Duration
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              {bleDwellTime && bleDwellTime > 0 && (
+                <div className="bg-warm-800/50 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock className="w-4 h-4 text-primary" />
+                    <span className="text-xs text-warm-400">Avg Stay</span>
+                  </div>
+                  <div className="text-2xl font-bold text-white">
+                    {Math.round(bleDwellTime)}
+                    <span className="text-sm font-normal text-warm-400 ml-1">min</span>
+                  </div>
+                  {totalVisitsTracked && totalVisitsTracked > 0 && (
+                    <p className="text-[10px] text-warm-500 mt-1">
+                      Based on {totalVisitsTracked} visits
+                    </p>
+                  )}
+                </div>
+              )}
+              {longestVisitorMinutes && longestVisitorMinutes > 0 && (
+                <div className="bg-warm-800/50 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Timer className="w-4 h-4 text-green-400" />
+                    <span className="text-xs text-warm-400">Longest Here</span>
+                  </div>
+                  <div className="text-2xl font-bold text-white">
+                    {Math.round(longestVisitorMinutes)}
+                    <span className="text-sm font-normal text-warm-400 ml-1">min</span>
+                  </div>
+                  <p className="text-[10px] text-warm-500 mt-1">
+                    Current visitor
+                  </p>
+                </div>
+              )}
             </div>
           </section>
         )}

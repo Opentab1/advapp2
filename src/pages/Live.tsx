@@ -418,6 +418,9 @@ export function Live() {
         isBLEEstimated={pulseData.isBLEEstimated}
         totalDevices={pulseData.totalDevices}
         deviceBreakdown={pulseData.deviceBreakdown}
+        bleDwellTime={pulseData.bleDwellTime}
+        longestVisitorMinutes={pulseData.longestVisitorMinutes}
+        totalVisitsTracked={pulseData.totalVisitsTracked}
       />
       
       {/* Action Detail */}
@@ -454,6 +457,9 @@ export function Live() {
         isBLEEstimated={pulseData.isBLEEstimated}
         totalDevices={pulseData.totalDevices}
         deviceBreakdown={pulseData.deviceBreakdown}
+        bleDwellTime={pulseData.bleDwellTime}
+        longestVisitorMinutes={pulseData.longestVisitorMinutes}
+        totalVisitsTracked={pulseData.totalVisitsTracked}
         currentSong={pulseData.sensorData?.currentSong ?? null}
         artist={pulseData.sensorData?.artist ?? null}
         albumArt={pulseData.sensorData?.albumArt ?? null}

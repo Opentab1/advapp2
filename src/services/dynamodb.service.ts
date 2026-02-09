@@ -1234,7 +1234,11 @@ class DynamoDBService {
         capacity: item.occupancy.capacity,
         // BLE device breakdown (Pi Zero 2W)
         total_devices: item.occupancy.total_devices,
-        device_breakdown: item.occupancy.device_breakdown
+        device_breakdown: item.occupancy.device_breakdown,
+        // BLE dwell time tracking (Pi Zero 2W)
+        avg_stay_minutes: item.occupancy.avg_stay_minutes,
+        longest_current_minutes: item.occupancy.longest_current_minutes,
+        total_visits_tracked: item.occupancy.total_visits_tracked
       } : undefined
     };
   }
