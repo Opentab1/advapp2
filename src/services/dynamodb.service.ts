@@ -155,11 +155,37 @@ const listSensorData = /* GraphQL */ `
         currentSong
         albumArt
         artist
+        sensors {
+          sound_level
+          peak_db
+          light_level
+          indoor_temperature
+          humidity
+        }
+        spotify {
+          current_song
+          artist
+          album_art
+        }
         occupancy {
           current
           entries
           exits
           capacity
+          total_devices
+          device_breakdown {
+            phone
+            watch
+            tablet
+            computer
+            headphones
+            beacon
+            other
+            unknown
+          }
+          avg_stay_minutes
+          longest_current_minutes
+          total_visits_tracked
         }
       }
       nextToken
