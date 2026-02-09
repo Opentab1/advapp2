@@ -416,6 +416,8 @@ export function Live() {
         peakOccupancy={pulseData.peakOccupancy}
         peakTime={pulseData.peakTime}
         isBLEEstimated={pulseData.isBLEEstimated}
+        totalDevices={pulseData.totalDevices}
+        deviceBreakdown={pulseData.deviceBreakdown}
       />
       
       {/* Action Detail */}
@@ -450,6 +452,8 @@ export function Live() {
         todayExits={pulseData.todayExits}
         peakOccupancy={pulseData.peakOccupancy}
         isBLEEstimated={pulseData.isBLEEstimated}
+        totalDevices={pulseData.totalDevices}
+        deviceBreakdown={pulseData.deviceBreakdown}
         currentSong={pulseData.sensorData?.currentSong ?? null}
         artist={pulseData.sensorData?.artist ?? null}
         albumArt={pulseData.sensorData?.albumArt ?? null}

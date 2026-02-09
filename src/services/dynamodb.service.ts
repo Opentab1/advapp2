@@ -1231,7 +1231,10 @@ class DynamoDBService {
         current: item.occupancy.current || 0,
         entries: item.occupancy.entries || 0,
         exits: item.occupancy.exits || 0,
-        capacity: item.occupancy.capacity
+        capacity: item.occupancy.capacity,
+        // BLE device breakdown (Pi Zero 2W)
+        total_devices: item.occupancy.total_devices,
+        device_breakdown: item.occupancy.device_breakdown
       } : undefined
     };
   }

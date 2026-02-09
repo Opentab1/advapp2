@@ -86,6 +86,10 @@ export interface PulseData {
   peakTime: string | null;
   isBLEEstimated: boolean; // True if entries/exits are estimated from BLE occupancy changes
   
+  // BLE device breakdown (Pi Zero 2W)
+  totalDevices: number | null;
+  deviceBreakdown: import('../types').DeviceBreakdown | null;
+  
   // Dwell time
   dwellTimeMinutes: number | null;
   dwellTimeFormatted: string;
@@ -755,6 +759,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     peakOccupancy: effectiveOccupancy.peakOccupancy,
     peakTime: effectiveOccupancy.peakTime,
     isBLEEstimated: effectiveOccupancy.isBLEEstimated,
+    
+    // BLE device breakdown
+    totalDevices: sensorData?.occupancy?.total_devices ?? null,
+    deviceBreakdown: sensorData?.occupancy?.device_breakdown ?? null,
     
     // Dwell time
     dwellTimeMinutes: effectiveDwellTime,

@@ -16,13 +16,14 @@ import { motion } from 'framer-motion';
 import { 
   Volume2, Sun, Users, UserPlus, UserMinus, 
   Thermometer, Music, Star, 
-  ExternalLink
+  ExternalLink, Smartphone, Watch, Tablet, Laptop, Headphones, Radio
 } from 'lucide-react';
 import { BottomSheet } from '../common/BottomSheet';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import { SoundVisualizer } from '../common/SoundVisualizer';
 import { OPTIMAL_RANGES } from '../../utils/constants';
 import type { GoogleReviewsData } from '../../services/google-reviews.service';
+import type { DeviceBreakdown } from '../../types';
 
 interface LiveStatsModalProps {
   isOpen: boolean;
@@ -37,6 +38,9 @@ interface LiveStatsModalProps {
   todayExits: number;
   peakOccupancy: number;
   isBLEEstimated?: boolean; // True if entries/exits are estimated from BLE device
+  // BLE device breakdown
+  totalDevices?: number | null;
+  deviceBreakdown?: DeviceBreakdown | null;
   // Music
   currentSong: string | null;
   artist: string | null;
@@ -58,6 +62,8 @@ export function LiveStatsModal({
   todayExits,
   peakOccupancy,
   isBLEEstimated = false,
+  totalDevices,
+  deviceBreakdown,
   currentSong,
   artist,
   albumArt,
@@ -176,8 +182,104 @@ export function LiveStatsModal({
                 />
               </>
             )}
+            
+            {/* Total Devices - BLE breakdown */}
+            {totalDevices && totalDevices > 0 && (
+              <StatCard
+                icon={Radio}
+                label="Devices in Range"
+                value={totalDevices}
+                unit="bluetooth"
+                status="neutral"
+                iconColor="text-blue-400"
+              />
+            )}
           </div>
         </section>
+        
+        {/* ============ DEVICE BREAKDOWN ============ */}
+        {deviceBreakdown && (
+          <section>
+            <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
+              Audience Profile
+            </h3>
+            <div className="bg-warm-800/50 rounded-xl p-4 space-y-3">
+              {/* Device breakdown bars */}
+              {(() => {
+                const total = Object.values(deviceBreakdown).reduce((a, b) => a + b, 0);
+                if (total === 0) return null;
+                
+                const devices = [
+                  { key: 'phone', label: 'Phones', icon: Smartphone, count: deviceBreakdown.phone, color: 'bg-primary' },
+                  { key: 'watch', label: 'Watches', icon: Watch, count: deviceBreakdown.watch, color: 'bg-purple-500' },
+                  { key: 'headphones', label: 'Headphones', icon: Headphones, count: deviceBreakdown.headphones, color: 'bg-pink-500' },
+                  { key: 'tablet', label: 'Tablets', icon: Tablet, count: deviceBreakdown.tablet, color: 'bg-blue-500' },
+                  { key: 'computer', label: 'Computers', icon: Laptop, count: deviceBreakdown.computer, color: 'bg-green-500' },
+                ].filter(d => d.count > 0);
+                
+                const watchToPhoneRatio = deviceBreakdown.phone > 0 
+                  ? Math.round((deviceBreakdown.watch / deviceBreakdown.phone) * 100) 
+                  : 0;
+                
+                const headphonePercent = total > 0 
+                  ? Math.round((deviceBreakdown.headphones / total) * 100) 
+                  : 0;
+                
+                return (
+                  <>
+                    {/* Breakdown bars */}
+                    <div className="space-y-2">
+                      {devices.map(({ key, label, icon: Icon, count, color }) => {
+                        const percent = Math.round((count / total) * 100);
+                        return (
+                          <div key={key} className="flex items-center gap-3">
+                            <Icon className="w-4 h-4 text-warm-400 flex-shrink-0" />
+                            <div className="flex-1">
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="text-warm-300">{label}</span>
+                                <span className="text-warm-400">{count} ({percent}%)</span>
+                              </div>
+                              <div className="h-1.5 bg-warm-700 rounded-full overflow-hidden">
+                                <motion.div
+                                  className={`h-full ${color} rounded-full`}
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${percent}%` }}
+                                  transition={{ duration: 0.5, ease: 'easeOut' }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    
+                    {/* Insights */}
+                    <div className="pt-3 border-t border-warm-700 space-y-2">
+                      {watchToPhoneRatio >= 30 && (
+                        <div className="flex items-center gap-2 text-xs">
+                          <Watch className="w-3.5 h-3.5 text-purple-400" />
+                          <span className="text-warm-300">
+                            <span className="text-purple-400 font-medium">{watchToPhoneRatio}%</span> watch-to-phone ratio
+                            {watchToPhoneRatio >= 50 && <span className="text-warm-500 ml-1">• Affluent crowd</span>}
+                          </span>
+                        </div>
+                      )}
+                      {headphonePercent >= 10 && (
+                        <div className="flex items-center gap-2 text-xs">
+                          <Headphones className="w-3.5 h-3.5 text-pink-400" />
+                          <span className="text-warm-300">
+                            <span className="text-pink-400 font-medium">{headphonePercent}%</span> wearing earbuds
+                            <span className="text-warm-500 ml-1">• May not hear venue music</span>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </section>
+        )}
 
         {/* ============ NOW PLAYING ============ */}
         {currentSong && (

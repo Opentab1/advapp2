@@ -44,11 +44,25 @@ export interface SensorData {
   _dataPointCount?: number;    // number of raw data points aggregated
 }
 
+export interface DeviceBreakdown {
+  phone: number;
+  watch: number;
+  tablet: number;
+  computer: number;
+  headphones: number;
+  beacon: number;
+  other: number;
+  unknown: number;
+}
+
 export interface OccupancyData {
   current: number;
   entries: number;
   exits: number;
   capacity?: number;
+  // BLE device breakdown (Pi Zero 2W)
+  total_devices?: number;
+  device_breakdown?: DeviceBreakdown;
 }
 
 export interface OccupancyMetrics {

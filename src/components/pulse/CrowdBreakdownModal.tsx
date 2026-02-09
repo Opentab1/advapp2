@@ -20,10 +20,11 @@ import { Modal } from '../common/Modal';
 import { 
   Users, UserPlus, UserMinus, TrendingUp, 
   ChevronRight, Target, Calendar,
-  BarChart3, AlertCircle
+  BarChart3, AlertCircle, Smartphone, Watch, Headphones, Radio
 } from 'lucide-react';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import { AreaChart, HorizontalBar, StatComparison } from '../common/MiniChart';
+import type { DeviceBreakdown } from '../../types';
 
 // ============ TYPES ============
 
@@ -43,6 +44,9 @@ interface CrowdBreakdownModalProps {
   peakOccupancy: number;
   peakTime: string | null;
   isBLEEstimated?: boolean; // True if entries/exits are estimated from BLE device
+  // BLE device breakdown
+  totalDevices?: number | null;
+  deviceBreakdown?: DeviceBreakdown | null;
   // New: hourly data for charts (optional, will generate mock if not provided)
   hourlyData?: HourlyData[];
   // New: historical comparison
@@ -63,6 +67,8 @@ export function CrowdBreakdownModal({
   peakOccupancy,
   peakTime,
   isBLEEstimated = false,
+  totalDevices,
+  deviceBreakdown,
   hourlyData: providedHourlyData,
   lastWeekSameDayPeak,
   lastWeekSameDayTotal,
@@ -369,6 +375,81 @@ export function CrowdBreakdownModal({
             )}
           </div>
         </CollapsibleSection>
+        )}
+        
+        {/* ============ AUDIENCE PROFILE (BLE devices) ============ */}
+        {deviceBreakdown && (
+          <CollapsibleSection
+            title="Audience Profile"
+            icon={Radio}
+            subtitle={totalDevices ? `${totalDevices} devices detected` : 'Device breakdown'}
+            expanded={expandedSection === 'audience'}
+            onToggle={() => toggleSection('audience')}
+          >
+            <div className="space-y-3 pt-2">
+              {(() => {
+                const total = Object.values(deviceBreakdown).reduce((a, b) => a + b, 0);
+                if (total === 0) return <p className="text-xs text-warm-500">No devices detected</p>;
+                
+                const watchToPhoneRatio = deviceBreakdown.phone > 0 
+                  ? Math.round((deviceBreakdown.watch / deviceBreakdown.phone) * 100) 
+                  : 0;
+                
+                const headphonePercent = total > 0 
+                  ? Math.round((deviceBreakdown.headphones / total) * 100) 
+                  : 0;
+                
+                return (
+                  <>
+                    {/* Quick stats */}
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="bg-warm-700/50 rounded-lg p-3 text-center">
+                        <Smartphone className="w-4 h-4 text-primary mx-auto mb-1" />
+                        <div className="text-lg font-bold text-white">{deviceBreakdown.phone}</div>
+                        <div className="text-[10px] text-warm-400">Phones</div>
+                      </div>
+                      <div className="bg-warm-700/50 rounded-lg p-3 text-center">
+                        <Watch className="w-4 h-4 text-purple-400 mx-auto mb-1" />
+                        <div className="text-lg font-bold text-white">{deviceBreakdown.watch}</div>
+                        <div className="text-[10px] text-warm-400">Watches</div>
+                      </div>
+                      <div className="bg-warm-700/50 rounded-lg p-3 text-center">
+                        <Headphones className="w-4 h-4 text-pink-400 mx-auto mb-1" />
+                        <div className="text-lg font-bold text-white">{deviceBreakdown.headphones}</div>
+                        <div className="text-[10px] text-warm-400">Earbuds</div>
+                      </div>
+                    </div>
+                    
+                    {/* Insights */}
+                    <div className="space-y-2">
+                      {watchToPhoneRatio >= 30 && (
+                        <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
+                          <div className="flex items-center gap-2">
+                            <Watch className="w-4 h-4 text-purple-400" />
+                            <span className="text-sm text-warm-200">
+                              <span className="text-purple-400 font-semibold">{watchToPhoneRatio}%</span> watch ratio
+                              {watchToPhoneRatio >= 50 && <span className="text-warm-400 ml-2">• Premium crowd</span>}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      {headphonePercent >= 10 && (
+                        <div className="bg-pink-500/10 border border-pink-500/20 rounded-lg p-3">
+                          <div className="flex items-center gap-2">
+                            <Headphones className="w-4 h-4 text-pink-400" />
+                            <span className="text-sm text-warm-200">
+                              <span className="text-pink-400 font-semibold">{headphonePercent}%</span> with earbuds
+                              <span className="text-warm-400 ml-2">• May miss venue audio</span>
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </CollapsibleSection>
         )}
         
         {/* ============ PATTERNS (Level 4 teaser) ============ */}
