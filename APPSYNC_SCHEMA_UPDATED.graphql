@@ -11,6 +11,37 @@ type SensorData {
   albumArt: String
   artist: String
   occupancy: OccupancyData
+  # Pi Zero 2W nested format
+  sensors: SensorValues
+  spotify: SpotifyInfo
+}
+
+# Pi Zero 2W sensor values
+type SensorValues {
+  sound_level: Float
+  peak_db: Float
+  light_level: Float
+  indoor_temperature: Float
+  humidity: Float
+}
+
+# Pi Zero 2W spotify info
+type SpotifyInfo {
+  current_song: String
+  artist: String
+  album_art: String
+}
+
+# BLE Device Breakdown
+type DeviceBreakdown {
+  phone: Int
+  watch: Int
+  tablet: Int
+  computer: Int
+  headphones: Int
+  beacon: Int
+  other: Int
+  unknown: Int
 }
 
 type OccupancyData {
@@ -18,6 +49,13 @@ type OccupancyData {
   entries: Int
   exits: Int
   capacity: Int
+  # BLE device tracking (Pi Zero 2W)
+  total_devices: Int
+  device_breakdown: DeviceBreakdown
+  # BLE dwell time tracking
+  avg_stay_minutes: Float
+  longest_current_minutes: Float
+  total_visits_tracked: Int
 }
 
 type SensorDataConnection {
