@@ -53,6 +53,7 @@ import type { SportsGame } from '../types';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { OfflineState, ErrorState } from '../components/common/LoadingState';
 import { haptic } from '../utils/haptics';
+import { isDemoAccount } from '../utils/demoData';
 
 // ============ MODAL TYPES ============
 
@@ -248,24 +249,57 @@ export function Live() {
         />
       </motion.div>
       
-      {/* Supporting Rings - Dwell, Rating, Crowd */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.05 }}
-      >
-        <SupportingRings
-          dwellTimeFormatted={pulseData.dwellTimeFormatted}
-          dwellScore={pulseData.dwellScore}
-          onDwellTap={() => setActiveModal('dwell')}
-          rating={pulseData.reviews?.rating ?? null}
-          reputationScore={pulseData.reputationScore}
-          onReputationTap={() => setActiveModal('reputation')}
-          currentOccupancy={pulseData.currentOccupancy}
-          occupancyScore={crowdScore}
-          onCrowdTap={() => setActiveModal('crowd')}
-        />
-      </motion.div>
+      {/* Quick Actions - Right below Pulse Score for demo accounts */}
+      {isDemoAccount(venueId) && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+        >
+          <TonightsPlaybook
+            currentDecibels={pulseData.currentDecibels ?? 65}
+            currentLight={pulseData.currentLight ?? 50}
+            currentOccupancy={pulseData.currentOccupancy ?? 0}
+            peakPrediction={intelligence.peakPrediction ? {
+              hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
+              expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
+              minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
+            } : undefined}
+            smartActions={intelligence.smartActions.map(a => ({
+              id: a.id,
+              title: a.title,
+              description: a.description,
+              priority: a.priority === 'critical' ? 'high' : a.priority,
+            }))}
+            venuePatterns={venueLearning.patterns.map(p => ({
+              factor: p.factor,
+              impact: p.impact,
+              confidence: p.confidence,
+            }))}
+          />
+        </motion.div>
+      )}
+      
+      {/* Supporting Rings - Dwell, Rating, Crowd (hidden for demo accounts) */}
+      {!isDemoAccount(venueId) && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+        >
+          <SupportingRings
+            dwellTimeFormatted={pulseData.dwellTimeFormatted}
+            dwellScore={pulseData.dwellScore}
+            onDwellTap={() => setActiveModal('dwell')}
+            rating={pulseData.reviews?.rating ?? null}
+            reputationScore={pulseData.reputationScore}
+            onReputationTap={() => setActiveModal('reputation')}
+            currentOccupancy={pulseData.currentOccupancy}
+            occupancyScore={crowdScore}
+            onCrowdTap={() => setActiveModal('crowd')}
+          />
+        </motion.div>
+      )}
       
       {/* Offline Warning */}
       {!pulseData.isConnected && pulseData.sensorData && (
@@ -290,25 +324,27 @@ export function Live() {
         />
       </motion.div>
       
-      {/* Guest Retention Metrics - 100% Accurate */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.12 }}
-      >
-        <RetentionMetrics
-          retentionRate={pulseData.retentionMetrics.retentionRate}
-          turnoverRate={pulseData.retentionMetrics.turnoverRate}
-          entryExitRatio={pulseData.retentionMetrics.entryExitRatio}
-          crowdTrend={pulseData.retentionMetrics.crowdTrend}
-          avgStayMinutes={pulseData.retentionMetrics.avgStayMinutes}
-          exitsPerHour={pulseData.retentionMetrics.exitsPerHour}
-          todayEntries={pulseData.todayEntries}
-          todayExits={pulseData.todayExits}
-          currentOccupancy={pulseData.currentOccupancy}
-          isBLEEstimated={pulseData.isBLEEstimated}
-        />
-      </motion.div>
+      {/* Guest Retention Metrics - 100% Accurate (hidden for demo - moved to Results tab) */}
+      {!isDemoAccount(venueId) && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12 }}
+        >
+          <RetentionMetrics
+            retentionRate={pulseData.retentionMetrics.retentionRate}
+            turnoverRate={pulseData.retentionMetrics.turnoverRate}
+            entryExitRatio={pulseData.retentionMetrics.entryExitRatio}
+            crowdTrend={pulseData.retentionMetrics.crowdTrend}
+            avgStayMinutes={pulseData.retentionMetrics.avgStayMinutes}
+            exitsPerHour={pulseData.retentionMetrics.exitsPerHour}
+            todayEntries={pulseData.todayEntries}
+            todayExits={pulseData.todayExits}
+            currentOccupancy={pulseData.currentOccupancy}
+            isBLEEstimated={pulseData.isBLEEstimated}
+          />
+        </motion.div>
+      )}
       
       {/* MY DAY Section Divider */}
       <motion.div
@@ -324,35 +360,37 @@ export function Live() {
       </motion.div>
       
       {/* Desktop: Side-by-side layout for Quick Actions and Outlook */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Quick Actions (formerly Tonight's Playbook) */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-        >
-          <TonightsPlaybook
-            currentDecibels={pulseData.currentDecibels ?? 65}
-            currentLight={pulseData.currentLight ?? 50}
-            currentOccupancy={pulseData.currentOccupancy ?? 0}
-            peakPrediction={intelligence.peakPrediction ? {
-              hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
-              expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
-              minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
-            } : undefined}
-            smartActions={intelligence.smartActions.map(a => ({
-              id: a.id,
-              title: a.title,
-              description: a.description,
-              priority: a.priority === 'critical' ? 'high' : a.priority,
-            }))}
-            venuePatterns={venueLearning.patterns.map(p => ({
-              factor: p.factor,
-              impact: p.impact,
-              confidence: p.confidence,
-            }))}
-          />
-        </motion.div>
+      <div className={`grid grid-cols-1 ${isDemoAccount(venueId) ? '' : 'lg:grid-cols-2'} gap-5`}>
+        {/* Quick Actions (formerly Tonight's Playbook) - hidden for demo (already shown above) */}
+        {!isDemoAccount(venueId) && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+          >
+            <TonightsPlaybook
+              currentDecibels={pulseData.currentDecibels ?? 65}
+              currentLight={pulseData.currentLight ?? 50}
+              currentOccupancy={pulseData.currentOccupancy ?? 0}
+              peakPrediction={intelligence.peakPrediction ? {
+                hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
+                expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
+                minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
+              } : undefined}
+              smartActions={intelligence.smartActions.map(a => ({
+                id: a.id,
+                title: a.title,
+                description: a.description,
+                priority: a.priority === 'critical' ? 'high' : a.priority,
+              }))}
+              venuePatterns={venueLearning.patterns.map(p => ({
+                factor: p.factor,
+                impact: p.impact,
+                confidence: p.confidence,
+              }))}
+            />
+          </motion.div>
+        )}
         
         {/* Today's Outlook - Holidays, Games, Weather */}
         <motion.div
