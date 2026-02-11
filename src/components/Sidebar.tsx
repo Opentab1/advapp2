@@ -2,7 +2,6 @@ import { motion } from 'framer-motion';
 import { 
   Gauge, 
   Zap,
-  Music, 
   FileText, 
   Settings,
   LucideIcon 
@@ -22,7 +21,6 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: 'pulse-plus', label: 'Pulse+', icon: Zap },
   { id: 'live', label: 'At a Glance', icon: Gauge },
-  { id: 'songs', label: 'Songs', icon: Music },
   { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];

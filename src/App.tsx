@@ -20,7 +20,7 @@ import { Offline } from './pages/Offline';
 import { Live } from './pages/Live';
 import { Analytics } from './pages/Analytics';
 import { Settings } from './pages/Settings';
-import { SongLog } from './pages/SongLog';
+// SongLog merged into Analytics
 import { Staffing } from './pages/Staffing';
 import { Leads } from './pages/Leads';
 import Events from './pages/Events';
@@ -70,9 +70,6 @@ function ProtectedDashboard() {
         break;
       case 'analytics':
         content = <Analytics />;
-        break;
-      case 'songs':
-        content = <SongLog />;
         break;
       case 'events':
         content = <Events />;
