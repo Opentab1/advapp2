@@ -10,11 +10,13 @@ import { motion } from 'framer-motion';
 import { 
   Target, Clock, CheckCircle2, ChevronRight, 
   Volume2, Lightbulb, Users, Music, AlertTriangle,
-  TrendingUp, Sparkles
+  TrendingUp, Sparkles, DollarSign, UserPlus
 } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 import { getCurrentTimeSlot } from '../../utils/scoring';
 import { TIME_SLOT_RANGES } from '../../utils/constants';
+import { isDemoAccount } from '../../utils/demoData';
+import authService from '../../services/auth.service';
 interface PlaybookAction {
   id: string;
   timeLabel: string; // "RIGHT NOW" or "IN 47 MINUTES"
@@ -71,8 +73,147 @@ export function TonightsPlaybook({
     return undefined; // No fabricated claims
   };
   
+  // Generate DEMO-specific smart actions - data-driven, specific, actionable
+  const generateDemoActions = (): PlaybookAction[] => {
+    const now = new Date();
+    const hour = now.getHours();
+    const dayOfWeek = now.getDay(); // 0 = Sunday, 6 = Saturday
+    const isWeekend = dayOfWeek === 5 || dayOfWeek === 6; // Friday or Saturday
+    
+    // Time-based contextual actions
+    const actions: PlaybookAction[] = [];
+    
+    // Action 1: Music recommendation (always show - most impactful)
+    if (hour >= 20 && hour < 23) {
+      actions.push({
+        id: 'music-energy',
+        timeLabel: 'DO THIS NOW',
+        title: 'Play "Uptown Funk" or "Blinding Lights"',
+        description: 'These tracks increased your retention by 23% on past Saturday nights at this hour.',
+        icon: 'music',
+        status: 'current',
+        impact: '+$340 avg revenue when played during peak',
+      });
+    } else if (hour >= 17 && hour < 20) {
+      actions.push({
+        id: 'music-warmup',
+        timeLabel: 'DO THIS NOW',
+        title: 'Start building energy with mid-tempo hits',
+        description: 'Your data shows crowds that hear upbeat music before 9 PM stay 18 min longer.',
+        icon: 'music',
+        status: 'current',
+        impact: '+18 min avg stay time',
+      });
+    } else {
+      actions.push({
+        id: 'music-maintain',
+        timeLabel: 'DO THIS NOW',
+        title: 'Queue 3 high-energy tracks for the next 30 min',
+        description: 'Consistent energy keeps your retention rate above 75%. You\'re at 78% now.',
+        icon: 'music',
+        status: 'current',
+        impact: 'Maintain 78% retention rate',
+      });
+    }
+    
+    // Action 2: Sound level (based on current dB)
+    if (currentDecibels < 75) {
+      actions.push({
+        id: 'sound-boost',
+        timeLabel: 'DO THIS NOW',
+        title: `Raise volume to 78 dB (currently ${Math.round(currentDecibels)} dB)`,
+        description: 'Your best nights hit 76-80 dB during peak. Every 3 dB increase = 8% longer stays.',
+        icon: 'sound',
+        status: 'current',
+        impact: '+$12 avg spend per guest at 78 dB',
+      });
+    } else if (currentDecibels > 82) {
+      actions.push({
+        id: 'sound-reduce',
+        timeLabel: 'DO THIS NOW',
+        title: `Lower volume to 78 dB (currently ${Math.round(currentDecibels)} dB)`,
+        description: 'Above 82 dB, conversations drop and guests leave 22 min earlier on average.',
+        icon: 'alert',
+        status: 'current',
+        impact: 'Prevent -22 min avg stay time',
+      });
+    }
+    
+    // Action 3: Staffing/crowd prediction
+    if (hour >= 19 && hour < 21) {
+      const peakTime = isWeekend ? '10:30 PM' : '9:00 PM';
+      const minutesUntil = isWeekend ? (22.5 - hour) * 60 : (21 - hour) * 60;
+      actions.push({
+        id: 'staffing-prep',
+        timeLabel: `IN ${Math.round(minutesUntil)} MIN`,
+        title: 'Call in backup bartender now',
+        description: `Your rush typically starts at ${peakTime}. Last week you were understaffed and lost an estimated $890.`,
+        icon: 'crowd',
+        status: 'upcoming',
+        impact: 'Prevent $890 in lost revenue',
+      });
+    } else if (hour >= 21 && hour < 23) {
+      actions.push({
+        id: 'peak-maximize',
+        timeLabel: 'PEAK HOURS',
+        title: 'Push signature cocktails now',
+        description: 'You\'re in your highest-revenue window. Signature drinks have 62% margin vs 45% for beer.',
+        icon: 'opportunity',
+        status: 'current',
+        impact: '+17% margin per drink sold',
+      });
+    }
+    
+    // Action 4: Promo/announcement timing
+    if (hour === 20 || hour === 21) {
+      actions.push({
+        id: 'promo-timing',
+        timeLabel: 'IN 15 MIN',
+        title: 'Announce happy hour ending (if applicable)',
+        description: 'You see 35% more drink orders in the 15 min after announcing last call for specials.',
+        icon: 'opportunity',
+        status: 'upcoming',
+        impact: '+35% orders in next 15 min',
+      });
+    }
+    
+    // Action 5: Retention alert
+    if (hour >= 22 && hour < 24) {
+      actions.push({
+        id: 'retention-watch',
+        timeLabel: 'WATCH THIS',
+        title: 'Keep energy high - this is your drop-off hour',
+        description: 'Historically, 30% of guests leave between 10-11 PM. High-energy music reduces this to 18%.',
+        icon: 'alert',
+        status: 'current',
+        impact: 'Keep 12% more guests (≈ $420 revenue)',
+      });
+    }
+    
+    // If we don't have enough actions, add a general tip
+    if (actions.length < 3) {
+      actions.push({
+        id: 'general-optimize',
+        timeLabel: 'TIP',
+        title: 'Check crowd distribution',
+        description: 'Walk the floor and identify cold spots. Moving people to the bar increases avg spend by $8.',
+        icon: 'crowd',
+        status: 'upcoming',
+        impact: '+$8 avg spend when bar is full',
+      });
+    }
+    
+    return actions.slice(0, 5); // Max 5 actions
+  };
+  
   // Generate playbook actions based on current state
   const generateActions = (): PlaybookAction[] => {
+    // Use demo-specific smart actions for demo accounts
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId || '')) {
+      return generateDemoActions();
+    }
+    
     const actions: PlaybookAction[] = [];
     
     // Get time-aware optimal ranges
@@ -207,6 +348,8 @@ export function TonightsPlaybook({
       case 'crowd': return Users;
       case 'alert': return AlertTriangle;
       case 'opportunity': return Sparkles;
+      case 'money': return DollarSign;
+      case 'retention': return UserPlus;
       default: return Target;
     }
   };
