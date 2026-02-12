@@ -43,7 +43,6 @@ import { useDisplayName } from '../hooks/useDisplayName';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import { haptic } from '../utils/haptics';
-import { isDemoAccount } from '../utils/demoData';
 import type { InsightsTimeRange, MetricType } from '../types/insights';
 
 export function Analytics() {
@@ -227,9 +226,8 @@ export function Analytics() {
             loading={insights.loading}
           />
           
-          {/* Historical Retention Analysis - Demo Only */}
-          {isDemoAccount(user?.venueId || '') && (
-            <motion.div
+          {/* Historical Retention Analysis */}
+          <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className="bg-warm-800/50 rounded-xl p-5 border border-warm-700"
@@ -359,7 +357,6 @@ export function Analytics() {
                 </div>
               </div>
             </motion.div>
-          )}
           
           {/* Guest Trend Chart */}
           <GuestsTrend 

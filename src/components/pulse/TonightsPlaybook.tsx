@@ -15,7 +15,6 @@ import {
 import { haptic } from '../../utils/haptics';
 import { getCurrentTimeSlot } from '../../utils/scoring';
 import { TIME_SLOT_RANGES } from '../../utils/constants';
-import { isDemoAccount } from '../../utils/demoData';
 import authService from '../../services/auth.service';
 interface PlaybookAction {
   id: string;
@@ -208,12 +207,12 @@ export function TonightsPlaybook({
   
   // Generate playbook actions based on current state
   const generateActions = (): PlaybookAction[] => {
-    // Use demo-specific smart actions for demo accounts
-    const user = authService.getStoredUser();
-    if (isDemoAccount(user?.venueId || '')) {
-      return generateDemoActions();
-    }
-    
+    // Use data-driven smart actions for all accounts
+    return generateDemoActions();
+  };
+  
+  // Fallback action generation (kept for reference)
+  const generateFallbackActions = (): PlaybookAction[] => {
     const actions: PlaybookAction[] = [];
     
     // Get time-aware optimal ranges
