@@ -13,11 +13,9 @@ import { motion } from 'framer-motion';
 import { 
   ChevronDown, 
   ChevronUp, 
-  Users, 
   LogIn, 
   LogOut,
   Volume2,
-  Sun,
   Zap,
   Music,
 } from 'lucide-react';
@@ -164,9 +162,9 @@ export function RawMetrics({ data, loading }: RawMetricsProps) {
       try {
         const songs = await songLogService.getTopSongs(5);
         setTopSongs(songs.map(s => ({
-          title: s.title,
+          title: s.song ?? (s as any).title ?? '',
           artist: s.artist,
-          count: s.playCount,
+          count: s.plays ?? (s as any).playCount ?? 0,
         })));
       } catch (err) {
         console.error('Failed to load top songs:', err);
@@ -220,7 +218,6 @@ export function RawMetrics({ data, loading }: RawMetricsProps) {
             // Check what data is available (Pi Zero 2W has no entries/exits or lux)
             const hasEntriesExits = totals.entries > 0 || totals.exits > 0;
             const hasSound = totals.avgDb > 0;
-            const hasLux = totals.avgLux > 0;
             const visibleCards = [hasEntriesExits, hasEntriesExits, hasSound, true].filter(Boolean).length;
             const gridCols = visibleCards <= 2 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-4';
             
