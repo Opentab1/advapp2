@@ -252,6 +252,7 @@ export function useInsightsData(timeRange: InsightsTimeRange): InsightsData {
     trendChartData,
     dwellCorrelations,
     rawData,
+    sensorData: rawSensorData,
     refresh: fetchData,
   };
 }

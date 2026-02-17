@@ -138,19 +138,8 @@ export function Analytics() {
     setShowExportMenu(false);
   };
   
-  // Get raw sensor data for the detailed components
-  const rawSensorData = insights.rawData.map(d => ({
-    timestamp: d.timestamp.toISOString(),
-    decibels: d.decibels,
-    light: d.light,
-    indoorTemp: d.temperature,
-    outdoorTemp: d.temperature,
-    occupancy: {
-      current: d.occupancy,
-      entries: 0,
-      exits: 0,
-    },
-  }));
+  // Use full sensor data (with entries/exits) for charts that need it
+  const rawSensorData = insights.sensorData;
   
   const handleRefresh = async () => {
     haptic('medium');
