@@ -5,19 +5,20 @@
  * Not abstract scores - real numbers with context.
  * 
  * Structure:
- * 1. Period Summary - Total guests, avg stay, peak hours
- * 2. Daily Breakdown - Table with each day's performance
- * 3. Hourly Heatmap - Visual of busy hours
- * 4. Guest Trend - Line chart over time
- * 5. Environment Summary - Sound, light, crowd conditions
- * 6. Song Analytics - Merged from Songs tab
+ * 1. Dwell Time Hero - THE number. How long guests stay = money.
+ * 2. Period Summary - Total guests, peak hours, best day
+ * 3. Guest Trend - Line chart over time
+ * 4. Daily Breakdown - Table with each day's performance
+ * 5. Song Analytics - What music keeps people
+ * 6. Raw Metrics + Environment - The proof
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  RefreshCw, Download, Calendar, Clock, Music, Volume2, Users, TrendingUp, TrendingDown,
-  Zap, ListMusic, ChevronDown, Disc3, FileText, FileJson, ShieldCheck
+  RefreshCw, Download, Calendar, Clock, Music, TrendingUp, TrendingDown,
+  Zap, ListMusic, ChevronDown, Disc3, FileText, FileJson, ShieldCheck,
+  DollarSign, ArrowRight
 } from 'lucide-react';
 import { format } from 'date-fns';
 import songLogService, { 
@@ -28,7 +29,6 @@ import songLogService, {
 } from '../services/song-log.service';
 import type { SongLogEntry } from '../types';
 import {
-  PeriodSummary,
   DailyBreakdown,
   RawMetrics,
   EnvironmentalSummary,
@@ -43,7 +43,30 @@ import { useDisplayName } from '../hooks/useDisplayName';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import { haptic } from '../utils/haptics';
-import type { InsightsTimeRange, MetricType } from '../types/insights';
+import type { InsightsTimeRange } from '../types/insights';
+
+// Revenue per minute estimate (industry average for bars)
+const REVENUE_PER_MINUTE = 0.62;
+
+function formatStayDuration(minutes: number | null): string {
+  if (minutes === null) return '--';
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  }
+  return `${minutes}m`;
+}
+
+function getTimeRangeComparisonLabel(range: InsightsTimeRange): string {
+  switch (range) {
+    case 'last_night': return 'vs previous night';
+    case '7d': return 'vs prior week';
+    case '14d': return 'vs prior 2 weeks';
+    case '30d': return 'vs prior month';
+    default: return 'vs prior period';
+  }
+}
 
 export function Analytics() {
   const user = authService.getStoredUser();
@@ -52,7 +75,6 @@ export function Analytics() {
   
   const [timeRange, setTimeRange] = useState<InsightsTimeRange>('7d');
   const [showRawData, setShowRawData] = useState(false);
-  const [rawDataMetric, setRawDataMetric] = useState<MetricType>('score');
   
   const insights = useInsightsData(timeRange);
   
@@ -111,8 +133,8 @@ export function Analytics() {
     }
   }, [songTimeRange, songsLoading, loadSongAnalytics]);
   
-  const handleExportPlaylist = async (format: 'csv' | 'txt' | 'json') => {
-    await songLogService.exportPlaylist(format, songTimeRange, venueName);
+  const handleExportPlaylist = async (fmt: 'csv' | 'txt' | 'json') => {
+    await songLogService.exportPlaylist(fmt, songTimeRange, venueName);
     setShowExportMenu(false);
   };
   
@@ -125,7 +147,7 @@ export function Analytics() {
     outdoorTemp: d.temperature,
     occupancy: {
       current: d.occupancy,
-      entries: 0, // Not available in RawDataPoint
+      entries: 0,
       exits: 0,
     },
   }));
@@ -149,6 +171,22 @@ export function Analytics() {
       apiService.exportToCSV(exportData as any, true, venueName);
     }
   };
+  
+  // Derived values for the hero
+  const avgStay = insights.summary?.avgStayMinutes ?? null;
+  const avgStayDelta = insights.summary?.avgStayDelta ?? null;
+  const totalGuests = insights.summary?.totalGuests ?? 0;
+  const guestsDelta = insights.summary?.guestsDelta ?? null;
+  const estRevenuePerGuest = avgStay !== null ? Math.round(avgStay * REVENUE_PER_MINUTE) : null;
+  const prevAvgStay = (avgStay !== null && avgStayDelta !== null && avgStayDelta !== 0) 
+    ? Math.round(avgStay / (1 + avgStayDelta / 100)) 
+    : null;
+  const stayDeltaMinutes = (avgStay !== null && prevAvgStay !== null) 
+    ? avgStay - prevAvgStay 
+    : null;
+  const revenueDelta = stayDeltaMinutes !== null 
+    ? Math.round(stayDeltaMinutes * REVENUE_PER_MINUTE * totalGuests) 
+    : null;
   
   if (insights.error && !insights.summary) {
     return (
@@ -176,7 +214,6 @@ export function Analytics() {
             <h1 className="text-xl font-bold text-white">Results</h1>
             
             <div className="flex items-center gap-2">
-              {/* Refresh */}
               <motion.button
                 onClick={handleRefresh}
                 disabled={insights.loading}
@@ -187,7 +224,6 @@ export function Analytics() {
                 <RefreshCw className={`w-4 h-4 ${insights.loading ? 'animate-spin' : ''}`} />
               </motion.button>
               
-              {/* Export */}
               <motion.button
                 onClick={handleExportCSV}
                 disabled={insights.loading || insights.rawData.length === 0}
@@ -198,7 +234,6 @@ export function Analytics() {
                 <Download className="w-4 h-4" />
               </motion.button>
               
-              {/* Raw Data */}
               <motion.button
                 onClick={() => { haptic('light'); setShowRawData(true); }}
                 disabled={insights.loading}
@@ -218,145 +253,91 @@ export function Analytics() {
             loading={insights.loading} 
           />
           
-          {/* Period Summary - THE NUMBERS */}
-          <PeriodSummary 
-            summary={insights.summary}
-            trend={insights.trend}
-            timeRange={timeRange}
-            loading={insights.loading}
-          />
-          
-          {/* Historical Retention Analysis */}
-          <motion.div
+          {/* ============ DWELL TIME HERO ============ */}
+          {/* This is THE metric. How long guests stay = how much they spend. */}
+          {insights.loading ? (
+            <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-6">
+              <div className="h-8 bg-warm-700 rounded w-48 mb-4 animate-pulse" />
+              <div className="h-16 bg-warm-700 rounded w-32 animate-pulse" />
+            </div>
+          ) : (
+            <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="bg-warm-800/50 rounded-xl p-5 border border-warm-700"
+              className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden"
             >
-              <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <Clock className="w-5 h-5 text-primary" />
-                Guest Retention Analysis
-              </h2>
-              
-              {/* Time Period Selector */}
-              <div className="flex gap-2 mb-5 overflow-x-auto pb-2">
-                {['Last Saturday 8PM', 'Last Friday 10PM', 'Last Saturday 11PM', 'Last Sunday 6PM'].map((period, idx) => (
-                  <button
-                    key={period}
-                    className={`px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-all ${
-                      idx === 0 
-                        ? 'bg-primary text-white' 
-                        : 'bg-warm-700 text-warm-300 hover:bg-warm-600'
-                    }`}
-                  >
-                    {period}
-                  </button>
-                ))}
-              </div>
-              
-              {/* Retention Stats Grid */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-                <div className="bg-warm-700/50 rounded-lg p-4 text-center">
-                  <div className="text-3xl font-bold text-primary">78%</div>
-                  <div className="text-xs text-warm-400 mt-1">Retention Rate</div>
-                  <div className="flex items-center justify-center gap-1 mt-2 text-green-400 text-xs">
-                    <TrendingUp className="w-3 h-3" />
-                    <span>+5% vs avg</span>
-                  </div>
+              {/* Main hero area */}
+              <div className="p-6 pb-5">
+                <div className="flex items-center gap-2 mb-1">
+                  <Clock className="w-4 h-4 text-teal" />
+                  <span className="text-xs text-text-secondary uppercase tracking-whoop font-semibold">Avg Guest Stay</span>
                 </div>
-                <div className="bg-warm-700/50 rounded-lg p-4 text-center">
-                  <div className="text-3xl font-bold text-white">342</div>
-                  <div className="text-xs text-warm-400 mt-1">Total Guests</div>
-                  <div className="flex items-center justify-center gap-1 mt-2 text-green-400 text-xs">
-                    <TrendingUp className="w-3 h-3" />
-                    <span>+12% vs week prior</span>
-                  </div>
-                </div>
-                <div className="bg-warm-700/50 rounded-lg p-4 text-center">
-                  <div className="text-3xl font-bold text-white">94</div>
-                  <div className="text-xs text-warm-400 mt-1">Avg Stay (min)</div>
-                  <div className="flex items-center justify-center gap-1 mt-2 text-warm-400 text-xs">
-                    <span>Target: 90 min</span>
-                  </div>
-                </div>
-                <div className="bg-warm-700/50 rounded-lg p-4 text-center">
-                  <div className="text-3xl font-bold text-white">$58</div>
-                  <div className="text-xs text-warm-400 mt-1">Avg Spend/Guest</div>
-                  <div className="flex items-center justify-center gap-1 mt-2 text-green-400 text-xs">
-                    <TrendingUp className="w-3 h-3" />
-                    <span>+$4 vs avg</span>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Sound & Music Section */}
-              <div className="border-t border-warm-600 pt-4 mt-4">
-                <h3 className="text-sm font-semibold text-warm-300 mb-3 flex items-center gap-2">
-                  <Volume2 className="w-4 h-4" />
-                  Sound Profile That Night
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-warm-700/30 rounded-lg p-3">
-                    <div className="text-xl font-bold text-white">76 dB</div>
-                    <div className="text-xs text-warm-400">Avg Sound Level</div>
-                    <div className="text-[10px] text-warm-500 mt-1">Optimal range: 70-80 dB</div>
-                  </div>
-                  <div className="bg-warm-700/30 rounded-lg p-3">
-                    <div className="text-xl font-bold text-white">85 dB</div>
-                    <div className="text-xs text-warm-400">Peak at 11:30 PM</div>
-                    <div className="text-[10px] text-warm-500 mt-1">During DJ set</div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Top Songs Section */}
-              <div className="border-t border-warm-600 pt-4 mt-4">
-                <h3 className="text-sm font-semibold text-warm-300 mb-3 flex items-center gap-2">
-                  <Music className="w-4 h-4" />
-                  Top Songs That Night
-                </h3>
-                <div className="space-y-2">
-                  {[
-                    { song: 'Ms. Jackson', artist: 'Outkast', plays: 3, peakCrowd: true },
-                    { song: 'Blinding Lights', artist: 'The Weeknd', plays: 2, peakCrowd: false },
-                    { song: 'Levitating', artist: 'Dua Lipa', plays: 2, peakCrowd: true },
-                    { song: 'Uptown Funk', artist: 'Bruno Mars', plays: 2, peakCrowd: false },
-                    { song: 'Don\'t Start Now', artist: 'Dua Lipa', plays: 1, peakCrowd: true },
-                  ].map((track, idx) => (
-                    <div key={idx} className="flex items-center justify-between bg-warm-700/30 rounded-lg px-3 py-2">
-                      <div className="flex items-center gap-3">
-                        <span className="text-warm-500 text-sm w-5">{idx + 1}</span>
-                        <div>
-                          <div className="text-sm text-white">{track.song}</div>
-                          <div className="text-xs text-warm-400">{track.artist}</div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {track.peakCrowd && (
-                          <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded">Peak Crowd</span>
-                        )}
-                        <span className="text-xs text-warm-400">{track.plays}x</span>
-                      </div>
+                
+                <div className="flex items-end gap-4 mt-2">
+                  <span className="text-5xl font-bold text-white leading-none tabular-nums">
+                    {avgStay !== null ? formatStayDuration(avgStay) : '--'}
+                  </span>
+                  
+                  {avgStayDelta !== null && avgStayDelta !== 0 && (
+                    <div className={`flex items-center gap-1 pb-1 text-sm font-medium ${avgStayDelta > 0 ? 'text-recovery-high' : 'text-recovery-low'}`}>
+                      {avgStayDelta > 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                      <span>{avgStayDelta > 0 ? '+' : ''}{avgStayDelta}%</span>
+                      <span className="text-text-muted text-xs font-normal ml-1">{getTimeRangeComparisonLabel(timeRange)}</span>
                     </div>
-                  ))}
+                  )}
                 </div>
+                
+                {/* Revenue translation */}
+                {estRevenuePerGuest !== null && (
+                  <div className="mt-4 flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 text-sm text-text-secondary">
+                      <DollarSign className="w-3.5 h-3.5 text-teal" />
+                      <span>~${estRevenuePerGuest}/guest estimated spend</span>
+                    </div>
+                    {revenueDelta !== null && revenueDelta !== 0 && (
+                      <div className={`flex items-center gap-1 text-xs font-medium ${revenueDelta > 0 ? 'text-recovery-high' : 'text-recovery-low'}`}>
+                        <ArrowRight className="w-3 h-3" />
+                        <span>{revenueDelta > 0 ? '+' : ''}{revenueDelta < 0 ? '-' : ''}${Math.abs(revenueDelta).toLocaleString()} total impact</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               
-              {/* Insight */}
-              <div className="bg-primary/10 border border-primary/20 rounded-lg p-4 mt-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                    <TrendingUp className="w-4 h-4 text-primary" />
+              {/* Supporting stats row */}
+              <div className="border-t border-whoop-divider bg-bg-panel-secondary/50 grid grid-cols-3 divide-x divide-whoop-divider">
+                <div className="p-4 text-center">
+                  <div className="text-lg font-bold text-white tabular-nums">
+                    {totalGuests > 0 
+                      ? (insights.summary?.guestsIsEstimate ? '~' : '') + totalGuests.toLocaleString() 
+                      : '--'}
                   </div>
-                  <div>
-                    <div className="text-sm font-medium text-white">Key Insight</div>
-                    <div className="text-xs text-warm-300 mt-1">
-                      When Outkast and Dua Lipa played during peak hours, guest retention increased by 23%. 
-                      Consider scheduling similar high-energy tracks between 10-11 PM on Saturdays.
+                  <div className="text-[10px] text-text-muted uppercase tracking-whoop mt-0.5">Total Guests</div>
+                  {guestsDelta !== null && guestsDelta !== 0 && (
+                    <div className={`flex items-center justify-center gap-0.5 mt-1 text-[10px] font-medium ${guestsDelta > 0 ? 'text-recovery-high' : 'text-recovery-low'}`}>
+                      {guestsDelta > 0 ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
+                      {guestsDelta > 0 ? '+' : ''}{guestsDelta}%
                     </div>
+                  )}
+                </div>
+                <div className="p-4 text-center">
+                  <div className="text-lg font-bold text-white">
+                    {insights.summary?.peakHours !== 'N/A' ? insights.summary?.peakHours : '--'}
                   </div>
+                  <div className="text-[10px] text-text-muted uppercase tracking-whoop mt-0.5">Peak Hours</div>
+                </div>
+                <div className="p-4 text-center">
+                  <div className="text-lg font-bold text-white">
+                    {insights.trend?.bestDay?.date || '--'}
+                  </div>
+                  <div className="text-[10px] text-text-muted uppercase tracking-whoop mt-0.5">Best Day</div>
+                  {insights.trend?.bestDay?.label && (
+                    <div className="text-[10px] text-text-muted mt-1 truncate">{insights.trend.bestDay.label}</div>
+                  )}
                 </div>
               </div>
             </motion.div>
+          )}
           
           {/* Guest Trend Chart */}
           <GuestsTrend 
@@ -366,18 +347,6 @@ export function Analytics() {
           
           {/* Daily Breakdown Table */}
           <DailyBreakdown 
-            data={rawSensorData as any}
-            loading={insights.loading}
-          />
-          
-          {/* Raw Metrics - entries, exits, dB, lux, score, top songs */}
-          <RawMetrics 
-            data={rawSensorData as any}
-            loading={insights.loading}
-          />
-          
-          {/* Environmental Summary */}
-          <EnvironmentalSummary 
             data={rawSensorData as any}
             loading={insights.loading}
           />
@@ -395,10 +364,12 @@ export function Analytics() {
             >
               <div className="flex items-center gap-3">
                 <Music className="w-5 h-5 text-primary" />
-                <h2 className="text-lg font-semibold text-white">Song Analytics</h2>
-                <span className="text-xs text-warm-400 bg-warm-700 px-2 py-0.5 rounded">
-                  {totalSongs.toLocaleString()} songs tracked
-                </span>
+                <h2 className="text-lg font-semibold text-white">What Kept People</h2>
+                {totalSongs > 0 && (
+                  <span className="text-xs text-warm-400 bg-warm-700 px-2 py-0.5 rounded">
+                    {totalSongs.toLocaleString()} songs tracked
+                  </span>
+                )}
               </div>
               <ChevronDown className={`w-5 h-5 text-warm-400 transition-transform ${showSongAnalytics ? 'rotate-180' : ''}`} />
             </button>
@@ -727,6 +698,18 @@ export function Analytics() {
             </AnimatePresence>
           </motion.div>
           
+          {/* Raw Metrics - entries, exits, dB, lux, score, top songs */}
+          <RawMetrics 
+            data={rawSensorData as any}
+            loading={insights.loading}
+          />
+          
+          {/* Environmental Summary */}
+          <EnvironmentalSummary 
+            data={rawSensorData as any}
+            loading={insights.loading}
+          />
+          
         </div>
       </PullToRefresh>
       
@@ -738,7 +721,7 @@ export function Analytics() {
           data={insights.rawData} 
           timeRange={timeRange} 
           onTimeRangeChange={setTimeRange} 
-          initialMetric={rawDataMetric} 
+          initialMetric={'score' as any} 
           onExport={handleExportCSV} 
         />
       )}
