@@ -9,6 +9,184 @@ import dynamoDBService from '../services/dynamodb.service';
 import authService from '../services/auth.service';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { CSVImport } from '../components/common/CSVImport';
+import { isDemoAccount } from '../utils/demoData';
+
+// Demo data for demo accounts
+const DEMO_STAFF: StaffMember[] = [
+  { id: 'demo-1', name: 'Sabrina Martinez', role: 'bartender', color: 'bg-purple-500' },
+  { id: 'demo-2', name: 'Jake Thompson', role: 'bartender', color: 'bg-purple-500' },
+  { id: 'demo-3', name: 'Ashley Chen', role: 'server', color: 'bg-cyan-500' },
+  { id: 'demo-4', name: 'Marcus Williams', role: 'server', color: 'bg-cyan-500' },
+  { id: 'demo-5', name: 'Tyler Johnson', role: 'door', color: 'bg-amber-500' },
+  { id: 'demo-6', name: 'Rachel Kim', role: 'manager', color: 'bg-emerald-500' },
+];
+
+const generateDemoShifts = (): Shift[] => {
+  const shifts: Shift[] = [];
+  const today = new Date();
+  const weekStart = startOfWeek(today, { weekStartsOn: 1 });
+  
+  // Generate shifts for this week and last week
+  for (let weekOffset = -1; weekOffset <= 1; weekOffset++) {
+    const week = addWeeks(weekStart, weekOffset);
+    const days = eachDayOfInterval({ 
+      start: week, 
+      end: endOfWeek(week, { weekStartsOn: 1 }) 
+    });
+    
+    days.forEach((day, dayIndex) => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const isWeekend = dayIndex >= 4; // Fri, Sat, Sun
+      
+      // Bartenders
+      if (isWeekend) {
+        shifts.push({
+          id: `shift-${dateStr}-1`,
+          staffId: 'demo-1',
+          staffName: 'Sabrina Martinez',
+          role: 'bartender',
+          date: dateStr,
+          startTime: '18:00',
+          endTime: '02:00'
+        });
+        shifts.push({
+          id: `shift-${dateStr}-2`,
+          staffId: 'demo-2',
+          staffName: 'Jake Thompson',
+          role: 'bartender',
+          date: dateStr,
+          startTime: '20:00',
+          endTime: '02:00'
+        });
+      } else if (dayIndex >= 2) { // Wed, Thu
+        shifts.push({
+          id: `shift-${dateStr}-1`,
+          staffId: dayIndex % 2 === 0 ? 'demo-1' : 'demo-2',
+          staffName: dayIndex % 2 === 0 ? 'Sabrina Martinez' : 'Jake Thompson',
+          role: 'bartender',
+          date: dateStr,
+          startTime: '17:00',
+          endTime: '23:00'
+        });
+      }
+      
+      // Servers on busy nights
+      if (isWeekend || dayIndex === 3) {
+        shifts.push({
+          id: `shift-${dateStr}-3`,
+          staffId: 'demo-3',
+          staffName: 'Ashley Chen',
+          role: 'server',
+          date: dateStr,
+          startTime: '18:00',
+          endTime: '01:00'
+        });
+        if (isWeekend) {
+          shifts.push({
+            id: `shift-${dateStr}-4`,
+            staffId: 'demo-4',
+            staffName: 'Marcus Williams',
+            role: 'server',
+            date: dateStr,
+            startTime: '19:00',
+            endTime: '02:00'
+          });
+        }
+      }
+      
+      // Door on weekends
+      if (isWeekend) {
+        shifts.push({
+          id: `shift-${dateStr}-5`,
+          staffId: 'demo-5',
+          staffName: 'Tyler Johnson',
+          role: 'door',
+          date: dateStr,
+          startTime: '21:00',
+          endTime: '02:00'
+        });
+      }
+      
+      // Manager on Fri/Sat
+      if (dayIndex >= 4 && dayIndex <= 5) {
+        shifts.push({
+          id: `shift-${dateStr}-6`,
+          staffId: 'demo-6',
+          staffName: 'Rachel Kim',
+          role: 'manager',
+          date: dateStr,
+          startTime: '18:00',
+          endTime: '02:00'
+        });
+      }
+    });
+  }
+  
+  return shifts;
+};
+
+const DEMO_PERFORMANCE: StaffPerformance[] = [
+  {
+    staffId: 'demo-1',
+    staffName: 'Sabrina Martinez',
+    role: 'bartender',
+    shiftsWorked: 12,
+    avgGuestsPerShift: 187,
+    avgStayTime: 94,
+    avgOccupancy: 78,
+    performanceScore: 92
+  },
+  {
+    staffId: 'demo-6',
+    staffName: 'Rachel Kim',
+    role: 'manager',
+    shiftsWorked: 8,
+    avgGuestsPerShift: 165,
+    avgStayTime: 88,
+    avgOccupancy: 72,
+    performanceScore: 85
+  },
+  {
+    staffId: 'demo-3',
+    staffName: 'Ashley Chen',
+    role: 'server',
+    shiftsWorked: 10,
+    avgGuestsPerShift: 156,
+    avgStayTime: 82,
+    avgOccupancy: 68,
+    performanceScore: 79
+  },
+  {
+    staffId: 'demo-2',
+    staffName: 'Jake Thompson',
+    role: 'bartender',
+    shiftsWorked: 11,
+    avgGuestsPerShift: 142,
+    avgStayTime: 76,
+    avgOccupancy: 65,
+    performanceScore: 74
+  },
+  {
+    staffId: 'demo-4',
+    staffName: 'Marcus Williams',
+    role: 'server',
+    shiftsWorked: 8,
+    avgGuestsPerShift: 134,
+    avgStayTime: 71,
+    avgOccupancy: 62,
+    performanceScore: 68
+  },
+  {
+    staffId: 'demo-5',
+    staffName: 'Tyler Johnson',
+    role: 'door',
+    shiftsWorked: 8,
+    avgGuestsPerShift: 158,
+    avgStayTime: 85,
+    avgOccupancy: 70,
+    performanceScore: 76
+  },
+];
 
 // API endpoints
 const API_BASE = 'https://4unsp74svc.execute-api.us-east-2.amazonaws.com/prod';
@@ -83,6 +261,16 @@ export function Staffing() {
     setLoading(true);
     
     try {
+      // Demo account - use fake data
+      if (isDemoAccount(venueId)) {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Simulate loading
+        setStaff(DEMO_STAFF);
+        setShifts(generateDemoShifts());
+        setPerformance(DEMO_PERFORMANCE);
+        setLoading(false);
+        return;
+      }
+      
       // Load staff and shifts from API
       const [staffRes, shiftsRes] = await Promise.all([
         fetch(`${STAFF_API}/${venueId}`),
