@@ -140,6 +140,9 @@ export interface InsightsData {
   // Level 3 data
   rawData: RawDataPoint[];
   
+  // Full sensor data (with entries/exits for charts that need it)
+  sensorData: import('../types').SensorData[];
+  
   // Actions
   refresh: () => Promise<void>;
 }
