@@ -24,6 +24,7 @@ import { Settings } from './pages/Settings';
 import { Staffing } from './pages/Staffing';
 import { Leads } from './pages/Leads';
 import Events from './pages/Events';
+import { VenueScope } from './pages/VenueScope';
 
 // Layout
 import { DashboardLayout } from './layouts/DashboardLayout';
@@ -79,6 +80,9 @@ function ProtectedDashboard() {
         break;
       case 'leads':
         content = <Leads />;
+        break;
+      case 'venuescope':
+        content = <VenueScope />;
         break;
       case 'settings':
         content = <Settings />;
