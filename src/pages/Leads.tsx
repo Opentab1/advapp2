@@ -40,8 +40,8 @@ import authService from '../services/auth.service';
 import { isDemoAccount } from '../utils/demoData';
 
 // API endpoint for fetching leads
-const LEADS_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
-const SMS_API = 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
+const LEADS_API = import.meta.env.VITE_LEADS_API_URL || 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
+const SMS_API = import.meta.env.VITE_LEADS_API_URL || 'https://1vqeyybqrj.execute-api.us-east-2.amazonaws.com';
 
 // Demo data for showcase account
 const DEMO_CUSTOMERS: Lead[] = [
@@ -746,7 +746,7 @@ export function Leads() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div>
-            <h1 className="text-xl font-bold text-white">BringBack</h1>
+            <h1 className="text-xl font-bold text-white">Leads</h1>
             <p className="text-xs text-warm-400">bring your customers back everytime</p>
           </div>
         </div>

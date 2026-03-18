@@ -16,6 +16,8 @@ import { haptic } from '../../utils/haptics';
 import { getCurrentTimeSlot } from '../../utils/scoring';
 import { TIME_SLOT_RANGES } from '../../utils/constants';
 import authService from '../../services/auth.service';
+import { isDemoAccount } from '../../utils/demoData';
+
 interface PlaybookAction {
   id: string;
   timeLabel: string; // "RIGHT NOW" or "IN 47 MINUTES"
@@ -207,8 +209,11 @@ export function TonightsPlaybook({
   
   // Generate playbook actions based on current state
   const generateActions = (): PlaybookAction[] => {
-    // Use data-driven smart actions for all accounts
-    return generateDemoActions();
+    const user = authService.getStoredUser();
+    if (isDemoAccount(user?.venueId || '')) {
+      return generateDemoActions();
+    }
+    return generateFallbackActions();
   };
   
   // Fallback action generation (kept for reference)

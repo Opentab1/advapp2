@@ -189,7 +189,7 @@ const DEMO_PERFORMANCE: StaffPerformance[] = [
 ];
 
 // API endpoints
-const API_BASE = 'https://4unsp74svc.execute-api.us-east-2.amazonaws.com/prod';
+const API_BASE = import.meta.env.VITE_STAFFING_API_URL || 'https://4unsp74svc.execute-api.us-east-2.amazonaws.com/prod';
 const STAFF_API = `${API_BASE}/staff`;
 const SHIFTS_API = `${API_BASE}/shifts`;
 

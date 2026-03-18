@@ -156,7 +156,7 @@ function App() {
     window.addEventListener('storage', checkAuth);
 
     // Also check periodically (in case of same-tab login)
-    const interval = setInterval(checkAuth, 1000);
+    const interval = setInterval(checkAuth, 5000);
 
     return () => {
       window.removeEventListener('storage', checkAuth);

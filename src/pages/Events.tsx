@@ -25,56 +25,56 @@ interface VibeProfileCardProps {
 
 function VibeProfileCard({ vibe }: VibeProfileCardProps) {
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-gradient-to-br from-purple-900/40 to-indigo-900/30 rounded-2xl p-6 border border-purple-500/20"
+      className="bg-warm-800/60 rounded-2xl p-6 border border-teal/20"
     >
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-12 h-12 rounded-full bg-purple-500/20 flex items-center justify-center">
-          <Music className="w-6 h-6 text-purple-400" />
+        <div className="w-12 h-12 rounded-full bg-teal/10 flex items-center justify-center">
+          <Music className="w-6 h-6 text-teal" />
         </div>
         <div>
           <h2 className="text-xl font-bold text-white">Your Vibe: {vibe.vibeName}</h2>
-          <p className="text-sm text-gray-400">{vibe.vibeDescription}</p>
+          <p className="text-sm text-warm-400">{vibe.vibeDescription}</p>
         </div>
       </div>
-      
+
       {/* Genre breakdown */}
       <div className="space-y-3 mb-4">
         <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-400 w-20">{vibe.primary.genre}</span>
-          <div className="flex-1 h-3 bg-gray-800 rounded-full overflow-hidden">
-            <motion.div 
+          <span className="text-sm text-warm-400 w-20">{vibe.primary.genre}</span>
+          <div className="flex-1 h-3 bg-warm-700 rounded-full overflow-hidden">
+            <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${vibe.primary.percentage}%` }}
               transition={{ duration: 1, ease: 'easeOut' }}
-              className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
+              className="h-full bg-gradient-to-r from-teal to-teal-dark"
             />
           </div>
           <span className="text-sm font-medium text-white w-12 text-right">{vibe.primary.percentage}%</span>
         </div>
-        
+
         {vibe.secondary && (
           <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-400 w-20">{vibe.secondary.genre}</span>
-            <div className="flex-1 h-3 bg-gray-800 rounded-full overflow-hidden">
-              <motion.div 
+            <span className="text-sm text-warm-400 w-20">{vibe.secondary.genre}</span>
+            <div className="flex-1 h-3 bg-warm-700 rounded-full overflow-hidden">
+              <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: `${vibe.secondary.percentage}%` }}
                 transition={{ duration: 1, delay: 0.2, ease: 'easeOut' }}
-                className="h-full bg-gradient-to-r from-blue-500 to-cyan-500"
+                className="h-full bg-gradient-to-r from-strain to-strain-light"
               />
             </div>
             <span className="text-sm font-medium text-white w-12 text-right">{vibe.secondary.percentage}%</span>
           </div>
         )}
-        
+
         {vibe.tertiary && (
           <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-400 w-20">{vibe.tertiary.genre}</span>
-            <div className="flex-1 h-3 bg-gray-800 rounded-full overflow-hidden">
-              <motion.div 
+            <span className="text-sm text-warm-400 w-20">{vibe.tertiary.genre}</span>
+            <div className="flex-1 h-3 bg-warm-700 rounded-full overflow-hidden">
+              <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: `${vibe.tertiary.percentage}%` }}
                 transition={{ duration: 1, delay: 0.4, ease: 'easeOut' }}
@@ -85,23 +85,23 @@ function VibeProfileCard({ vibe }: VibeProfileCardProps) {
           </div>
         )}
       </div>
-      
+
       {/* Top artists */}
       {vibe.topArtists.length > 0 && (
-        <div className="pt-4 border-t border-gray-700/50">
-          <p className="text-xs text-gray-500 mb-2">TOP ARTISTS</p>
+        <div className="pt-4 border-t border-warm-700/50">
+          <p className="text-xs text-warm-500 mb-2">TOP ARTISTS</p>
           <div className="flex flex-wrap gap-2">
             {vibe.topArtists.map((artist, i) => (
-              <span key={i} className="px-3 py-1 bg-gray-800/60 rounded-full text-xs text-gray-300">
+              <span key={i} className="px-3 py-1 bg-warm-700/60 rounded-full text-xs text-warm-200">
                 {artist}
               </span>
             ))}
           </div>
         </div>
       )}
-      
-      <div className="mt-4 pt-4 border-t border-gray-700/50 flex items-center justify-between">
-        <span className="text-xs text-gray-500">
+
+      <div className="mt-4 pt-4 border-t border-warm-700/50 flex items-center justify-between">
+        <span className="text-xs text-warm-500">
           Based on {vibe.songsAnalyzed.toLocaleString()} song plays
         </span>
       </div>
@@ -138,7 +138,7 @@ function EventCard({ event, index }: EventCardProps) {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.1 }}
-      className="bg-gray-900/60 rounded-xl border border-gray-800 hover:border-purple-500/40 transition-all duration-300 overflow-hidden"
+      className="bg-warm-800/60 rounded-xl border border-warm-700 hover:border-teal/40 transition-all duration-300 overflow-hidden"
     >
       <button
         onClick={() => setExpanded(!expanded)}
@@ -146,7 +146,7 @@ function EventCard({ event, index }: EventCardProps) {
       >
         <div className="flex items-start gap-4">
           {/* Emoji */}
-          <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center text-3xl flex-shrink-0">
+          <div className="w-14 h-14 rounded-xl bg-warm-700/60 flex items-center justify-center text-3xl flex-shrink-0">
             {event.emoji}
           </div>
           
@@ -157,17 +157,17 @@ function EventCard({ event, index }: EventCardProps) {
               <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? 'rotate-90' : ''}`} />
             </div>
             
-            <p className="text-sm text-gray-400 line-clamp-1">{event.description}</p>
+            <p className="text-sm text-warm-400 line-clamp-1">{event.description}</p>
             
             <div className="flex items-center gap-3 mt-3">
               <span className={`px-2 py-1 rounded-full text-xs border ${difficultyColors[event.difficulty]}`}>
                 {event.difficulty}
               </span>
-              <span className="flex items-center gap-1 text-xs text-gray-500">
+              <span className="flex items-center gap-1 text-xs text-warm-500">
                 <CatIcon className="w-3 h-3" />
                 {catInfo.label}
               </span>
-              <span className="flex items-center gap-1 text-xs text-gray-500">
+              <span className="flex items-center gap-1 text-xs text-warm-500">
                 <Calendar className="w-3 h-3" />
                 Best: {event.bestNight}
               </span>
@@ -183,26 +183,26 @@ function EventCard({ event, index }: EventCardProps) {
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="border-t border-gray-800"
+            className="border-t border-warm-700"
           >
             <div className="p-5 pt-4 space-y-4">
               <div>
-                <p className="text-xs text-purple-400 font-medium mb-1">WHY IT FITS YOUR VENUE</p>
-                <p className="text-sm text-gray-300">{event.whyItFits}</p>
+                <p className="text-xs text-teal font-medium mb-1">WHY IT FITS YOUR VENUE</p>
+                <p className="text-sm text-warm-300">{event.whyItFits}</p>
               </div>
-              
+
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-800/50 rounded-lg p-3">
-                  <p className="text-xs text-gray-500 mb-1">Best Night</p>
+                <div className="bg-warm-800/50 rounded-lg p-3">
+                  <p className="text-xs text-warm-500 mb-1">Best Night</p>
                   <p className="text-sm font-medium text-white flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-purple-400" />
+                    <Calendar className="w-4 h-4 text-teal" />
                     {event.bestNight}
                   </p>
                 </div>
-                <div className="bg-gray-800/50 rounded-lg p-3">
-                  <p className="text-xs text-gray-500 mb-1">Effort Level</p>
+                <div className="bg-warm-800/50 rounded-lg p-3">
+                  <p className="text-xs text-warm-500 mb-1">Effort Level</p>
                   <p className="text-sm font-medium text-white flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-purple-400" />
+                    <Clock className="w-4 h-4 text-teal" />
                     {event.difficulty} Setup
                   </p>
                 </div>
@@ -275,21 +275,21 @@ export default function Events() {
     : suggestions.filter(e => e.category === filter);
   
   return (
-    <div className="min-h-screen bg-gray-950 pb-24">
+    <div className="pb-20 space-y-0">
       {/* Header */}
-      <div className="px-5 pt-6 pb-4">
+      <div className="pb-4">
         <div className="flex items-center gap-2 mb-1">
-          <Sparkles className="w-5 h-5 text-purple-400" />
+          <Sparkles className="w-5 h-5 text-teal" />
           <h1 className="text-2xl font-bold text-white">Events</h1>
-          <span className="px-2 py-0.5 bg-purple-500/20 border border-purple-500/40 rounded-full text-[10px] font-semibold text-purple-300 uppercase tracking-wide">
+          <span className="px-2 py-0.5 bg-teal/10 border border-teal/30 rounded-full text-[10px] font-semibold text-teal uppercase tracking-wide">
             Beta
           </span>
         </div>
-        <p className="text-sm text-gray-400">Event ideas and performance tracking</p>
+        <p className="text-sm text-warm-400">Event ideas and performance tracking</p>
       </div>
-      
+
       {/* Tab Navigation */}
-      <div className="px-5 mb-4">
+      <div className="mb-4">
         <div className="flex gap-2">
           {[
             { id: 'suggestions' as const, label: 'Ideas', icon: Sparkles },
@@ -300,8 +300,8 @@ export default function Events() {
               onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
                 activeTab === tab.id
-                  ? 'bg-purple-500/20 border border-purple-500/50 text-white'
-                  : 'bg-gray-800 border border-gray-700 text-gray-400 hover:text-white'
+                  ? 'bg-teal/10 border border-teal/50 text-white'
+                  : 'bg-warm-800 border border-warm-700 text-warm-400 hover:text-white'
               }`}
               whileTap={{ scale: 0.95 }}
             >
@@ -313,42 +313,42 @@ export default function Events() {
       </div>
 
       {activeTab === 'performance' ? (
-        <div className="px-5">
+        <div>
           <EventROITracker />
         </div>
       ) : (
         <>
         {/* Suggestions Tab Content */}
-      
+
       {/* Vibe Profile */}
-      <div className="px-5 mb-6">
+      <div className="mb-6">
         {isLoading ? (
-          <div className="bg-gradient-to-br from-purple-900/40 to-indigo-900/30 rounded-2xl p-6 border border-purple-500/20 animate-pulse">
+          <div className="bg-warm-800/60 rounded-2xl p-6 border border-warm-600 animate-pulse">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 rounded-full bg-purple-500/20"></div>
+              <div className="w-12 h-12 rounded-full bg-teal/10"></div>
               <div className="flex-1">
-                <div className="h-6 bg-gray-700/50 rounded w-48 mb-2"></div>
-                <div className="h-4 bg-gray-700/30 rounded w-64"></div>
+                <div className="h-6 bg-warm-700/50 rounded w-48 mb-2"></div>
+                <div className="h-4 bg-warm-700/30 rounded w-64"></div>
               </div>
             </div>
             <div className="space-y-3">
-              <div className="h-3 bg-gray-700/30 rounded w-full"></div>
-              <div className="h-3 bg-gray-700/30 rounded w-3/4"></div>
+              <div className="h-3 bg-warm-700/30 rounded w-full"></div>
+              <div className="h-3 bg-warm-700/30 rounded w-3/4"></div>
             </div>
-            <p className="text-center text-sm text-purple-400 mt-4">Analyzing your music...</p>
+            <p className="text-center text-sm text-teal mt-4">Analyzing your music...</p>
           </div>
         ) : vibe ? (
           <VibeProfileCard vibe={vibe} />
         ) : null}
       </div>
-      
+
       {/* Quick Wins */}
       {quickWins.length > 0 && (
-        <div className="px-5 mb-6">
+        <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
             <Flame className="w-4 h-4 text-green-400" />
             <h3 className="text-sm font-medium text-white">Quick Wins</h3>
-            <span className="text-xs text-gray-500">Low effort, high reward</span>
+            <span className="text-xs text-warm-500">Low effort, high reward</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {quickWins.map((event) => (
@@ -357,9 +357,9 @@ export default function Events() {
           </div>
         </div>
       )}
-      
+
       {/* Filter tabs */}
-      <div className="px-5 mb-4">
+      <div className="mb-4">
         <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
           {[
             { key: 'all', label: 'All Ideas' },
@@ -371,9 +371,9 @@ export default function Events() {
               key={key}
               onClick={() => setFilter(key as typeof filter)}
               className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${
-                filter === key 
-                  ? 'bg-purple-500 text-white' 
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                filter === key
+                  ? 'bg-primary text-warm-900'
+                  : 'bg-warm-800 text-warm-400 hover:bg-warm-700'
               }`}
             >
               {label}
@@ -381,29 +381,29 @@ export default function Events() {
           ))}
         </div>
       </div>
-      
+
       {/* Event Suggestions */}
-      <div className="px-5 space-y-3">
+      <div className="space-y-3">
         <AnimatePresence mode="popLayout">
           {filteredSuggestions.map((event, index) => (
             <EventCard key={event.id} event={event} index={index} />
           ))}
         </AnimatePresence>
-        
+
         {filteredSuggestions.length === 0 && (
           <div className="text-center py-12">
-            <p className="text-gray-500">No events in this category</p>
+            <p className="text-warm-500">No events in this category</p>
           </div>
         )}
       </div>
-      
+
       {/* Footer note */}
-      <div className="px-5 mt-8 text-center space-y-2">
-        <p className="text-xs text-gray-600">
+      <div className="mt-8 text-center space-y-2">
+        <p className="text-xs text-warm-500">
           Suggestions refresh each session based on your venue's music data
         </p>
-        <p className="text-xs text-purple-400/70">
-          🚧 This feature is in beta — we're still refining the recommendations
+        <p className="text-xs text-warm-400">
+          This feature is in beta — we're still refining the recommendations
         </p>
       </div>
         </>

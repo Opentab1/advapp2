@@ -522,9 +522,17 @@ function processSummary(
     ? Math.round(((avgStayMinutes - prevAvgStay) / prevAvgStay) * 100)
     : null;
   
-  // Format peak hours
+  // Format peak hours — only show if the range is meaningful (≤8 hours span)
   const formatHour = (h: number) => h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h-12}pm`;
-  const peakHours = peakStartHour < 24 ? `${formatHour(peakStartHour)} - ${formatHour(peakEndHour)}` : 'N/A';
+  const peakSpan = sortedPeakHours.length > 1
+    ? sortedPeakHours[sortedPeakHours.length - 1] - sortedPeakHours[0]
+    : 0;
+  const hourlySpread = hourlyAvgs.length > 1
+    ? hourlyAvgs[0].avgScore - hourlyAvgs[hourlyAvgs.length - 1].avgScore
+    : 0;
+  const peakHours = (peakStartHour < 24 && peakSpan <= 8 && hourlySpread >= 5)
+    ? `${formatHour(peakStartHour)} - ${formatHour(peakEndHour)}`
+    : 'N/A';
   
   // Simple summary text - just the facts
   let summaryText = `Peak hours: ${peakHours}.`;
