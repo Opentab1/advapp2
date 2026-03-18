@@ -34,6 +34,85 @@ div[data-testid="metric-container"]{background:#1e293b;border-radius:10px;
 
 st.title("▶️ Run Analysis")
 
+# ── Venue Profile save / load ───────────────────────────────────────────────
+_PROFILES_FILE = CONFIG_DIR / "profiles.json"
+
+def _load_profiles() -> dict:
+    if _PROFILES_FILE.exists():
+        try:
+            return json.loads(_PROFILES_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+def _save_profiles(profiles: dict) -> None:
+    _PROFILES_FILE.write_text(json.dumps(profiles, indent=2))
+
+with st.expander("📋 Venue Profile", expanded=False):
+    _profiles = _load_profiles()
+    _profile_names = list(_profiles.keys())
+
+    vp_col1, vp_col2 = st.columns([2, 1])
+    with vp_col1:
+        if _profile_names:
+            _sel_profile = st.selectbox("Saved profiles", ["— select —"] + _profile_names,
+                                        key="vp_select")
+        else:
+            _sel_profile = None
+            st.caption("No saved profiles yet.")
+
+    with vp_col2:
+        st.write("")  # vertical alignment spacer
+        if _profile_names and _sel_profile and _sel_profile != "— select —":
+            _load_col, _del_col = st.columns(2)
+            with _load_col:
+                if st.button("Load", key="vp_load_btn"):
+                    _p = _profiles[_sel_profile]
+                    st.session_state["vp_loaded"] = _p
+                    st.success(f"Profile '{_sel_profile}' loaded — settings applied below.")
+                    st.rerun()
+            with _del_col:
+                if st.button("Delete", key="vp_del_btn"):
+                    del _profiles[_sel_profile]
+                    _save_profiles(_profiles)
+                    st.success(f"Profile '{_sel_profile}' deleted.")
+                    st.rerun()
+
+    st.divider()
+    st.caption("**Save current settings as a profile:**")
+    vp_s1, vp_s2, vp_s3 = st.columns([3, 2, 1])
+    with vp_s1:
+        _new_profile_name = st.text_input("Profile name", placeholder="e.g. Main Bar Weekend",
+                                          key="vp_new_name")
+    with vp_s2:
+        # Preview which values will be captured (read from session or defaults)
+        _vp_preview = st.session_state.get("vp_loaded", {})
+        st.caption(f"Will capture: mode, model, camera angle, config, shift")
+    with vp_s3:
+        st.write("")
+        if st.button("Save", key="vp_save_btn"):
+            if not _new_profile_name.strip():
+                st.warning("Enter a profile name.")
+            else:
+                # Gather current widget values from session state keys set by the
+                # widgets below (they haven't rendered yet on first run, so we fall
+                # back to any previously loaded profile values).
+                _vp_cur = st.session_state.get("vp_loaded", {})
+                _new_entry = {
+                    "mode":          st.session_state.get("vp_mode",         _vp_cur.get("mode", "drink_count")),
+                    "model_profile": st.session_state.get("vp_model_profile", _vp_cur.get("model_profile", "balanced")),
+                    "camera_mode":   st.session_state.get("vp_camera_mode",   _vp_cur.get("camera_mode", "normal")),
+                    "config_path":   st.session_state.get("vp_config_path",   _vp_cur.get("config_path", "")),
+                    "shift_id":      st.session_state.get("vp_shift_id",      _vp_cur.get("shift_id", "")),
+                }
+                _profiles[_new_profile_name.strip()] = _new_entry
+                _save_profiles(_profiles)
+                st.success(f"Profile '{_new_profile_name.strip()}' saved.")
+                st.rerun()
+
+# Apply loaded profile defaults into session state keys for widgets
+_loaded_profile: dict = st.session_state.pop("vp_loaded", {})  # consume once per rerun
+
 
 def _get_frame(path: str, t_sec: float = 3.0):
     try:
@@ -73,8 +152,13 @@ with col1:
                 "Make sure the Pi can reach the camera on the network.")
     clip_label = st.text_input("Label", placeholder="e.g. Main Bar – Fri 9pm")
 with col2:
-    mode = st.radio("Mode", list(ANALYSIS_MODES.keys()),
+    _mode_keys = list(ANALYSIS_MODES.keys())
+    _mode_default = _loaded_profile.get("mode", "drink_count")
+    _mode_index   = _mode_keys.index(_mode_default) if _mode_default in _mode_keys else 0
+    mode = st.radio("Mode", _mode_keys,
+                    index=_mode_index,
                     format_func=lambda k: ANALYSIS_MODES[k])
+    st.session_state["vp_mode"] = mode
     st.caption(ANALYSIS_DESCRIPTIONS.get(mode,""))
 
 uploaded   = locals().get("uploaded")
@@ -118,6 +202,41 @@ if saved_path:
         except Exception:
             pass
         st.image(frame_rgb, caption=f"Frame @ {prev_t}s", use_container_width=True)
+
+        # ── Test Detection button ──────────────────────────────────────────
+        if st.button("🔍 Test Detection (Single Frame)", key="test_detection_btn",
+                     help="Run YOLO on this frame to verify persons are detected before full analysis"):
+            with st.spinner("Running detection…"):
+                try:
+                    from ultralytics import YOLO
+                    _yolo_model = YOLO("yolov8n.pt")
+                    _det_frame  = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+                    _results    = _yolo_model(_det_frame, conf=0.30, classes=[0], verbose=False)
+                    _boxes      = _results[0].boxes if _results else None
+                    _n_persons  = int(len(_boxes)) if _boxes is not None else 0
+
+                    # Draw bounding boxes on a copy of the frame
+                    _vis = frame_rgb.copy()
+                    if _boxes is not None and _n_persons > 0:
+                        for _box in _boxes:
+                            _x1, _y1, _x2, _y2 = [int(v) for v in _box.xyxy[0].tolist()]
+                            _conf_val = float(_box.conf[0])
+                            cv2.rectangle(_vis, (_x1, _y1), (_x2, _y2), (255, 100, 30), 2)
+                            cv2.putText(_vis, f"{_conf_val:.2f}", (_x1, max(_y1 - 6, 0)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 100, 30), 2)
+
+                    st.image(_vis, caption="Detection result", use_container_width=True)
+
+                    if _n_persons == 0:
+                        st.warning("⚠️ No people detected — check camera angle, lighting, "
+                                   "and ensure YOLO models are installed.")
+                    else:
+                        st.success(f"✅ {_n_persons} person(s) detected in this frame "
+                                   f"with confidence ≥ 0.30")
+                except ImportError:
+                    st.error("ultralytics not installed. Run: pip install ultralytics")
+                except Exception as _det_err:
+                    st.error(f"Detection failed: {_det_err}")
 
 # ── STEP 3: Zone & line setup ──────────────────────────────────────────────
 st.divider()
@@ -173,10 +292,14 @@ elif mode == "drink_count":
     extra_config["ignore_zones"] = state["zones"]
 
     st.markdown("**Bar Layout Config:**")
-    configs = [p.stem for p in CONFIG_DIR.glob("*.json")]
+    configs = [p.stem for p in CONFIG_DIR.glob("*.json")
+               if p.stem not in ("profiles", "preferences")]
     if configs:
-        config_sel  = st.selectbox("Layout", configs)
+        _cp_default = Path(_loaded_profile.get("config_path", "")).stem
+        _cp_index   = configs.index(_cp_default) if _cp_default in configs else 0
+        config_sel  = st.selectbox("Layout", configs, index=_cp_index)
         config_path = str(CONFIG_DIR/f"{config_sel}.json")
+        st.session_state["vp_config_path"] = config_path
         if frame_rgb is not None:
             try:
                 cfg = BarConfig.load(Path(config_path).stem)
@@ -192,9 +315,16 @@ elif mode == "drink_count":
     st.markdown("**Shift:**")
     shifts = list_shifts()
     if shifts:
-        sopts    = {f"{s['shift_name']} [{s['shift_id']}]":s["shift_id"] for s in shifts}
-        ssel     = st.selectbox("Shift", list(sopts.keys()))
+        sopts      = {f"{s['shift_name']} [{s['shift_id']}]":s["shift_id"] for s in shifts}
+        _sopts_keys = list(sopts.keys())
+        _sid_default = _loaded_profile.get("shift_id", "")
+        # Find the selectbox entry whose value matches the loaded shift_id
+        _sid_index  = next(
+            (i for i, k in enumerate(_sopts_keys) if sopts[k] == _sid_default), 0
+        )
+        ssel     = st.selectbox("Shift", _sopts_keys, index=_sid_index)
         shift_id = sopts[ssel]
+        st.session_state["vp_shift_id"] = shift_id
         so       = get_shift(shift_id)
         sm       = ShiftManager(shift_id, so["bartenders"])
         shift_json = json.dumps(sm.to_dict())
@@ -241,6 +371,12 @@ elif mode == "after_hours":
     motion_thr=st.slider("Motion sensitivity",500,5000,1500)
     extra_config["motion_threshold"]=motion_thr
 
+    st.markdown("**Ignore Zones (optional):**")
+    st.caption("Draw zones to ignore (e.g., exit signs, clocks, fans that cause false motion)")
+    ah_state = line_zone_editor(frame_rgb, session_key="lz_after_hours",
+                                 mode="zones_only", height=420)
+    extra_config["ignore_zones"] = ah_state["zones"]
+
 # ── STEP 4: Processing ─────────────────────────────────────────────────────
 st.divider()
 st.subheader("④ Processing Speed")
@@ -250,9 +386,13 @@ is_dark  = q.get("mean_luminance",128) < 70
 
 pc1,pc2=st.columns(2)
 with pc1:
+    _mp_default = _loaded_profile.get("model_profile", "balanced")
+    if _mp_default not in ("fast", "balanced", "accurate"):
+        _mp_default = "balanced"
     model_profile=st.select_slider("Speed vs accuracy",
-        options=["fast","balanced","accurate"],value="balanced",
+        options=["fast","balanced","accurate"],value=_mp_default,
         help="Fast=stride 3, Balanced=stride 2, Accurate=every frame (~3× slower)")
+    st.session_state["vp_model_profile"] = model_profile
 with pc2:
     if mode == "drink_count":
         annotate = True
@@ -280,12 +420,17 @@ with st.expander("⚙️ Advanced Settings"):
             help="Sets enhancement level and detection sensitivity automatically"
         )
     with ac2:
+        _cm_default = _loaded_profile.get("camera_mode", "normal")
+        _cm_opts    = ["normal", "side_angle"]
+        _cm_index   = _cm_opts.index(_cm_default) if _cm_default in _cm_opts else 0
         camera_mode = st.selectbox(
             "Camera angle",
-            ["normal", "side_angle"],
+            _cm_opts,
+            index=_cm_index,
             format_func=lambda x: "Normal/overhead" if x == "normal" else "Side/wall-mounted",
             help="Side angle adjusts centroid to head/shoulders for better line crossing"
         )
+        st.session_state["vp_camera_mode"] = camera_mode
     with ac3:
         dewarp = st.checkbox(
             "Fisheye correction",

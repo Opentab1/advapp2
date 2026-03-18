@@ -1,12 +1,18 @@
 /**
  * VenueScope - CCTV Analytics Engine
+ *
  * Embeds the Streamlit app in an iframe.
+ * Also shows a live summary card pulled from the VenueScope REST API.
  * Set VITE_VENUESCOPE_URL in environment variables to point to your server.
  */
 
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Video, Monitor, Server, ExternalLink, RefreshCw, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Video, Monitor, Server, ExternalLink, RefreshCw,
+  AlertTriangle, ShieldCheck, TrendingUp, BarChart3,
+} from 'lucide-react';
+import venueScopeService, { VenueScopeLatestSummary } from '../services/venuescope.service';
 
 const RAW_URL = import.meta.env.VITE_VENUESCOPE_URL || '';
 const IS_CONFIGURED = RAW_URL !== '' && !RAW_URL.includes('localhost') && !RAW_URL.includes('127.0.0.1');
@@ -23,7 +29,23 @@ function useIsMobile() {
   return isMobile;
 }
 
-// ── Not configured ────────────────────────────────────────────────────────────
+function useIframeHeight() {
+  const [height, setHeight] = useState('calc(100vh - 112px)');
+  useEffect(() => {
+    const update = () => {
+      // Header ~56px + top/bottom content padding ~56px = 112px
+      // On very short screens floor at 400px
+      const h = Math.max(window.innerHeight - 112, 400);
+      setHeight(`${h}px`);
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  return height;
+}
+
+// ── Not configured ─────────────────────────────────────────────────────────
 
 function SetupGuide() {
   return (
@@ -77,7 +99,7 @@ function SetupGuide() {
   );
 }
 
-// ── Mobile wall ───────────────────────────────────────────────────────────────
+// ── Mobile wall ────────────────────────────────────────────────────────────
 
 function MobileWall() {
   return (
@@ -91,14 +113,14 @@ function MobileWall() {
           <Monitor className="w-7 h-7 text-text-muted" />
         </div>
         <h2 className="text-white font-semibold mb-2">Open on Desktop</h2>
-        <p className="text-sm text-text-secondary">
+        <p className="text-sm text-text-secondary mb-5">
           VenueScope requires a larger screen to upload footage and review analysis results.
         </p>
         <a
           href={VENUESCOPE_URL}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-5 inline-flex items-center gap-2 px-4 py-2.5 bg-teal/10 border border-teal/30 text-teal text-sm font-medium rounded-xl"
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-teal/10 border border-teal/30 text-teal text-sm font-medium rounded-xl"
         >
           <ExternalLink className="w-4 h-4" />
           Open directly
@@ -108,7 +130,7 @@ function MobileWall() {
   );
 }
 
-// ── Server offline ────────────────────────────────────────────────────────────
+// ── Server offline ─────────────────────────────────────────────────────────
 
 function ServerOffline({ onRetry }: { onRetry: () => void }) {
   return (
@@ -144,21 +166,101 @@ function ServerOffline({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── Quick stats sidebar ────────────────────────────────────────────────────
+
+function QuickStatsSidebar({ summary }: { summary: VenueScopeLatestSummary | null }) {
+  if (!summary) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 16 }}
+      animate={{ opacity: 1, x: 0 }}
+      className="w-56 flex-shrink-0 flex flex-col gap-3 p-3 bg-whoop-panel border-l border-whoop-divider overflow-y-auto"
+    >
+      <div>
+        <p className="text-[10px] text-text-muted uppercase tracking-wide mb-1">Last Analysis</p>
+        <p className="text-xs text-warm-300 truncate">{summary.clip_label || summary.job_id}</p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="bg-whoop-bg rounded-xl p-3 text-center">
+          <div className="text-3xl font-bold text-teal">{summary.total_drinks}</div>
+          <div className="text-[10px] text-text-muted uppercase tracking-wide mt-0.5">Drinks Made</div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="bg-whoop-bg rounded-xl p-2 text-center">
+            <div className="text-lg font-bold text-white">{summary.drinks_per_hour.toFixed(0)}</div>
+            <div className="text-[9px] text-text-muted uppercase">/hr</div>
+          </div>
+          <div className="bg-whoop-bg rounded-xl p-2 text-center flex flex-col items-center justify-center">
+            {summary.has_theft_flag ? (
+              <>
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+                <div className="text-[9px] text-red-400 mt-0.5">Review</div>
+              </>
+            ) : (
+              <>
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <div className="text-[9px] text-emerald-400 mt-0.5">Clean</div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-whoop-divider pt-2">
+        <div className="flex items-center gap-1.5">
+          <BarChart3 className="w-3.5 h-3.5 text-text-muted" />
+          <span className="text-[10px] text-text-muted">Confidence</span>
+        </div>
+        <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+          summary.confidence_color === 'green' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
+          summary.confidence_color === 'red'   ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                                  'bg-amber-500/20 text-amber-400 border-amber-500/30'
+        }`}>
+          {summary.confidence_label}
+        </span>
+      </div>
+
+      <a
+        href={VENUESCOPE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-auto flex items-center gap-1.5 text-[10px] text-text-muted hover:text-teal transition-colors"
+      >
+        <TrendingUp className="w-3 h-3" />
+        Full analysis
+        <ExternalLink className="w-3 h-3 ml-auto" />
+      </a>
+    </motion.div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────
 
 export function VenueScope() {
   const isMobile = useIsMobile();
+  const iframeHeight = useIframeHeight();
   const [iframeKey, setIframeKey] = useState(0);
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const [latestSummary, setLatestSummary] = useState<VenueScopeLatestSummary | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
     setStatus('loading');
-    // Give the iframe 12 seconds to load before showing error
-    const timer = setTimeout(() => {
+    timerRef.current = setTimeout(() => {
       setStatus(prev => prev === 'loading' ? 'error' : prev);
-    }, 12000);
-    return () => clearTimeout(timer);
+    }, 15000);
+    return () => clearTimeout(timerRef.current);
   }, [iframeKey]);
+
+  // Fetch quick stats from REST API when configured
+  useEffect(() => {
+    if (!IS_CONFIGURED) return;
+    venueScopeService.getLatestSummary().then(s => {
+      if (s) setLatestSummary(s);
+    });
+  }, []);
 
   const handleRetry = () => {
     setIframeKey(k => k + 1);
@@ -170,9 +272,9 @@ export function VenueScope() {
   if (status === 'error') return <ServerOffline onRetry={handleRetry} />;
 
   return (
-    <div className="-mx-4 -my-6 lg:-mx-8 lg:-my-6">
+    <div className="-mx-4 -my-6 lg:-mx-8 lg:-my-6 flex flex-col">
       {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-whoop-panel border-b border-whoop-divider lg:px-8">
+      <div className="flex items-center justify-between px-4 py-3 bg-whoop-panel border-b border-whoop-divider lg:px-8 flex-shrink-0">
         <div className="flex items-center gap-3">
           <Video className="w-5 h-5 text-teal flex-shrink-0" />
           <div>
@@ -181,18 +283,32 @@ export function VenueScope() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {status === 'loading' && (
-            <div className="flex items-center gap-1.5 text-xs text-text-muted">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              Connecting...
-            </div>
-          )}
-          {status === 'loaded' && (
-            <div className="flex items-center gap-1.5 text-xs text-teal">
-              <div className="w-1.5 h-1.5 rounded-full bg-teal" />
-              Connected
-            </div>
-          )}
+          <AnimatePresence mode="wait">
+            {status === 'loading' && (
+              <motion.div
+                key="loading"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="flex items-center gap-1.5 text-xs text-text-muted"
+              >
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                Connecting...
+              </motion.div>
+            )}
+            {status === 'loaded' && (
+              <motion.div
+                key="loaded"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="flex items-center gap-1.5 text-xs text-teal"
+              >
+                <div className="w-1.5 h-1.5 rounded-full bg-teal animate-pulse" />
+                Connected
+              </motion.div>
+            )}
+          </AnimatePresence>
           <a
             href={VENUESCOPE_URL}
             target="_blank"
@@ -205,17 +321,30 @@ export function VenueScope() {
         </div>
       </div>
 
-      {/* Iframe */}
-      <iframe
-        key={iframeKey}
-        src={VENUESCOPE_URL}
-        title="VenueScope Analytics Engine"
-        className="w-full border-0"
-        style={{ height: 'calc(100vh - 112px)' }}
-        allow="camera; microphone"
-        onLoad={() => setStatus('loaded')}
-        onError={() => setStatus('error')}
-      />
+      {/* Body: iframe + optional quick stats sidebar */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Iframe */}
+        <iframe
+          key={iframeKey}
+          src={VENUESCOPE_URL}
+          title="VenueScope Analytics Engine"
+          className="flex-1 border-0"
+          style={{ height: iframeHeight }}
+          allow="camera; microphone"
+          onLoad={() => {
+            clearTimeout(timerRef.current);
+            setStatus('loaded');
+          }}
+          onError={() => setStatus('error')}
+        />
+
+        {/* Quick stats sidebar — only on xl screens when we have data */}
+        {latestSummary && status === 'loaded' && (
+          <div className="hidden xl:block">
+            <QuickStatsSidebar summary={latestSummary} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -360,3 +360,137 @@ with tab5:
 - 🇨🇦 **Canada**: PIPEDA applies · Written notice required in most provinces
 - **General**: Consult an employment lawyer before deploying in your jurisdiction.
 """)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STORAGE MANAGEMENT  (appended below all tabs — always visible)
+# ─────────────────────────────────────────────────────────────────────────────
+import os as _os
+import time as _time
+from pathlib import Path as _Path
+
+st.divider()
+with st.expander("💾 Storage Management", expanded=False):
+    _upload_dir  = _Path(UPLOAD_DIR)
+    _result_dir  = _Path(RESULT_DIR)
+
+    # ── Disk usage ────────────────────────────────────────────────────────────
+    def _dir_size_mb(p: _Path) -> float:
+        if not p.exists():
+            return 0.0
+        return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 1024 ** 2
+
+    _up_mb  = _dir_size_mb(_upload_dir)
+    _res_mb = _dir_size_mb(_result_dir)
+    _total_mb = _up_mb + _res_mb
+
+    _sm1, _sm2, _sm3 = st.columns(3)
+    _sm1.metric("Uploads folder", f"{_up_mb:.1f} MB")
+    _sm2.metric("Results folder", f"{_res_mb:.1f} MB")
+    _sm3.metric("Total usage",    f"{_total_mb:.1f} MB")
+
+    # ── Job counts by status ───────────────────────────────────────────────
+    st.divider()
+    _all_jobs_sm = list_jobs_filtered(500)
+    _status_counts = {}
+    for _j in _all_jobs_sm:
+        _s = _j.get("status", "unknown")
+        _status_counts[_s] = _status_counts.get(_s, 0) + 1
+
+    _jc_cols = st.columns(4)
+    _jc_cols[0].metric("Done",    _status_counts.get("done", 0))
+    _jc_cols[1].metric("Failed",  _status_counts.get("failed", 0))
+    _jc_cols[2].metric("Running", _status_counts.get("running", 0))
+    _jc_cols[3].metric("Pending", _status_counts.get("pending", 0))
+
+    # ── Oldest / newest job ──────────────────────────────────────────────
+    _now_ts = _time.time()
+    _ts_list = [_j["created_at"] for _j in _all_jobs_sm if _j.get("created_at")]
+    if _ts_list:
+        _oldest_days = (_now_ts - min(_ts_list)) / 86400
+        _newest_days = (_now_ts - max(_ts_list)) / 86400
+        st.caption(
+            f"Oldest job: **{_oldest_days:.0f} days ago**  "
+            f"&nbsp;·&nbsp;  Newest job: **{_newest_days:.0f} days ago**"
+        )
+
+    # ── Auto-purge snapshots older than N days ────────────────────────────
+    st.divider()
+    st.markdown("**Auto-purge snapshots older than N days**")
+    st.caption("Deletes snapshot subdirectories from result folders older than the threshold. "
+               "Keeps summary.json, events.csv, and annotated videos.")
+    _purge_days = st.number_input("Purge snapshots older than (days)", 1, 3650, 90,
+                                   key="sm_purge_days")
+    _purge_confirm = st.checkbox("I understand this is permanent (snapshot purge)",
+                                  key="sm_purge_confirm")
+    if st.button("🗑 Purge Old Snapshots", key="sm_purge_btn",
+                 disabled=not _purge_confirm):
+        _cutoff = _now_ts - _purge_days * 86400
+        _purged = 0
+        if _result_dir.exists():
+            for _job_dir in _result_dir.iterdir():
+                if not _job_dir.is_dir():
+                    continue
+                _snap_dir = _job_dir / "snapshots"
+                if _snap_dir.exists():
+                    _mtime = _snap_dir.stat().st_mtime
+                    if _mtime < _cutoff:
+                        try:
+                            shutil.rmtree(str(_snap_dir))
+                            _purged += 1
+                        except Exception:
+                            pass
+        st.success(f"Purged {_purged} snapshot director{'ies' if _purged != 1 else 'y'}.")
+
+    # ── Delete all failed jobs ─────────────────────────────────────────────
+    st.divider()
+    st.markdown("**Delete all failed jobs**")
+    st.caption("Removes the job record and result directory for every job with status 'failed'.")
+    _failed_jobs_sm = [_j for _j in _all_jobs_sm if _j.get("status") == "failed"]
+    if not _failed_jobs_sm:
+        st.caption("No failed jobs to delete.")
+    else:
+        st.caption(f"{len(_failed_jobs_sm)} failed job(s) will be deleted.")
+        _del_failed_confirm = st.checkbox("I understand this is permanent (delete failed jobs)",
+                                           key="sm_del_failed_confirm")
+        if st.button(f"🗑 Delete {len(_failed_jobs_sm)} Failed Job(s)", key="sm_del_failed_btn",
+                     disabled=not _del_failed_confirm):
+            from core.database import delete_job as _delete_job
+            _deleted = 0
+            for _fj in _failed_jobs_sm:
+                try:
+                    if _delete_job(_fj["job_id"]):
+                        _deleted += 1
+                except Exception:
+                    pass
+            st.success(f"Deleted {_deleted} failed job(s).")
+            st.rerun()
+
+    # ── Delete all annotated videos ────────────────────────────────────────
+    st.divider()
+    st.markdown("**Delete all annotated videos**")
+    st.caption("Removes `annotated.mp4` from every result directory to free space. "
+               "Keeps summary.json, snapshots, events.csv, and clips.")
+    _ann_paths = []
+    if _result_dir.exists():
+        _ann_paths = [p for p in _result_dir.rglob("annotated.mp4") if p.is_file()]
+    _ann_total_mb = sum(p.stat().st_size for p in _ann_paths) / 1024 ** 2
+
+    if not _ann_paths:
+        st.caption("No annotated videos found.")
+    else:
+        st.caption(f"{len(_ann_paths)} annotated video(s) found — "
+                   f"{_ann_total_mb:.1f} MB total.")
+        _del_ann_confirm = st.checkbox("I understand this is permanent (delete annotated videos)",
+                                        key="sm_del_ann_confirm")
+        if st.button(f"🗑 Delete {len(_ann_paths)} Annotated Video(s)", key="sm_del_ann_btn",
+                     disabled=not _del_ann_confirm):
+            _del_ann_count = 0
+            for _ap in _ann_paths:
+                try:
+                    _ap.unlink()
+                    _del_ann_count += 1
+                except Exception:
+                    pass
+            st.success(f"Deleted {_del_ann_count} annotated video(s), "
+                       f"freeing ~{_ann_total_mb:.1f} MB.")
+            st.rerun()

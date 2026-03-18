@@ -40,6 +40,7 @@ import { PullToRefresh } from '../components/common/PullToRefresh';
 import { ErrorState } from '../components/common/LoadingState';
 import { POSComparison } from '../components/analytics/POSComparison';
 import { WeeklyReportSection } from '../components/reports/WeeklyReportSection';
+import { VenueScopeInsights } from '../components/analytics/VenueScopeInsights';
 import { useInsightsData } from '../hooks/useInsightsData';
 import { useDisplayName } from '../hooks/useDisplayName';
 import apiService from '../services/api.service';
@@ -700,6 +701,9 @@ export function Analytics() {
             data={rawSensorData as any}
             loading={insights.loading}
           />
+
+          {/* VenueScope CCTV analytics — shows if server is configured */}
+          <VenueScopeInsights />
 
           {/* POS vs VenueScope comparison */}
           <POSComparison />

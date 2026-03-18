@@ -1,6 +1,7 @@
 """
-VenueScope Production — Results v5
-Big-number hero, confidence badge, POS theft detection, PDF report.
+VenueScope Production — Results v6
+Big-number hero, confidence badge, POS theft detection, PDF report,
+POS profile persistence, Excel/CSV export, zero-drink help, annual loss persistence.
 """
 import json
 from pathlib import Path
@@ -8,10 +9,94 @@ import streamlit as st
 import pandas as pd
 import io
 
-from core.database  import list_jobs, get_job
-from core.config    import RESULT_DIR, ANALYSIS_MODES
+from core.database  import list_jobs, get_job, get_preferences, save_preferences
+from core.config    import RESULT_DIR, ANALYSIS_MODES, CONFIG_DIR
 from core.report    import generate_shift_report, REPORTLAB_OK
 from core.confidence import compute_confidence_score
+
+try:
+    import openpyxl
+    _OPENPYXL_OK = True
+except ImportError:
+    _OPENPYXL_OK = False
+
+# ── POS profile helpers ───────────────────────────────────────────────────────
+_POS_PROFILES_FILE = CONFIG_DIR / "pos_profiles.json"
+
+def _load_pos_profiles() -> dict:
+    if _POS_PROFILES_FILE.exists():
+        try:
+            return json.loads(_POS_PROFILES_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+def _save_pos_profiles(profiles: dict) -> None:
+    _POS_PROFILES_FILE.write_text(json.dumps(profiles, indent=2))
+
+# ── Excel / CSV export helper ─────────────────────────────────────────────────
+def _build_export(summary: dict, job: dict, sel_id: str,
+                  pos_data: dict, mode: str) -> tuple:
+    """
+    Returns (bytes, filename, mime_type).
+    Uses openpyxl for Excel if available, otherwise CSV.
+    """
+    bartenders = summary.get("bartenders", {})
+    dur_secs   = summary.get("video_seconds", 0)
+
+    # Gather sheets as DataFrames
+    summary_rows = [
+        {"Field": "Job ID",          "Value": sel_id},
+        {"Field": "Clip Label",      "Value": job.get("clip_label","")},
+        {"Field": "Analysis Mode",   "Value": ANALYSIS_MODES.get(mode, mode)},
+        {"Field": "Video Duration (s)", "Value": dur_secs},
+        {"Field": "Total Drinks (CV)", "Value": sum(d.get("total_drinks",0) for d in bartenders.values())},
+        {"Field": "Confidence Score","Value": compute_confidence_score(summary)[0]},
+        {"Field": "Model Profile",   "Value": job.get("model_profile","")},
+    ]
+    df_summary = pd.DataFrame(summary_rows)
+
+    comp_rows = []
+    for name, d in bartenders.items():
+        cv  = d.get("total_drinks", 0)
+        pos = pos_data.get(name, 0) if pos_data else 0
+        delta = cv - pos
+        pct   = f"{delta/max(pos,1)*100:.1f}%" if pos > 0 else "N/A"
+        comp_rows.append({"Bartender": name, "CV Count": cv,
+                           "POS Rings": pos, "Delta": delta,
+                           "Variance %": pct,
+                           "Drinks/hr": round(d.get("drinks_per_hour",0),1)})
+    df_bartenders = pd.DataFrame(comp_rows) if comp_rows else pd.DataFrame()
+
+    ts_rows = []
+    for bname, bdata in bartenders.items():
+        for ts in bdata.get("drink_timestamps", []):
+            mins, secs = divmod(int(ts), 60)
+            ts_rows.append({"Bartender": bname, "Time (s)": ts,
+                             "Timestamp": f"{mins:02d}:{secs:02d}"})
+    df_timeline = pd.DataFrame(ts_rows) if ts_rows else pd.DataFrame()
+
+    if _OPENPYXL_OK:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df_summary.to_excel(writer, sheet_name="Summary", index=False)
+            if not df_bartenders.empty:
+                df_bartenders.to_excel(writer, sheet_name="Per-Bartender", index=False)
+            if not df_timeline.empty:
+                df_timeline.to_excel(writer, sheet_name="Serve Timeline", index=False)
+            if pos_data and not df_bartenders.empty:
+                df_bartenders.to_excel(writer, sheet_name="POS Comparison", index=False)
+        buf.seek(0)
+        return buf.read(), f"venuescope_{sel_id}.xlsx", \
+               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        # Fallback: CSV of per-bartender sheet (most useful single sheet)
+        buf = io.StringIO()
+        df_summary.to_csv(buf, index=False)
+        buf.write("\n")
+        if not df_bartenders.empty:
+            df_bartenders.to_csv(buf, index=False)
+        return buf.getvalue().encode(), f"venuescope_{sel_id}.csv", "text/csv"
 
 st.set_page_config(page_title="Results · VenueScope", layout="wide")
 st.markdown("""
@@ -37,6 +122,14 @@ div[data-testid="metric-container"]{background:#1e293b;border-radius:10px;
 </style>""", unsafe_allow_html=True)
 
 st.markdown("## 📊 Shift Results")
+
+# ── Load persisted annual-loss preferences once per session ───────────────────
+if "_prefs_loaded" not in st.session_state:
+    _prefs = get_preferences()
+    st.session_state.setdefault("avg_price",   _prefs.get("avg_price", 10))
+    st.session_state.setdefault("shifts_pw",   _prefs.get("shifts_pw", 5))
+    st.session_state.setdefault("shift_hrs",   _prefs.get("shift_hrs", 8))
+    st.session_state["_prefs_loaded"] = True
 
 jobs = [j for j in list_jobs(100) if j["status"]=="done"]
 if not jobs:
@@ -80,6 +173,26 @@ with hdr1:
     st.markdown(f"**{clip}** &nbsp;·&nbsp; {ANALYSIS_MODES.get(mode,mode)} &nbsp;·&nbsp; {dur:.0f}s", unsafe_allow_html=True)
 with hdr2:
     st.markdown(badge_html, unsafe_allow_html=True)
+    with st.expander("How is this score calculated?"):
+        st.markdown(f"""
+**Detection Confidence (45% weight)**
+Average YOLO detection score across all detections in the clip.
+Score of 0.60+ = 100%, 0.25 = 0%. Current: `{quality.get('avg_detection_conf', 0):.0%}`
+
+**Tracking Stability (35% weight)**
+Track ID switch rate — lower is better.
+0% switches = 100%, 15%+ switches = 0%. Current switch rate: `{quality.get('tracking_switch_rate', 0):.3f}`
+
+**Viability (20% weight)**
+Whether drink count is non-zero and average detection confidence exceeds 0.40.
+A zero-drink result in drink_count mode reduces this component.
+
+---
+**What each color means:**
+- **Green (75–100)** — High trust. Results can be used with confidence.
+- **Yellow (55–74)** — Review recommended. Spot-check verification clips and snapshots.
+- **Red (0–54)** — Verify manually. Poor lighting, wrong angle, or short clip may be the cause.
+""")
 
 # Show any critical warnings
 dq_warns = summary.get("drink_quality",{}).get("warnings",[])
@@ -121,6 +234,31 @@ if mode == "drink_count":
 
     if low_conf > 0:
         st.warning(f"⚠️ {low_conf} serve(s) had low crossing confidence — check verification clips below to confirm or discard.")
+
+    # ── Zero-drink troubleshooter ──────────────────────────────────────────
+    if total_cv == 0:
+        bar_line_y = None
+        try:
+            import ast
+            cfg_path = job.get("config_path")
+            if cfg_path and Path(cfg_path).exists():
+                _cfg = json.loads(Path(cfg_path).read_text())
+                bar_line_y = _cfg.get("bar_line_y") or (_cfg.get("zones",[{}]) or [{}])[0].get("bar_line_y")
+        except Exception:
+            pass
+        _bar_hint = f" (currently `{bar_line_y:.2f}`)" if bar_line_y is not None else ""
+        st.markdown(f"""
+<div style="background:#7f1d1d;border:2px solid #dc2626;border-radius:10px;
+padding:18px 22px;margin:16px 0;color:#fca5a5;">
+<strong style="font-size:1.2em;">⚠️ 0 drinks detected — possible causes:</strong>
+<ol style="margin-top:10px;line-height:1.9;color:#fecaca;">
+<li><strong>Bar line y-coordinate</strong> — should be ~0.44 for a standard overhead bar camera{_bar_hint}. Check the Layout page and drag the bar line to where bartenders cross when serving.</li>
+<li><strong>Station zones</strong> — zones must cover the area where bartenders typically stand. If zones are too narrow or positioned incorrectly, bartenders won't register inside them.</li>
+<li><strong>Camera angle</strong> — this system is designed for overhead fisheye cameras. If using a side-angle camera, set <code>camera_mode='side_angle'</code> in the bar config.</li>
+<li><strong>Clip length</strong> — minimum 2 minutes recommended. Very short clips may not contain any serve events.</li>
+<li><strong>Bartender visibility</strong> — open the Annotated Analysis Video above to confirm bartenders were detected at all. If no bounding boxes appear, the model may not be detecting people in this footage.</li>
+</ol>
+</div>""", unsafe_allow_html=True)
 
     # ── Annotated video — show prominently here ────────────────────────────
     ann_path = rdir / "annotated.mp4"
@@ -203,6 +341,27 @@ if mode == "drink_count":
         st.divider()
         st.subheader("🔍 POS Comparison — Theft Detection")
 
+        # ── POS Profile: Load ─────────────────────────────────────────────
+        _all_profiles = _load_pos_profiles()
+        _profile_names = list(_all_profiles.keys())
+        if _profile_names:
+            _pc_load1, _pc_load2 = st.columns([3, 1])
+            with _pc_load1:
+                _sel_profile = st.selectbox(
+                    "📂 Load saved POS profile",
+                    ["— New Profile —"] + _profile_names,
+                    key="pos_profile_select")
+            with _pc_load2:
+                st.write("")
+                st.write("")
+                if _sel_profile != "— New Profile —":
+                    if st.button("Load Profile", key="pos_load_btn"):
+                        _loaded = _all_profiles[_sel_profile]
+                        for _bname, _bval in _loaded.get("counts", {}).items():
+                            st.session_state[f"pos_{_bname}"] = _bval
+                        st.success(f"Loaded profile '{_sel_profile}'")
+                        st.rerun()
+
         tab1, tab2 = st.tabs(["📝 Enter Manually", "📤 Import POS CSV"])
 
         with tab1:
@@ -270,6 +429,28 @@ if mode == "drink_count":
                 except Exception as e:
                     st.error(f"CSV parse error: {e}")
 
+        # ── POS Profile: Save ─────────────────────────────────────────────
+        _current_pos = st.session_state.get("pos_data") or pos_data
+        if any(v > 0 for v in _current_pos.values()):
+            _sp_col1, _sp_col2 = st.columns([3, 1])
+            with _sp_col1:
+                _profile_name_input = st.text_input(
+                    "Profile name (e.g. 'Friday Night Crew')",
+                    value=st.session_state.get("venue_name", "My Venue"),
+                    key="pos_profile_name_input")
+            with _sp_col2:
+                st.write("")
+                st.write("")
+                if st.button("💾 Save POS Profile", key="pos_save_btn"):
+                    _pname = _profile_name_input.strip() or "Unnamed Profile"
+                    _profiles = _load_pos_profiles()
+                    _profiles[_pname] = {
+                        "counts": {n: _current_pos.get(n, 0) for n in bartenders},
+                        "bartenders": list(bartenders.keys()),
+                    }
+                    _save_pos_profiles(_profiles)
+                    st.success(f"Saved profile '{_pname}'")
+
         st.divider()
         tc1, tc2 = st.columns(2)
         with tc1:
@@ -328,20 +509,26 @@ if mode == "drink_count":
                     "Avg drink price ($)", min_value=1, max_value=100,
                     value=int(st.session_state.get("avg_price", 10)),
                     help="Average sale price per drink at your venue")
-                st.session_state["avg_price"] = avg_price
+                if avg_price != st.session_state.get("avg_price"):
+                    st.session_state["avg_price"] = avg_price
+                    save_preferences({"avg_price": avg_price})
             with lc2:
                 shifts_per_week = st.number_input(
                     "Shifts per week", min_value=1, max_value=21,
                     value=int(st.session_state.get("shifts_pw", 5)),
                     help="How many bartender shifts run per week at this bar")
-                st.session_state["shifts_pw"] = shifts_per_week
+                if shifts_per_week != st.session_state.get("shifts_pw"):
+                    st.session_state["shifts_pw"] = shifts_per_week
+                    save_preferences({"shifts_pw": shifts_per_week})
             with lc3:
                 clip_hours = max(summary.get("video_seconds", 3600) / 3600, 0.1)
                 shift_hours = st.number_input(
                     "Shift length (hours)", min_value=1, max_value=16,
                     value=int(st.session_state.get("shift_hrs", 8)),
                     help="Typical shift length — used to scale this clip's rate to a full shift")
-                st.session_state["shift_hrs"] = shift_hours
+                if shift_hours != st.session_state.get("shift_hrs"):
+                    st.session_state["shift_hrs"] = shift_hours
+                    save_preferences({"shift_hrs": shift_hours})
 
             # Scale unrung drinks from clip duration → full shift → annual
             unrung_per_shift = total_unrung * (shift_hours / clip_hours)
@@ -773,6 +960,20 @@ if snap_dir.exists():
 # ─────────────────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("⬇️ Raw Downloads")
+
+# ── Excel / CSV export ────────────────────────────────────────────────────────
+if mode == "drink_count":
+    _export_label = "Export to Excel" if _OPENPYXL_OK else "Export to CSV"
+    _export_note  = "" if _OPENPYXL_OK else " (install openpyxl for Excel)"
+    _exp_bytes, _exp_fname, _exp_mime = _build_export(
+        summary, job, sel_id,
+        st.session_state.get("pos_data", {}), mode)
+    st.download_button(
+        f"📊 {_export_label}{_export_note}",
+        _exp_bytes, _exp_fname, _exp_mime,
+        help="Exports Summary, Per-Bartender, Serve Timeline, and POS Comparison sheets")
+    st.divider()
+
 dc=st.columns(4)
 with dc[0]:
     if evf.exists(): st.download_button("events.csv",evf.read_bytes(),f"events_{sel_id}.csv","text/csv")

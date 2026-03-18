@@ -24,6 +24,13 @@ _orig_spc = _st.set_page_config
 def _noop_spc(*a, **kw): pass
 _st.set_page_config = _noop_spc
 
+# ── REST API — start once on first load ───────────────────────────────────────
+try:
+    from app.api import start_api_server
+    start_api_server(background=True)
+except Exception as _api_err:
+    pass  # API optional — Streamlit UI still works without it
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 from core.auth import require_auth, logout
 require_auth()
@@ -32,6 +39,7 @@ PAGES = {
     "🏠  Dashboard":       "app/pages/00_dashboard.py",
     "▶️  Run Analysis":     "app/pages/01_run.py",
     "📊  Results":          "app/pages/02_results.py",
+    "🔀  Compare Jobs":     "app/pages/08_compare.py",
     "📋  Unified Report":   "app/pages/07_unified.py",
     "🔑  Shift Setup":      "app/pages/03_shift.py",
     "⚙️  Zone Layout":      "app/pages/04_layout.py",
