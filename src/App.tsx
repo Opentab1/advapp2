@@ -32,6 +32,7 @@ import type { TabId } from './components/common/TabNav';
 
 // Components
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { OnboardingWizard, hasCompletedOnboarding } from './components/onboarding/OnboardingWizard';
 
 // Services & Hooks
 import authService from './services/auth.service';
@@ -41,6 +42,7 @@ import { usePulseScore, useWeather, useDataConnection } from './stores/pulseStor
 
 function ProtectedDashboard() {
   const [activeTab, setActiveTab] = useState<TabId>('live');
+  const [showOnboarding, setShowOnboarding] = useState(() => !hasCompletedOnboarding());
   
   // Get shared pulse score, weather, and connection status for header display
   const pulseScore = usePulseScore();
@@ -94,6 +96,8 @@ function ProtectedDashboard() {
   };
   
   return (
+    <>
+    {showOnboarding && <OnboardingWizard onComplete={() => setShowOnboarding(false)} />}
     <DashboardLayout
       venueName="Pulse"
       isConnected={dataConnection.isConnected}
@@ -106,6 +110,7 @@ function ProtectedDashboard() {
     >
       {renderTabContent()}
     </DashboardLayout>
+    </>
   );
 }
 
