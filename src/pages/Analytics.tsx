@@ -38,6 +38,8 @@ import {
 } from '../components/analytics';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { ErrorState } from '../components/common/LoadingState';
+import { POSComparison } from '../components/analytics/POSComparison';
+import { WeeklyReportSection } from '../components/reports/WeeklyReportSection';
 import { useInsightsData } from '../hooks/useInsightsData';
 import { useDisplayName } from '../hooks/useDisplayName';
 import apiService from '../services/api.service';
@@ -694,11 +696,17 @@ export function Analytics() {
           />
           
           {/* Environmental Summary */}
-          <EnvironmentalSummary 
+          <EnvironmentalSummary
             data={rawSensorData as any}
             loading={insights.loading}
           />
-          
+
+          {/* POS vs VenueScope comparison */}
+          <POSComparison />
+
+          {/* Weekly report download + schedule */}
+          <WeeklyReportSection />
+
         </div>
       </PullToRefresh>
       

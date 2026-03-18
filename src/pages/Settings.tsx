@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { 
+import {
   Key, MapPin, Check, Building2,
-  User, Info, CloudSun, Sliders, Users, Save, CreditCard
+  User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell
 } from 'lucide-react';
+import alertsService, { AlertPreferences } from '../services/alerts.service';
 import authService from '../services/auth.service';
 import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
 import weatherService from '../services/weather.service';
@@ -16,7 +17,9 @@ import { haptic } from '../utils/haptics';
 import { useDisplayName } from '../hooks/useDisplayName';
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'about'>('account');
+  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'about'>('account');
+  const [alertPrefs, setAlertPrefs] = useState<AlertPreferences>(() => alertsService.getPreferences());
+  const [alertsSaved, setAlertsSaved] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [savedAddress, setSavedAddress] = useState<VenueAddress | null>(null);
   const [capacity, setCapacity] = useState<number | ''>('');
@@ -72,6 +75,7 @@ export function Settings() {
             { id: 'venue' as const, label: 'Venue', icon: MapPin },
             { id: 'integrations' as const, label: 'Integrations', icon: CreditCard },
             { id: 'calibration' as const, label: 'Calibration', icon: Sliders },
+            { id: 'alerts' as const, label: 'Alerts', icon: Bell },
             { id: 'about' as const, label: 'About', icon: Info },
           ].map((tab) => (
             <motion.button
@@ -329,6 +333,98 @@ export function Settings() {
                   </p>
                 </div>
               )}
+            </motion.div>
+          )}
+
+          {/* Alerts Tab */}
+          {activeTab === 'alerts' && (
+            <motion.div
+              className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6 space-y-6"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <div>
+                <h3 className="text-xl font-semibold text-white mb-1">Alert Thresholds</h3>
+                <p className="text-sm text-warm-400">Get notified in-app when your venue needs attention.</p>
+              </div>
+
+              {/* Helper to render a toggle row */}
+              {([
+                {
+                  key: 'capacityEnabled',
+                  label: 'Crowd capacity',
+                  desc: 'Alert when occupancy exceeds a % of your venue limit',
+                  threshold: { key: 'capacityThresholdPct', label: 'Alert at', suffix: '% of capacity', min: 50, max: 100 },
+                },
+                {
+                  key: 'dwellEnabled',
+                  label: 'Dwell time drop',
+                  desc: 'Alert when average stay drops vs last week',
+                  threshold: { key: 'dwellDropPct', label: 'Alert when drops by', suffix: '%', min: 5, max: 50 },
+                },
+                {
+                  key: 'pulseEnabled',
+                  label: 'Low Pulse Score',
+                  desc: 'Alert when score falls below threshold',
+                  threshold: { key: 'pulseThreshold', label: 'Alert below score', suffix: '', min: 10, max: 60 },
+                },
+                {
+                  key: 'connectionEnabled',
+                  label: 'Sensor connection lost',
+                  desc: 'Alert when sensor data goes stale',
+                  threshold: { key: 'connectionStaleMinutes', label: 'Alert after', suffix: ' min without data', min: 5, max: 60 },
+                },
+                {
+                  key: 'posEnabled',
+                  label: 'POS vs Camera variance',
+                  desc: 'Alert when drink count differs from POS',
+                  threshold: { key: 'posVariancePct', label: 'Alert above', suffix: '% variance', min: 5, max: 50 },
+                },
+              ] as const).map(({ key, label, desc, threshold }) => (
+                <div key={key} className="border border-warm-700 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{label}</p>
+                      <p className="text-xs text-warm-400 mt-0.5">{desc}</p>
+                    </div>
+                    <button
+                      onClick={() => setAlertPrefs(p => ({ ...p, [key]: !p[key as keyof AlertPreferences] }))}
+                      className={`w-10 h-5 rounded-full relative transition-colors flex-shrink-0 ${alertPrefs[key as keyof AlertPreferences] ? 'bg-primary' : 'bg-warm-700'}`}
+                    >
+                      <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${alertPrefs[key as keyof AlertPreferences] ? 'left-5' : 'left-0.5'}`} />
+                    </button>
+                  </div>
+                  {alertPrefs[key as keyof AlertPreferences] && (
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-warm-400 flex-shrink-0">{threshold.label}</span>
+                      <input
+                        type="range"
+                        min={threshold.min}
+                        max={threshold.max}
+                        value={alertPrefs[threshold.key as keyof AlertPreferences] as number}
+                        onChange={e => setAlertPrefs(p => ({ ...p, [threshold.key]: Number(e.target.value) }))}
+                        className="flex-1 accent-primary"
+                      />
+                      <span className="text-sm font-semibold text-white w-24 text-right flex-shrink-0">
+                        {alertPrefs[threshold.key as keyof AlertPreferences] as number}{threshold.suffix}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              <motion.button
+                onClick={() => {
+                  alertsService.savePreferences(alertPrefs);
+                  haptic('success');
+                  setAlertsSaved(true);
+                  setTimeout(() => setAlertsSaved(false), 3000);
+                }}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-primary/20 border border-primary/40 text-white font-medium text-sm hover:bg-primary/30 transition-colors"
+                whileTap={{ scale: 0.97 }}
+              >
+                {alertsSaved ? <><Check className="w-4 h-4 text-primary" /> Saved</> : <><Save className="w-4 h-4" /> Save Alert Settings</>}
+              </motion.button>
             </motion.div>
           )}
 

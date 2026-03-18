@@ -107,6 +107,7 @@ function ProtectedDashboard() {
       activeTab={activeTab}
       onTabChange={setActiveTab}
       onLogout={handleLogout}
+      onOpenAlertSettings={() => setActiveTab('settings')}
     >
       {renderTabContent()}
     </DashboardLayout>

@@ -22,6 +22,7 @@ interface DashboardLayoutProps {
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
   onLogout: () => void;
+  onOpenAlertSettings?: () => void;
 }
 
 export function DashboardLayout({
@@ -34,14 +35,17 @@ export function DashboardLayout({
   activeTab,
   onTabChange,
   onLogout,
+  onOpenAlertSettings,
 }: DashboardLayoutProps) {
   return (
     <div className="min-h-screen bg-warm-900 flex flex-col">
       {/* Minimal Header */}
-      <Header 
+      <Header
         isConnected={isConnected}
         dataAgeSeconds={dataAgeSeconds}
         onLogout={onLogout}
+        onTabChange={onTabChange}
+        onOpenAlertSettings={onOpenAlertSettings}
       />
       
       {/* Main content area */}
