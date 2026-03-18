@@ -10,6 +10,8 @@ import pandas as pd
 
 from core.database import list_jobs, get_job
 from core.config   import RESULT_DIR, ANALYSIS_MODES
+from core.auth import require_auth as _page_auth
+_page_auth()
 
 st.set_page_config(page_title="Compare Jobs · VenueScope", layout="wide")
 st.markdown("""<style>

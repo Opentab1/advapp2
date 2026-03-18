@@ -10,6 +10,8 @@ import pandas as pd
 from core.database import list_jobs, get_job
 from core.config   import RESULT_DIR, ANALYSIS_MODES
 from core.confidence import compute_confidence_score
+from core.auth import require_auth as _page_auth
+_page_auth()
 
 st.markdown("## 📋 Unified Shift Report")
 st.caption(

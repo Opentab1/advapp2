@@ -7,6 +7,9 @@ Start programmatically: from app.api import start_api_server; start_api_server()
 """
 from __future__ import annotations
 import sys, json, time, threading
+import re as _re
+import time as _time
+from collections import defaultdict
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
@@ -19,6 +22,24 @@ from core.database import list_jobs, get_job
 
 API_VERSION = "1.0"
 API_PORT    = 8502
+
+_JOB_ID_RE = _re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+
+# Simple in-memory rate limiter: {ip: [timestamps]}
+_rate_limit_log: dict = defaultdict(list)
+_RATE_LIMIT_MAX = 60   # requests
+_RATE_LIMIT_WINDOW = 60  # seconds
+
+def _check_rate_limit(ip: str) -> bool:
+    """Returns True if request is allowed, False if rate limited."""
+    now = _time.time()
+    window_start = now - _RATE_LIMIT_WINDOW
+    # Prune old entries
+    _rate_limit_log[ip] = [t for t in _rate_limit_log[ip] if t > window_start]
+    if len(_rate_limit_log[ip]) >= _RATE_LIMIT_MAX:
+        return False
+    _rate_limit_log[ip].append(now)
+    return True
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -194,6 +215,11 @@ class _APIHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        client_ip = self.client_address[0]
+        if not _check_rate_limit(client_ip):
+            _json_response(self, {"error": "Rate limit exceeded"}, 429)
+            return
+
         parsed = urlparse(self.path)
         path   = parsed.path.rstrip("/")
 
@@ -213,11 +239,11 @@ class _APIHandler(BaseHTTPRequestHandler):
 
             elif path.startswith("/api/jobs/"):
                 job_id = path[len("/api/jobs/"):]
-                if not job_id:
-                    _json_response(self, {"error": "Missing job_id"}, 400)
-                else:
-                    data, status = _handle_job_detail(job_id)
-                    _json_response(self, data, status)
+                if not job_id or not _JOB_ID_RE.match(job_id):
+                    _json_response(self, {"error": "Invalid job_id"}, 400)
+                    return
+                data, status = _handle_job_detail(job_id)
+                _json_response(self, data, status)
 
             else:
                 _json_response(self, {"error": "Not found", "path": path}, 404)

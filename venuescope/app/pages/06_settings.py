@@ -13,6 +13,8 @@ from core.config   import UPLOAD_DIR, RESULT_DIR, CONFIG_DIR, ANALYSIS_MODES, MO
 from core.shift    import ShiftManager
 from core.bar_config import BarConfig
 import shutil
+from core.auth import require_auth as _page_auth
+_page_auth()
 
 st.title("⚙️ Settings & Backup")
 

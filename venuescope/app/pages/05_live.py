@@ -12,6 +12,8 @@ from core.database import (
     list_cameras, get_camera, save_camera, delete_camera,
     create_job, list_jobs, get_job, _raw_update,
 )
+from core.auth import require_auth as _page_auth
+_page_auth()
 
 st.set_page_config(page_title="Live Cameras · VenueScope", layout="wide")
 st.markdown("""

@@ -5,6 +5,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import json
 import streamlit as st
+from core.auth import require_auth as _page_auth
+_page_auth()
 import cv2
 import numpy as np
 

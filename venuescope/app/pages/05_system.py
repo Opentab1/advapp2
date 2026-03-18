@@ -5,6 +5,8 @@ Pre-flight: verify models downloaded, disk space, Python deps.
 import sys, shutil
 from pathlib import Path
 import streamlit as st
+from core.auth import require_auth as _page_auth
+_page_auth()
 
 st.title("🔧 System Check")
 st.markdown("Run this before your first analysis to make sure everything is ready.")

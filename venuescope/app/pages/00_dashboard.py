@@ -11,6 +11,8 @@ import pandas as pd
 
 from core.database import list_jobs_filtered, delete_job, get_preferences, save_preferences
 from core.config   import RESULT_DIR, ANALYSIS_MODES
+from core.auth import require_auth as _page_auth
+_page_auth()
 
 st.set_page_config(page_title="Dashboard · VenueScope", layout="wide")
 st.markdown("""

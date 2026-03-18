@@ -13,6 +13,8 @@ from core.database  import list_jobs, get_job, get_preferences, save_preferences
 from core.config    import RESULT_DIR, ANALYSIS_MODES, CONFIG_DIR
 from core.report    import generate_shift_report, REPORTLAB_OK
 from core.confidence import compute_confidence_score
+from core.auth import require_auth as _page_auth
+_page_auth()
 
 try:
     import openpyxl

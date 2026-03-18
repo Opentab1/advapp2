@@ -2,10 +2,14 @@
 VenueScope Production — Run Analysis v4 (fixed)
 """
 import uuid, json, sys, shutil
+import re as _re
+import os as _os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import streamlit as st
+from core.auth import require_auth as _page_auth
+_page_auth()
 import cv2, numpy as np
 
 from core.config     import UPLOAD_DIR, RESULT_DIR, CONFIG_DIR
@@ -127,12 +131,43 @@ def _get_frame(path: str, t_sec: float = 3.0):
     return None
 
 
+_VIDEO_MAGIC = [
+    b'RIFF',           # AVI
+    b'\x00\x00\x00\x18ftypmp42',
+    b'\x00\x00\x00\x18ftypisom',
+    b'\x00\x00\x00\x18ftypMSNV',
+    b'\x00\x00\x00\x18ftypf4v ',
+    b'\x00\x00\x00\x20ftyp',
+    b'\x00\x00\x00\x1cftyp',
+    b'\x00\x00\x00\x14ftyp',
+    b'\x00\x00\x00\x08ftyp',
+]
+
 def _save_upload(uploaded) -> str:
-    jdir = Path(UPLOAD_DIR)/"preview"; jdir.mkdir(parents=True, exist_ok=True)
-    dest = str(jdir/uploaded.name)
-    if not Path(dest).exists():
-        Path(dest).write_bytes(uploaded.read())
-    return dest
+    # Read magic bytes first (don't consume the full stream yet)
+    header = uploaded.read(12)
+    is_video = any(header[:len(sig)] == sig for sig in _VIDEO_MAGIC)
+    # Relaxed check: if starts with nulls + 'ftyp' or 'RIFF', it's likely video
+    if not is_video:
+        if b'ftyp' in header or header[:4] == b'RIFF':
+            is_video = True
+    if not is_video:
+        raise ValueError(
+            "Uploaded file does not appear to be a video (failed magic byte check). "
+            "Please upload a valid MP4, MOV, or AVI file."
+        )
+    # Sanitize filename
+    raw_name = _os.path.basename(uploaded.name or "upload.mp4")
+    safe_name = _re.sub(r'[^a-zA-Z0-9._-]', '_', raw_name)
+    if not safe_name:
+        safe_name = f"upload_{int(__import__('time').time())}.mp4"
+
+    jdir = Path(UPLOAD_DIR) / "preview"
+    jdir.mkdir(parents=True, exist_ok=True)
+    dest = jdir / safe_name
+    # Write header + rest of file
+    dest.write_bytes(header + uploaded.read())
+    return str(dest)
 
 
 # ── STEP 1 ─────────────────────────────────────────────────────────────────
@@ -166,7 +201,11 @@ rtsp_url   = locals().get("rtsp_url","").strip()
 saved_path = None
 source_type = "file"
 if uploaded:
-    saved_path  = _save_upload(uploaded)
+    try:
+        saved_path  = _save_upload(uploaded)
+    except ValueError as _upload_err:
+        st.error(str(_upload_err))
+        saved_path = None
     source_type = "file"
 elif rtsp_url:
     saved_path  = rtsp_url

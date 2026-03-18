@@ -7,6 +7,8 @@ import streamlit as st
 from core.database import save_shift, list_shifts, get_shift
 from core.shift    import BARTENDER_COLORS
 from core.config   import CONFIG_DIR
+from core.auth import require_auth as _page_auth
+_page_auth()
 
 st.title("🔑 Shift Setup")
 st.markdown(
