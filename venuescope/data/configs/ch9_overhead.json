@@ -1,0 +1,35 @@
+{
+  "venue_id": "ch9_overhead",
+  "display_name": "CH9 Overhead Fisheye",
+  "stations": [
+    {
+      "zone_id": "bar_left",
+      "label": "Left Station",
+      "polygon": [
+        [0.05, 0.30],
+        [0.50, 0.30],
+        [0.50, 0.98],
+        [0.05, 0.98]
+      ],
+      "bar_line_p1": [0.33, 0.30],
+      "bar_line_p2": [0.33, 0.98],
+      "customer_side": -1
+    },
+    {
+      "zone_id": "bar_right",
+      "label": "Right Station",
+      "polygon": [
+        [0.50, 0.30],
+        [0.95, 0.30],
+        [0.95, 0.98],
+        [0.50, 0.98]
+      ],
+      "bar_line_p1": [0.65, 0.30],
+      "bar_line_p2": [0.65, 0.98],
+      "customer_side": 1
+    }
+  ],
+  "frame_width": 2622,
+  "frame_height": 1206,
+  "notes": "CH9 overhead fisheye. Bartenders move LEFT-RIGHT when serving (not top-bottom). Bar line is VERTICAL. Left bartender serve: cx crosses 0.33 rightward. Right bartender: cx crosses 0.65 leftward."
+}

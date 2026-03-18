@@ -1,0 +1,767 @@
+"""
+VenueScope v6 — Mac-native drink count engine.
+Clean, simple, no Pi workarounds. Just:
+  - Open video
+  - Load YOLO
+  - Detect & track people
+  - Count drinks per bartender
+  - Write results
+"""
+from __future__ import annotations
+import os, time, cv2, json
+import numpy as np
+from pathlib import Path
+from typing import Callable, Optional, Dict, Any, List
+from collections import deque
+
+os.environ.setdefault("YOLO_TELEMETRY",          "False")
+os.environ.setdefault("ULTRALYTICS_AUTOINSTALL", "False")
+
+from ultralytics import YOLO
+
+from core.config     import MODEL_PROFILES, DEFAULT_RULES, DEFAULT_PEOPLE_RULES
+from core.config     import DEFAULT_TABLE_RULES, DEFAULT_STAFF_RULES, BOTTLE_CLASSES, CONFIG_DIR
+from core.preprocessing import (enhance_for_detection, build_dewarp_maps, dewarp_frame, enhance_frame,
+                                 upscale_for_detection, detect_night_mode, night_mode_enhance)
+from core.bar_config import BarConfig
+from core.shift      import ShiftManager
+from core.analytics.drink_counter  import DrinkCounter
+from core.analytics.bottle_counter import BottleCounter
+from core.analytics.people_counter import PeopleCounter
+from core.analytics.table_tracker  import TableTurnTracker, TableZone
+from core.analytics.staff_tracker  import StaffActivityTracker, AfterHoursDetector
+from core.output.writer            import ResultWriter
+
+ProgressCB = Callable[[float, str], None]
+
+
+def _centroids(boxes: np.ndarray) -> np.ndarray:
+    if not len(boxes):
+        return np.empty((0, 2), dtype=np.float32)
+    return np.stack([(boxes[:,0]+boxes[:,2])/2,
+                     (boxes[:,1]+boxes[:,3])/2], axis=1)
+
+
+def _in_ignore_zone(cx, cy, zones, W, H):
+    for zone in zones:
+        poly = [(p[0]*W, p[1]*H) for p in zone.get("polygon", [])]
+        if len(poly) < 3: continue
+        n = len(poly); inside = False; j = n-1
+        for i in range(n):
+            xi,yi=poly[i]; xj,yj=poly[j]
+            if ((yi>cy)!=(yj>cy)) and (cx<(xj-xi)*(cy-yi)/(yj-yi+1e-9)+xi):
+                inside = not inside
+            j = i
+        if inside: return True
+    return False
+
+
+def _load_yolo(model_name: str) -> YOLO:
+    """Find and load YOLO model from any common location."""
+    candidates = [
+        Path.home() / ".cache" / "ultralytics" / "assets" / model_name,
+        Path.home() / ".cache" / "ultralytics" / model_name,
+        Path.cwd() / model_name,
+        Path(model_name),
+    ]
+    for c in candidates:
+        if c.exists():
+            return YOLO(str(c))
+    # Not found locally — let ultralytics download it
+    return YOLO(model_name)
+
+
+# Gap 3: Mode-specific ByteTrack configs
+# Lower match_thresh = tracks survive more occlusion; higher track_buffer = longer ID persistence
+_TRACKER_PARAMS = {
+    "drink_count":    {"match_thresh": 0.55, "track_buffer": 90,  "new_track_thresh": 0.20},
+    "people_count":   {"match_thresh": 0.65, "track_buffer": 60,  "new_track_thresh": 0.25},
+    "table_turns":    {"match_thresh": 0.60, "track_buffer": 60,  "new_track_thresh": 0.25},
+    "staff_activity": {"match_thresh": 0.60, "track_buffer": 60,  "new_track_thresh": 0.25},
+    "after_hours":    {"match_thresh": 0.70, "track_buffer": 30,  "new_track_thresh": 0.25},
+    "bottle_count":   {"match_thresh": 0.70, "track_buffer": 30,  "new_track_thresh": 0.25},
+}
+_tracker_yaml_cache: Dict[str, str] = {}
+
+def _get_tracker_yaml(mode: str) -> str:
+    """Return path to mode-specific ByteTrack YAML, creating it if needed."""
+    if mode in _tracker_yaml_cache:
+        return _tracker_yaml_cache[mode]
+    p = _TRACKER_PARAMS.get(mode, {"match_thresh": 0.70, "track_buffer": 30, "new_track_thresh": 0.25})
+    tracker_dir = CONFIG_DIR / "trackers"
+    tracker_dir.mkdir(parents=True, exist_ok=True)
+    yaml_path = tracker_dir / f"bytetrack_{mode}.yaml"
+    yaml_path.write_text(
+        f"tracker_type: bytetrack\n"
+        f"track_high_thresh: 0.25\n"
+        f"track_low_thresh: 0.10\n"
+        f"new_track_thresh: {p['new_track_thresh']}\n"
+        f"track_buffer: {p['track_buffer']}\n"
+        f"match_thresh: {p['match_thresh']}\n"
+        f"fuse_score: True\n"
+    )
+    _tracker_yaml_cache[mode] = str(yaml_path)
+    return str(yaml_path)
+
+
+# Gap 2: Screen recording detection
+_SCREEN_RESOLUTIONS = {(1920,1080),(1280,720),(2560,1440),(3840,2160),(2560,1600),(1366,768)}
+
+def _detect_screen_recording(frame: np.ndarray, W: int, H: int) -> Optional[str]:
+    """
+    Heuristic check for screen-recorded footage.
+    Returns a warning string if suspicious, else None.
+    Checks:
+      1. Solid-color horizontal strip at bottom (player controls)
+      2. Solid-color strip at top (browser/OS chrome)
+      3. Standard desktop screen resolution
+    """
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # Check bottom 5% and top 5% for flat color (std dev < 18 = essentially solid)
+    bottom = gray[int(H * 0.93):, :]
+    top    = gray[:int(H * 0.05), :]
+    if np.std(bottom) < 18:
+        return ("SCREEN_RECORDING: Solid color strip detected at the bottom of the frame — "
+                "likely a video player UI. The actual bar area may be compressed into the upper "
+                "portion of the frame, causing missed detections. "
+                "Re-export directly from the CCTV DVR/NVR instead of screen-recording a player.")
+    if np.std(top) < 18:
+        return ("SCREEN_RECORDING: Solid color strip detected at the top of the frame — "
+                "likely a browser toolbar or app chrome. "
+                "Re-export directly from the CCTV DVR/NVR for full-frame accuracy.")
+    if (W, H) in _SCREEN_RESOLUTIONS:
+        return ("SCREEN_RECORDING_SUSPECTED: Video resolution matches a common desktop screen size. "
+                "If this was screen-recorded from a player app, bar content may be compressed. "
+                "Consider exporting directly from your DVR/NVR.")
+    return None
+
+
+def _iou(b1: np.ndarray, b2: np.ndarray) -> float:
+    """Intersection-over-Union for two [x1,y1,x2,y2] boxes."""
+    ix1 = max(b1[0], b2[0]); iy1 = max(b1[1], b2[1])
+    ix2 = min(b1[2], b2[2]); iy2 = min(b1[3], b2[3])
+    inter = max(0.0, ix2-ix1) * max(0.0, iy2-iy1)
+    if inter == 0.0:
+        return 0.0
+    a1 = (b1[2]-b1[0]) * (b1[3]-b1[1])
+    a2 = (b2[2]-b2[0]) * (b2[3]-b2[1])
+    return inter / (a1 + a2 - inter + 1e-9)
+
+
+class VenueProcessor:
+
+    def __init__(self, job_id, analysis_mode, source, source_type,
+                 model_profile, bar_config, shift, extra_config,
+                 result_dir, annotate=False, progress_cb=None):
+        self.job_id      = job_id
+        self.mode        = analysis_mode
+        self.source      = source
+        self.source_type = source_type
+        ec_tmp = extra_config or {}
+        _override = ec_tmp.get("model_override", model_profile)
+        if _override in MODEL_PROFILES:
+            self.profile = MODEL_PROFILES[_override]
+        elif model_profile in MODEL_PROFILES:
+            self.profile = MODEL_PROFILES[model_profile]
+        else:
+            self.profile = MODEL_PROFILES["accurate"]  # safe fallback
+        self.bar_config  = bar_config
+        self.shift       = shift
+        self.ec          = extra_config or {}
+        self.result_dir  = Path(result_dir)
+        # Always annotate drink_count — visual proof of every detected serve
+        self.annotate    = annotate or (analysis_mode == "drink_count")
+
+        # Gap 1: Overhead camera — lower conf floor + larger imgsz for top-down fisheye
+        self._overhead = bool(bar_config and getattr(bar_config, "overhead_camera", False))
+        if self._overhead:
+            self.profile = dict(self.profile)   # shallow copy so we don't mutate the global
+            self.profile["conf"]   = min(self.profile["conf"],  0.15)
+            self.profile["imgsz"]  = max(self.profile["imgsz"], 1280)
+            self.profile["stride"] = 1          # every frame — overhead cameras miss fast movements
+
+        # Gap 3: Swap in mode-specific ByteTrack YAML
+        self.profile = dict(self.profile)
+        self.profile["tracker"] = _get_tracker_yaml(analysis_mode)
+        self.cb          = progress_cb or (lambda p, m: None)
+        self._serve_flashes: List[Dict] = []  # active serve event overlays
+
+        self.result_dir.mkdir(parents=True, exist_ok=True)
+        (self.result_dir / "snapshots").mkdir(exist_ok=True)
+
+        self._conf_sum = 0.0; self._conf_n = 0
+        self._total = self._processed = self._dropped = 0
+        self._screen_recording_warning: Optional[str] = None   # Gap 2
+        self._prev_ids = set(); self._id_switches = 0
+        self._last_boxes:  Dict[int, np.ndarray] = {}  # A2: last known box per track
+        self._lost_boxes:  Dict[int, tuple]      = {}  # A2: {old_id: (box, frame_idx)}
+        self._track_ages: Dict[int,int] = {}
+        self._snap_count = 0
+        self._clip_count  = 0
+        self._min_track_age = self.ec.get("min_track_age_frames", 8)
+        self._ignore_zones  = self.ec.get("ignore_zones", [])
+
+        # Preprocessing
+        self._enhance_strength = self.ec.get("enhance_strength", "off")
+        self._dewarp           = self.ec.get("dewarp", False)
+        self._dewarp_strength  = float(self.ec.get("dewarp_strength", 0.4))
+        self._dewarp_maps      = None   # built lazily after first frame
+
+        # Improvement 2: Adaptive confidence
+        self._adaptive_conf    = self.ec.get("adaptive_conf", True)
+        self._running_conf_sum = 0.0
+        self._running_conf_n   = 0
+        self._conf_threshold   = self.profile["conf"]  # starts at profile default, may adapt
+
+        # Improvement 3: Night/IR camera detection
+        self._night_mode         = False
+        self._night_mode_checked = False
+
+        # Improvement 5: ROI crop for drink_count
+        self._roi_crop  = (self.mode == "drink_count" and
+                           self.bar_config is not None and
+                           self.ec.get("enhance_strength", "off") in ("light", "strong"))
+        self._roi_boxes: Optional[tuple] = None   # (x1, y1, x2, y2) in pixels, set lazily
+
+        self._max_seconds = float(self.ec.get("max_seconds", 0))  # 0 = unlimited
+
+        # Rolling frame buffer for clip saving (stores thumbnail-size frames)
+        self._clip_fps   = 0.0          # set once fps is known
+        self._clip_W     = 480
+        self._frame_buf: deque = deque(maxlen=90)   # up to ~3s pre-event buffer
+        self._pending_clips: List[Dict] = []         # clips currently writing forward frames
+
+    def run(self) -> Dict[str, Any]:
+        self.cb(0, "Opening video...")
+        cap = (cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+               if self.source_type == "rtsp"
+               else cv2.VideoCapture(str(self.source)))
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open: {self.source}")
+
+        fps     = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        total_f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or -1
+        W       = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        H       = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._clip_fps = fps / max(self.profile.get("stride", 2), 1)
+        self._clip_H   = int(H * self._clip_W / W)
+        self.cb(2, f"Video: {W}x{H} @ {fps:.1f}fps  ({total_f} frames, {total_f/fps/60:.1f} min)")
+        if self._overhead:
+            self.cb(2, "Overhead camera mode: conf=0.15, imgsz=1280, stride=1")
+        (self.result_dir / "clips").mkdir(exist_ok=True)
+
+        analyzer   = self._build_analyzer(W, H, fps)
+        model_name = self.profile["model"]
+        self.cb(4, f"Loading {model_name}...")
+        model = _load_yolo(model_name)
+        self.cb(5, f"Model ready. Starting analysis...")
+
+        writer = ResultWriter(self.job_id, self.result_dir, fps)
+        vout   = None
+        if self.annotate:
+            # avc1 = H.264 — browser-native codec; falls back to mp4v if unavailable
+            _fourcc = cv2.VideoWriter_fourcc(*"avc1")
+            _test   = cv2.VideoWriter(str(self.result_dir / "annotated.mp4"),
+                                      _fourcc, fps, (W, H))
+            if not _test.isOpened():
+                _test.release()
+                _fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                _test   = cv2.VideoWriter(str(self.result_dir / "annotated.mp4"),
+                                          _fourcc, fps, (W, H))
+            vout = _test
+
+        stride    = self.profile["stride"]
+        imgsz     = self.profile["imgsz"]
+        frame_idx = 0
+        t0        = time.time()
+
+        while True:
+            ret, frame = cap.read()
+            if not ret: break
+            self._total += 1
+
+            if frame_idx % stride != 0:
+                frame_idx += 1; self._dropped += 1; continue
+            self._processed += 1
+
+            # Buffer thumbnail for clip saving (before detection)
+            try:
+                thumb_buf = cv2.resize(frame, (self._clip_W, self._clip_H),
+                                       interpolation=cv2.INTER_LINEAR)
+                self._frame_buf.append(thumb_buf)
+                # Write forward frames into any open clip writers
+                for pc in self._pending_clips:
+                    if pc["frames_left"] > 0:
+                        pc["writer"].write(thumb_buf)
+                        pc["frames_left"] -= 1
+                # Close finished clips
+                done = [pc for pc in self._pending_clips if pc["frames_left"] <= 0]
+                for pc in done:
+                    pc["writer"].release()
+                self._pending_clips = [pc for pc in self._pending_clips if pc["frames_left"] > 0]
+            except Exception:
+                pass
+
+            # Gap 2: Screen recording check on first processed frame only
+            if self._processed == 1 and self._screen_recording_warning is None:
+                w = _detect_screen_recording(frame, W, H)
+                if w:
+                    self._screen_recording_warning = w
+                    self.cb(0, f"WARNING: {w[:120]}...")
+
+            # Keep original frame for annotation (boxes are transformed back to full-frame coords)
+            orig_frame = frame if not self.annotate else frame.copy()
+
+            # Per-frame init for ROI offset (Improvement 5)
+            _roi_offset_x = 0
+            _roi_offset_y = 0
+
+            # Preprocessing for bad cameras
+            if self._dewarp:
+                if self._dewarp_maps is None:
+                    self._dewarp_maps = build_dewarp_maps(W, H, self._dewarp_strength)
+                frame = dewarp_frame(frame, self._dewarp_maps[0], self._dewarp_maps[1])
+            if self._enhance_strength != "off":
+                frame = enhance_for_detection(frame, self._enhance_strength)
+
+            # Improvement 3: Night/IR camera auto-detection (check on first 3 processed frames)
+            if not self._night_mode_checked and self._processed <= 3:
+                if detect_night_mode(frame):
+                    self._night_mode = True
+                    self.cb(0, "Night/IR camera detected — switching to night enhancement mode")
+                if self._processed == 3:
+                    self._night_mode_checked = True
+            if self._night_mode:
+                frame = night_mode_enhance(frame)
+
+            # Improvement 4: Auto-upscale low-res cameras (< 720p shorter side) before YOLO
+            _fh, _fw = frame.shape[:2]
+            if self._enhance_strength in ("light", "strong") and min(_fh, _fw) < 720:
+                frame = upscale_for_detection(frame, min_side=720)
+
+            # Improvement 5: ROI crop for drink_count — focus on bar zone for better resolution
+            if self._roi_crop and self.bar_config:
+                if self._roi_boxes is None:
+                    _cur_H, _cur_W = frame.shape[:2]
+                    all_pts = []
+                    for _st in self.bar_config.stations:
+                        for _p in _st.polygon:
+                            all_pts.append((_p[0] * _cur_W, _p[1] * _cur_H))
+                    if all_pts:
+                        _pad = 0.05  # 5% padding
+                        _xs = [p[0] for p in all_pts]
+                        _ys = [p[1] for p in all_pts]
+                        _rx1 = max(0,       int(min(_xs) - _pad * _cur_W))
+                        _ry1 = max(0,       int(min(_ys) - _pad * _cur_H))
+                        _rx2 = min(_cur_W,  int(max(_xs) + _pad * _cur_W))
+                        _ry2 = min(_cur_H,  int(max(_ys) + _pad * _cur_H))
+                        self._roi_boxes = (_rx1, _ry1, _rx2, _ry2)
+                if self._roi_boxes:
+                    _rx1, _ry1, _rx2, _ry2 = self._roi_boxes
+                    _roi_offset_x = _rx1
+                    _roi_offset_y = _ry1
+                    frame = frame[_ry1:_ry2, _rx1:_rx2]
+
+            # Resize frame down to imgsz before YOLO — critical for high-res cameras
+            H_orig, W_orig = frame.shape[:2]
+            scale = min(imgsz / W_orig, imgsz / H_orig, 1.0)
+            if scale < 1.0:
+                yolo_frame = cv2.resize(frame,
+                                        (int(W_orig*scale), int(H_orig*scale)),
+                                        interpolation=cv2.INTER_LINEAR)
+            else:
+                yolo_frame = frame
+                scale      = 1.0
+
+            detect_classes = BOTTLE_CLASSES if self.mode == "bottle_count" else [0]
+            results = model.track(yolo_frame, persist=True,
+                                  imgsz=imgsz,
+                                  conf=self._conf_threshold,
+                                  iou=self.profile["iou"],
+                                  classes=detect_classes,
+                                  tracker=self.profile["tracker"],
+                                  verbose=False)
+
+            boxes_px:  np.ndarray = np.empty((0, 4), dtype=np.float32)
+            track_ids: List[int]  = []
+            confs:     List[float]= []
+
+            class_ids: List[int] = []
+            res = results[0] if results else None
+            if res and res.boxes is not None and len(res.boxes):
+                raw       = res.boxes.xyxy.cpu().numpy() / scale
+                # Improvement 5: shift coords back to full-frame space if ROI crop was applied
+                if _roi_offset_x != 0 or _roi_offset_y != 0:
+                    raw[:, 0] += _roi_offset_x
+                    raw[:, 1] += _roi_offset_y
+                    raw[:, 2] += _roi_offset_x
+                    raw[:, 3] += _roi_offset_y
+                raw_ids   = (res.boxes.id.cpu().numpy().astype(int).tolist()
+                             if res.boxes.id is not None else list(range(len(raw))))
+                raw_confs = (res.boxes.conf.cpu().numpy().tolist()
+                             if res.boxes.conf is not None else [0.5]*len(raw))
+                raw_cls   = (res.boxes.cls.cpu().numpy().astype(int).tolist()
+                             if res.boxes.cls is not None else [0]*len(raw))
+
+                fb, fi, fc, fk = [], [], [], []
+                for box, tid, conf, cls in zip(raw, raw_ids, raw_confs, raw_cls):
+                    cx = (box[0]+box[2])/2; cy = (box[1]+box[3])/2
+                    if self._ignore_zones and _in_ignore_zone(cx, cy, self._ignore_zones, W, H):
+                        continue
+                    fb.append(box); fi.append(tid); fc.append(conf); fk.append(cls)
+
+                if fb:
+                    boxes_px  = np.stack(fb).astype(np.float32)
+                    track_ids = fi; confs = fc; class_ids = fk
+
+                # Skip min-age filter for bottle mode (bottles don't move, no track age warmup needed)
+                if self.mode != "bottle_count":
+                    for tid in track_ids:
+                        self._track_ages[tid] = self._track_ages.get(tid, 0) + 1
+                    mask      = [self._track_ages.get(t,0) >= self._min_track_age for t in track_ids]
+                    boxes_px  = boxes_px[mask]  if len(boxes_px)  else boxes_px
+                    track_ids = [t for t,m in zip(track_ids,mask) if m]
+                    confs     = [c for c,m in zip(confs,mask)     if m]
+                    class_ids = [k for k,m in zip(class_ids,mask) if m]
+
+                if len(boxes_px):
+                    # A2: IoU track re-ID — inherit state when new ID overlaps lost track
+                    cur = set(track_ids)
+                    just_lost     = self._prev_ids - cur
+                    just_appeared = cur - self._prev_ids
+                    for _tid in just_lost:
+                        if _tid in self._last_boxes:
+                            self._lost_boxes[_tid] = (self._last_boxes[_tid], frame_idx)
+                    for _new_tid in just_appeared:
+                        _ni = track_ids.index(_new_tid) if _new_tid in track_ids else -1
+                        if _ni < 0 or _ni >= len(boxes_px):
+                            continue
+                        _new_box = boxes_px[_ni]
+                        _best_old = None; _best_iou = 0.50
+                        for _old_tid, (_old_box, _lf) in list(self._lost_boxes.items()):
+                            if frame_idx - _lf > 60:
+                                continue
+                            _s = _iou(_new_box, _old_box)
+                            if _s > _best_iou:
+                                _best_iou = _s; _best_old = _old_tid
+                        if _best_old is not None:
+                            if hasattr(analyzer, 'merge_track'):
+                                analyzer.merge_track(_best_old, _new_tid)
+                            self._lost_boxes.pop(_best_old, None)
+                    # Evict stale lost boxes
+                    self._lost_boxes = {t: v for t, v in self._lost_boxes.items()
+                                        if frame_idx - v[1] <= 60}
+                    # Update last-known boxes for current tracks
+                    for _tid, _box in zip(track_ids, boxes_px):
+                        self._last_boxes[_tid] = _box
+
+                    self._conf_sum += sum(confs); self._conf_n += len(confs)
+                    self._id_switches += min(len(self._prev_ids-cur), len(cur-self._prev_ids))
+                    self._prev_ids = cur
+
+                    # Improvement 2: Adaptive confidence — lower threshold if detections are poor
+                    if self._adaptive_conf and len(confs) > 0:
+                        self._running_conf_sum += sum(confs)
+                        self._running_conf_n   += len(confs)
+                        # Re-evaluate every 50 accumulated detections
+                        if self._running_conf_n >= 50 and self._running_conf_n % 50 == 0:
+                            rolling_avg = self._running_conf_sum / self._running_conf_n
+                            if rolling_avg < 0.30 and self._conf_threshold > 0.15:
+                                self._conf_threshold = max(0.15, self._conf_threshold - 0.03)
+                                self.cb(0, f"Auto-adjusting confidence threshold to {self._conf_threshold:.2f} (low detection quality)")
+
+            t_sec     = frame_idx / fps
+            if self._max_seconds > 0 and t_sec >= self._max_seconds:
+                self.cb(95, f"Segment limit reached ({self._max_seconds:.0f}s) — stopping.")
+                break
+            centroids = _centroids(boxes_px)
+            evs       = self._run_analyzer(analyzer, frame, frame_idx, t_sec,
+                                           centroids, track_ids, confs, boxes_px, class_ids)
+
+            snap_dir = self.result_dir / "snapshots"
+            clip_dir = self.result_dir / "clips"
+            for ev in evs:
+                # Snapshot (single frame)
+                if self._snap_count < 60:
+                    try:
+                        thumb = cv2.resize(frame, (480, int(H*480/W)))
+                        fname = f"{self._snap_count:03d}_{ev.get('event_type','ev')}_{ev.get('t_sec',0):.1f}s.jpg"
+                        cv2.imwrite(str(snap_dir/fname), thumb, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                        ev["snapshot"] = fname
+                    except Exception: pass
+                    self._snap_count += 1
+
+                # Video clip: pre-event buffer + 60 forward frames (~2s each side)
+                if self._clip_count < 60:
+                    try:
+                        cfname  = f"{self._clip_count:03d}_{ev.get('event_type','ev')}_{ev.get('t_sec',0):.1f}s.mp4"
+                        cpath   = str(clip_dir/cfname)
+                        fourcc  = cv2.VideoWriter_fourcc(*"avc1")
+                        cwriter = cv2.VideoWriter(cpath, fourcc,
+                                                  max(self._clip_fps, 8.0),
+                                                  (self._clip_W, self._clip_H))
+                        if not cwriter.isOpened():
+                            cwriter.release()
+                            fourcc  = cv2.VideoWriter_fourcc(*"mp4v")
+                            cwriter = cv2.VideoWriter(cpath, fourcc,
+                                                  max(self._clip_fps, 8.0),
+                                                  (self._clip_W, self._clip_H))
+                        # Write buffered pre-event frames
+                        for bf in list(self._frame_buf):
+                            cwriter.write(bf)
+                        # Schedule forward-frame capture
+                        self._pending_clips.append({
+                            "writer":     cwriter,
+                            "frames_left": int(self._clip_fps * 2) + 1,  # ~2s after event
+                        })
+                        ev["clip"] = cfname
+                        self._clip_count += 1
+                    except Exception:
+                        pass
+
+            for ev in evs: writer.add_event(ev)
+            writer.add_frame(t_sec, self.shift)
+
+            # Track serve flashes for annotation overlay
+            for ev in evs:
+                if ev.get("event_type") == "drink_serve":
+                    self._serve_flashes.append({
+                        "bartender":   ev.get("bartender", "?"),
+                        "station":     ev.get("station_id", ""),
+                        "frames_left": int(fps * 3),  # show 3 seconds
+                    })
+            for f in self._serve_flashes:
+                f["frames_left"] -= 1
+            self._serve_flashes = [f for f in self._serve_flashes if f["frames_left"] > 0]
+
+            if vout:
+                vout.write(self._annotate_frame(orig_frame, boxes_px, track_ids,
+                                                W, H, t_sec, self._serve_flashes))
+
+            frame_idx += 1
+
+            # Prune stale track ages
+            if frame_idx % 150 == 0 and self._track_ages:
+                active = set(track_ids)
+                for t in [t for t in list(self._track_ages)
+                          if t not in active and self._track_ages.get(t,0) < 5]:
+                    self._track_ages.pop(t, None)
+
+            if total_f > 0 and frame_idx % 30 == 0:
+                pct  = min(5 + 90*frame_idx/total_f, 95)
+                efps = self._processed / max(time.time()-t0, 0.01)
+                elapsed   = time.time() - t0
+                remaining = (elapsed / max(self._processed,1)) * max(total_f//stride - self._processed, 0)
+                mins_left = int(remaining // 60)
+                self.cb(pct, f"Frame {int(frame_idx)}/{total_f}  {efps:.1f}fps  ~{mins_left}min left")
+
+        cap.release()
+        if vout: vout.release()
+        # Close any clip writers that didn't finish forward capture
+        for pc in self._pending_clips:
+            try: pc["writer"].release()
+            except Exception: pass
+        self._pending_clips = []
+
+        self.cb(96, "Writing results...")
+        summary = self._build_summary(analyzer, frame_idx/fps, fps)
+        writer.write_all(summary)
+        self.cb(100, "Done.")
+        return summary
+
+    def _build_analyzer(self, W, H, fps: float = 25.0):
+        ec = self.ec; mode = self.mode
+        if mode == "drink_count":
+            import copy
+            rules = copy.copy(DEFAULT_RULES)
+            effective_fps = max(1.0, fps / max(self.profile.get("stride", 1), 1))
+            rules.serve_cooldown_frames   = max(10, int(rules.serve_cooldown_seconds * effective_fps))
+            # Grace period: keep track state for 90s of video time so bartenders returning
+            # from a back-room trip or long conversation still get re-assigned by zone
+            rules.reappear_grace_frames   = max(100, int(effective_fps * 90))
+            shift = self.shift
+            if shift is None:
+                # Auto-create one bartender per station from bar config
+                if self.bar_config and self.bar_config.stations:
+                    from core.shift import BARTENDER_COLORS
+                    bartenders = [
+                        {"name": st.label, "station_id": st.zone_id,
+                         "color": BARTENDER_COLORS[i % len(BARTENDER_COLORS)]}
+                        for i, st in enumerate(self.bar_config.stations)
+                    ]
+                else:
+                    bartenders = [{"name": "Bartender 1", "station_id": "zone_1",
+                                   "color": "#f97316"}]
+                shift = ShiftManager("auto", bartenders)
+                self.shift = shift  # store so _build_summary can read it
+            return DrinkCounter(self.bar_config, shift, rules, W, H)
+        elif mode == "bottle_count":
+            zones = ec.get("zones", [])
+            # zones is a list of polygons in normalized [0,1] coords
+            polys = [z.get("polygon", []) for z in zones] if zones else [
+                [[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0]]  # full-frame default zone
+            ]
+            return BottleCounter(zone_polys_norm=polys, W=W, H=H)
+        elif mode == "people_count":
+            lines = ec.get("lines", [])
+            if not lines:
+                lines = [{"line_id":"entrance_1","label":"Entrance 1",
+                          "p1":ec.get("line_p1",[0.5,0.0]),
+                          "p2":ec.get("line_p2",[0.5,1.0]),
+                          "entry_side":ec.get("entry_side",-1)}]
+            return PeopleCounter(lines_config=lines,
+                                 confirm_frames=DEFAULT_PEOPLE_RULES.entry_line_confirm,
+                                 W=W, H=H)
+        elif mode == "table_turns":
+            zones = [TableZone(table_id=t["table_id"],
+                               label=t.get("label",t["table_id"]),
+                               polygon_px=[(p[0]*W,p[1]*H) for p in t["polygon"]])
+                     for t in ec.get("tables",[])]
+            r = DEFAULT_TABLE_RULES
+            return TableTurnTracker(zones, r.occupied_conf_frames,
+                                    r.empty_conf_frames, r.min_dwell_seconds)
+        elif mode == "staff_activity":
+            return StaffActivityTracker(idle_threshold_sec=ec.get(
+                "idle_threshold_seconds", DEFAULT_STAFF_RULES.idle_threshold_seconds))
+        elif mode == "after_hours":
+            return AfterHoursDetector(motion_threshold=ec.get("motion_threshold",1500.0))
+        raise ValueError(f"Unknown mode: {mode}")
+
+    def _run_analyzer(self, analyzer, frame, frame_idx, t_sec,
+                      centroids, track_ids, confs, boxes_px, class_ids=None):
+        if self.mode == "drink_count":
+            return analyzer.update(frame_idx, t_sec, centroids, track_ids, confs,
+                                   boxes=boxes_px if len(boxes_px) else None)
+        elif self.mode == "bottle_count":
+            return analyzer.update(frame_idx, t_sec, boxes_px, class_ids or [], confs)
+        elif self.mode in ("people_count","table_turns","staff_activity"):
+            return analyzer.update(frame_idx, t_sec, centroids, track_ids)
+        elif self.mode == "after_hours":
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return analyzer.update_frame(frame_idx, t_sec, gray, len(track_ids))
+        return []
+
+    def _build_summary(self, analyzer, total_sec, fps):
+        avg_conf    = self._conf_sum / max(self._conf_n, 1)
+        switch_rate = self._id_switches / max(self._processed, 1)
+        warnings = []
+        if avg_conf < 0.45:
+            warnings.append("LOW_CONFIDENCE: check lighting or camera angle")
+        if switch_rate > 0.05:
+            warnings.append("HIGH_ID_SWITCHES: try 'accurate' profile")
+        if self._screen_recording_warning:
+            warnings.append(self._screen_recording_warning)
+
+        quality = {"avg_detection_conf":      round(avg_conf, 4),
+                   "tracking_switch_rate":    round(switch_rate, 4),
+                   "dropped_frames":          self._dropped,
+                   "processed_frames":        self._processed,
+                   "warnings":                warnings,
+                   "adapted_conf_threshold":  round(self._conf_threshold, 3),
+                   "night_mode_detected":     self._night_mode}
+
+        b = {"mode":self.mode, "video_seconds":round(total_sec,1),
+             "quality":quality, "snap_count":self._snap_count,
+             "heatmap_generated":False}
+
+        if self.mode == "drink_count":
+            b.update({"bartenders":    self.shift.summary(total_sec) if self.shift else {},
+                      "drink_quality": analyzer.quality_report()})
+        elif self.mode == "bottle_count":
+            b["bottles"] = analyzer.summary()
+        elif self.mode == "people_count":
+            b.update({"people":        analyzer.summary(total_sec),
+                      "occupancy_log": analyzer.occupancy_log})
+        elif self.mode == "table_turns":
+            b["tables"] = analyzer.summary()
+        elif self.mode == "staff_activity":
+            b.update({"staff":         analyzer.summary(total_sec),
+                      "headcount_log": analyzer.headcount_log})
+        elif self.mode == "after_hours":
+            b["motion"] = analyzer.summary()
+        return b
+
+    def _annotate_frame(self, frame, boxes, track_ids, W, H,
+                        t_sec: float = 0.0, serve_flashes: list = None):
+        ann = frame.copy()
+
+        # ── Bar lines + station labels ──────────────────────────────────────
+        if self.bar_config:
+            for st in self.bar_config.stations:
+                p1 = (int(st.bar_line_p1[0]*W), int(st.bar_line_p1[1]*H))
+                p2 = (int(st.bar_line_p2[0]*W), int(st.bar_line_p2[1]*H))
+                cv2.line(ann, p1, p2, (0, 230, 255), 2)   # cyan bar line
+                mid = ((p1[0]+p2[0])//2, (p1[1]+p2[1])//2)
+                cv2.putText(ann, st.label, (mid[0]+6, mid[1]),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,230,255), 1)
+
+        # ── Bounding boxes + bartender labels + drink counter ───────────────
+        for i, box in enumerate(boxes):
+            x1,y1,x2,y2 = int(box[0]),int(box[1]),int(box[2]),int(box[3])
+            tid   = track_ids[i] if i < len(track_ids) else "?"
+            label = f"#{tid}"; color = (0,200,0); rec = None
+            if self.shift:
+                rec = self.shift.track_to_bartender(
+                    int(tid) if str(tid).isdigit() else -1)
+                if rec:
+                    label = rec.name
+                    try:
+                        c = tuple(int(rec.color.lstrip("#")[k:k+2], 16) for k in (0,2,4))
+                        color = (c[2], c[1], c[0])
+                    except Exception:
+                        pass
+            cv2.rectangle(ann, (x1,y1), (x2,y2), color, 2)
+
+            pad = 4
+            fs  = 0.55
+            if rec:
+                # Running drink count up to the current video timestamp
+                drinks_so_far = sum(1 for t in rec.drink_timestamps if t <= t_sec)
+                count_text = f"{drinks_so_far} drink{'s' if drinks_so_far != 1 else ''}"
+                (nw, nh), _ = cv2.getTextSize(label,      cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+                (cw, ch), _ = cv2.getTextSize(count_text, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+                lw = max(nw, cw) + pad * 2
+                # ── Name row (colored background) just above box ──────────
+                name_top = y1 - nh - pad * 2
+                cv2.rectangle(ann, (x1, name_top), (x1 + lw, y1), color, -1)
+                cv2.putText(ann, label, (x1 + pad, y1 - pad),
+                            cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 1)
+                # ── Drink counter badge (dark bg, teal text) above name ───
+                count_top = name_top - ch - pad * 2
+                cv2.rectangle(ann, (x1, count_top), (x1 + lw, name_top), (15, 15, 15), -1)
+                cv2.rectangle(ann, (x1, count_top), (x1 + lw, name_top), color, 1)
+                cv2.putText(ann, count_text, (x1 + pad, name_top - pad),
+                            cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 230, 200), 1)
+            else:
+                # Unknown track — show track ID only
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+                cv2.rectangle(ann, (x1, y1 - th - pad * 2), (x1 + tw + pad, y1), color, -1)
+                cv2.putText(ann, label, (x1 + 2, y1 - pad),
+                            cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 1)
+
+        # ── Serve event flash banners (top of frame) ─────────────────────
+        if serve_flashes:
+            y_off = 10
+            for flash in serve_flashes:
+                alpha  = min(flash["frames_left"] / max(10, 1), 1.0)
+                name   = flash["bartender"]
+                # semi-transparent dark panel
+                panel_h = 40; panel_w = 280
+                overlay = ann.copy()
+                cv2.rectangle(overlay, (10, y_off), (10+panel_w, y_off+panel_h),
+                              (10,10,10), -1)
+                cv2.addWeighted(overlay, 0.6*alpha, ann, 1-0.6*alpha, 0, ann)
+                text = f"  +1 DRINK  {name}"
+                cv2.putText(ann, text, (18, y_off+27),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255,165,0), 2)
+                y_off += panel_h + 6
+
+        # ── Timestamp bottom-right ───────────────────────────────────────
+        mins, secs = divmod(int(t_sec), 60)
+        ts_label = f"{mins:02d}:{secs:02d}"
+        (tw, th), _ = cv2.getTextSize(ts_label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+        cv2.rectangle(ann, (W-tw-14, H-th-14), (W-2, H-2), (0,0,0), -1)
+        cv2.putText(ann, ts_label, (W-tw-10, H-8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200,200,200), 2)
+
+        return ann

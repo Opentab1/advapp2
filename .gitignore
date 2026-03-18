@@ -32,3 +32,22 @@ dist-ssr
 # Capacitor
 android/
 ios/
+
+# Python / VenueScope (root-level artifacts — source lives in venuescope/)
+__pycache__/
+*.pyc
+*.pyo
+*.pt
+worker.log
+/{app
+
+# Root-level Python files (duplicates — canonical source is in venuescope/)
+/app/
+/core/
+/data/
+/workers/
+/tests/
+/scripts/
+/requirements.txt
+/start.sh
+/worker_daemon.py

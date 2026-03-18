@@ -1,0 +1,22 @@
+{
+  "venue_id": "bar_main",
+  "display_name": "Main Bar",
+  "stations": [
+    {
+      "zone_id": "well_a",
+      "label": "Well A",
+      "polygon": [
+        [0.05, 0.22],
+        [0.95, 0.22],
+        [0.95, 0.68],
+        [0.05, 0.68]
+      ],
+      "bar_line_p1": [0.05, 0.44],
+      "bar_line_p2": [0.95, 0.44],
+      "customer_side": 1
+    }
+  ],
+  "frame_width": 2622,
+  "frame_height": 1206,
+  "notes": "Overhead fisheye CH9. Bartender normal cy~0.37. Serving cy~0.44+. Bar line separates working from serving reach."
+}

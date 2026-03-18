@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# App runtime data — never commit
+data/uploads/
+data/results/
+data/venuescope.db
+data/configs/auth.json
+data/configs/credentials.json
+data/configs/preferences.json
+
+# YOLO model weights — large binaries, download at runtime
+*.pt
+
+# Logs
+worker.log
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Env
+.env
+.env.local
