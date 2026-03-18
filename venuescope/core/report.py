@@ -386,6 +386,41 @@ def generate_shift_report(summary: Dict[str, Any],
     if not REPORTLAB_OK:
         raise RuntimeError("reportlab not installed: pip install reportlab")
 
+    try:
+        return _generate_shift_report_inner(summary, job_id, clip_label, mode,
+                                            pos_data, venue_name)
+    except Exception as exc:
+        # Fall back to a minimal error PDF so the caller always gets bytes back
+        try:
+            buf = io.BytesIO()
+            doc = SimpleDocTemplate(buf, pagesize=letter,
+                                    leftMargin=0.65 * inch, rightMargin=0.65 * inch,
+                                    topMargin=0.6 * inch, bottomMargin=0.65 * inch)
+            styles = getSampleStyleSheet()
+            story = [
+                Paragraph("VenueScope — Report Generation Error", styles["Heading1"]),
+                Spacer(1, 0.2 * inch),
+                Paragraph(f"An error occurred while building the report: {exc}",
+                          styles["Normal"]),
+                Spacer(1, 0.1 * inch),
+                Paragraph(f"Job ID: {job_id}  |  Mode: {mode}  |  Clip: {clip_label}",
+                          styles["Normal"]),
+                Spacer(1, 0.1 * inch),
+                Paragraph("Please re-run the analysis or contact support if this persists.",
+                          styles["Normal"]),
+            ]
+            doc.build(story)
+            return buf.getvalue()
+        except Exception:
+            raise exc from None
+
+
+def _generate_shift_report_inner(summary: Dict[str, Any],
+                                  job_id: str,
+                                  clip_label: str,
+                                  mode: str,
+                                  pos_data: Optional[Dict],
+                                  venue_name: str) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=letter,

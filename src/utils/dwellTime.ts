@@ -178,8 +178,8 @@ export function calculateRecentDwellTime(
   console.log(`📊 Dwell time debug:`, {
     dataPoints: recentData.length,
     avgOccupancy: avgOccupancy.toFixed(1),
-    minEntries,
-    maxEntries,
+    earliestEntries: earliest.occupancy!.entries,
+    latestEntries: latest.occupancy!.entries,
     totalEntries,
     actualHours: actualHours.toFixed(2)
   });

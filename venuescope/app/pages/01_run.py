@@ -468,6 +468,12 @@ if _qsettings["model_override"] and mode != "after_hours":
 st.divider()
 st.subheader("⑤ Launch")
 
+# Advisory: warn if drink count mode is selected but no shifts exist
+shifts_configured = len(list_shifts()) > 0
+if mode in ("drink_count", "full") and not shifts_configured:
+    st.warning("⚠️ No shifts configured. Add a shift in **Shift Setup** before running "
+               "drink count analysis, or switch to People Count only mode.")
+
 if not uploaded and not rtsp_url:
     st.info("Upload a video clip or enter an RTSP URL in Step 1.")
 elif mode=="drink_count" and not config_path:

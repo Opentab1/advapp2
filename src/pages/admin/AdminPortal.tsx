@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AnimatedBackground } from '../../components/AnimatedBackground';
 import { AdminSidebar } from '../../components/admin/AdminSidebar';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { AdminDashboard } from './AdminDashboard';
 import { VenuesManagement } from './VenuesManagement';
 import { NFCLeadsManagement } from './NFCLeadsManagement';
@@ -59,20 +60,20 @@ export function AdminPortal() {
         />
 
         <div className="flex-1 overflow-auto">
-          {activeTab === 'dashboard' && <AdminDashboard />}
-          {activeTab === 'venues' && <VenuesManagement />}
-          {activeTab === 'nfc-leads' && <NFCLeadsManagement />}
-          {activeTab === 'users' && <UsersManagement />}
-          {activeTab === 'team' && <TeamManagement />}
-          {activeTab === 'devices' && <DevicesManagement />}
-          {activeTab === 'feature-controls' && <FeatureControls />}
-          {activeTab === 'transparency' && <DataTransparency />}
-          {activeTab === 'data-health' && <DataAccuracy />}
-          {activeTab === 'data-validator' && <DataValidator />}
-          {activeTab === 'audit' && <AuditLog />}
-          {activeTab === 'analytics' && <SystemAnalytics />}
-          {activeTab === 'email-reporting' && <EmailReporting />}
-          {activeTab === 'settings' && <AdminSettings />}
+          {activeTab === 'dashboard' && <ErrorBoundary key="dashboard"><AdminDashboard /></ErrorBoundary>}
+          {activeTab === 'venues' && <ErrorBoundary key="venues"><VenuesManagement /></ErrorBoundary>}
+          {activeTab === 'nfc-leads' && <ErrorBoundary key="nfc-leads"><NFCLeadsManagement /></ErrorBoundary>}
+          {activeTab === 'users' && <ErrorBoundary key="users"><UsersManagement /></ErrorBoundary>}
+          {activeTab === 'team' && <ErrorBoundary key="team"><TeamManagement /></ErrorBoundary>}
+          {activeTab === 'devices' && <ErrorBoundary key="devices"><DevicesManagement /></ErrorBoundary>}
+          {activeTab === 'feature-controls' && <ErrorBoundary key="feature-controls"><FeatureControls /></ErrorBoundary>}
+          {activeTab === 'transparency' && <ErrorBoundary key="transparency"><DataTransparency /></ErrorBoundary>}
+          {activeTab === 'data-health' && <ErrorBoundary key="data-health"><DataAccuracy /></ErrorBoundary>}
+          {activeTab === 'data-validator' && <ErrorBoundary key="data-validator"><DataValidator /></ErrorBoundary>}
+          {activeTab === 'audit' && <ErrorBoundary key="audit"><AuditLog /></ErrorBoundary>}
+          {activeTab === 'analytics' && <ErrorBoundary key="analytics"><SystemAnalytics /></ErrorBoundary>}
+          {activeTab === 'email-reporting' && <ErrorBoundary key="email-reporting"><EmailReporting /></ErrorBoundary>}
+          {activeTab === 'settings' && <ErrorBoundary key="settings"><AdminSettings /></ErrorBoundary>}
         </div>
       </div>
     </div>

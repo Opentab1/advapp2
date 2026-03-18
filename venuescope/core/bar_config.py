@@ -43,7 +43,15 @@ class BarConfig:
         if not path.exists():
             return None
         d = json.loads(path.read_text())
-        stations = [BarStation(**s) for s in d.pop("stations", [])]
+        required = {"venue_id", "display_name"}
+        missing = required - set(d.keys())
+        if missing:
+            raise ValueError(f"Bar config for '{venue_id}' missing required fields: {missing}")
+        try:
+            stations = [BarStation(**s) for s in d.pop("stations", [])]
+        except (TypeError, KeyError) as e:
+            raise ValueError(f"Corrupt bar config for venue '{venue_id}': {e}. "
+                             f"Delete {path} and reconfigure in Zone Layout.") from e
         # Tolerate old configs that lack overhead_camera
         d.setdefault("overhead_camera", False)
         obj = cls(**d)

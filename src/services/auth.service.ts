@@ -96,7 +96,18 @@ class AuthService {
           localStorage.removeItem(key);
         }
       });
-      
+
+      // Also clear sessionStorage of any Cognito tokens
+      Object.keys(sessionStorage).forEach(key => {
+        if (
+          key.startsWith('CognitoIdentityServiceProvider') ||
+          key.startsWith('aws-amplify-') ||
+          key.startsWith('amplify-')
+        ) {
+          sessionStorage.removeItem(key);
+        }
+      });
+
       console.log('✅ Logout complete - auth tokens cleared');
     } catch (error) {
       console.error('Logout error:', error);

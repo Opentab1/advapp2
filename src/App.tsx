@@ -121,12 +121,11 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => authService.isAuthenticated());
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
-  // Check if user is admin (has role but no venueId)
+  // Check if user is admin (must have an explicitly allowed role and no venueId)
   const isAdmin = () => {
     const user = authService.getStoredUser();
-    const role = user?.role;
-    const venueId = user?.venueId;
-    return role && !venueId;
+    const validAdminRoles = ['admin', 'sales', 'support', 'installer'];
+    return !!(user && validAdminRoles.includes(user.role as string) && !user.venueId);
   };
 
   // Handle online/offline status
