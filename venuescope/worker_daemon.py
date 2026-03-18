@@ -16,13 +16,39 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 
 from core.config   import RESULT_DIR
-from core.database import list_jobs, get_job, set_running, set_progress, set_done, set_failed
+from core.database import list_jobs, get_job, set_running, set_progress, set_done, set_failed, _raw_update
 from core.bar_config import BarConfig, BarStation
 from core.shift      import ShiftManager
 from core.tracking.engine import VenueProcessor
 
 POLL_INTERVAL = 2
 MAX_PARALLEL  = int(os.environ.get("VENUESCOPE_WORKERS", "4"))
+STALE_JOB_SECONDS = 7200   # 2 hours
+
+
+def _reap_stale_jobs():
+    """Mark jobs stuck in 'running' for >2 hours as failed.
+
+    Uses created_at as the staleness proxy because the schema has no
+    last_heartbeat column. Any job that is still 'running' and was
+    created more than STALE_JOB_SECONDS ago is considered hung.
+    """
+    cutoff = time.time() - STALE_JOB_SECONDS
+    try:
+        jobs = list_jobs(100)
+    except Exception as e:
+        print(f"[worker] _reap_stale_jobs: could not fetch jobs: {e}", flush=True)
+        return
+    for job in jobs:
+        if job.get("status") == "running" and (job.get("created_at", 0) < cutoff):
+            try:
+                _raw_update(job["job_id"],
+                            status="failed",
+                            finished_at=time.time(),
+                            error_msg="Job timed out — exceeded 2-hour limit. Worker may have crashed.")
+                print(f"[worker] Reaped stale job {job['job_id']}", flush=True)
+            except Exception as e:
+                print(f"[worker] Failed to reap job {job['job_id']}: {e}", flush=True)
 
 
 def run_job(job_id: str):
@@ -118,7 +144,11 @@ def main():
             set_failed(job["job_id"], "worker restarted — job was interrupted")
             print(f"[worker] Reset stuck job {job['job_id']}", flush=True)
 
+    # Reap any jobs that were already beyond the 2-hour limit at startup
+    _reap_stale_jobs()
+
     _last_cleanup = 0.0
+    _poll_count   = 0          # increments every loop iteration; triggers stale reap every 10
     _active: Dict[str, multiprocessing.Process] = {}
 
     def handle_signal(sig, frame):
@@ -140,6 +170,12 @@ def main():
 
     while True:
         try:
+            _poll_count += 1
+
+            # Periodic stale-job reaper (every 10 iterations ≈ every 20 seconds)
+            if _poll_count % 10 == 0:
+                _reap_stale_jobs()
+
             # 1. Reap finished processes
             for job_id, proc in list(_active.items()):
                 if not proc.is_alive():

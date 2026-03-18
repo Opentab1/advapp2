@@ -455,6 +455,34 @@ else:
         # Fallback: plain dataframe without styling if Styler isn't supported
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
+    # ── View Results buttons for completed jobs ────────────────────────────────
+    done_in_filter = [j for j in all_jobs if j["status"] == "done"]
+    if done_in_filter:
+        st.divider()
+        st.subheader("Quick Access")
+        st.caption("Jump directly to the Results page for any completed job.")
+        _btn_cols = st.columns(min(len(done_in_filter), 4))
+        for _idx, _job in enumerate(done_in_filter):
+            _job_id    = _job["job_id"]
+            _job_label = _job.get("clip_label") or _job_id
+            _mode_name = ANALYSIS_MODES.get(_job.get("analysis_mode", ""), _job.get("analysis_mode", ""))
+            with _btn_cols[_idx % 4]:
+                if st.button(
+                    f"📊 View",
+                    key=f"view_{_job_id}",
+                    help=f"{_mode_name} — {_job_label}",
+                    use_container_width=True,
+                ):
+                    st.session_state["results_job_id"] = _job_id
+                    try:
+                        st.switch_page("app/pages/02_results.py")
+                    except AttributeError:
+                        # st.switch_page not available in older Streamlit versions
+                        st.info(
+                            f"Navigate to **📊 Results** in the sidebar to view **{_job_label}**."
+                        )
+                st.caption(f"{_job_label}")
+
     # ── Delete jobs ────────────────────────────────────────────────────────────
     st.divider()
     st.subheader("Manage Jobs")

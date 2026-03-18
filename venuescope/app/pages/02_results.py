@@ -143,7 +143,18 @@ job_opts = {
     f"{j.get('clip_label') or j['job_id']}  [{j['job_id']}]": j["job_id"]
     for j in jobs
 }
-sel_id  = job_opts[st.selectbox("Select shift to view", list(job_opts.keys()))]
+
+# Pre-select a job if the dashboard (or any other page) set results_job_id in session state
+_preselect_id  = st.session_state.pop("results_job_id", None)
+_opt_keys      = list(job_opts.keys())
+_default_index = 0
+if _preselect_id:
+    for _i, _k in enumerate(_opt_keys):
+        if job_opts[_k] == _preselect_id:
+            _default_index = _i
+            break
+
+sel_id  = job_opts[st.selectbox("Select shift to view", _opt_keys, index=_default_index)]
 
 # Clear stale POS data if user switched to a different job
 if st.session_state.get("_last_sel_id") != sel_id:

@@ -250,7 +250,7 @@ export function VenueScope() {
     setStatus('loading');
     timerRef.current = setTimeout(() => {
       setStatus(prev => prev === 'loading' ? 'error' : prev);
-    }, 15000);
+    }, 30000);
     return () => clearTimeout(timerRef.current);
   }, [iframeKey]);
 
@@ -330,7 +330,7 @@ export function VenueScope() {
           title="VenueScope Analytics Engine"
           className="flex-1 border-0"
           style={{ height: iframeHeight }}
-          allow="camera; microphone"
+          allow="fullscreen"
           onLoad={() => {
             clearTimeout(timerRef.current);
             setStatus('loaded');
@@ -340,7 +340,7 @@ export function VenueScope() {
 
         {/* Quick stats sidebar — only on xl screens when we have data */}
         {latestSummary && status === 'loaded' && (
-          <div className="hidden xl:block">
+          <div className="hidden lg:block">
             <QuickStatsSidebar summary={latestSummary} />
           </div>
         )}

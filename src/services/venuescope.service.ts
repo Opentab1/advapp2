@@ -44,6 +44,20 @@ export interface VenueScope30dSummary {
   entries_by_date: Record<string, number>;
 }
 
+export interface VenueScopeRecentJob {
+  job_id: string;
+  clip_label: string;
+  analysis_mode: string;
+  total_drinks: number;
+  created_at: number;
+  status: string;
+}
+
+export interface VenueScopeRecentJobsResponse {
+  jobs: VenueScopeRecentJob[];
+  total: number;
+}
+
 async function fetchWithTimeout<T>(path: string): Promise<T | null> {
   if (!API_BASE) return null;
   try {
@@ -77,6 +91,13 @@ const venueScopeService = {
 
   async get30dSummary(): Promise<VenueScope30dSummary | null> {
     return fetchWithTimeout<VenueScope30dSummary>('/api/summary/30d');
+  },
+
+  async getRecentJobs(limit = 10, days = 30): Promise<VenueScopeRecentJob[]> {
+    const result = await fetchWithTimeout<VenueScopeRecentJobsResponse>(
+      `/api/jobs/recent?mode=drink_count&limit=${limit}&days=${days}`
+    );
+    return result?.jobs ?? [];
   },
 };
 

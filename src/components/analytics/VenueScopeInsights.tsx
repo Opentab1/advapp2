@@ -11,6 +11,7 @@ import { Video, TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, RefreshCw,
 import venueScopeService, {
   VenueScopeLatestSummary,
   VenueScope30dSummary,
+  VenueScopeRecentJob,
 } from '../../services/venuescope.service';
 
 const RAW_URL = import.meta.env.VITE_VENUESCOPE_URL || '';
@@ -32,6 +33,7 @@ function ConfidenceBadge({ color, label }: { color: string; label: string }) {
 export function VenueScopeInsights() {
   const [latest, setLatest] = useState<VenueScopeLatestSummary | null>(null);
   const [summary30d, setSummary30d] = useState<VenueScope30dSummary | null>(null);
+  const [recentJobs, setRecentJobs] = useState<VenueScopeRecentJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [online, setOnline] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(Date.now());
@@ -46,11 +48,12 @@ export function VenueScopeInsights() {
       if (cancelled) return;
       setOnline(alive);
       if (alive) {
-        const [lat, sum] = await Promise.all([
+        const [lat, sum, jobs] = await Promise.all([
           venueScopeService.getLatestSummary(),
           venueScopeService.get30dSummary(),
+          venueScopeService.getRecentJobs(5),
         ]);
-        if (!cancelled) { setLatest(lat); setSummary30d(sum); }
+        if (!cancelled) { setLatest(lat); setSummary30d(sum); setRecentJobs(jobs); }
       }
       if (!cancelled) setLoading(false);
     }
@@ -239,6 +242,25 @@ export function VenueScopeInsights() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Recent shifts */}
+      {recentJobs.length > 1 && (
+        <div className="px-4 pb-3 border-t border-whoop-divider pt-3">
+          <p className="text-xs text-warm-500 uppercase tracking-wide mb-2">Recent Shifts</p>
+          <div className="space-y-1.5">
+            {recentJobs.slice(0, 5).map(job => (
+              <div key={job.job_id} className="flex items-center justify-between">
+                <span className="text-xs text-warm-300 truncate max-w-[160px]">
+                  {job.clip_label || job.job_id.slice(0, 8)}
+                </span>
+                <span className="text-xs font-semibold text-teal flex-shrink-0 ml-2">
+                  {job.total_drinks} drinks
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </motion.div>

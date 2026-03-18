@@ -91,10 +91,12 @@ def _summary_payload(job: dict) -> dict:
     # confidence
     confidence_score = 0
     confidence_label = "Unknown"
+    confidence_color = "yellow"
     try:
         from core.confidence import compute_confidence_score
         cs, _color, clabel = compute_confidence_score(summary)
         confidence_score = cs
+        confidence_color = _color   # "green", "yellow", or "red"
         confidence_label = clabel
     except Exception:
         pass
@@ -102,16 +104,26 @@ def _summary_payload(job: dict) -> dict:
     # theft flag
     has_theft_flag = bool(summary.get("theft_flags") or summary.get("theft_risk"))
 
+    # unrung drinks count
+    unrung_drinks = (
+        summary.get("unrung_drinks")
+        or summary.get("drink_quality", {}).get("unrung_serves", 0)
+        or len(summary.get("theft_flags", []))
+        or 0
+    )
+
     return {
         "job_id":           job["job_id"],
         "clip_label":       job.get("clip_label") or "",
         "total_drinks":     total_drinks,
         "drinks_per_hour":  drinks_per_hour,
-        "top_bartender":    top_bartender,
+        "top_bartender":    top_bartender or "—",
         "confidence_score": confidence_score,
         "confidence_label": confidence_label,
+        "confidence_color": confidence_color,    # "green", "yellow", or "red"
         "created_at":       job.get("created_at", 0),
         "has_theft_flag":   has_theft_flag,
+        "unrung_drinks":    unrung_drinks,
     }
 
 
@@ -167,6 +179,37 @@ def _handle_summary_30d() -> dict:
         "drinks_by_date":      drinks_by_date,
         "entries_by_date":     entries_by_date,
     }
+
+
+def _handle_jobs_recent(mode: str | None = None, days: int = 30, limit: int = 20) -> dict:
+    """Return recent completed jobs for the Analytics card job history."""
+    from datetime import datetime, timezone
+    cutoff = time.time() - days * 86400
+    all_jobs = list_jobs(200)
+    result = []
+    for j in all_jobs:
+        if j.get("status") != "done":
+            continue
+        if (j.get("created_at") or 0) < cutoff:
+            continue
+        if mode and j.get("analysis_mode") != mode:
+            continue
+        summary = _parse_summary(j) or {}
+        total_drinks = sum(
+            b.get("total_drinks", 0)
+            for b in summary.get("bartenders", {}).values()
+        )
+        result.append({
+            "job_id":        j["job_id"],
+            "clip_label":    j.get("clip_label") or "",
+            "analysis_mode": j.get("analysis_mode", ""),
+            "total_drinks":  total_drinks,
+            "created_at":    j.get("created_at", 0),
+            "status":        j.get("status", ""),
+        })
+        if len(result) >= limit:
+            break
+    return {"jobs": result, "total": len(result)}
 
 
 def _handle_jobs_list() -> list:
@@ -233,6 +276,16 @@ class _APIHandler(BaseHTTPRequestHandler):
 
             elif path == "/api/summary/30d":
                 _json_response(self, _handle_summary_30d(), 200)
+
+            elif path == "/api/jobs/recent":
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                mode  = qs.get("mode",  [None])[0]
+                days  = int(qs.get("days",  ["30"])[0])
+                limit = int(qs.get("limit", ["20"])[0])
+                limit = min(max(limit, 1), 100)  # clamp 1-100
+                days  = min(max(days, 1), 365)   # clamp 1-365
+                _json_response(self, _handle_jobs_recent(mode, days, limit))
 
             elif path == "/api/jobs":
                 _json_response(self, _handle_jobs_list(), 200)
