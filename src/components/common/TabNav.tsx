@@ -12,9 +12,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Zap, BarChart2, Settings, Sparkles, Users, Smartphone, Video, LucideIcon } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 
-const RAW_VENUESCOPE_URL = import.meta.env.VITE_VENUESCOPE_URL || '';
-const IS_VENUESCOPE_CONFIGURED = RAW_VENUESCOPE_URL !== '' && !RAW_VENUESCOPE_URL.includes('localhost') && !RAW_VENUESCOPE_URL.includes('127.0.0.1') && !RAW_VENUESCOPE_URL.includes('your-ec2-ip');
-
 export type TabId = 'live' | 'analytics' | 'events' | 'staffing' | 'leads' | 'venuescope' | 'settings';
 
 interface Tab {
@@ -24,7 +21,7 @@ interface Tab {
   beta?: boolean;
 }
 
-const ALL_TABS: Tab[] = [
+const TABS: Tab[] = [
   { id: 'live', label: 'Live', icon: Zap },
   { id: 'analytics', label: 'Results', icon: BarChart2 },
   { id: 'events', label: 'Events', icon: Sparkles },
@@ -33,10 +30,6 @@ const ALL_TABS: Tab[] = [
   { id: 'venuescope', label: 'VenueScope', icon: Video },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
-
-const TABS = ALL_TABS.filter(tab =>
-  tab.id !== 'venuescope' || IS_VENUESCOPE_CONFIGURED
-);
 
 interface TabNavProps {
   activeTab: TabId;
