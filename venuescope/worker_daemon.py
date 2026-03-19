@@ -118,6 +118,13 @@ def run_job(job_id: str):
         set_done(job_id, str(result_dir), summary)
         print(f"[worker] Job {job_id} DONE", flush=True)
 
+        # Sync results to AWS (non-blocking — failure doesn't affect local results)
+        try:
+            from core.aws_sync import sync_job_to_aws
+            sync_job_to_aws(job_id, summary, result_dir)
+        except Exception as _sync_err:
+            print(f"[worker] AWS sync error (non-fatal): {_sync_err}", flush=True)
+
         src = Path(job["source_path"])
         if job["source_type"] == "file" and src.exists():
             try: src.unlink()

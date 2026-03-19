@@ -61,6 +61,32 @@ type VenueConfig {
   iotEndpoint: String
 }
 
+# VenueScope CCTV analytics jobs — written by local Mac processor, read by dashboard
+type VenueScopeJob {
+  venueId: ID!
+  jobId: String!
+  clipLabel: String
+  analysisMode: String
+  totalDrinks: Int
+  drinksPerHour: Float
+  topBartender: String
+  confidenceScore: Int
+  confidenceLabel: String
+  confidenceColor: String
+  hasTheftFlag: Boolean
+  unrungDrinks: Int
+  cameraLabel: String
+  createdAt: Float
+  finishedAt: Float
+  status: String
+  s3ClipKey: String
+}
+
+type VenueScopeJobConnection {
+  items: [VenueScopeJob]
+  nextToken: String
+}
+
 type Query {
   getSensorData(venueId: ID!, timestamp: String!): SensorData
     @aws_cognito_user_pools
@@ -91,6 +117,13 @@ type Query {
     @aws_cognito_user_pools
 
   getVenueSettings(venueId: ID!): VenueSettingsData
+    @aws_cognito_user_pools
+
+  listVenueScopeJobs(
+    venueId: ID!
+    limit: Int
+    nextToken: String
+  ): VenueScopeJobConnection
     @aws_cognito_user_pools
 }
 
