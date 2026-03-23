@@ -13,10 +13,11 @@
  */
 
 import { motion } from 'framer-motion';
-import { 
-  Volume2, Sun, Users, UserPlus, UserMinus, 
+import {
+  Volume2, Sun, Users, UserPlus, UserMinus,
   Thermometer, Music, Star, Clock, Timer,
-  ExternalLink, Smartphone, Watch, Tablet, Laptop, Headphones, Radio
+  ExternalLink, Smartphone, Watch, Tablet, Laptop, Headphones, Radio,
+  GlassWater, TrendingUp
 } from 'lucide-react';
 import { BottomSheet } from '../common/BottomSheet';
 import { AnimatedNumber } from '../common/AnimatedNumber';
@@ -45,6 +46,10 @@ interface LiveStatsModalProps {
   bleDwellTime?: number | null;
   longestVisitorMinutes?: number | null;
   totalVisitsTracked?: number | null;
+  // VenueScope bar activity
+  totalDrinks?: number | null;
+  drinksPerHour?: number | null;
+  topBartender?: string | null;
   // Music
   currentSong: string | null;
   artist: string | null;
@@ -71,6 +76,9 @@ export function LiveStatsModal({
   bleDwellTime,
   longestVisitorMinutes,
   totalVisitsTracked,
+  totalDrinks,
+  drinksPerHour,
+  topBartender,
   currentSong,
   artist,
   albumArt,
@@ -204,8 +212,41 @@ export function LiveStatsModal({
           </div>
         </section>
         
-        {/* ============ DEVICE BREAKDOWN ============ */}
-        {deviceBreakdown && (
+        {/* ============ BAR ACTIVITY (VenueScope) ============ */}
+        {totalDrinks !== null && totalDrinks !== undefined && (
+          <section>
+            <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
+              Bar Activity
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <StatCard
+                icon={GlassWater}
+                label="Drinks Tonight"
+                value={totalDrinks}
+                unit=""
+                status="neutral"
+              />
+              {drinksPerHour !== null && drinksPerHour !== undefined && (
+                <StatCard
+                  icon={TrendingUp}
+                  label="Per Hour"
+                  value={Math.round(drinksPerHour)}
+                  unit="/hr"
+                  status="neutral"
+                />
+              )}
+              {topBartender && (
+                <div className="col-span-2 p-3 rounded-xl bg-warm-700/50 border border-warm-600 flex items-center gap-2">
+                  <span className="text-xs text-warm-400">Top Bartender</span>
+                  <span className="text-sm font-semibold text-warm-100 ml-auto">{topBartender}</span>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ============ AUDIENCE PROFILE ============ */}
+        {deviceBreakdown ? (
           <section>
             <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
               Audience Profile
@@ -286,8 +327,18 @@ export function LiveStatsModal({
               })()}
             </div>
           </section>
+        ) : (
+          <section>
+            <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
+              Audience Profile
+            </h3>
+            <div className="p-4 rounded-xl bg-warm-700/20 border border-dashed border-warm-700/50 text-center">
+              <p className="text-xs text-warm-500">BLE audience tracking</p>
+              <p className="text-[10px] text-warm-600 mt-0.5">Contact us to set up</p>
+            </div>
+          </section>
         )}
-        
+
         {/* ============ DWELL TIME (BLE) ============ */}
         {(bleDwellTime || longestVisitorMinutes) && (
           <section>

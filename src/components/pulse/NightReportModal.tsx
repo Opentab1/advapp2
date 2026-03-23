@@ -7,14 +7,15 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  X, Download, Share2, Users, Zap, Volume2, 
+import {
+  X, Download, Share2, Users, Zap, Volume2,
   TrendingUp, TrendingDown,
-  ChevronDown, ChevronUp, Calendar
+  ChevronDown, ChevronUp, Calendar, GlassWater
 } from 'lucide-react';
 import apiService from '../../services/api.service';
 import { calculatePulseScore } from '../../utils/scoring';
 import type { SensorData } from '../../types';
+import venueScopeService, { VenueScopeJob } from '../../services/venuescope.service';
 
 interface NightReportModalProps {
   isOpen: boolean;
@@ -56,6 +57,7 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<NightSummary | null>(null);
   const [showAllHours, setShowAllHours] = useState(false);
+  const [vsNightJobs, setVsNightJobs] = useState<VenueScopeJob[]>([]);
   const reportRef = useRef<HTMLDivElement>(null);
 
   // Fetch and process data
@@ -83,6 +85,17 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
     } finally {
       setLoading(false);
     }
+
+    // Also fetch VenueScope jobs for tonight
+    try {
+      const allJobs = await venueScopeService.listJobs(venueId, 20);
+      const now = new Date();
+      const barDayStart = new Date(now);
+      barDayStart.setHours(3, 0, 0, 0);
+      if (now.getHours() < 3) barDayStart.setDate(barDayStart.getDate() - 1);
+      const cutoff = barDayStart.getTime() / 1000;
+      setVsNightJobs(allJobs.filter(j => j.status === 'done' && (j.createdAt ?? 0) >= cutoff));
+    } catch { /* silently ignore */ }
   };
 
   const processNightData = (data: SensorData[]): NightSummary => {
@@ -457,13 +470,22 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
                       subtitle={summary.peakOccupancyHour ? `Peak: ${summary.peakOccupancy} @ ${summary.peakOccupancyHour}` : undefined}
                     />
                     
-                    {/* Avg Sound */}
-                    <StatCard
-                      icon={Volume2}
-                      label="Avg Sound"
-                      value={summary.avgDecibels}
-                      unit="dB"
-                    />
+                    {/* Drinks or Avg Sound */}
+                    {vsNightJobs.length > 0 ? (
+                      <StatCard
+                        icon={GlassWater}
+                        label="Drinks Served"
+                        value={vsNightJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0)}
+                        subtitle={vsNightJobs[0]?.topBartender ? `Top: ${vsNightJobs[0].topBartender}` : undefined}
+                      />
+                    ) : (
+                      <StatCard
+                        icon={Volume2}
+                        label="Avg Sound"
+                        value={summary.avgDecibels}
+                        unit="dB"
+                      />
+                    )}
                   </div>
                   
                   {/* Hourly Breakdown */}

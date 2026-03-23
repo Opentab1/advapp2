@@ -37,6 +37,8 @@ export interface PulseScoreResult {
     light: FactorScore;
     crowd: FactorScore;
     music: FactorScore;
+    activity?: FactorScore;   // VenueScope: bar activity score (replaces sound)
+    retention?: FactorScore;  // VenueScope: guest retention (replaces light)
   };
   // Best Night comparison data
   bestNight: BestNightProfile | null;
@@ -311,7 +313,9 @@ export function calculatePulseScore(
   timestamp?: Date | string | null,
   // New params
   currentOccupancy?: number | null,
-  estimatedCapacity?: number
+  estimatedCapacity?: number,
+  vsActivityScore?: number | null,
+  vsRetentionScore?: number | null
 ): PulseScoreResult {
   // Ignore legacy temp params
   void _indoorTemp;
@@ -403,12 +407,20 @@ export function calculatePulseScore(
   let musicWeight = FACTOR_WEIGHTS.music;
   
   if (!hasSound && !hasLight) {
-    // No environmental sensors - only crowd and music matter
-    const totalRemaining = crowdWeight + musicWeight;
-    crowdWeight = crowdWeight / totalRemaining;
-    musicWeight = musicWeight / totalRemaining;
-    soundWeight = 0;
-    lightWeight = 0;
+    const hasVSData = vsActivityScore != null && vsRetentionScore != null;
+    if (hasVSData) {
+      // VenueScope-native formula: Activity 35% + Retention 30% + Crowd 20% + Music 15%
+      soundWeight = 0.35;
+      lightWeight = 0.30;
+      crowdWeight = 0.20;
+      musicWeight = 0.15;
+    } else {
+      const totalRemaining = crowdWeight + musicWeight;
+      crowdWeight = crowdWeight / totalRemaining;
+      musicWeight = musicWeight / totalRemaining;
+      soundWeight = 0;
+      lightWeight = 0;
+    }
   } else if (!hasSound) {
     // No sound - redistribute to light, crowd, music
     const totalRemaining = lightWeight + crowdWeight + musicWeight;
@@ -426,10 +438,14 @@ export function calculatePulseScore(
   }
   
   // Weighted average with adjusted weights
+  const useVSFormula = !hasSound && !hasLight && vsActivityScore != null && vsRetentionScore != null;
+  const effectiveSound  = useVSFormula ? (vsActivityScore ?? 0) : soundScore;
+  const effectiveLight  = useVSFormula ? (vsRetentionScore ?? 0) : lightScore;
+
   const pulseScore = Math.round(
-    (soundScore * soundWeight) + 
-    (lightScore * lightWeight) +
-    (crowdScore * crowdWeight) +
+    (effectiveSound  * soundWeight) +
+    (effectiveLight  * lightWeight) +
+    (crowdScore      * crowdWeight) +
     (musicResult.score * musicWeight)
   );
   
@@ -470,6 +486,20 @@ export function calculatePulseScore(
         inRange: musicResult.score >= 80,
         message: musicResult.message,
       },
+      ...(useVSFormula && {
+        activity: {
+          score: vsActivityScore ?? 0,
+          value: vsActivityScore ?? null,
+          inRange: (vsActivityScore ?? 0) >= 70,
+          message: (vsActivityScore ?? 0) >= 80 ? 'Bar is busy' : (vsActivityScore ?? 0) >= 50 ? 'Moderate activity' : 'Quiet at bar',
+        },
+        retention: {
+          score: vsRetentionScore ?? 0,
+          value: vsRetentionScore ?? null,
+          inRange: (vsRetentionScore ?? 0) >= 60,
+          message: (vsRetentionScore ?? 0) >= 70 ? 'Guests are staying' : (vsRetentionScore ?? 0) >= 40 ? 'Average retention' : 'Guests leaving early',
+        },
+      }),
     },
     bestNight,
     isUsingHistoricalData,

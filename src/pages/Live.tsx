@@ -116,6 +116,10 @@ export function Live() {
     currentLight: pulseData.currentLight,
     occupancy: pulseData.occupancyMetrics,
     hasUpcomingGames: todayGames.length > 0,
+    totalDrinks: pulseData.totalDrinks,
+    drinksPerHour: pulseData.drinksPerHour,
+    hasTheftFlag: pulseData.hasTheftFlag,
+    retentionRate: pulseData.retentionMetrics.retentionRate,
   });
   
   // Load external data (sports, holidays)
@@ -253,6 +257,10 @@ export function Live() {
             impact: p.impact,
             confidence: p.confidence,
           }))}
+          totalDrinks={pulseData.totalDrinks}
+          drinksPerHour={pulseData.drinksPerHour}
+          hasTheftFlag={pulseData.hasTheftFlag}
+          retentionRate={pulseData.retentionMetrics.retentionRate}
         />
       </motion.div>
       
@@ -330,6 +338,10 @@ export function Live() {
         bestNight={pulseData.bestNight}
         isUsingHistoricalData={pulseData.isUsingHistoricalData}
         proximityToBest={pulseData.proximityToBest}
+        activityScore={pulseData.activityScore ?? undefined}
+        retentionScore={pulseData.retentionScore ?? undefined}
+        totalDrinks={pulseData.totalDrinks}
+        drinksPerHour={pulseData.drinksPerHour}
       />
       
       {/* Dwell Breakdown */}
@@ -401,6 +413,9 @@ export function Live() {
         bleDwellTime={pulseData.bleDwellTime}
         longestVisitorMinutes={pulseData.longestVisitorMinutes}
         totalVisitsTracked={pulseData.totalVisitsTracked}
+        totalDrinks={pulseData.totalDrinks}
+        drinksPerHour={pulseData.drinksPerHour}
+        topBartender={null}
         currentSong={pulseData.sensorData?.currentSong ?? null}
         artist={pulseData.sensorData?.artist ?? null}
         albumArt={pulseData.sensorData?.albumArt ?? null}

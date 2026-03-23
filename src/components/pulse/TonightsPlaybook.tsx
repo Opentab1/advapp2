@@ -52,6 +52,10 @@ interface TonightsPlaybookProps {
   }>;
   // Venue learning patterns - only show impact if we have data to back it up
   venuePatterns?: VenuePattern[];
+  totalDrinks?: number | null;
+  drinksPerHour?: number | null;
+  hasTheftFlag?: boolean;
+  retentionRate?: number | null;
 }
 
 export function TonightsPlaybook({
@@ -61,8 +65,16 @@ export function TonightsPlaybook({
   peakPrediction,
   smartActions = [],
   venuePatterns = [],
+  totalDrinks,
+  drinksPerHour,
+  hasTheftFlag,
+  retentionRate,
 }: TonightsPlaybookProps) {
   const [completedActions, setCompletedActions] = useState<Set<string>>(new Set());
+
+  const now = new Date();
+  const currentHour = now.getHours();
+  const isPeakHours = currentHour >= 20 && currentHour < 2;
   
   // Helper: Find a pattern for a specific factor with sufficient confidence
   const getPatternImpact = (factor: 'sound' | 'light' | 'temperature'): string | undefined => {
@@ -219,119 +231,119 @@ export function TonightsPlaybook({
   // Fallback action generation (kept for reference)
   const generateFallbackActions = (): PlaybookAction[] => {
     const actions: PlaybookAction[] = [];
-    
-    // Get time-aware optimal ranges
     const timeSlot = getCurrentTimeSlot();
     const ranges = TIME_SLOT_RANGES[timeSlot];
-    
-    // Current state assessment using time-appropriate ranges
-    const soundStatus = currentDecibels >= ranges.sound.min && currentDecibels <= ranges.sound.max ? 'good' : 
-                        currentDecibels > ranges.sound.max ? 'high' : 'low';
-    const lightStatus = currentLight >= ranges.light.min && currentLight <= ranges.light.max ? 'good' : 
-                        currentLight > ranges.light.max ? 'bright' : 'dim';
-    
-    // Context-aware labels
+    const hasRealSensors = currentDecibels > 0 || currentLight > 0;
+
+    // ── VenueScope-native actions (no sensors) ─────────────────────────
+    if (!hasRealSensors) {
+      if (hasTheftFlag) {
+        actions.push({
+          id: 'vs-theft',
+          timeLabel: 'REVIEW NOW',
+          title: 'Unrung drinks detected',
+          description: 'VenueScope flagged a discrepancy between camera counts and POS. Check the latest shift.',
+          icon: 'alert',
+          status: 'current',
+        });
+      }
+
+      if (drinksPerHour != null && drinksPerHour > 35) {
+        actions.push({
+          id: 'vs-rush',
+          timeLabel: 'RIGHT NOW',
+          title: `Bar running hot — ${drinksPerHour.toFixed(0)} drinks/hr`,
+          description: 'Drink rate is elevated. Consider calling extra staff before the queue builds.',
+          icon: 'crowd',
+          status: 'current',
+        });
+      }
+
+      if (retentionRate != null && retentionRate < 45 && isPeakHours) {
+        actions.push({
+          id: 'vs-retention',
+          timeLabel: 'RIGHT NOW',
+          title: 'Guests leaving early',
+          description: `${retentionRate}% of tonight's guests are still here. Try a promo or energy boost.`,
+          icon: 'alert',
+          status: 'current',
+        });
+      }
+
+      if (peakPrediction && peakPrediction.minutesUntil > 0 && peakPrediction.minutesUntil < 120) {
+        actions.push({
+          id: 'vs-peak-prep',
+          timeLabel: peakPrediction.minutesUntil <= 30 ? 'SOON' : `IN ${peakPrediction.minutesUntil} MIN`,
+          title: 'Rush hour approaching — stock up',
+          description: `Peak expected around ${peakPrediction.hour}. Ensure ice, garnishes, and bar stock are ready.`,
+          icon: 'opportunity',
+          status: 'upcoming',
+          impact: peakPrediction.expectedOccupancy > currentOccupancy
+            ? `~${peakPrediction.expectedOccupancy - currentOccupancy} more guests expected`
+            : undefined,
+        });
+      }
+
+      if (actions.length === 0) {
+        actions.push({
+          id: 'vs-all-good',
+          timeLabel: 'RIGHT NOW',
+          title: totalDrinks != null && totalDrinks > 0
+            ? `${totalDrinks} drinks served tonight`
+            : 'Bar monitoring active',
+          description: totalDrinks != null && totalDrinks > 0
+            ? 'Drink counts are being tracked by VenueScope. Stay consistent.'
+            : 'VenueScope is monitoring bar activity via CCTV.',
+          icon: 'opportunity',
+          status: 'current',
+        });
+      }
+
+      return actions.slice(0, 4);
+    }
+
+    // ── Sensor-based actions (Pi accounts) ────────────────────────────
     const isWeekendPeak = timeSlot === 'friday_peak' || timeSlot === 'saturday_peak';
     const isHappyHour = timeSlot === 'weekday_happy_hour';
     const isDaytime = timeSlot === 'daytime';
-    
-    // Context label for messaging
-    const contextLabel = isWeekendPeak ? 'for weekend peak' : 
-                         isHappyHour ? 'for happy hour' : 
+    const contextLabel = isWeekendPeak ? 'for weekend peak' :
+                         isHappyHour ? 'for happy hour' :
                          isDaytime ? 'for daytime crowd' : 'for this time';
-    
-    // Get data-backed impact claims (or undefined if no data)
+
+    const soundStatus = currentDecibels >= ranges.sound.min && currentDecibels <= ranges.sound.max ? 'good' :
+                        currentDecibels > ranges.sound.max ? 'high' : 'low';
+    const lightStatus = currentLight >= ranges.light.min && currentLight <= ranges.light.max ? 'good' :
+                        currentLight > ranges.light.max ? 'bright' : 'dim';
+
     const soundImpact = getPatternImpact('sound');
     const lightImpact = getPatternImpact('light');
-    
-    // RIGHT NOW actions
+
     if (soundStatus === 'good') {
-      actions.push({
-        id: 'sound-good',
-        timeLabel: 'RIGHT NOW',
-        title: 'Sound is perfect',
-        description: `${currentDecibels}dB is ideal ${contextLabel}. Keep it here.`,
-        icon: 'sound',
-        status: 'current',
-      });
+      actions.push({ id: 'sound-good', timeLabel: 'RIGHT NOW', title: 'Sound is perfect', description: `${currentDecibels}dB is ideal ${contextLabel}. Keep it here.`, icon: 'sound', status: 'current' });
     } else if (soundStatus === 'high') {
       const overBy = Math.round(currentDecibels - ranges.sound.max);
-      actions.push({
-        id: 'sound-high',
-        timeLabel: 'RIGHT NOW',
-        title: 'Sound too loud',
-        description: `${currentDecibels}dB is ${overBy}dB over optimal ${contextLabel}. Lower volume.`,
-        icon: 'alert',
-        status: 'current',
-        impact: soundImpact, // Only show if backed by data
-      });
+      actions.push({ id: 'sound-high', timeLabel: 'RIGHT NOW', title: 'Sound too loud', description: `${currentDecibels}dB is ${overBy}dB over optimal ${contextLabel}. Lower volume.`, icon: 'alert', status: 'current', impact: soundImpact });
     } else {
       const underBy = Math.round(ranges.sound.min - currentDecibels);
-      actions.push({
-        id: 'sound-low',
-        timeLabel: 'RIGHT NOW',
-        title: 'Boost the energy',
-        description: `${currentDecibels}dB is ${underBy}dB under optimal ${contextLabel}. Raise volume.`,
-        icon: 'sound',
-        status: 'current',
-        impact: soundImpact, // Only show if backed by data
-      });
+      actions.push({ id: 'sound-low', timeLabel: 'RIGHT NOW', title: 'Boost the energy', description: `${currentDecibels}dB is ${underBy}dB under optimal ${contextLabel}. Raise volume.`, icon: 'sound', status: 'current', impact: soundImpact });
     }
-    
-    // Light suggestions - time aware
+
     if (lightStatus === 'bright' && !isDaytime) {
-      actions.push({
-        id: 'light-dim',
-        timeLabel: 'RIGHT NOW',
-        title: 'Dim the lights',
-        description: `${currentLight}% is too bright ${contextLabel}. Target ${ranges.light.min}-${ranges.light.max}%.`,
-        icon: 'light',
-        status: 'current',
-        impact: lightImpact, // Only show if backed by data
-      });
+      actions.push({ id: 'light-dim', timeLabel: 'RIGHT NOW', title: 'Dim the lights', description: `${currentLight}% is too bright ${contextLabel}. Target ${ranges.light.min}-${ranges.light.max}%.`, icon: 'light', status: 'current', impact: lightImpact });
     } else if (lightStatus === 'dim' && isDaytime) {
-      actions.push({
-        id: 'light-bright',
-        timeLabel: 'RIGHT NOW',
-        title: 'Brighten up',
-        description: `${currentLight}% is too dim for daytime. Target ${ranges.light.min}-${ranges.light.max}%.`,
-        icon: 'light',
-        status: 'current',
-        impact: lightImpact, // Only show if backed by data
-      });
+      actions.push({ id: 'light-bright', timeLabel: 'RIGHT NOW', title: 'Brighten up', description: `${currentLight}% is too dim for daytime. Target ${ranges.light.min}-${ranges.light.max}%.`, icon: 'light', status: 'current', impact: lightImpact });
     }
-    
-    // Peak prediction action (based on historical same-day averages)
+
     if (peakPrediction && peakPrediction.minutesUntil > 0 && peakPrediction.minutesUntil < 120) {
-      const timeLabel = peakPrediction.minutesUntil <= 30 
-        ? 'SOON' 
-        : `IN ${peakPrediction.minutesUntil} MIN`;
-      
+      const timeLabel = peakPrediction.minutesUntil <= 30 ? 'SOON' : `IN ${peakPrediction.minutesUntil} MIN`;
       const expectedIncrease = peakPrediction.expectedOccupancy - currentOccupancy;
-      
-      actions.push({
-        id: 'peak-prep',
-        timeLabel,
-        title: 'Peak hour approaching',
-        description: `Based on past weeks, ${peakPrediction.hour} is typically your busiest.`,
-        icon: 'opportunity',
-        status: 'upcoming',
-        impact: expectedIncrease > 0 ? `~${expectedIncrease} more guests expected` : undefined,
-      });
+      actions.push({ id: 'peak-prep', timeLabel, title: 'Peak hour approaching', description: `Based on past weeks, ${peakPrediction.hour} is typically your busiest.`, icon: 'opportunity', status: 'upcoming', impact: expectedIncrease > 0 ? `~${expectedIncrease} more guests expected` : undefined });
     }
-    
-    // Add smart actions from AI
+
     smartActions.slice(0, 2).forEach((action, idx) => {
-      actions.push({
-        id: action.id,
-        timeLabel: idx === 0 ? 'SUGGESTED' : 'ALSO CONSIDER',
-        title: action.title,
-        description: action.description,
-        icon: 'opportunity',
-        status: 'upcoming',
-      });
+      actions.push({ id: action.id, timeLabel: idx === 0 ? 'SUGGESTED' : 'ALSO CONSIDER', title: action.title, description: action.description, icon: 'opportunity', status: 'upcoming' });
     });
-    
+
     return actions;
   };
   

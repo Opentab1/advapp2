@@ -11,7 +11,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Modal } from '../common/Modal';
-import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Clock, ChevronRight, Trophy, Users, Timer, TrendingUp, Music } from 'lucide-react';
+import { Volume2, Sun, Info, Target, AlertTriangle, CheckCircle2, Clock, ChevronRight, Trophy, Users, Timer, TrendingUp, Music, GlassWater, UserPlus } from 'lucide-react';
 import { FACTOR_WEIGHTS, SCORE_THRESHOLDS, TIME_SLOT_RANGES, OPTIMAL_CROWD, type TimeSlot } from '../../utils/constants';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import { getCurrentTimeSlot } from '../../utils/scoring';
@@ -38,6 +38,10 @@ interface PulseBreakdownModalProps {
   bestNight?: BestNightProfile | null;
   isUsingHistoricalData?: boolean;
   proximityToBest?: number | null;
+  activityScore?: number;
+  retentionScore?: number;
+  totalDrinks?: number | null;
+  drinksPerHour?: number | null;
 }
 
 export function PulseBreakdownModal({
@@ -59,6 +63,10 @@ export function PulseBreakdownModal({
   bestNight,
   isUsingHistoricalData,
   proximityToBest,
+  activityScore,
+  retentionScore,
+  totalDrinks,
+  drinksPerHour,
 }: PulseBreakdownModalProps) {
   const [selectedFactor, setSelectedFactor] = useState<FactorType | null>(null);
   
@@ -288,8 +296,8 @@ export function PulseBreakdownModal({
           <p className="text-xs text-warm-500 mb-3">Tap any factor for deeper insights →</p>
           
           <div className="space-y-3">
-            {/* Sound Factor - 40% (hide if no sound data) */}
-            {currentDecibels !== null && currentDecibels !== 0 && (
+            {/* Sound / Activity Factor */}
+            {currentDecibels !== null && currentDecibels !== 0 ? (
               <FactorCard
                 icon={Volume2}
                 label="Sound"
@@ -302,10 +310,20 @@ export function PulseBreakdownModal({
                 bestNightValue={bestNight ? `${bestNight.avgSound} dB` : undefined}
                 isUsingHistoricalData={isUsingHistoricalData}
               />
-            )}
+            ) : activityScore !== undefined ? (
+              <FactorCard
+                icon={GlassWater}
+                label="Bar Activity"
+                weight={35}
+                score={activityScore}
+                currentValue={drinksPerHour != null ? `${drinksPerHour.toFixed(0)}/hr` : '--'}
+                optimalRange="30–50+ drinks/hr"
+                insight={getActivityInsight(activityScore)}
+              />
+            ) : null}
             
-            {/* Light Factor - 25% (hide if no light sensor, e.g., Pi Zero 2W) */}
-            {currentLight !== null && currentLight > 0 && (
+            {/* Light / Retention Factor */}
+            {currentLight !== null && currentLight > 0 ? (
               <FactorCard
                 icon={Sun}
                 label="Light"
@@ -318,7 +336,17 @@ export function PulseBreakdownModal({
                 bestNightValue={bestNight ? `${bestNight.avgLight} lux` : undefined}
                 isUsingHistoricalData={isUsingHistoricalData}
               />
-            )}
+            ) : retentionScore !== undefined ? (
+              <FactorCard
+                icon={UserPlus}
+                label="Guest Retention"
+                weight={30}
+                score={retentionScore}
+                currentValue={`${retentionScore}%`}
+                optimalRange="60%+ still here"
+                insight={getRetentionInsight(retentionScore)}
+              />
+            ) : null}
             
             {/* Crowd Factor - 20% */}
             <FactorCard
@@ -357,18 +385,28 @@ export function PulseBreakdownModal({
           </div>
           
           <div className="space-y-1.5 text-sm">
-            {currentDecibels !== null && currentDecibels !== 0 && (
+            {currentDecibels !== null && currentDecibels !== 0 ? (
               <div className="flex justify-between text-warm-300">
                 <span>Sound × {Math.round(FACTOR_WEIGHTS.sound * 100)}%</span>
                 <span className="font-medium text-warm-100">{(soundScore * FACTOR_WEIGHTS.sound).toFixed(0)}</span>
               </div>
-            )}
-            {currentLight !== null && currentLight > 0 && (
+            ) : activityScore !== undefined ? (
+              <div className="flex justify-between text-warm-300">
+                <span>Bar Activity × 35%</span>
+                <span className="font-medium text-warm-100">{(activityScore * 0.35).toFixed(0)}</span>
+              </div>
+            ) : null}
+            {currentLight !== null && currentLight > 0 ? (
               <div className="flex justify-between text-warm-300">
                 <span>Light × {Math.round(FACTOR_WEIGHTS.light * 100)}%</span>
                 <span className="font-medium text-warm-100">{(lightScore * FACTOR_WEIGHTS.light).toFixed(0)}</span>
               </div>
-            )}
+            ) : retentionScore !== undefined ? (
+              <div className="flex justify-between text-warm-300">
+                <span>Guest Retention × 30%</span>
+                <span className="font-medium text-warm-100">{(retentionScore * 0.30).toFixed(0)}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between text-warm-300">
               <span>Crowd × {Math.round(FACTOR_WEIGHTS.crowd * 100)}%</span>
               <span className="font-medium text-warm-100">{(crowdScore * FACTOR_WEIGHTS.crowd).toFixed(0)}</span>
@@ -578,6 +616,19 @@ function getMusicInsight(score: number, detectedGenres: string[], bestNightGenre
     return { status: 'warning', message: `Different from your best`, action: `Try ${bestNightGenres[0]}` };
   }
   return { status: 'optimal', message: `Playing ${detectedGenres[0]}` };
+}
+
+function getActivityInsight(score: number): InsightResult {
+  if (score >= 80) return { status: 'optimal', message: 'Bar is very active' };
+  if (score >= 50) return { status: 'optimal', message: 'Moderate bar activity' };
+  if (score >= 30) return { status: 'warning', message: 'Below typical rate', action: 'Consider a promo' };
+  return { status: 'critical', message: 'Quiet at the bar', action: 'Drive drink sales' };
+}
+
+function getRetentionInsight(score: number): InsightResult {
+  if (score >= 70) return { status: 'optimal', message: 'Guests are staying' };
+  if (score >= 45) return { status: 'warning', message: 'Average retention' };
+  return { status: 'critical', message: 'Guests leaving early', action: 'Boost energy or run promo' };
 }
 
 export default PulseBreakdownModal;

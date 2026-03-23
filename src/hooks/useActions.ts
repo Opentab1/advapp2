@@ -7,7 +7,7 @@
  */
 
 import { useState, useMemo, useCallback } from 'react';
-import { Volume2, Sun, Users, Clock, Trophy, Music, LucideIcon } from 'lucide-react';
+import { Volume2, Sun, Users, Clock, Trophy, Music, LucideIcon, AlertTriangle, GlassWater, TrendingDown } from 'lucide-react';
 import { OCCUPANCY_THRESHOLDS, TIME_PERIODS } from '../utils/constants';
 import { getCurrentTimeSlot } from '../utils/scoring';
 import venueLearningService from '../services/venue-learning.service';
@@ -37,6 +37,10 @@ interface ActionInput {
   currentLight: number | null;
   occupancy: OccupancyMetrics | null;
   hasUpcomingGames?: boolean;
+  totalDrinks?: number | null;
+  drinksPerHour?: number | null;
+  hasTheftFlag?: boolean;
+  retentionRate?: number | null;
 }
 
 interface UseActionsReturn {
@@ -286,11 +290,52 @@ function generateActions(input: ActionInput): PulseAction[] {
     });
   }
   
+  // ============ VENUESCOPE ACTIONS ============
+
+  const { totalDrinks, drinksPerHour, hasTheftFlag, retentionRate } = input;
+
+  if (hasTheftFlag) {
+    actions.push({
+      id: 'vs-theft',
+      priority: 'critical',
+      category: 'general',
+      title: 'Discrepancy Detected',
+      description: 'VenueScope flagged unrung drinks. Review the latest shift report.',
+      icon: AlertTriangle,
+      reasoning: ['Camera detected drinks not matched to POS records.'],
+    });
+  }
+
+  if (drinksPerHour != null && drinksPerHour > 35) {
+    actions.push({
+      id: 'vs-rush',
+      priority: 'high',
+      category: 'occupancy',
+      title: `Bar Rush — ${drinksPerHour.toFixed(0)} drinks/hr`,
+      description: 'High drink rate detected. Consider calling in extra staff.',
+      icon: GlassWater,
+    });
+  }
+
+  if (retentionRate != null && retentionRate < 45 && isPeakHours) {
+    actions.push({
+      id: 'vs-retention-low',
+      priority: 'medium',
+      category: 'general',
+      title: 'Guests Leaving Early',
+      description: `${retentionRate}% of tonight's guests still here. Consider a promo or energy boost.`,
+      icon: TrendingDown,
+    });
+  }
+
+  // Suppress unused variable warning
+  void totalDrinks;
+
   // ============ SORT BY PRIORITY ============
-  
+
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
   actions.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
-  
+
   return actions;
 }
 

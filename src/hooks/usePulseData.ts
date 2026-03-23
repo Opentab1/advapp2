@@ -79,6 +79,9 @@ export interface PulseData {
   totalDrinks: number | null;
   drinksPerHour: number | null;
   hasVenueScopeData: boolean;
+  activityScore: number | null;
+  retentionScore: number | null;
+  hasTheftFlag: boolean;
 
   // Current sensor values
   currentDecibels: number | null;
@@ -457,6 +460,11 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     [vsTodayJobs]
   );
 
+  const vsHasTheftFlag = useMemo(() =>
+    vsJobs.some(j => j.hasTheftFlag),
+    [vsJobs]
+  );
+
   const vsOccupancy = useMemo(() => {
     if (vsTodayJobs.length === 0) return null;
     return {
@@ -588,6 +596,15 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       console.log(`📊 No historical data for ${timeSlot} yet - using defaults`);
     }
     
+    // VenueScope activity score: drinks/hr → 0-100 (40/hr = 100%)
+    const vsActivityScore = vsDrinksPerHour != null
+      ? Math.min(100, Math.round((vsDrinksPerHour / 40) * 100))
+      : null;
+    // VenueScope retention score: % of tonight's entries still inside
+    const vsRetentionScore = effectiveOccupancy.todayEntries > 0
+      ? Math.min(100, Math.round((effectiveOccupancy.current / effectiveOccupancy.todayEntries) * 100))
+      : null;
+
     return calculatePulseScore(
       sensorData?.decibels,
       sensorData?.light,
@@ -598,9 +615,11 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       venueId,
       undefined, // timestamp
       effectiveOccupancy.current, // currentOccupancy for crowd scoring
-      estimatedCapacity // for crowd scoring
+      estimatedCapacity, // for crowd scoring
+      vsActivityScore,
+      vsRetentionScore
     );
-  }, [sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist, venueId, effectiveOccupancy.current, estimatedCapacity, learningVersion]);
+  }, [sensorData?.decibels, sensorData?.light, sensorData?.currentSong, sensorData?.artist, venueId, effectiveOccupancy.current, estimatedCapacity, learningVersion, vsDrinksPerHour, effectiveOccupancy.todayEntries]);
   
 
   // ============ DWELL TIME CALCULATION ============
@@ -833,6 +852,9 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     totalDrinks: vsTotalDrinks,
     drinksPerHour: vsDrinksPerHour,
     hasVenueScopeData: vsJobs.length > 0,
+    activityScore: pulseScoreResult.factors.activity?.score ?? null,
+    retentionScore: pulseScoreResult.factors.retention?.score ?? null,
+    hasTheftFlag: vsHasTheftFlag,
 
     // Current sensor values
     currentDecibels: sensorData?.decibels ?? null,
