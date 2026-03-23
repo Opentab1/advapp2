@@ -182,8 +182,9 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         setError(null);
       }
     } catch (err: any) {
-      console.error('Failed to fetch live sensor data:', err);
-      setError(err.message || 'Failed to fetch sensor data');
+      // No sensor present (VenueScope-only account) — suppress error, page still
+      // renders with VenueScope data via the separate fetchVenueScopeData path.
+      console.warn('[usePulseData] No sensor data (expected for VenueScope-only accounts):', err?.message);
     }
   }, [venueId]);
   
