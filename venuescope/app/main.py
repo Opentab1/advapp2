@@ -48,10 +48,14 @@ PAGES = {
 }
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
-st.sidebar.markdown("""
+venue_name = st.session_state.get("venue_name", "") or st.session_state.get("venue_id", "")
+email      = st.session_state.get("email", "")
+st.sidebar.markdown(f"""
 <div style='padding:8px 0 4px 0'>
   <span style='font-size:22px;font-weight:700;color:#f97316'>🎯 VenueScope</span><br>
   <span style='font-size:12px;color:#64748b'>Venue Intelligence Platform</span>
+  {f'<br><span style="font-size:12px;color:#94a3b8;margin-top:4px;display:block">📍 {venue_name}</span>' if venue_name else ''}
+  {f'<span style="font-size:11px;color:#64748b">{email}</span>' if email else ''}
 </div>
 """, unsafe_allow_html=True)
 st.sidebar.divider()

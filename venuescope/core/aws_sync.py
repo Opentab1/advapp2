@@ -21,9 +21,27 @@ from typing import Dict, Any, Optional
 DYNAMODB_TABLE = "VenueScopeJobs"
 
 # Offline queue — persisted locally when AWS is unreachable
-_DATA_DIR   = Path(os.environ.get("VENUESCOPE_DATA_DIR",
-                                   str(Path.home() / ".venuescope")))
-_QUEUE_FILE = _DATA_DIR / "sync_queue.json"
+_DATA_DIR      = Path(os.environ.get("VENUESCOPE_DATA_DIR",
+                                      str(Path.home() / ".venuescope")))
+_QUEUE_FILE    = _DATA_DIR / "sync_queue.json"
+_IDENTITY_FILE = Path.home() / ".venuescope" / "venue_identity.json"
+
+
+def _get_venue_id() -> str:
+    """
+    Resolve the active venueId in priority order:
+    1. Identity file written by auth.py on login (multi-venue safe)
+    2. VENUESCOPE_VENUE_ID env var (legacy / fallback)
+    """
+    try:
+        if _IDENTITY_FILE.exists():
+            data = json.loads(_IDENTITY_FILE.read_text())
+            vid  = data.get("venueId", "")
+            if vid:
+                return vid
+    except Exception:
+        pass
+    return os.environ.get("VENUESCOPE_VENUE_ID", "")
 
 # ── Circuit breaker ───────────────────────────────────────────────────────────
 
@@ -154,7 +172,7 @@ def _is_configured() -> bool:
     return bool(
         os.environ.get("AWS_ACCESS_KEY_ID")
         and os.environ.get("AWS_SECRET_ACCESS_KEY")
-        and os.environ.get("VENUESCOPE_VENUE_ID")
+        and _get_venue_id()
     )
 
 
@@ -236,7 +254,7 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
     if not _cb.allow():
         return False
 
-    venue_id = os.environ["VENUESCOPE_VENUE_ID"]
+    venue_id = _get_venue_id()
     now      = str(time.time())
     pct      = str(int(max(0, min(100, progress_pct))))
 
@@ -282,7 +300,7 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
               "AWS_SECRET_ACCESS_KEY, VENUESCOPE_VENUE_ID", flush=True)
         return False
 
-    venue_id  = os.environ["VENUESCOPE_VENUE_ID"]
+    venue_id  = _get_venue_id()
     has_theft = bool(summary.get("has_theft_flag") or summary.get("unrung_drinks", 0) > 0)
 
     # Always upload full summary JSON to S3 for web app detail view
