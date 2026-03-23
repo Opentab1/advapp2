@@ -29,6 +29,7 @@ let venueSettingsInitialized = false;
 // Historical scoring will be re-implemented properly
 // import { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
 import { isDemoAccount } from '../utils/demoData';
+import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
 import type { SensorData, OccupancyMetrics } from '../types';
 
 // ============ TYPES ============
@@ -74,6 +75,11 @@ export interface PulseData {
   // Estimated capacity (for crowd scoring)
   estimatedCapacity: number;
   
+  // VenueScope bar metrics (polled every 30s)
+  totalDrinks: number | null;
+  drinksPerHour: number | null;
+  hasVenueScopeData: boolean;
+
   // Current sensor values
   currentDecibels: number | null;
   currentLight: number | null;
@@ -153,6 +159,9 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   const [reviews, setReviews] = useState<GoogleReviewsData | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   
+  // VenueScope job data
+  const [vsJobs, setVsJobs] = useState<VenueScopeJob[]>([]);
+
   // BLE device tracking (for Pi Zero 2W that doesn't have entry/exit sensors)
   // We estimate entries/exits based on changes in occupancy.current
   const prevOccupancyCurrent = useRef<number | null>(null);
@@ -260,6 +269,17 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     }
   }, [venueId, venueName]);
   
+  const fetchVenueScopeData = useCallback(async () => {
+    if (!venueId) return;
+    try {
+      const jobs = await venueScopeService.listJobs(venueId, 20);
+      setVsJobs(jobs.filter(j => j.status === 'done'));
+      setLastUpdated(new Date());
+    } catch (err) {
+      console.warn('[usePulseData] VenueScope fetch failed:', err);
+    }
+  }, [venueId]);
+
   const fetchWeather = useCallback(async () => {
     if (!venueId) return;
     
@@ -321,6 +341,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         fetchOccupancy(),
         fetchReviews(),
         fetchWeather(),
+        fetchVenueScopeData(),
       ]);
       
       setLoading(false);
@@ -336,13 +357,17 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     // Poll live data
     const liveInterval = setInterval(fetchLiveData, pollingInterval);
-    
+
     // Poll occupancy less frequently
     const occupancyInterval = setInterval(fetchOccupancy, POLLING_INTERVALS.occupancy);
-    
+
+    // Poll VenueScope jobs every 30s
+    const vsInterval = setInterval(fetchVenueScopeData, 30_000);
+
     return () => {
       clearInterval(liveInterval);
       clearInterval(occupancyInterval);
+      clearInterval(vsInterval);
     };
   }, [enabled, venueId, pollingInterval, fetchLiveData, fetchOccupancy]);
   
@@ -411,9 +436,50 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   const isConnected = dataAgeSeconds < DATA_FRESHNESS.disconnected;
   
+  // ============ VENUESCOPE COMPUTED VALUES ============
+  const vsTodayJobs = useMemo(() => {
+    const now = new Date();
+    const barDayStart = new Date(now);
+    barDayStart.setHours(3, 0, 0, 0);
+    if (now.getHours() < 3) barDayStart.setDate(barDayStart.getDate() - 1);
+    const todayTs = barDayStart.getTime() / 1000;
+    return vsJobs.filter(j => (j.createdAt ?? 0) >= todayTs);
+  }, [vsJobs]);
+
+  const vsTotalDrinks = useMemo(() =>
+    vsTodayJobs.length > 0 ? vsTodayJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0) : null,
+    [vsTodayJobs]
+  );
+
+  const vsDrinksPerHour = useMemo(() =>
+    vsTodayJobs[0]?.drinksPerHour ?? null,
+    [vsTodayJobs]
+  );
+
+  const vsOccupancy = useMemo(() => {
+    if (vsTodayJobs.length === 0) return null;
+    return {
+      todayEntries: vsTodayJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
+      todayExits:   vsTodayJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
+      peakOccupancy: Math.max(...vsTodayJobs.map(j => j.peakOccupancy ?? 0)),
+      current: vsTodayJobs[0]?.peakOccupancy ?? 0,
+    };
+  }, [vsTodayJobs]);
+
   // ============ OCCUPANCY CALCULATION ============
   const effectiveOccupancy = useMemo(() => {
     if (!sensorData?.occupancy) {
+      // Fall back to VenueScope people-count data when no sensor is present
+      if (vsOccupancy) {
+        return {
+          current:       vsOccupancy.current,
+          todayEntries:  vsOccupancy.todayEntries,
+          todayExits:    vsOccupancy.todayExits,
+          peakOccupancy: vsOccupancy.peakOccupancy,
+          peakTime:      null,
+          isBLEEstimated: false,
+        };
+      }
       return { current: 0, todayEntries: 0, todayExits: 0, peakOccupancy: 0, peakTime: null, isBLEEstimated: false };
     }
     
@@ -762,6 +828,11 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     // Estimated capacity
     estimatedCapacity,
     
+    // VenueScope bar metrics
+    totalDrinks: vsTotalDrinks,
+    drinksPerHour: vsDrinksPerHour,
+    hasVenueScopeData: vsJobs.length > 0,
+
     // Current sensor values
     currentDecibels: sensorData?.decibels ?? null,
     currentLight: sensorData?.light ?? null,

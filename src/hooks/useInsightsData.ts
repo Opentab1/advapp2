@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
+import venueScopeService from '../services/venuescope.service';
 import { calculatePulseScore } from '../utils/scoring';
 import { isDemoAccount } from '../utils/demoData';
 import type { SensorData, TimeRange } from '../types';
@@ -165,7 +166,58 @@ export function useInsightsData(timeRange: InsightsTimeRange): InsightsData {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-  
+
+  // ============ VENUESCOPE FALLBACK ============
+  // When no sensor data exists, synthesise SensorData records from VenueScope jobs
+  // so DailyBreakdown / GuestsTrend still have something to render.
+  useEffect(() => {
+    if (loading || rawSensorData.length > 0 || !venueId) return;
+
+    venueScopeService.listJobs(venueId, 100).then(jobs => {
+      const done = jobs.filter(j => j.status === 'done' && j.createdAt);
+      if (done.length === 0) return;
+
+      // Filter by selected time range
+      const now = Date.now() / 1000;
+      const rangeSec: Record<string, number> = {
+        last_night: 86400,
+        '7d': 7 * 86400,
+        '14d': 14 * 86400,
+        '30d': 30 * 86400,
+      };
+      const cutoff = now - (rangeSec[timeRange] ?? 7 * 86400);
+      const inRange = done.filter(j => (j.createdAt ?? 0) >= cutoff);
+      if (inRange.length === 0) return;
+
+      // Group jobs by calendar date
+      const byDate: Record<string, typeof inRange> = {};
+      inRange.forEach(j => {
+        const d = new Date((j.createdAt!) * 1000).toLocaleDateString('en-CA'); // YYYY-MM-DD
+        if (!byDate[d]) byDate[d] = [];
+        byDate[d].push(j);
+      });
+
+      // For each date, create two synthetic SensorData points so that the
+      // delta-based guest calculation (lastEntry - firstEntry) works correctly.
+      const synthetic: SensorData[] = [];
+      Object.entries(byDate).forEach(([date, dayJobs]) => {
+        const totalEntries = dayJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+        const totalExits   = dayJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
+        const peak         = Math.max(...dayJobs.map(j => j.peakOccupancy ?? 0));
+        const baseTs       = new Date(`${date}T12:00:00`).toISOString();
+        const endTs        = new Date(`${date}T23:30:00`).toISOString();
+
+        // Start of shift: all counters at 0
+        synthetic.push({ timestamp: baseTs, decibels: 0, light: 0, indoorTemp: 0, outdoorTemp: 0, humidity: 0, occupancy: { current: 0, entries: 0, exits: 0 } });
+        // End of shift: cumulative totals so delta gives correct guest count
+        synthetic.push({ timestamp: endTs,  decibels: 0, light: 0, indoorTemp: 0, outdoorTemp: 0, humidity: 0, occupancy: { current: peak, entries: totalEntries, exits: totalExits } });
+      });
+
+      setRawSensorData(synthetic);
+    }).catch(() => {/* silently ignore */});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, rawSensorData.length, venueId, timeRange]);
+
   // ============ PROCESS DATA ============
   
   // Level 1: Summary

@@ -14,7 +14,7 @@
  */
 
 import { motion } from 'framer-motion';
-import { Volume2, Sun, Users, Music, ChevronRight } from 'lucide-react';
+import { Volume2, Sun, Users, Music, ChevronRight, GlassWater, Settings } from 'lucide-react';
 import { OPTIMAL_RANGES } from '../../utils/constants';
 import { SoundVisualizer } from '../common/SoundVisualizer';
 import { AnimatedNumber } from '../common/AnimatedNumber';
@@ -29,6 +29,8 @@ interface LiveStatsProps {
   albumArt?: string | null;
   lastUpdated: Date | null;
   onTap?: () => void;
+  totalDrinks?: number | null;
+  drinksPerHour?: number | null;
 }
 
 export function LiveStats({
@@ -40,6 +42,8 @@ export function LiveStats({
   albumArt,
   lastUpdated,
   onTap,
+  totalDrinks = null,
+  drinksPerHour = null,
 }: LiveStatsProps) {
   // Calculate freshness
   const secondsAgo = lastUpdated 
@@ -79,20 +83,17 @@ export function LiveStats({
         </div>
       </div>
       
-      {/* Stats Grid - adapt based on available sensors */}
+      {/* Stats Grid — always show all chips; "setup" state when sensor not present */}
       {(() => {
-        // Check which sensors have valid data (Pi Zero 2W sends 0 for unavailable sensors)
-        const hasSound = decibels !== null && decibels !== 0;
-        const hasLight = light !== null && light > 0;
-        const hasCrowd = true; // occupancy.current is always valid (BLE or camera)
-        
-        const availableStats = [hasSound, hasLight, hasCrowd].filter(Boolean).length;
-        const gridCols = availableStats <= 2 ? 'grid-cols-2' : 'grid-cols-3';
-        
+        const hasSound  = decibels !== null && decibels !== 0;
+        const hasLight  = light !== null && light > 0;
+        const hasDrinks = totalDrinks !== null;
+        const cols = hasDrinks ? 'grid-cols-2' : 'grid-cols-3';
+
         return (
-          <div className={`grid ${gridCols} gap-3`}>
-            {/* Sound with visualizer - show if we have sound data */}
-            {hasSound && (
+          <div className={`grid ${cols} gap-3`}>
+            {/* Sound */}
+            {hasSound ? (
               <StatChip
                 icon={Volume2}
                 label="Sound"
@@ -101,10 +102,12 @@ export function LiveStats({
                 status={getDecibelStatus(decibels)}
                 extra={<SoundVisualizer level={normalizedSound} height={16} barCount={4} />}
               />
+            ) : (
+              <SetupChip icon={Volume2} label="Sound" />
             )}
-            
-            {/* Light - only show if sensor has data (Pi Zero 2W has no light sensor) */}
-            {hasLight && (
+
+            {/* Light */}
+            {hasLight ? (
               <StatChip
                 icon={Sun}
                 label="Light"
@@ -112,15 +115,26 @@ export function LiveStats({
                 unit="lux"
                 status={getLightStatus(light)}
               />
+            ) : (
+              <SetupChip icon={Sun} label="Light" />
             )}
-            
-            {/* Crowd - always show (works via BLE or camera) */}
-            {hasCrowd && (
+
+            {/* Crowd — always has a value (VenueScope or sensor) */}
+            <StatChip
+              icon={Users}
+              label="Crowd"
+              value={occupancy}
+              unit="people"
+              status="neutral"
+            />
+
+            {/* Drinks from VenueScope (today's total) */}
+            {hasDrinks && (
               <StatChip
-                icon={Users}
-                label="Crowd"
-                value={occupancy}
-                unit="people"
+                icon={GlassWater}
+                label={drinksPerHour !== null ? `${drinksPerHour.toFixed(0)}/hr` : 'Drinks'}
+                value={totalDrinks}
+                unit="today"
                 status="neutral"
               />
             )}
@@ -128,7 +142,19 @@ export function LiveStats({
         );
       })()}
       
-      {/* Now Playing */}
+      {/* Now Playing — show setup prompt when no music integration */}
+      {!currentSong && (
+        <div className="mt-3 pt-3 border-t border-warm-700 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-warm-700/40 flex items-center justify-center flex-shrink-0">
+            <Music className="w-4 h-4 text-warm-600" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-warm-500">Music integration</p>
+            <p className="text-[10px] text-warm-600">Contact us to set up</p>
+          </div>
+          <Settings className="w-3.5 h-3.5 text-warm-600 flex-shrink-0" />
+        </div>
+      )}
       {currentSong && (
         <motion.div
           className="mt-3 pt-3 border-t border-warm-700 flex items-center gap-3"
@@ -222,6 +248,20 @@ function StatChip({ icon: Icon, label, value, unit, status, extra }: StatChipPro
         />
         <span className="text-xs text-warm-500">{unit}</span>
       </div>
+    </div>
+  );
+}
+
+// ============ SETUP CHIP ============
+
+function SetupChip({ icon: Icon, label }: { icon: typeof Volume2; label: string }) {
+  return (
+    <div className="p-2.5 rounded-xl bg-warm-700/20 border border-dashed border-warm-700/50 transition-colors">
+      <div className="flex items-center gap-1.5 mb-1">
+        <Icon className="w-3.5 h-3.5 text-warm-600" />
+        <span className="text-[10px] text-warm-600 uppercase tracking-wide">{label}</span>
+      </div>
+      <p className="text-[10px] text-warm-600 leading-tight">Contact us to set up</p>
     </div>
   );
 }

@@ -297,6 +297,8 @@ export function Live() {
           albumArt={pulseData.sensorData?.albumArt}
           lastUpdated={pulseData.lastUpdated}
           onTap={() => setActiveModal('livestats')}
+          totalDrinks={pulseData.totalDrinks}
+          drinksPerHour={pulseData.drinksPerHour}
         />
       </motion.div>
       
