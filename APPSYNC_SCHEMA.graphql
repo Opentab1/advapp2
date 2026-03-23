@@ -80,6 +80,16 @@ type VenueScopeJob {
   finishedAt: Float
   status: String
   s3ClipKey: String
+  # In-progress tracking (updated every ~60s during processing)
+  progressPct: Int
+  statusMsg: String
+  updatedAt: Float
+  # Camera auto-detection result
+  cameraAngle: String
+  # Review queue: count of low-confidence events pending human review
+  reviewCount: Int
+  # Table service: avg seconds from customer seating to first server visit
+  avgResponseSec: Float
 }
 
 type VenueScopeJobConnection {

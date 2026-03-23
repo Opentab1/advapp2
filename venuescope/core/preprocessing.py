@@ -207,6 +207,78 @@ class HeatMapAccumulator:
         return buf.tobytes()
 
 
+def detect_camera_angle(frame_bgr: np.ndarray) -> dict:
+    """
+    Estimate camera mounting angle from a single frame.
+    Uses edge-gradient direction distribution and frame composition heuristics.
+
+    Returns:
+        angle:              'overhead' | 'elevated' | 'side'
+        confidence:         0.0–1.0
+        vertical_edge_ratio: fraction of strong edges that are more vertical
+        config_hints:       suggested engine parameters for this angle
+    """
+    H, W = frame_bgr.shape[:2]
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+
+    # Compute Sobel gradients
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    mag = np.sqrt(gx ** 2 + gy ** 2)
+
+    # Only analyse the strongest 15% of edges to avoid noise
+    threshold = float(np.percentile(mag, 85))
+    strong_mask = mag > threshold
+    if strong_mask.sum() < 100:
+        return {"angle": "elevated", "confidence": 0.3,
+                "vertical_edge_ratio": 0.5, "config_hints": {}}
+
+    angles = np.arctan2(np.abs(gy[strong_mask]), np.abs(gx[strong_mask]))
+    vertical_ratio = float(np.mean(angles > (np.pi / 4)))
+
+    # Floor / ceiling color variance: overhead cameras see a lot of floor
+    upper_var = float(np.std(frame_bgr[:H // 2]))
+    lower_var = float(np.std(frame_bgr[H // 2:]))
+    floor_dominant = lower_var > upper_var * 1.15  # floor more varied → overhead
+
+    # Classify
+    if vertical_ratio < 0.42 or (vertical_ratio < 0.50 and floor_dominant):
+        angle = "overhead"
+        confidence = max(0.0, min(1.0, 1.0 - vertical_ratio / 0.42))
+        hints = {
+            "overhead_camera": True,
+            "conf": 0.15,
+            "imgsz": 1280,
+            "stride": 1,
+            "note": "Overhead fisheye — low-conf, high-res, every-frame mode",
+        }
+    elif vertical_ratio > 0.60:
+        angle = "side"
+        confidence = max(0.0, min(1.0, (vertical_ratio - 0.60) / 0.40))
+        hints = {
+            "overhead_camera": False,
+            "conf": 0.25,
+            "imgsz": 640,
+            "note": "Side-angle camera — arm-reach serve detection enabled",
+        }
+    else:
+        angle = "elevated"
+        confidence = max(0.0, min(1.0, 1.0 - abs(vertical_ratio - 0.50) * 5))
+        hints = {
+            "overhead_camera": False,
+            "conf": 0.20,
+            "imgsz": 960,
+            "note": "Elevated CCTV angle — standard settings",
+        }
+
+    return {
+        "angle": angle,
+        "confidence": round(confidence, 2),
+        "vertical_edge_ratio": round(vertical_ratio, 3),
+        "config_hints": hints,
+    }
+
+
 def frame_quality_score(frame_bgr: np.ndarray) -> dict:
     gray     = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     mean_lum = float(gray.mean())

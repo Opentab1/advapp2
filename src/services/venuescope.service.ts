@@ -27,6 +27,14 @@ export interface VenueScopeJob {
   finishedAt: number;
   status: string;
   s3ClipKey?: string;
+  // In-progress
+  progressPct?: number;
+  statusMsg?: string;
+  updatedAt?: number;
+  // Enriched fields
+  cameraAngle?: string;
+  reviewCount?: number;
+  avgResponseSec?: number;
 }
 
 interface JobConnection {
@@ -55,6 +63,12 @@ const LIST_JOBS_QUERY = `
         finishedAt
         status
         s3ClipKey
+        progressPct
+        statusMsg
+        updatedAt
+        cameraAngle
+        reviewCount
+        avgResponseSec
       }
       nextToken
     }

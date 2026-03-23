@@ -1,0 +1,39 @@
+version: "3.9"
+
+# VenueScope v6 — local development stack
+# Usage:
+#   docker compose up           # start both services
+#   docker compose up app       # dashboard only
+#   docker compose up worker    # worker only
+#   docker compose logs -f      # tail all logs
+
+x-common: &common
+  build: .
+  env_file: .env
+  volumes:
+    - venuescope_data:/data
+  restart: unless-stopped
+
+services:
+  app:
+    <<: *common
+    ports:
+      - "8501:8501"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  worker:
+    <<: *common
+    command: ["python", "worker_daemon.py"]
+    # Workers can be horizontally scaled:
+    # docker compose up --scale worker=2
+    environment:
+      VENUESCOPE_WORKERS: "4"
+
+volumes:
+  venuescope_data:
+    driver: local

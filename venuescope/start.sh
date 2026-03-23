@@ -8,6 +8,14 @@ echo "================================================"
 echo "  VenueScope v6"
 echo "================================================"
 
+# Load .env if present
+if [ -f "$SCRIPT_DIR/../.env" ]; then
+    set -a
+    source "$SCRIPT_DIR/../.env"
+    set +a
+    echo "✓ Loaded .env"
+fi
+
 # Kill any existing instances
 pkill -f "streamlit run app/main.py" 2>/dev/null || true
 pkill -f "worker_daemon.py" 2>/dev/null || true
@@ -18,11 +26,21 @@ export ULTRALYTICS_AUTOINSTALL=False
 export STREAMLIT_BROWSER_GATHERUSAGESTATS=false
 export PYTHONPATH="$SCRIPT_DIR"
 
-if [ -z "$VENUESCOPE_PIN" ]; then
-    echo "  PIN: 1234 (default — set with VENUESCOPE_PIN=xxxx ./start.sh)"
-    export VENUESCOPE_PIN="1234"
+# PIN: auth.json (set in Settings) > VENUESCOPE_PIN env var > warn
+if python3 -c "
+import json; from pathlib import Path
+auth = Path('data/configs/auth.json')
+exit(0 if auth.exists() and 'pin_hash' in json.loads(auth.read_text()) else 1)
+" 2>/dev/null; then
+    echo "✓ PIN set (auth.json)"
+elif [ -n "$VENUESCOPE_PIN" ]; then
+    echo "✓ PIN set (env var)"
 else
-    echo "✓ Custom PIN set"
+    echo ""
+    echo "  WARNING: Using default PIN 1234"
+    echo "  Change it in the app: Settings > Security > Change PIN"
+    echo ""
+    export VENUESCOPE_PIN="1234"
 fi
 
 # Check dependencies
@@ -47,13 +65,23 @@ else
     exit 1
 fi
 
+# Network access mode: local (default) or network (0.0.0.0 for Tailscale/LAN)
+BIND_ADDR="${VENUESCOPE_BIND:-127.0.0.1}"
+LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+
 echo ""
-echo "  Open: http://localhost:8501"
+if [ "$BIND_ADDR" = "0.0.0.0" ]; then
+    echo "  Local:   http://localhost:8501"
+    echo "  Network: http://$LOCAL_IP:8501"
+else
+    echo "  Open: http://localhost:8501"
+    echo "  (For network access: VENUESCOPE_BIND=0.0.0.0 ./start.sh)"
+fi
 echo "  Worker log: tail -f $SCRIPT_DIR/worker.log"
 echo ""
 
 exec python3 -m streamlit run app/main.py \
     --server.headless=true \
-    --server.address=127.0.0.1 \
-    --server.port=8501 \
+    --server.address="$BIND_ADDR" \
+    --server.port="${VENUESCOPE_PORT:-8501}" \
     --browser.gatherUsageStats=false

@@ -8,7 +8,7 @@ Clean, simple, no Pi workarounds. Just:
   - Write results
 """
 from __future__ import annotations
-import os, time, cv2, json
+import os, time, cv2, json, threading
 import numpy as np
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any, List
@@ -22,7 +22,8 @@ from ultralytics import YOLO
 from core.config     import MODEL_PROFILES, DEFAULT_RULES, DEFAULT_PEOPLE_RULES
 from core.config     import DEFAULT_TABLE_RULES, DEFAULT_STAFF_RULES, BOTTLE_CLASSES, CONFIG_DIR
 from core.preprocessing import (enhance_for_detection, build_dewarp_maps, dewarp_frame, enhance_frame,
-                                 upscale_for_detection, detect_night_mode, night_mode_enhance)
+                                 upscale_for_detection, detect_night_mode, night_mode_enhance,
+                                 detect_camera_angle)
 from core.bar_config import BarConfig
 from core.shift      import ShiftManager
 from core.analytics.drink_counter  import DrinkCounter
@@ -56,8 +57,11 @@ def _in_ignore_zone(cx, cy, zones, W, H):
     return False
 
 
+_MIN_MODEL_MB = 1      # reject files smaller than this (corrupted download)
+_MAX_MODEL_MB = 800    # reject files larger than this (wrong file type)
+
 def _load_yolo(model_name: str) -> YOLO:
-    """Find and load YOLO model from any common location."""
+    """Find and load YOLO model from any common location, with size validation."""
     candidates = [
         Path.home() / ".cache" / "ultralytics" / "assets" / model_name,
         Path.home() / ".cache" / "ultralytics" / model_name,
@@ -66,9 +70,55 @@ def _load_yolo(model_name: str) -> YOLO:
     ]
     for c in candidates:
         if c.exists():
+            size_mb = c.stat().st_size / 1_048_576
+            if size_mb < _MIN_MODEL_MB:
+                raise RuntimeError(
+                    f"Model file {c} looks corrupted ({size_mb:.1f} MB < {_MIN_MODEL_MB} MB). "
+                    "Delete it and let VenueScope re-download."
+                )
+            if size_mb > _MAX_MODEL_MB:
+                raise RuntimeError(
+                    f"Model file {c} is unexpectedly large ({size_mb:.0f} MB). "
+                    "Check that the correct .pt file is referenced."
+                )
             return YOLO(str(c))
     # Not found locally — let ultralytics download it
     return YOLO(model_name)
+
+
+def _check_memory_mb(required_mb: int = 1024):
+    """Raise MemoryError if available system RAM < required_mb."""
+    try:
+        import psutil
+        avail = psutil.virtual_memory().available / 1_048_576
+        if avail < required_mb:
+            raise MemoryError(
+                f"Insufficient RAM: {avail:.0f} MB available, "
+                f"{required_mb} MB required. Close other applications or use 'fast' profile."
+            )
+    except ImportError:
+        pass  # psutil not installed — skip check
+
+
+def _rtsp_read(cap: cv2.VideoCapture, timeout_sec: float = 10.0):
+    """Read one frame from cap with a thread-based timeout for RTSP hang prevention."""
+    result = [False, None]
+    exc    = [None]
+
+    def _reader():
+        try:
+            result[0], result[1] = cap.read()
+        except Exception as e:
+            exc[0] = e
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    t.join(timeout_sec)
+    if t.is_alive():
+        return False, None, True   # timed out
+    if exc[0]:
+        raise exc[0]
+    return result[0], result[1], False
 
 
 # Gap 3: Mode-specific ByteTrack configs
@@ -152,9 +202,15 @@ class VenueProcessor:
 
     def __init__(self, job_id, analysis_mode, source, source_type,
                  model_profile, bar_config, shift, extra_config,
-                 result_dir, annotate=False, progress_cb=None):
+                 result_dir, annotate=False, progress_cb=None,
+                 extra_modes: List[str] = None):
         self.job_id      = job_id
+        # Primary mode drives tracker config + annotation
         self.mode        = analysis_mode
+        # All modes (primary + any extras) — each gets its own analyzer
+        self.modes: List[str] = [analysis_mode] + [
+            m for m in (extra_modes or []) if m and m != analysis_mode
+        ]
         self.source      = source
         self.source_type = source_type
         ec_tmp = extra_config or {}
@@ -217,6 +273,12 @@ class VenueProcessor:
         self._night_mode         = False
         self._night_mode_checked = False
 
+        # Feature 4: Camera angle auto-detection
+        self._angle_info:    Optional[Dict[str, Any]] = None
+        self._angle_checked: bool = False
+        # Only auto-configure overhead if bar_config hasn't explicitly set it
+        self._explicit_overhead = bool(bar_config and getattr(bar_config, "overhead_camera", False))
+
         # Improvement 5: ROI crop for drink_count
         self._roi_crop  = (self.mode == "drink_count" and
                            self.bar_config is not None and
@@ -224,6 +286,21 @@ class VenueProcessor:
         self._roi_boxes: Optional[tuple] = None   # (x1, y1, x2, y2) in pixels, set lazily
 
         self._max_seconds = float(self.ec.get("max_seconds", 0))  # 0 = unlimited
+
+        # RTSP health tracking
+        self._rtsp_errors     = 0
+        self._rtsp_timeouts   = 0
+
+        # Per-frame timing for performance monitoring
+        self._frame_times: List[float] = []   # ms per processed frame
+
+        # Checkpoint / resume
+        self._checkpoint_file   = self.result_dir / "checkpoint.json"
+        self._checkpoint_every  = 500   # save every N processed frames
+        self._resumed_from      = 0     # frame_idx we resumed from (0 = fresh start)
+
+        # Pre-job memory check (require at least 1 GB free)
+        _check_memory_mb(required_mb=int(os.environ.get("VENUESCOPE_MIN_RAM_MB", "1024")))
 
         # Rolling frame buffer for clip saving (stores thumbnail-size frames)
         self._clip_fps   = 0.0          # set once fps is known
@@ -250,7 +327,10 @@ class VenueProcessor:
             self.cb(2, "Overhead camera mode: conf=0.15, imgsz=1280, stride=1")
         (self.result_dir / "clips").mkdir(exist_ok=True)
 
-        analyzer   = self._build_analyzer(W, H, fps)
+        # Build one analyzer per mode — single YOLO pass feeds them all
+        analyzers  = {m: self._build_analyzer(W, H, fps, mode_override=m)
+                      for m in self.modes}
+        analyzer   = analyzers[self.mode]   # primary (used for annotation)
         model_name = self.profile["model"]
         self.cb(4, f"Loading {model_name}...")
         model = _load_yolo(model_name)
@@ -275,9 +355,55 @@ class VenueProcessor:
         frame_idx = 0
         t0        = time.time()
 
+        # Checkpoint resume: seek to last saved position
+        if self._checkpoint_file.exists():
+            try:
+                ck = json.loads(self._checkpoint_file.read_text())
+                resume_frame = int(ck.get("frame_idx", 0))
+                if resume_frame > 0 and self.source_type != "rtsp":
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, resume_frame)
+                    frame_idx          = resume_frame
+                    self._total        = resume_frame
+                    self._processed    = ck.get("processed", 0)
+                    self._dropped      = ck.get("dropped", 0)
+                    self._resumed_from = resume_frame
+                    self.cb(0, f"Resuming from frame {resume_frame} "
+                               f"(checkpoint found — {resume_frame/fps/60:.1f} min in)")
+            except Exception as _ce:
+                self.cb(0, f"Checkpoint load failed (starting fresh): {_ce}")
+
+        _rtsp_consecutive_errors = 0
+        _MAX_RTSP_ERRORS         = 30   # give up after 30 consecutive read failures
+
         while True:
-            ret, frame = cap.read()
-            if not ret: break
+            _ft_start = time.perf_counter()
+
+            if self.source_type == "rtsp":
+                ret, frame, timed_out = _rtsp_read(cap, timeout_sec=10.0)
+                if timed_out:
+                    self._rtsp_timeouts      += 1
+                    _rtsp_consecutive_errors += 1
+                    self.cb(0, f"RTSP read timeout #{self._rtsp_timeouts} "
+                               f"(frame {frame_idx}) — retrying")
+                    if _rtsp_consecutive_errors >= _MAX_RTSP_ERRORS:
+                        self.cb(0, f"RTSP: {_MAX_RTSP_ERRORS} consecutive errors — aborting stream")
+                        break
+                    continue
+            else:
+                ret, frame = cap.read()
+                timed_out  = False
+
+            if not ret:
+                if self.source_type == "rtsp":
+                    self._rtsp_errors        += 1
+                    _rtsp_consecutive_errors += 1
+                    if _rtsp_consecutive_errors >= _MAX_RTSP_ERRORS:
+                        break
+                    time.sleep(0.1)
+                    continue
+                break
+
+            _rtsp_consecutive_errors = 0
             self._total += 1
 
             if frame_idx % stride != 0:
@@ -333,6 +459,29 @@ class VenueProcessor:
                     self._night_mode_checked = True
             if self._night_mode:
                 frame = night_mode_enhance(frame)
+
+            # Feature 4: Camera angle auto-detection on first frame
+            if not self._angle_checked and self._processed == 1:
+                self._angle_info    = detect_camera_angle(frame)
+                self._angle_checked = True
+                ai = self._angle_info
+                self.cb(0, f"Camera angle: {ai['angle']} "
+                           f"(confidence {ai['confidence']:.0%}, "
+                           f"vertical_edge_ratio={ai['vertical_edge_ratio']:.2f})")
+                # Auto-configure overhead mode if not explicitly set and detected with high confidence
+                if not self._explicit_overhead and ai["angle"] == "overhead" \
+                        and ai["confidence"] >= 0.60:
+                    hints = ai["config_hints"]
+                    self._overhead              = True
+                    self.profile["conf"]        = min(self.profile["conf"],
+                                                      hints.get("conf", 0.15))
+                    self.profile["imgsz"]       = max(self.profile["imgsz"],
+                                                      hints.get("imgsz", 1280))
+                    self.profile["stride"]      = hints.get("stride", 1)
+                    self._conf_threshold        = self.profile["conf"]
+                    self.cb(0, "Auto-configured for overhead camera: "
+                               f"conf={self.profile['conf']}, "
+                               f"imgsz={self.profile['imgsz']}, stride=1")
 
             # Improvement 4: Auto-upscale low-res cameras (< 720p shorter side) before YOLO
             _fh, _fw = frame.shape[:2]
@@ -475,8 +624,13 @@ class VenueProcessor:
                 self.cb(95, f"Segment limit reached ({self._max_seconds:.0f}s) — stopping.")
                 break
             centroids = _centroids(boxes_px)
-            evs       = self._run_analyzer(analyzer, frame, frame_idx, t_sec,
-                                           centroids, track_ids, confs, boxes_px, class_ids)
+            # Feed detections to ALL analyzers — one YOLO pass, many metrics
+            evs = []
+            for _m, _az in analyzers.items():
+                evs += self._run_analyzer(_az, frame, frame_idx, t_sec,
+                                          centroids, track_ids, confs,
+                                          boxes_px, class_ids,
+                                          mode_override=_m)
 
             snap_dir = self.result_dir / "snapshots"
             clip_dir = self.result_dir / "clips"
@@ -547,13 +701,34 @@ class VenueProcessor:
                           if t not in active and self._track_ages.get(t,0) < 5]:
                     self._track_ages.pop(t, None)
 
+            # Per-frame timing
+            _ft_ms = (time.perf_counter() - _ft_start) * 1000
+            self._frame_times.append(_ft_ms)
+            if len(self._frame_times) > 200:
+                self._frame_times = self._frame_times[-200:]
+
+            # Checkpoint every N processed frames (file jobs only)
+            if (self.source_type != "rtsp" and
+                    self._processed > 0 and
+                    self._processed % self._checkpoint_every == 0):
+                try:
+                    self._checkpoint_file.write_text(json.dumps({
+                        "frame_idx": frame_idx,
+                        "processed": self._processed,
+                        "dropped":   self._dropped,
+                    }))
+                except Exception:
+                    pass
+
             if total_f > 0 and frame_idx % 30 == 0:
                 pct  = min(5 + 90*frame_idx/total_f, 95)
                 efps = self._processed / max(time.time()-t0, 0.01)
                 elapsed   = time.time() - t0
                 remaining = (elapsed / max(self._processed,1)) * max(total_f//stride - self._processed, 0)
                 mins_left = int(remaining // 60)
-                self.cb(pct, f"Frame {int(frame_idx)}/{total_f}  {efps:.1f}fps  ~{mins_left}min left")
+                avg_ms    = sum(self._frame_times[-30:]) / max(len(self._frame_times[-30:]), 1)
+                self.cb(pct, f"Frame {int(frame_idx)}/{total_f}  {efps:.1f}fps  "
+                             f"~{mins_left}min left  {avg_ms:.0f}ms/frame")
 
         cap.release()
         if vout: vout.release()
@@ -563,14 +738,21 @@ class VenueProcessor:
             except Exception: pass
         self._pending_clips = []
 
+        # Remove checkpoint — job completed successfully
+        try:
+            if self._checkpoint_file.exists():
+                self._checkpoint_file.unlink()
+        except Exception:
+            pass
+
         self.cb(96, "Writing results...")
-        summary = self._build_summary(analyzer, frame_idx/fps, fps)
+        summary = self._build_summary(analyzers, frame_idx/fps, fps)
         writer.write_all(summary)
         self.cb(100, "Done.")
         return summary
 
-    def _build_analyzer(self, W, H, fps: float = 25.0):
-        ec = self.ec; mode = self.mode
+    def _build_analyzer(self, W, H, fps: float = 25.0, mode_override: str = None):
+        ec = self.ec; mode = mode_override or self.mode
         if mode == "drink_count":
             import copy
             rules = copy.copy(DEFAULT_RULES)
@@ -628,20 +810,26 @@ class VenueProcessor:
         raise ValueError(f"Unknown mode: {mode}")
 
     def _run_analyzer(self, analyzer, frame, frame_idx, t_sec,
-                      centroids, track_ids, confs, boxes_px, class_ids=None):
-        if self.mode == "drink_count":
+                      centroids, track_ids, confs, boxes_px, class_ids=None,
+                      mode_override: str = None):
+        mode = mode_override or self.mode
+        if mode == "drink_count":
             return analyzer.update(frame_idx, t_sec, centroids, track_ids, confs,
                                    boxes=boxes_px if len(boxes_px) else None)
-        elif self.mode == "bottle_count":
+        elif mode == "bottle_count":
             return analyzer.update(frame_idx, t_sec, boxes_px, class_ids or [], confs)
-        elif self.mode in ("people_count","table_turns","staff_activity"):
+        elif mode in ("people_count", "table_turns", "staff_activity"):
             return analyzer.update(frame_idx, t_sec, centroids, track_ids)
-        elif self.mode == "after_hours":
+        elif mode == "after_hours":
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             return analyzer.update_frame(frame_idx, t_sec, gray, len(track_ids))
         return []
 
-    def _build_summary(self, analyzer, total_sec, fps):
+    def _build_summary(self, analyzers, total_sec, fps):
+        """
+        Build summary from all analyzers (dict of mode -> analyzer).
+        When multiple modes are active, all results are merged into one summary dict.
+        """
         avg_conf    = self._conf_sum / max(self._conf_n, 1)
         switch_rate = self._id_switches / max(self._processed, 1)
         warnings = []
@@ -652,33 +840,53 @@ class VenueProcessor:
         if self._screen_recording_warning:
             warnings.append(self._screen_recording_warning)
 
+        avg_frame_ms = (sum(self._frame_times) / max(len(self._frame_times), 1)
+                        if self._frame_times else 0.0)
         quality = {"avg_detection_conf":      round(avg_conf, 4),
                    "tracking_switch_rate":    round(switch_rate, 4),
                    "dropped_frames":          self._dropped,
                    "processed_frames":        self._processed,
                    "warnings":                warnings,
                    "adapted_conf_threshold":  round(self._conf_threshold, 3),
-                   "night_mode_detected":     self._night_mode}
+                   "night_mode_detected":     self._night_mode,
+                   "avg_frame_ms":            round(avg_frame_ms, 1),
+                   "rtsp_errors":             self._rtsp_errors + self._rtsp_timeouts,
+                   "resumed_from_frame":      self._resumed_from}
 
-        b = {"mode":self.mode, "video_seconds":round(total_sec,1),
-             "quality":quality, "snap_count":self._snap_count,
-             "heatmap_generated":False}
+        b = {"mode":         self.mode,
+             "modes":        self.modes,          # all active modes
+             "video_seconds": round(total_sec, 1),
+             "quality":       quality,
+             "snap_count":    self._snap_count,
+             "heatmap_generated": False}
 
-        if self.mode == "drink_count":
-            b.update({"bartenders":    self.shift.summary(total_sec) if self.shift else {},
-                      "drink_quality": analyzer.quality_report()})
-        elif self.mode == "bottle_count":
-            b["bottles"] = analyzer.summary()
-        elif self.mode == "people_count":
-            b.update({"people":        analyzer.summary(total_sec),
-                      "occupancy_log": analyzer.occupancy_log})
-        elif self.mode == "table_turns":
-            b["tables"] = analyzer.summary()
-        elif self.mode == "staff_activity":
-            b.update({"staff":         analyzer.summary(total_sec),
-                      "headcount_log": analyzer.headcount_log})
-        elif self.mode == "after_hours":
-            b["motion"] = analyzer.summary()
+        if self._angle_info:
+            b["camera_angle"] = self._angle_info
+
+        # Collect results from every active mode
+        for mode, analyzer in analyzers.items():
+            if mode == "drink_count":
+                b.update({"bartenders":    self.shift.summary(total_sec) if self.shift else {},
+                          "drink_quality": analyzer.quality_report(),
+                          "review_events": [
+                              {"t_sec": e["t_sec"], "serve_score": e["serve_score"],
+                               "station_id": e["station_id"], "track_id": e["track_id"],
+                               "review_reason": e["review_reason"],
+                               "snapshot": e.get("snapshot"), "clip": e.get("clip")}
+                              for e in analyzer._review_events
+                          ]})
+            elif mode == "bottle_count":
+                b["bottles"] = analyzer.summary()
+            elif mode == "people_count":
+                b.update({"people":        analyzer.summary(total_sec),
+                          "occupancy_log": analyzer.occupancy_log})
+            elif mode == "table_turns":
+                b["tables"] = analyzer.summary()
+            elif mode == "staff_activity":
+                b.update({"staff":         analyzer.summary(total_sec),
+                          "headcount_log": analyzer.headcount_log})
+            elif mode == "after_hours":
+                b["motion"] = analyzer.summary()
         return b
 
     def _annotate_frame(self, frame, boxes, track_ids, W, H,

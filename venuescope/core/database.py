@@ -1,6 +1,6 @@
 """
 VenueScope — SQLite job store.
-Fixed: empty update() calls, proper column handling.
+Enterprise hardening: WAL mode, busy timeout, column whitelist, soft delete, audit log.
 """
 from __future__ import annotations
 import json, time, shutil
@@ -8,13 +8,19 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from sqlalchemy import (
     create_engine, MetaData, Table, Column,
-    String, Float, Text, Boolean,
-    select, insert, text
+    String, Float, Text, Boolean, Integer,
+    select, insert, text, event as sa_event
 )
 from core.config import DB_PATH, CONFIG_DIR
 
 _engine = None
 _meta   = MetaData()
+
+# Whitelist of columns allowed in _raw_update — prevents SQL injection
+_ALLOWED_UPDATE_COLS = {
+    "status", "progress", "error_msg", "result_dir", "summary_json",
+    "finished_at", "shift_json", "clip_label", "analysis_mode",
+}
 
 jobs_table = Table("jobs", _meta,
     Column("job_id",        String,  primary_key=True),
@@ -34,7 +40,50 @@ jobs_table = Table("jobs", _meta,
     Column("annotate",      Boolean, nullable=False, default=False),
     Column("summary_json",  Text,    nullable=True),
     Column("clip_label",    String,  nullable=True),
+    Column("is_deleted",    Boolean, nullable=False, default=False),
+    Column("deleted_at",    Float,   nullable=True),
 )
+
+audit_log_table = Table("audit_log", _meta,
+    Column("id",         Integer, primary_key=True, autoincrement=True),
+    Column("timestamp",  Float,   nullable=False),
+    Column("action",     String,  nullable=False),
+    Column("job_id",     String,  nullable=True),
+    Column("user",       String,  nullable=False, default="system"),
+    Column("detail",     Text,    nullable=True),
+    Column("old_value",  Text,    nullable=True),
+    Column("new_value",  Text,    nullable=True),
+)
+
+
+def _configure_sqlite(dbapi_conn, _connection_record):
+    """Enable WAL mode, normal sync, and busy timeout on every new connection."""
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA synchronous=NORMAL")
+    cur.execute("PRAGMA busy_timeout=5000")   # 5 s retry on locked DB
+    cur.close()
+
+
+def _migrate_schema(engine):
+    """Safely add new columns to pre-existing databases."""
+    migrations = [
+        "ALTER TABLE jobs ADD COLUMN is_deleted BOOLEAN DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN deleted_at FLOAT",
+        (
+            "CREATE TABLE IF NOT EXISTS audit_log ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "timestamp FLOAT NOT NULL, action TEXT NOT NULL, "
+            "job_id TEXT, user TEXT NOT NULL DEFAULT 'system', "
+            "detail TEXT, old_value TEXT, new_value TEXT)"
+        ),
+    ]
+    with engine.begin() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(text(sql))
+            except Exception:
+                pass  # column / table already exists
 
 
 def get_engine():
@@ -44,14 +93,46 @@ def get_engine():
             f"sqlite:///{DB_PATH}", echo=False,
             connect_args={"check_same_thread": False}
         )
+        sa_event.listen(_engine, "connect", _configure_sqlite)
         _meta.create_all(_engine)
+        _migrate_schema(_engine)
     return _engine
 
 
+# ── Audit log ────────────────────────────────────────────────────────────────
+
+def audit(action: str, job_id: str = None, user: str = "system",
+          detail: str = "", old_value: str = None, new_value: str = None):
+    """Append an immutable audit log entry."""
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(insert(audit_log_table).values(
+                timestamp=time.time(), action=action, job_id=job_id,
+                user=user, detail=detail, old_value=old_value, new_value=new_value,
+            ))
+    except Exception:
+        pass  # never crash the caller over audit logging
+
+
+def get_audit_log(limit: int = 100, job_id: str = None) -> list:
+    """Retrieve audit log entries, newest first."""
+    with get_engine().connect() as conn:
+        q = select(audit_log_table).order_by(audit_log_table.c.timestamp.desc()).limit(limit)
+        if job_id:
+            q = q.where(audit_log_table.c.job_id == job_id)
+        rows = conn.execute(q).mappings().all()
+    return [dict(r) for r in rows]
+
+
+# ── Core job mutations ───────────────────────────────────────────────────────
+
 def _raw_update(job_id: str, **kw):
-    """Raw SQL update — avoids SQLAlchemy ORM quirks with dynamic columns."""
+    """Raw SQL update with column whitelist — prevents SQL injection."""
     if not kw:
         return
+    bad = set(kw) - _ALLOWED_UPDATE_COLS
+    if bad:
+        raise ValueError(f"_raw_update: disallowed column(s): {bad}")
     engine = get_engine()
     sets   = ", ".join(f"{k} = :{k}" for k in kw)
     kw["_job_id"] = job_id
@@ -93,7 +174,21 @@ def list_jobs(limit: int = 50) -> list:
     with get_engine().connect() as c:
         rows = c.execute(
             select(jobs_table)
+            .where(jobs_table.c.is_deleted == False)
             .order_by(jobs_table.c.created_at.desc())
+            .limit(limit)
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def list_jobs_by_status(status: str, limit: int = 50) -> list:
+    """Efficient DB-level status filter — avoids Python-side scanning."""
+    with get_engine().connect() as c:
+        rows = c.execute(
+            select(jobs_table)
+            .where(jobs_table.c.status == status)
+            .where(jobs_table.c.is_deleted == False)
+            .order_by(jobs_table.c.created_at.asc())
             .limit(limit)
         ).mappings().all()
     return [dict(r) for r in rows]
@@ -101,6 +196,7 @@ def list_jobs(limit: int = 50) -> list:
 
 def set_running(job_id):
     _raw_update(job_id, status="running")
+    audit("job_running", job_id=job_id)
 
 def set_progress(job_id, p):
     _raw_update(job_id, progress=min(float(p), 99.9))
@@ -112,12 +208,15 @@ def set_done(job_id, rdir, summary):
                 finished_at=time.time(),
                 result_dir=str(rdir),
                 summary_json=json.dumps(summary))
+    audit("job_done", job_id=job_id,
+          detail=f"drinks={summary.get('total_drinks', 0)}, unrung={summary.get('unrung_drinks', 0)}")
 
 def set_failed(job_id, err):
     _raw_update(job_id,
                 status="failed",
                 finished_at=time.time(),
-                error_msg=str(err))
+                error_msg=str(err)[:500])
+    audit("job_failed", job_id=job_id, detail=str(err)[:200])
 
 def update_shift_json(job_id: str, shift_json: str):
     _raw_update(job_id, shift_json=shift_json)
@@ -180,24 +279,63 @@ def list_shifts(limit: int = 20) -> list:
     return result
 
 
-def delete_job(job_id: str) -> bool:
-    """Delete a job record and its result directory. Returns True on success."""
+def mark_job_deleted(job_id: str, user: str = "system") -> bool:
+    """Soft-delete a job (is_deleted=True). Files are preserved for 30-day recovery window."""
     job = get_job(job_id)
     if not job:
         return False
-    # Remove result dir
+    with get_engine().begin() as c:
+        c.execute(text(
+            "UPDATE jobs SET is_deleted=1, deleted_at=:ts WHERE job_id=:id"
+        ), {"ts": time.time(), "id": job_id})
+    audit("job_deleted", job_id=job_id, user=user)
+    return True
+
+
+def restore_job(job_id: str, user: str = "system") -> bool:
+    """Restore a soft-deleted job."""
+    with get_engine().begin() as c:
+        c.execute(text(
+            "UPDATE jobs SET is_deleted=0, deleted_at=NULL WHERE job_id=:id"
+        ), {"id": job_id})
+    audit("job_restored", job_id=job_id, user=user)
+    return True
+
+
+def list_deleted_jobs(limit: int = 50) -> list:
+    """Return only soft-deleted jobs (for recovery UI)."""
+    with get_engine().connect() as c:
+        rows = c.execute(
+            select(jobs_table)
+            .where(jobs_table.c.is_deleted == True)
+            .order_by(jobs_table.c.deleted_at.desc())
+            .limit(limit)
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def delete_job(job_id: str) -> bool:
+    """Hard-delete a job record and its result directory. Prefer mark_job_deleted() instead."""
+    job = get_job(job_id)
+    if not job:
+        # Also check deleted jobs
+        with get_engine().connect() as c:
+            row = c.execute(
+                select(jobs_table).where(jobs_table.c.job_id == job_id)
+            ).mappings().first()
+            job = dict(row) if row else None
+    if not job:
+        return False
     rdir = job.get("result_dir")
     if rdir:
         try:
             shutil.rmtree(rdir, ignore_errors=True)
         except Exception:
             pass
-    # Remove source file if still exists
     src = job.get("source_path")
     if src:
         try:
             Path(src).unlink(missing_ok=True)
-            # also try parent dir if it's a job-specific upload folder
             p = Path(src).parent
             if p != Path(src) and not any(p.iterdir()):
                 p.rmdir()
@@ -205,6 +343,7 @@ def delete_job(job_id: str) -> bool:
             pass
     with get_engine().begin() as c:
         c.execute(text("DELETE FROM jobs WHERE job_id = :id"), {"id": job_id})
+    audit("job_hard_deleted", job_id=job_id)
     return True
 
 
