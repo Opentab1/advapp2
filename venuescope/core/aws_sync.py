@@ -194,6 +194,34 @@ def _upload_clip_to_s3(result_dir: Path, job_id: str, venue_id: str) -> Optional
         return None
 
 
+def _upload_summary_to_s3(summary: Dict[str, Any], job_id: str, venue_id: str) -> Optional[str]:
+    """
+    Upload the full summary JSON to S3 so the web app can fetch rich detail.
+    Key: venuescope/{venueId}/{jobId}/summary.json
+    Always called on job completion (not just theft flagged).
+    Returns S3 key or None if upload fails/not configured.
+    """
+    bucket = os.environ.get("S3_BUCKET", "")
+    if not bucket:
+        return None
+
+    s3_key = f"venuescope/{venue_id}/{job_id}/summary.json"
+    try:
+        s3 = _get_client("s3")
+        body = json.dumps(summary, default=str).encode()
+        _retry(lambda: s3.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=body,
+            ContentType="application/json",
+        ))
+        print(f"[aws_sync] Summary uploaded to s3://{bucket}/{s3_key}", flush=True)
+        return s3_key
+    except Exception as e:
+        print(f"[aws_sync] S3 summary upload failed: {e}", flush=True)
+        return None
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def sync_partial_to_aws(job_id: str, progress_pct: float,
@@ -256,9 +284,17 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
 
     venue_id  = os.environ["VENUESCOPE_VENUE_ID"]
     has_theft = bool(summary.get("has_theft_flag") or summary.get("unrung_drinks", 0) > 0)
-    s3_key    = None
+
+    # Always upload full summary JSON to S3 for web app detail view
+    summary_s3_key = _upload_summary_to_s3(summary, job_id, venue_id)
+
+    # Upload flagged clip to S3
+    clip_s3_key = None
     if has_theft:
-        s3_key = _upload_clip_to_s3(Path(result_dir), job_id, venue_id)
+        clip_s3_key = _upload_clip_to_s3(Path(result_dir), job_id, venue_id)
+
+    # Active modes (primary + any extras run in same pass)
+    active_modes = summary.get("modes", [summary.get("analysis_mode", "drink_count")])
 
     item: Dict[str, Any] = {
         "venueId":         {"S": venue_id},
@@ -267,6 +303,7 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
         "createdAt":       {"N": str(summary.get("created_at", time.time()))},
         "finishedAt":      {"N": str(time.time())},
         "analysisMode":    {"S": summary.get("analysis_mode", "drink_count")},
+        "activeModes":     {"S": json.dumps(active_modes)},
         "clipLabel":       {"S": summary.get("clip_label", "")},
         "totalDrinks":     {"N": str(int(summary.get("total_drinks", 0)))},
         "drinksPerHour":   {"N": str(float(summary.get("drinks_per_hour", 0.0)))},
@@ -279,8 +316,11 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
         "syncStatus":      {"S": "synced"},
     }
 
-    if s3_key:
-        item["s3ClipKey"] = {"S": s3_key}
+    if clip_s3_key:
+        item["s3ClipKey"] = {"S": clip_s3_key}
+
+    if summary_s3_key:
+        item["summaryS3Key"] = {"S": summary_s3_key}
 
     camera = summary.get("camera_label") or summary.get("venue_id", "")
     if camera:
@@ -296,12 +336,47 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
     if review_count > 0:
         item["reviewCount"] = {"N": str(review_count)}
 
+    # ── Bottle count metrics ───────────────────────────────────────────────────
+    bottles = summary.get("bottles", {})
+    if bottles:
+        item["bottleCount"]         = {"N": str(int(bottles.get("total_bottles_seen", 0)))}
+        item["peakBottleCount"]     = {"N": str(int(bottles.get("peak_count", 0)))}
+        item["pourCount"]           = {"N": str(int(bottles.get("pours_detected", 0)))}
+        item["totalPouredOz"]       = {"N": str(float(bottles.get("total_poured_oz", 0.0)))}
+        item["overPours"]           = {"N": str(int(bottles.get("over_pours", 0)))}
+        item["walkOutAlerts"]       = {"N": str(int(bottles.get("walk_out_alerts", 0)))}
+        item["unknownBottleAlerts"] = {"N": str(int(bottles.get("unknown_bottle_alerts", 0)))}
+        item["parLowEvents"]        = {"N": str(int(bottles.get("par_low_events", 0)))}
+        if bottles.get("walk_out_alerts", 0) > 0 or bottles.get("unknown_bottle_alerts", 0) > 0:
+            item["hasTheftFlag"] = {"BOOL": True}   # escalate flag if bottle theft detected
+
+    # ── People count metrics ───────────────────────────────────────────────────
+    people = summary.get("people", {})
+    if people:
+        item["totalEntries"]   = {"N": str(int(people.get("total_entries", 0)))}
+        item["totalExits"]     = {"N": str(int(people.get("total_exits", 0)))}
+        item["peakOccupancy"]  = {"N": str(int(people.get("peak_occupancy", 0)))}
+
+    # ── Table turns metrics ────────────────────────────────────────────────────
     tables = summary.get("tables", {})
     if tables:
+        total_turns = sum(d.get("turn_count", 0) for d in tables.values())
+        item["totalTurns"] = {"N": str(total_turns)}
         responses = [v["avg_response_sec"] for v in tables.values()
                      if v.get("avg_response_sec") is not None]
         if responses:
             item["avgResponseSec"] = {"N": str(round(sum(responses) / len(responses), 1))}
+        dwells = [v["avg_dwell_min"] for v in tables.values()
+                  if v.get("avg_dwell_min") is not None]
+        if dwells:
+            item["avgDwellMin"] = {"N": str(round(sum(dwells) / len(dwells), 1))}
+
+    # ── Staff activity metrics ─────────────────────────────────────────────────
+    staff = summary.get("staff", {})
+    if staff:
+        item["uniqueStaff"]  = {"N": str(int(staff.get("total_unique_staff", 0)))}
+        item["peakHeadcount"]= {"N": str(int(staff.get("peak_headcount", 0)))}
+        item["avgIdlePct"]   = {"N": str(float(staff.get("avg_idle_pct", 0.0)))}
 
     # Circuit breaker check
     if not _cb.allow():

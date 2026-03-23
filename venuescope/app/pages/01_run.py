@@ -103,7 +103,7 @@ with st.expander("📋 Venue Profile", expanded=False):
                 # back to any previously loaded profile values).
                 _vp_cur = st.session_state.get("vp_loaded", {})
                 _new_entry = {
-                    "mode":          st.session_state.get("vp_mode",         _vp_cur.get("mode", "drink_count")),
+                    "modes":         st.session_state.get("vp_modes",         _vp_cur.get("modes", ["drink_count"])),
                     "model_profile": st.session_state.get("vp_model_profile", _vp_cur.get("model_profile", "balanced")),
                     "camera_mode":   st.session_state.get("vp_camera_mode",   _vp_cur.get("camera_mode", "normal")),
                     "config_path":   st.session_state.get("vp_config_path",   _vp_cur.get("config_path", "")),
@@ -188,13 +188,26 @@ with col1:
     clip_label = st.text_input("Label", placeholder="e.g. Main Bar – Fri 9pm")
 with col2:
     _mode_keys = list(ANALYSIS_MODES.keys())
-    _mode_default = _loaded_profile.get("mode", "drink_count")
-    _mode_index   = _mode_keys.index(_mode_default) if _mode_default in _mode_keys else 0
-    mode = st.radio("Mode", _mode_keys,
-                    index=_mode_index,
-                    format_func=lambda k: ANALYSIS_MODES[k])
-    st.session_state["vp_mode"] = mode
-    st.caption(ANALYSIS_DESCRIPTIONS.get(mode,""))
+    # Support both old single-mode and new multi-mode profiles
+    _profile_modes = _loaded_profile.get("modes", None)
+    if _profile_modes is None:
+        _old_mode = _loaded_profile.get("mode", "drink_count")
+        _profile_modes = [_old_mode] if _old_mode in _mode_keys else ["drink_count"]
+    _profile_modes = [m for m in _profile_modes if m in _mode_keys] or ["drink_count"]
+
+    modes = st.multiselect(
+        "Modes",
+        _mode_keys,
+        default=_profile_modes,
+        format_func=lambda k: ANALYSIS_MODES[k],
+        help="Select one or more analysis modes — all run in a single pass.",
+    )
+    if not modes:
+        modes = ["drink_count"]
+    st.session_state["vp_modes"] = modes
+    mode = modes[0]   # primary mode (used for annotation + DB column)
+    for _m in modes:
+        st.caption(f"**{ANALYSIS_MODES[_m]}** — {ANALYSIS_DESCRIPTIONS.get(_m, '')}")
 
 uploaded   = locals().get("uploaded")
 rtsp_url   = locals().get("rtsp_url","").strip()
@@ -288,42 +301,10 @@ config_path  = None
 shift_id     = None
 shift_json   = None
 
-if mode == "people_count":
-    # Load saved counting lines config if available
-    lines_configs = [p.stem.replace("lines_","") for p in CONFIG_DIR.glob("lines_*.json")]
-    if lines_configs:
-        lc1, lc2 = st.columns([2,3])
-        with lc1:
-            use_saved = st.checkbox("Use saved counting lines config", value=True)
-        if use_saved:
-            lsel = st.selectbox("Counting lines config", lines_configs)
-            try:
-                ldata = json.loads((CONFIG_DIR/f"lines_{lsel}.json").read_text())
-                extra_config["lines"] = ldata.get("lines", [])
-                st.success(f"Loaded: {ldata.get('display_name', lsel)} — {len(extra_config['lines'])} line(s)")
-            except Exception as e:
-                st.warning(f"Could not load config: {e}")
-        else:
-            st.info("📏 Draw a counting line across each entrance doorway.")
-            state = line_zone_editor(frame_rgb, session_key="lz_people",
-                                      mode="lines_and_zones", n_lines_default=2)
-            extra_config["lines"] = state["lines"]
-    else:
-        st.info("📏 Draw a counting line across each entrance doorway. "
-                "Or save one in ⚙️ Zone Layout first.")
-        state = line_zone_editor(frame_rgb, session_key="lz_people",
-                                  mode="lines_and_zones", n_lines_default=2)
-        extra_config["lines"]        = state["lines"]
-        extra_config["ignore_zones"] = state["zones"]
+_multi = len(modes) > 1
 
-elif mode == "bottle_count":
-    st.info("🍾 Optionally draw a zone to restrict bottle counting to a specific shelf or area. "
-            "Leave empty to count bottles across the full frame.")
-    state = line_zone_editor(frame_rgb, session_key="lz_bottle",
-                              mode="zones_only", height=420)
-    extra_config["zones"] = state["zones"]
-
-elif mode == "drink_count":
+if "drink_count" in modes:
+    _hdr = st.subheader("🍺 Drink Count Setup") if _multi else None
     # Zone editor for staff exclusion only
     st.info("🚫 Optionally draw staff-only exclusion zones to filter customers from detection.")
     state = line_zone_editor(frame_rgb, session_key="lz_drink",
@@ -357,7 +338,6 @@ elif mode == "drink_count":
         sopts      = {f"{s['shift_name']} [{s['shift_id']}]":s["shift_id"] for s in shifts}
         _sopts_keys = list(sopts.keys())
         _sid_default = _loaded_profile.get("shift_id", "")
-        # Find the selectbox entry whose value matches the loaded shift_id
         _sid_index  = next(
             (i for i, k in enumerate(_sopts_keys) if sopts[k] == _sid_default), 0
         )
@@ -370,11 +350,58 @@ elif mode == "drink_count":
     else:
         st.warning("⚠️ No shifts. Set up a shift in 🔑 Shift Setup first.")
 
-elif mode == "table_turns":
-    # Load saved table zones config if available
+if _multi and "drink_count" in modes and len(modes) > 1:
+    st.divider()
+
+if "bottle_count" in modes:
+    _hdr = st.subheader("🍾 Bottle Count Setup") if _multi else None
+    st.info("🍾 Optionally draw a zone to restrict bottle counting to a specific shelf or area. "
+            "Leave empty to count bottles across the full frame.")
+    state = line_zone_editor(frame_rgb, session_key="lz_bottle",
+                              mode="zones_only", height=420)
+    extra_config["zones"] = state["zones"]
+
+if _multi and "bottle_count" in modes and not modes[-1] == "bottle_count":
+    st.divider()
+
+if "people_count" in modes:
+    _hdr = st.subheader("🚶 People Count Setup") if _multi else None
+    lines_configs = [p.stem.replace("lines_","") for p in CONFIG_DIR.glob("lines_*.json")]
+    if lines_configs:
+        lc1, lc2 = st.columns([2,3])
+        with lc1:
+            use_saved = st.checkbox("Use saved counting lines config", value=True,
+                                    key="pc_use_saved")
+        if use_saved:
+            lsel = st.selectbox("Counting lines config", lines_configs)
+            try:
+                ldata = json.loads((CONFIG_DIR/f"lines_{lsel}.json").read_text())
+                extra_config["lines"] = ldata.get("lines", [])
+                st.success(f"Loaded: {ldata.get('display_name', lsel)} — {len(extra_config['lines'])} line(s)")
+            except Exception as e:
+                st.warning(f"Could not load config: {e}")
+        else:
+            st.info("📏 Draw a counting line across each entrance doorway.")
+            state = line_zone_editor(frame_rgb, session_key="lz_people",
+                                      mode="lines_and_zones", n_lines_default=2)
+            extra_config["lines"] = state["lines"]
+    else:
+        st.info("📏 Draw a counting line across each entrance doorway. "
+                "Or save one in ⚙️ Zone Layout first.")
+        state = line_zone_editor(frame_rgb, session_key="lz_people",
+                                  mode="lines_and_zones", n_lines_default=2)
+        extra_config["lines"]        = state["lines"]
+        extra_config["ignore_zones"] = state["zones"]
+
+if _multi and "people_count" in modes and not modes[-1] == "people_count":
+    st.divider()
+
+if "table_turns" in modes:
+    _hdr = st.subheader("🪑 Table Turns Setup") if _multi else None
     table_configs = [p.stem.replace("tables_","") for p in CONFIG_DIR.glob("tables_*.json")]
     if table_configs:
-        use_saved_t = st.checkbox("Use saved table zones config", value=True)
+        use_saved_t = st.checkbox("Use saved table zones config", value=True,
+                                  key="tt_use_saved")
         if use_saved_t:
             tsel = st.selectbox("Table zones config", table_configs)
             try:
@@ -398,17 +425,25 @@ elif mode == "table_turns":
                    "polygon": z["polygon"]} for i, z in enumerate(state["zones"])]
         extra_config["tables"] = tables
 
-elif mode == "staff_activity":
-    if frame_rgb is not None:
-        st.image(frame_rgb, caption="Frame preview", use_container_width=True)
-    idle_min=st.slider("Idle alert threshold (min)",1,10,2)
-    extra_config["idle_threshold_seconds"]=idle_min*60
+if _multi and "table_turns" in modes and not modes[-1] == "table_turns":
+    st.divider()
 
-elif mode == "after_hours":
-    if frame_rgb is not None:
+if "staff_activity" in modes:
+    _hdr = st.subheader("👷 Staff Activity Setup") if _multi else None
+    if frame_rgb is not None and not _multi:
         st.image(frame_rgb, caption="Frame preview", use_container_width=True)
-    motion_thr=st.slider("Motion sensitivity",500,5000,1500)
-    extra_config["motion_threshold"]=motion_thr
+    idle_min = st.slider("Idle alert threshold (min)", 1, 10, 2, key="sa_idle")
+    extra_config["idle_threshold_seconds"] = idle_min * 60
+
+if _multi and "staff_activity" in modes and not modes[-1] == "staff_activity":
+    st.divider()
+
+if "after_hours" in modes:
+    _hdr = st.subheader("🔒 After Hours Setup") if _multi else None
+    if frame_rgb is not None and not _multi:
+        st.image(frame_rgb, caption="Frame preview", use_container_width=True)
+    motion_thr = st.slider("Motion sensitivity", 500, 5000, 1500, key="ah_motion")
+    extra_config["motion_threshold"] = motion_thr
 
     st.markdown("**Ignore Zones (optional):**")
     st.caption("Draw zones to ignore (e.g., exit signs, clocks, fans that cause false motion)")
@@ -433,7 +468,7 @@ with pc1:
         help="Fast=stride 3, Balanced=stride 2, Accurate=every frame (~3× slower)")
     st.session_state["vp_model_profile"] = model_profile
 with pc2:
-    if mode == "drink_count":
+    if "drink_count" in modes:
         annotate = True
         st.info("📹 Annotated video always saved for drink count — verify every detected pour.")
     else:
@@ -509,15 +544,15 @@ st.subheader("⑤ Launch")
 
 # Advisory: warn if drink count mode is selected but no shifts exist
 shifts_configured = len(list_shifts()) > 0
-if mode in ("drink_count", "full") and not shifts_configured:
+if "drink_count" in modes and not shifts_configured:
     st.warning("⚠️ No shifts configured. Add a shift in **Shift Setup** before running "
                "drink count analysis, or switch to People Count only mode.")
 
 if not uploaded and not rtsp_url:
     st.info("Upload a video clip or enter an RTSP URL in Step 1.")
-elif mode=="drink_count" and not config_path:
+elif "drink_count" in modes and not config_path:
     st.warning("Select a bar layout config before launching.")
-elif mode=="drink_count" and not shift_json:
+elif "drink_count" in modes and not shift_json:
     st.warning("Select a shift before launching.")
 elif st.button("🚀 Start Analysis", type="primary", use_container_width=True):
     job_id = str(uuid.uuid4())[:8]
@@ -531,6 +566,9 @@ elif st.button("🚀 Start Analysis", type="primary", use_container_width=True):
             shutil.copy(saved_path, dest)
         elif uploaded:
             dest.write_bytes(uploaded.read())
+
+    # Store extra modes so the worker runs all of them in one pass
+    extra_config["extra_modes"] = [m for m in modes if m != mode]
 
     create_job(job_id=job_id, analysis_mode=mode,
                shift_id=shift_id, shift_json=shift_json,

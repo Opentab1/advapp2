@@ -67,6 +67,8 @@ type VenueScopeJob {
   jobId: String!
   clipLabel: String
   analysisMode: String
+  # All modes run in this job (JSON array string: ["drink_count","people_count"])
+  activeModes: String
   totalDrinks: Int
   drinksPerHour: Float
   topBartender: String
@@ -80,6 +82,8 @@ type VenueScopeJob {
   finishedAt: Float
   status: String
   s3ClipKey: String
+  # Full summary JSON stored in S3 — fetch via Lambda presigned URL for rich detail view
+  summaryS3Key: String
   # In-progress tracking (updated every ~60s during processing)
   progressPct: Int
   statusMsg: String
@@ -88,8 +92,27 @@ type VenueScopeJob {
   cameraAngle: String
   # Review queue: count of low-confidence events pending human review
   reviewCount: Int
-  # Table service: avg seconds from customer seating to first server visit
+  # ── Bottle count metrics ───────────────────────────────────────────────────
+  bottleCount: Int
+  peakBottleCount: Int
+  pourCount: Int
+  totalPouredOz: Float
+  overPours: Int
+  walkOutAlerts: Int
+  unknownBottleAlerts: Int
+  parLowEvents: Int
+  # ── People count metrics ───────────────────────────────────────────────────
+  totalEntries: Int
+  totalExits: Int
+  peakOccupancy: Int
+  # ── Table turns metrics ────────────────────────────────────────────────────
+  totalTurns: Int
   avgResponseSec: Float
+  avgDwellMin: Float
+  # ── Staff activity metrics ─────────────────────────────────────────────────
+  uniqueStaff: Int
+  peakHeadcount: Int
+  avgIdlePct: Float
 }
 
 type VenueScopeJobConnection {

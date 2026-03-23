@@ -779,11 +779,18 @@ class VenueProcessor:
             return DrinkCounter(self.bar_config, shift, rules, W, H)
         elif mode == "bottle_count":
             zones = ec.get("zones", [])
-            # zones is a list of polygons in normalized [0,1] coords
-            polys = [z.get("polygon", []) for z in zones] if zones else [
-                [[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0]]  # full-frame default zone
+            polys     = [z.get("polygon", []) for z in zones] if zones else [
+                [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
             ]
-            return BottleCounter(zone_polys_norm=polys, W=W, H=H)
+            par_levels = [z.get("par_level") for z in zones] if zones else [None]
+            return BottleCounter(
+                zone_polys_norm   = polys,
+                W                 = W,
+                H                 = H,
+                par_levels        = par_levels,
+                standard_pour_oz  = float(ec.get("standard_pour_oz", 1.25)),
+                flow_rate_oz_per_sec = float(ec.get("flow_rate_oz_per_sec", 0.75)),
+            )
         elif mode == "people_count":
             lines = ec.get("lines", [])
             if not lines:

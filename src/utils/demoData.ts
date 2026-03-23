@@ -12,6 +12,7 @@ import type {
 } from '../types';
 import type { GoogleReviewsData } from '../services/google-reviews.service';
 import type { WeatherData } from '../services/weather.service';
+import type { VenueScopeJob } from '../services/venuescope.service';
 
 /**
  * Demo Account Configuration
@@ -1475,4 +1476,94 @@ export function getDemoTopPerformersPlaylist(limit: number = 20): Array<{
     position: i + 1,
     ...s,
   }));
+}
+
+
+// ============ DEMO VENUESCOPE DATA ============
+
+/**
+ * Generate realistic demo VenueScope jobs for The Showcase Lounge.
+ * Produces jobs for today + the past 14 nights so the Today section
+ * and the live-polling behaviour both look active.
+ */
+export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
+  const venueId = DEMO_VENUE.venueId;
+  const now     = Math.floor(Date.now() / 1000);
+
+  type Shift = {
+    label: string; bartender: string; drinks: number; unrung: number;
+    confidence: 'green' | 'yellow' | 'red'; mode: string; hoursAgo: number;
+    entries?: number; peak?: number; bottles?: number; pours?: number;
+  };
+
+  // Tonight's shifts (today — simulate jobs processed through the night)
+  const todayShifts: Shift[] = [
+    { label: 'Main Bar – Tonight (10 PM)', bartender: 'Marcus',  drinks: 47, unrung: 3, confidence: 'yellow', mode: 'drink_count',   hoursAgo: 0.5 },
+    { label: 'Main Bar – Tonight (8 PM)',  bartender: 'Marcus',  drinks: 31, unrung: 0, confidence: 'green',  mode: 'drink_count',   hoursAgo: 2.5 },
+    { label: 'Entrance – Tonight',         bartender: '',        drinks: 0,  unrung: 0, confidence: 'green',  mode: 'people_count',  hoursAgo: 1, entries: 312, peak: 287 },
+    { label: 'Back Bar – Tonight',         bartender: 'Priya',   drinks: 29, unrung: 0, confidence: 'green',  mode: 'bottle_count',  hoursAgo: 1.5, bottles: 18, pours: 29 },
+    { label: 'VIP Bar – Tonight',          bartender: 'Jordan',  drinks: 22, unrung: 5, confidence: 'red',    mode: 'drink_count',   hoursAgo: 3, },
+  ];
+
+  // Past 14 nights' jobs
+  const historicShifts: Shift[] = [
+    { label: 'Main Bar – Fri 9 PM',   bartender: 'Marcus',  drinks: 83, unrung: 7,  confidence: 'red',    mode: 'drink_count', hoursAgo: 24 },
+    { label: 'Main Bar – Fri 7 PM',   bartender: 'Priya',   drinks: 44, unrung: 1,  confidence: 'green',  mode: 'drink_count', hoursAgo: 26 },
+    { label: 'Entrance – Fri',        bartender: '',        drinks: 0,  unrung: 0,  confidence: 'green',  mode: 'people_count', hoursAgo: 25, entries: 498, peak: 431 },
+    { label: 'Main Bar – Thu 10 PM',  bartender: 'Jordan',  drinks: 61, unrung: 2,  confidence: 'yellow', mode: 'drink_count', hoursAgo: 48 },
+    { label: 'Main Bar – Thu 8 PM',   bartender: 'Marcus',  drinks: 38, unrung: 0,  confidence: 'green',  mode: 'drink_count', hoursAgo: 50 },
+    { label: 'Main Bar – Wed 10 PM',  bartender: 'Priya',   drinks: 55, unrung: 4,  confidence: 'yellow', mode: 'drink_count', hoursAgo: 72 },
+    { label: 'Main Bar – Tue 10 PM',  bartender: 'Jordan',  drinks: 48, unrung: 0,  confidence: 'green',  mode: 'drink_count', hoursAgo: 96 },
+    { label: 'Main Bar – Mon 9 PM',   bartender: 'Marcus',  drinks: 35, unrung: 1,  confidence: 'green',  mode: 'drink_count', hoursAgo: 120 },
+    { label: 'Main Bar – Sun 11 PM',  bartender: 'Priya',   drinks: 72, unrung: 9,  confidence: 'red',    mode: 'drink_count', hoursAgo: 144 },
+    { label: 'Main Bar – Sat 11 PM',  bartender: 'Marcus',  drinks: 91, unrung: 11, confidence: 'red',    mode: 'drink_count', hoursAgo: 168 },
+    { label: 'Entrance – Sat',        bartender: '',        drinks: 0,  unrung: 0,  confidence: 'green',  mode: 'people_count', hoursAgo: 167, entries: 612, peak: 504 },
+    { label: 'Back Bar – Sat',        bartender: 'Jordan',  drinks: 38, unrung: 0,  confidence: 'green',  mode: 'bottle_count', hoursAgo: 166, bottles: 24, pours: 38 },
+    { label: 'Main Bar – Fri 2wk 9P', bartender: 'Priya',   drinks: 79, unrung: 6,  confidence: 'yellow', mode: 'drink_count', hoursAgo: 192 },
+    { label: 'Main Bar – Thu 2wk',    bartender: 'Marcus',  drinks: 57, unrung: 0,  confidence: 'green',  mode: 'drink_count', hoursAgo: 216 },
+  ];
+
+  function makeJob(shift: Shift, idx: number): VenueScopeJob {
+    const finishedAt = now - Math.round(shift.hoursAgo * 3600);
+    const createdAt  = finishedAt - (25 * 60 + Math.round(Math.random() * 300)); // ~25 min processing
+    const dph        = shift.drinks > 0 ? parseFloat((shift.drinks / 2.5).toFixed(1)) : 0;
+    const hasTheft   = shift.unrung > 0;
+    const confScore  = shift.confidence === 'green' ? 87 : shift.confidence === 'yellow' ? 68 : 42;
+
+    return {
+      venueId,
+      jobId:            `demo-${idx.toString().padStart(3, '0')}`,
+      clipLabel:        shift.label,
+      analysisMode:     shift.mode,
+      activeModes:      JSON.stringify([shift.mode]),
+      totalDrinks:      shift.drinks,
+      drinksPerHour:    dph,
+      topBartender:     shift.bartender || '—',
+      confidenceScore:  confScore,
+      confidenceLabel:  shift.confidence === 'green' ? 'High confidence' : shift.confidence === 'yellow' ? 'Medium confidence' : 'Low confidence',
+      confidenceColor:  shift.confidence,
+      hasTheftFlag:     hasTheft,
+      unrungDrinks:     shift.unrung,
+      cameraLabel:      'Bar Cam',
+      createdAt,
+      finishedAt,
+      status:           'done',
+      // People count fields
+      totalEntries:     shift.entries ?? 0,
+      totalExits:       shift.entries ? Math.round(shift.entries * 0.85) : 0,
+      peakOccupancy:    shift.peak ?? 0,
+      // Bottle count fields
+      bottleCount:      shift.bottles ?? 0,
+      peakBottleCount:  shift.bottles ? shift.bottles + 4 : 0,
+      pourCount:        shift.pours ?? 0,
+      totalPouredOz:    shift.pours ? parseFloat((shift.pours * 1.3).toFixed(1)) : 0,
+      overPours:        hasTheft ? Math.ceil(shift.unrung / 2) : 0,
+      cameraAngle:      'overhead',
+      reviewCount:      hasTheft ? shift.unrung + 1 : 0,
+    };
+  }
+
+  const todayJobs     = todayShifts.map((s, i) => makeJob(s, i));
+  const historicJobs  = historicShifts.map((s, i) => makeJob(s, i + 100));
+  return [...todayJobs, ...historicJobs].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }

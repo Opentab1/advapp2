@@ -138,8 +138,20 @@ if not jobs:
     st.info("No completed jobs yet. Go to **▶️ Run Analysis** to process a video.")
     st.stop()
 
+def _job_mode_label(j: dict) -> str:
+    primary = ANALYSIS_MODES.get(j.get("analysis_mode", ""), j.get("analysis_mode", ""))
+    try:
+        _ec = json.loads(j.get("summary_json") or "{}").get("extra_config", {})
+        _extras = _ec.get("extra_modes", [])
+    except Exception:
+        _extras = []
+    if _extras:
+        extra_labels = " + ".join(ANALYSIS_MODES.get(m, m) for m in _extras)
+        return f"{primary} + {extra_labels}"
+    return primary
+
 job_opts = {
-    f"{ANALYSIS_MODES.get(j.get('analysis_mode',''),j.get('analysis_mode',''))} — "
+    f"{_job_mode_label(j)} — "
     f"{j.get('clip_label') or j['job_id']}  [{j['job_id']}]": j["job_id"]
     for j in jobs
 }
@@ -162,6 +174,10 @@ if st.session_state.get("_last_sel_id") != sel_id:
     st.session_state["_last_sel_id"] = sel_id
 job     = get_job(sel_id)
 mode    = job.get("analysis_mode","drink_count")
+# Build the full list of active modes (primary + any extras run in same pass)
+_extra_cfg   = json.loads(job.get("summary_json") or "{}").get("extra_config", {})
+_extra_modes = _extra_cfg.get("extra_modes", [])
+active_modes = [mode] + [m for m in _extra_modes if m and m != mode]
 rdir    = Path(job.get("result_dir") or Path(RESULT_DIR)/sel_id)
 sumf    = rdir/"summary.json"
 evf     = rdir/"events.csv"
@@ -216,7 +232,9 @@ st.divider()
 # ─────────────────────────────────────────────────────────────────────────────
 # DRINK COUNT
 # ─────────────────────────────────────────────────────────────────────────────
-if mode == "drink_count":
+if "drink_count" in active_modes:
+    if len(active_modes) > 1:
+        st.header("🍺 Drink Count")
     bartenders = summary.get("bartenders",{})
     pos_data   = {}
 
@@ -698,41 +716,136 @@ padding:18px 22px;margin:16px 0;color:#fca5a5;">
 # ─────────────────────────────────────────────────────────────────────────────
 # BOTTLE COUNT
 # ─────────────────────────────────────────────────────────────────────────────
-elif mode == "bottle_count":
-    bottles = summary.get("bottles", {})
+if "bottle_count" in active_modes:
+    if len(active_modes) > 1:
+        st.divider()
+        st.header("🍾 Bottle Count")
+    bottles   = summary.get("bottles", {})
     total_b   = bottles.get("total_bottles_seen", 0)
     peak_b    = bottles.get("peak_count", 0)
     avg_b     = bottles.get("avg_count", 0)
     by_class  = bottles.get("by_class", {})
+    pours     = bottles.get("pours_detected", 0)
+    total_oz  = bottles.get("total_poured_oz", 0.0)
+    avg_oz    = bottles.get("avg_pour_oz", 0.0)
+    over_p    = bottles.get("over_pours", 0)
+    walk_outs = bottles.get("walk_out_alerts", 0)
+    unknown_b = bottles.get("unknown_bottle_alerts", 0)
+    par_low   = bottles.get("par_low_events", 0)
+    std_oz    = bottles.get("standard_pour_oz", 1.25)
 
-    hc1, hc2, hc3 = st.columns(3)
-    with hc1:
+    # ── Theft / risk alerts ───────────────────────────────────────────────────
+    has_flags = over_p > 0 or walk_outs > 0 or unknown_b > 0 or par_low > 0
+    if has_flags:
+        flag_parts = []
+        if unknown_b:  flag_parts.append(f"🚨 **{unknown_b} unknown bottle(s)** appeared mid-shift (possible BYOB scam)")
+        if walk_outs:  flag_parts.append(f"🚨 **{walk_outs} bottle(s)** removed from zone without a pour (possible walk-out)")
+        if over_p:     flag_parts.append(f"⚠️ **{over_p} over-pour(s)** detected — pours exceeded {std_oz * 1.4:.2f} oz standard")
+        if par_low:    flag_parts.append(f"⚠️ **{par_low} par-level violation(s)** — shelf fell below minimum stock")
+        st.error("  \n".join(flag_parts))
+
+    # ── Hero metrics ─────────────────────────────────────────────────────────
+    h1, h2, h3, h4, h5 = st.columns(5)
+    with h1:
         st.markdown(f'<div class="hero-number">{total_b}</div>'
-                    f'<div class="hero-label">Bottles / Glasses Seen</div>', unsafe_allow_html=True)
-    with hc2:
+                    f'<div class="hero-label">Bottles Seen</div>', unsafe_allow_html=True)
+    with h2:
         st.markdown(f'<div class="hero-number">{peak_b}</div>'
-                    f'<div class="hero-label">Peak Simultaneous</div>', unsafe_allow_html=True)
-    with hc3:
-        st.markdown(f'<div class="hero-number">{avg_b:.1f}</div>'
-                    f'<div class="hero-label">Avg on Screen</div>', unsafe_allow_html=True)
+                    f'<div class="hero-label">Peak on Shelf</div>', unsafe_allow_html=True)
+    with h3:
+        st.markdown(f'<div class="hero-number">{pours}</div>'
+                    f'<div class="hero-label">Pours Detected</div>', unsafe_allow_html=True)
+    with h4:
+        oz_color = "#ef4444" if avg_oz > std_oz * 1.4 else "#22c55e" if avg_oz > 0 else "#94a3b8"
+        st.markdown(f'<div class="hero-number" style="color:{oz_color}">{avg_oz:.2f} oz</div>'
+                    f'<div class="hero-label">Avg Pour Size</div>', unsafe_allow_html=True)
+    with h5:
+        wo_color = "#ef4444" if (walk_outs or unknown_b) else "#22c55e"
+        flag_count = walk_outs + unknown_b + over_p
+        st.markdown(f'<div class="hero-number" style="color:{wo_color}">{flag_count}</div>'
+                    f'<div class="hero-label">Theft Flags</div>', unsafe_allow_html=True)
 
+    st.divider()
+
+    # ── Yield analysis ────────────────────────────────────────────────────────
+    if pours > 0:
+        ya1, ya2, ya3 = st.columns(3)
+        with ya1:
+            st.metric("Total Oz Poured", f"{total_oz:.1f} oz")
+            st.caption(f"Standard pour = {std_oz} oz")
+        with ya2:
+            expected_pours = round(total_oz / std_oz, 1) if std_oz > 0 else 0
+            st.metric("Expected Pours at Standard", expected_pours)
+            st.caption("Based on estimated oz ÷ standard measure")
+        with ya3:
+            over_pct = round(over_p / pours * 100) if pours else 0
+            color = "normal" if over_pct < 10 else "inverse"
+            st.metric("Over-Pour Rate", f"{over_pct}%", delta=f"{over_p} events",
+                      delta_color="inverse")
+
+    # ── By type breakdown ─────────────────────────────────────────────────────
     if by_class:
         st.divider()
         st.subheader("🍾 By Type")
         bc_cols = st.columns(len(by_class))
         for i, (cls, cnt) in enumerate(by_class.items()):
-            bc_cols[i].metric(cls.replace("_"," ").title(), cnt)
+            bc_cols[i].metric(cls.replace("_", " ").title(), cnt)
 
+    # ── Pour event log ────────────────────────────────────────────────────────
+    pour_events = bottles.get("pour_events", [])
+    if pour_events:
+        st.divider()
+        st.subheader("🥃 Pour Log")
+        pour_rows = []
+        for p in pour_events:
+            m, s = divmod(int(p.get("t_sec", 0)), 60)
+            pour_rows.append({
+                "Time":         f"{m}:{s:02d}",
+                "Type":         p.get("class_name", "bottle").replace("_", " ").title(),
+                "Duration":     f"{p.get('duration_sec', 0):.1f}s",
+                "Est. Oz":      f"{p.get('estimated_oz', 0):.2f}",
+                "Over-Pour":    "⚠️ YES" if p.get("is_over_pour") else "✓",
+                "Unknown Btl":  "🚨 YES" if p.get("is_unknown_bottle") else "—",
+            })
+        st.dataframe(pd.DataFrame(pour_rows), use_container_width=True, hide_index=True)
+
+    # ── Unknown bottle / walk-out alerts ──────────────────────────────────────
+    unk_details = bottles.get("unknown_bottle_details", [])
+    wo_details  = bottles.get("walk_out_details", [])
+
+    if unk_details:
+        st.divider()
+        st.subheader("🚨 Unknown Bottle Alerts (BYOB / Unregistered Inventory)")
+        for ev in unk_details:
+            m, s = divmod(int(ev.get("t_sec", 0)), 60)
+            st.warning(f"**{ev.get('class_name','bottle').title()}** appeared at {m}:{s:02d} "
+                       f"in zone {ev.get('zone_idx', 0)} — not in opening inventory. "
+                       f"Confidence: {ev.get('confidence', 0):.0%}")
+
+    if wo_details:
+        st.divider()
+        st.subheader("🚨 Walk-Out Alerts (Bottle Removed Without Pour)")
+        for ev in wo_details:
+            m1, s1 = divmod(int(ev.get("first_seen_t", 0)), 60)
+            m2, s2 = divmod(int(ev.get("last_seen_t", 0)), 60)
+            st.error(f"Bottle disappeared from zone {ev.get('zone_idx',0)} "
+                     f"between {m1}:{s1:02d} and {m2}:{s2:02d} "
+                     f"with no pour detected — possible walk-out theft.")
+
+    # ── Count over time ───────────────────────────────────────────────────────
     timeline = bottles.get("timeline", [])
     if timeline:
         st.divider()
-        st.subheader("📈 Count Over Time")
+        st.subheader("📈 Bottles on Shelf Over Time")
         st.line_chart(pd.DataFrame(timeline).set_index("t_sec"))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PEOPLE COUNT
 # ─────────────────────────────────────────────────────────────────────────────
-elif mode == "people_count":
+if "people_count" in active_modes:
+    if len(active_modes) > 1:
+        st.divider()
+        st.header("🚶 People Count")
     p = summary.get("people", {})
     entries   = p.get("total_entries", 0)
     exits     = p.get("total_exits", 0)
@@ -784,7 +897,10 @@ elif mode == "people_count":
 # ─────────────────────────────────────────────────────────────────────────────
 # TABLE TURNS
 # ─────────────────────────────────────────────────────────────────────────────
-elif mode == "table_turns":
+if "table_turns" in active_modes:
+    if len(active_modes) > 1:
+        st.divider()
+        st.header("🪑 Table Turns")
     tables = summary.get("tables", {})
     if not tables:
         st.info("No table data. Make sure table zones were defined before processing.")
@@ -821,7 +937,10 @@ elif mode == "table_turns":
 # ─────────────────────────────────────────────────────────────────────────────
 # STAFF / SERVER ACTIVITY
 # ─────────────────────────────────────────────────────────────────────────────
-elif mode == "staff_activity":
+if "staff_activity" in active_modes:
+    if len(active_modes) > 1:
+        st.divider()
+        st.header("👷 Staff Activity")
     staff = summary.get("staff", {})
     details = staff.get("staff_details", [])
     total_s = staff.get("total_unique_staff", 0)
@@ -874,7 +993,10 @@ elif mode == "staff_activity":
 # ─────────────────────────────────────────────────────────────────────────────
 # AFTER HOURS
 # ─────────────────────────────────────────────────────────────────────────────
-elif mode == "after_hours":
+if "after_hours" in active_modes:
+    if len(active_modes) > 1:
+        st.divider()
+        st.header("🔒 After Hours Motion")
     motion = summary.get("motion", {})
     n = motion.get("total_motion_events", 0)
     hc1, hc2, hc3, hc4 = st.columns(4)
@@ -975,7 +1097,7 @@ st.divider()
 st.subheader("⬇️ Raw Downloads")
 
 # ── Excel / CSV export ────────────────────────────────────────────────────────
-if mode == "drink_count":
+if "drink_count" in active_modes:
     _export_label = "Export to Excel" if _OPENPYXL_OK else "Export to CSV"
     _export_note  = "" if _OPENPYXL_OK else " (install openpyxl for Excel)"
     _exp_bytes, _exp_fname, _exp_mime = _build_export(

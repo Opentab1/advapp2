@@ -5,16 +5,17 @@
  * This page reads from DynamoDB via AppSync — no local server required.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Video, ShieldCheck, AlertTriangle, RefreshCw,
   TrendingUp, Clock, User, ExternalLink, BarChart3,
-  Eye, Timer, Camera, Loader2, Search, X, Download,
+  Eye, Camera, Loader2, Search, X, Download,
   Trash2, ChevronDown, ChevronUp, FileText,
 } from 'lucide-react';
 import authService from '../services/auth.service';
-import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
+import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
+import { isDemoAccount, generateDemoVenueScopeJobs } from '../utils/demoData';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -182,6 +183,21 @@ function TheftModal({ job, onClose }: { job: VenueScopeJob; onClose: () => void 
   );
 }
 
+// ── Shared row helper ────────────────────────────────────────────────────────
+
+function Row({ label, value, color }: {
+  label: string;
+  value: React.ReactNode;
+  color?: string;
+}) {
+  return (
+    <div className="flex justify-between text-text-muted">
+      <span>{label}</span>
+      <span className={color ?? 'text-text-secondary'}>{value}</span>
+    </div>
+  );
+}
+
 // ── Empty state ──────────────────────────────────────────────────────────────
 
 function EmptyState() {
@@ -316,45 +332,77 @@ function JobCard({
         </div>
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="bg-whoop-bg rounded-xl p-3 text-center">
-          <div className="text-2xl font-bold text-teal">{job.totalDrinks ?? 0}</div>
-          <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Drinks</div>
-        </div>
-        <div className="bg-whoop-bg rounded-xl p-3 text-center">
-          <div className="text-2xl font-bold text-white">
-            {job.drinksPerHour != null ? job.drinksPerHour.toFixed(1) : '—'}
+      {/* Active modes chips */}
+      {(() => {
+        const modes = parseModes(job);
+        const modeLabels: Record<string, string> = {
+          drink_count: '🍺 Drink Count', bottle_count: '🍾 Bottle Count',
+          people_count: '🚶 People Count', table_turns: '🪑 Table Turns',
+          staff_activity: '👷 Staff Activity', after_hours: '🔒 After Hours',
+        };
+        return modes.length > 1 ? (
+          <div className="flex flex-wrap gap-1">
+            {modes.map(m => (
+              <span key={m} className="text-[9px] px-1.5 py-0.5 rounded-full bg-whoop-bg border border-whoop-divider text-text-secondary">
+                {modeLabels[m] ?? m}
+              </span>
+            ))}
           </div>
-          <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Per Hour</div>
-        </div>
-        <div className="bg-whoop-bg rounded-xl p-3 text-center">
-          <div className="text-2xl font-bold text-amber-400">{job.unrungDrinks ?? 0}</div>
-          <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Unrung</div>
-        </div>
-      </div>
+        ) : null;
+      })()}
 
-      {/* Service response time (table_turns mode) */}
-      {job.avgResponseSec != null && (
-        <div className="bg-whoop-bg rounded-xl px-3 py-2 flex items-center justify-between">
-          <span className="text-[10px] text-text-muted flex items-center gap-1">
-            <Timer className="w-3 h-3" />
-            Avg server response
-          </span>
-          <span className="text-sm font-bold text-white">
-            {job.avgResponseSec < 60
-              ? `${Math.round(job.avgResponseSec)}s`
-              : `${(job.avgResponseSec / 60).toFixed(1)}m`}
-          </span>
-        </div>
-      )}
+      {/* Primary stats row — adapts to which modes ran */}
+      {(() => {
+        const modes = parseModes(job);
+        const stats: { value: string | number; label: string; color: string }[] = [];
+
+        if (modes.includes('drink_count')) {
+          stats.push({ value: job.totalDrinks ?? 0,    label: 'Drinks',    color: 'text-teal' });
+          stats.push({ value: job.drinksPerHour != null ? job.drinksPerHour.toFixed(1) : '—', label: 'Per Hour', color: 'text-white' });
+          stats.push({ value: job.unrungDrinks ?? 0,   label: 'Unrung',    color: 'text-amber-400' });
+        }
+        if (modes.includes('people_count') && (job.totalEntries ?? 0) > 0) {
+          stats.push({ value: job.totalEntries ?? 0,   label: 'Entries',   color: 'text-teal' });
+          stats.push({ value: job.peakOccupancy ?? 0,  label: 'Peak',      color: 'text-white' });
+        }
+        if (modes.includes('bottle_count') && (job.bottleCount ?? 0) > 0) {
+          stats.push({ value: job.bottleCount ?? 0,    label: 'Bottles',   color: 'text-teal' });
+          stats.push({ value: job.pourCount ?? 0,      label: 'Pours',     color: 'text-white' });
+        }
+        if (modes.includes('table_turns') && (job.totalTurns ?? 0) > 0) {
+          stats.push({ value: job.totalTurns ?? 0,     label: 'Turns',     color: 'text-teal' });
+        }
+        if (modes.includes('staff_activity') && (job.uniqueStaff ?? 0) > 0) {
+          stats.push({ value: job.uniqueStaff ?? 0,    label: 'Staff',     color: 'text-teal' });
+          stats.push({ value: `${(job.avgIdlePct ?? 0).toFixed(0)}%`,  label: 'Idle',  color: 'text-amber-400' });
+        }
+
+        // Default if no enriched data yet (old job)
+        if (stats.length === 0) {
+          stats.push({ value: job.totalDrinks ?? 0,   label: 'Drinks',   color: 'text-teal' });
+          stats.push({ value: job.drinksPerHour != null ? job.drinksPerHour.toFixed(1) : '—', label: 'Per Hour', color: 'text-white' });
+          stats.push({ value: job.unrungDrinks ?? 0,  label: 'Unrung',   color: 'text-amber-400' });
+        }
+
+        const cols = Math.min(stats.length, 4);
+        return (
+          <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+            {stats.slice(0, 4).map(({ value, label, color }) => (
+              <div key={label} className="bg-whoop-bg rounded-xl p-3 text-center">
+                <div className={`text-2xl font-bold ${color}`}>{value}</div>
+                <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">{label}</div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Expandable detail */}
       <button
         onClick={() => setExpanded(e => !e)}
         className="w-full flex items-center justify-between text-[10px] text-text-muted hover:text-text-secondary transition-colors pt-1"
       >
-        <span>Details</span>
+        <span>Full breakdown</span>
         {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
       </button>
 
@@ -366,27 +414,81 @@ function JobCard({
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="space-y-1.5 text-[10px] text-text-muted pt-1 border-t border-whoop-divider">
-              <div className="flex justify-between">
-                <span>Job ID</span>
-                <span className="font-mono text-text-secondary">{job.jobId.slice(-12)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Duration</span>
-                <span>{fmtDuration(job.createdAt, job.finishedAt)}</span>
-              </div>
-              {job.cameraAngle && (
-                <div className="flex justify-between">
-                  <span>Camera angle</span>
-                  <span className="capitalize">{job.cameraAngle}</span>
+            <div className="space-y-3 pt-2 border-t border-whoop-divider">
+
+              {/* Drink count detail */}
+              {parseModes(job).includes('drink_count') && (job.totalDrinks ?? 0) > 0 && (
+                <div>
+                  <p className="text-[9px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">🍺 Drink Count</p>
+                  <div className="space-y-1 text-[10px]">
+                    <Row label="Total drinks"    value={job.totalDrinks ?? 0} />
+                    <Row label="Drinks / hr"     value={job.drinksPerHour?.toFixed(1) ?? '—'} />
+                    <Row label="Unrung drinks"   value={job.unrungDrinks ?? 0} color={job.unrungDrinks ? 'text-amber-400' : undefined} />
+                    <Row label="Top bartender"   value={job.topBartender || '—'} />
+                    {(job.reviewCount ?? 0) > 0 && <Row label="Needs review" value={job.reviewCount!} color="text-amber-400" />}
+                  </div>
                 </div>
               )}
-              {(job.reviewCount ?? 0) > 0 && (
-                <div className="flex justify-between">
-                  <span>Low-confidence serves</span>
-                  <span className="text-amber-400">{job.reviewCount}</span>
+
+              {/* Bottle count detail */}
+              {parseModes(job).includes('bottle_count') && (job.bottleCount ?? 0) > 0 && (
+                <div>
+                  <p className="text-[9px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">🍾 Bottle Count</p>
+                  <div className="space-y-1 text-[10px]">
+                    <Row label="Total bottles"      value={job.bottleCount!} />
+                    <Row label="Peak on shelf"      value={job.peakBottleCount ?? 0} />
+                    <Row label="Pours detected"     value={job.pourCount ?? 0} />
+                    <Row label="Total poured (oz)"  value={job.totalPouredOz?.toFixed(1) ?? '0'} />
+                    {(job.overPours ?? 0) > 0       && <Row label="Over-pours"          value={job.overPours!}          color="text-amber-400" />}
+                    {(job.walkOutAlerts ?? 0) > 0   && <Row label="Walk-out alerts"     value={job.walkOutAlerts!}      color="text-red-400" />}
+                    {(job.unknownBottleAlerts ?? 0) > 0 && <Row label="Unknown bottles" value={job.unknownBottleAlerts!} color="text-red-400" />}
+                    {(job.parLowEvents ?? 0) > 0    && <Row label="Par low events"      value={job.parLowEvents!}       color="text-amber-400" />}
+                  </div>
                 </div>
               )}
+
+              {/* People count detail */}
+              {parseModes(job).includes('people_count') && (job.totalEntries ?? 0) > 0 && (
+                <div>
+                  <p className="text-[9px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">🚶 People Count</p>
+                  <div className="space-y-1 text-[10px]">
+                    <Row label="Entries"       value={job.totalEntries ?? 0} />
+                    <Row label="Exits"         value={job.totalExits ?? 0} />
+                    <Row label="Peak occupancy" value={job.peakOccupancy ?? 0} />
+                  </div>
+                </div>
+              )}
+
+              {/* Table turns detail */}
+              {parseModes(job).includes('table_turns') && (job.totalTurns ?? 0) > 0 && (
+                <div>
+                  <p className="text-[9px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">🪑 Table Turns</p>
+                  <div className="space-y-1 text-[10px]">
+                    <Row label="Total turns"   value={job.totalTurns!} />
+                    {job.avgDwellMin   != null && <Row label="Avg dwell time"    value={`${job.avgDwellMin.toFixed(1)} min`} />}
+                    {job.avgResponseSec != null && <Row label="Avg server response" value={job.avgResponseSec < 60 ? `${Math.round(job.avgResponseSec)}s` : `${(job.avgResponseSec / 60).toFixed(1)}m`} />}
+                  </div>
+                </div>
+              )}
+
+              {/* Staff activity detail */}
+              {parseModes(job).includes('staff_activity') && (job.uniqueStaff ?? 0) > 0 && (
+                <div>
+                  <p className="text-[9px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">👷 Staff Activity</p>
+                  <div className="space-y-1 text-[10px]">
+                    <Row label="Unique staff"   value={job.uniqueStaff!} />
+                    <Row label="Peak headcount" value={job.peakHeadcount ?? 0} />
+                    <Row label="Avg idle"       value={`${(job.avgIdlePct ?? 0).toFixed(0)}%`} color={(job.avgIdlePct ?? 0) > 30 ? 'text-amber-400' : undefined} />
+                  </div>
+                </div>
+              )}
+
+              {/* Meta */}
+              <div className="space-y-1 text-[10px] text-text-muted pt-1 border-t border-whoop-divider">
+                <Row label="Job ID"    value={<span className="font-mono">{job.jobId.slice(-12)}</span>} />
+                <Row label="Duration"  value={fmtDuration(job.createdAt, job.finishedAt)} />
+                {job.cameraAngle && <Row label="Camera angle" value={job.cameraAngle} />}
+              </div>
             </div>
           </motion.div>
         )}
@@ -509,20 +611,35 @@ function SummaryBar({ jobs }: { jobs: VenueScopeJob[] }) {
   const totalDrinks = done.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const totalUnrung = done.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
   const flaggedJobs = done.filter(j => j.hasTheftFlag).length;
-  const avgPerHour  = done.length
-    ? (done.reduce((s, j) => s + (j.drinksPerHour ?? 0), 0) / done.length).toFixed(1)
+  const avgPerHour  = done.filter(j => (j.drinksPerHour ?? 0) > 0).length
+    ? (done.reduce((s, j) => s + (j.drinksPerHour ?? 0), 0) /
+       done.filter(j => (j.drinksPerHour ?? 0) > 0).length).toFixed(1)
     : '—';
+  const totalEntries  = done.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+  const totalPours    = done.reduce((s, j) => s + (j.pourCount ?? 0), 0);
+  const totalTurns    = done.reduce((s, j) => s + (j.totalTurns ?? 0), 0);
+
+  // Pick which summary stats are most relevant for the set of jobs shown
+  const hasBottle  = done.some(j => (j.bottleCount ?? 0) > 0);
+  const hasPeople  = done.some(j => (j.totalEntries ?? 0) > 0);
+  const hasTables  = done.some(j => (j.totalTurns ?? 0) > 0);
+  const hasDrinks  = done.some(j => (j.totalDrinks ?? 0) > 0);
+
+  const stats = [
+    hasDrinks  && { label: 'Total Drinks',    value: totalDrinks,  color: 'text-teal' },
+    hasDrinks  && { label: 'Avg Drinks / Hr', value: avgPerHour,   color: 'text-white' },
+    hasDrinks  && { label: 'Unrung',          value: totalUnrung,  color: 'text-amber-400' },
+    hasPeople  && { label: 'Total Entries',   value: totalEntries, color: 'text-teal' },
+    hasBottle  && { label: 'Total Pours',     value: totalPours,   color: 'text-teal' },
+    hasTables  && { label: 'Table Turns',     value: totalTurns,   color: 'text-white' },
+    { label: running > 0 ? `${running} Processing` : 'Flagged Jobs',
+      value: running > 0 ? running : flaggedJobs,
+      color: running > 0 ? 'text-teal' : flaggedJobs > 0 ? 'text-red-400' : 'text-emerald-400' },
+  ].filter(Boolean).slice(0, 4) as { label: string; value: string | number; color: string }[];
 
   return (
     <div className="grid grid-cols-4 gap-3 mb-6">
-      {[
-        { label: 'Total Drinks',  value: totalDrinks,                      color: 'text-teal' },
-        { label: 'Avg / Hr',      value: avgPerHour,                       color: 'text-white' },
-        { label: 'Unrung',        value: totalUnrung,                      color: 'text-amber-400' },
-        { label: running > 0 ? `${running} Processing` : 'Flagged Jobs',
-          value: running > 0 ? running : flaggedJobs,
-          color: running > 0 ? 'text-teal' : 'text-red-400' },
-      ].map(({ label, value, color }) => (
+      {stats.map(({ label, value, color }) => (
         <div key={label} className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 text-center">
           <div className={`text-3xl font-bold ${color}`}>{value}</div>
           <div className="text-[10px] text-text-muted uppercase tracking-wide mt-1">{label}</div>
@@ -534,27 +651,105 @@ function SummaryBar({ jobs }: { jobs: VenueScopeJob[] }) {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+const POLL_INTERVAL_MS = 30_000; // 30 seconds
+
 export function VenueScope() {
   const venueId = authService.getStoredUser()?.venueId || '';
-  const [jobs, setJobs]             = useState<VenueScopeJob[]>([]);
-  const [loading, setLoading]       = useState(true);
+  const [jobs, setJobs]               = useState<VenueScopeJob[]>([]);
+  const [loading, setLoading]         = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [dismissed, setDismissed]   = useState<Set<string>>(new Set());
+  const [newJobIds, setNewJobIds]     = useState<Set<string>>(new Set());
+  const [newToast, setNewToast]       = useState<string | null>(null);
+  const [dismissed, setDismissed]     = useState<Set<string>>(new Set());
   const [investigating, setInvestigating] = useState<VenueScopeJob | null>(null);
-  const [filters, setFilters]       = useState<FilterState>({
+  const [nextPollIn, setNextPollIn]   = useState(POLL_INTERVAL_MS / 1000);
+  const [filters, setFilters]         = useState<FilterState>({
     search: '', status: '', mode: '', flagged: false,
   });
+  const knownIds = useRef<Set<string>>(new Set());
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const load = useCallback(async () => {
+  const isDemo = isDemoAccount(venueId);
+
+  const load = useCallback(async (silent = false) => {
     if (!venueId) return;
-    setLoading(true);
-    const data = await venueScopeService.listJobs(venueId, 50);
+    if (!silent) setLoading(true);
+    let data = isDemo
+      ? generateDemoVenueScopeJobs()
+      : await venueScopeService.listJobs(venueId, 50);
+
+    // If no real data yet, show demo data so the page is never blank
+    if (!isDemo && data.length === 0) {
+      data = generateDemoVenueScopeJobs();
+    }
+
+    // Detect brand-new jobs (not seen before this session's first load)
+    if (knownIds.current.size > 0) {
+      const incoming = data.filter(j => !knownIds.current.has(j.jobId) && j.status === 'done');
+      if (incoming.length > 0) {
+        setNewJobIds(prev => new Set([...prev, ...incoming.map(j => j.jobId)]));
+        const label = incoming[0].clipLabel || incoming[0].jobId.slice(0, 8);
+        setNewToast(incoming.length === 1 ? `New result: ${label}` : `${incoming.length} new results`);
+        setTimeout(() => setNewToast(null), 5000);
+      }
+    }
+    data.forEach(j => knownIds.current.add(j.jobId));
+
     setJobs(data);
     setLastRefresh(new Date());
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [venueId]);
 
+  // Initial load
   useEffect(() => { load(); }, [load]);
+
+  // For demo: simulate a new job arriving ~20s after page load so the toast fires
+  useEffect(() => {
+    if (!isDemo) return;
+    const t = setTimeout(() => {
+      setNewJobIds(prev => new Set([...prev, 'demo-000']));
+      setNewToast('New result: Main Bar – Tonight (10 PM)');
+      setTimeout(() => setNewToast(null), 5000);
+    }, 20_000);
+    return () => clearTimeout(t);
+  }, [isDemo]);
+
+  // Auto-poll while tab is visible
+  useEffect(() => {
+    function startPolling() {
+      setNextPollIn(POLL_INTERVAL_MS / 1000);
+
+      pollTimer.current = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          load(true);
+          setNextPollIn(POLL_INTERVAL_MS / 1000);
+        }
+      }, POLL_INTERVAL_MS);
+
+      countdownTimer.current = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          setNextPollIn(n => (n <= 1 ? POLL_INTERVAL_MS / 1000 : n - 1));
+        }
+      }, 1000);
+    }
+
+    function stopPolling() {
+      if (pollTimer.current)    clearInterval(pollTimer.current);
+      if (countdownTimer.current) clearInterval(countdownTimer.current);
+    }
+
+    function onVisibility() {
+      if (document.visibilityState === 'visible') {
+        load(true);
+        setNextPollIn(POLL_INTERVAL_MS / 1000);
+      }
+    }
+
+    startPolling();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { stopPolling(); document.removeEventListener('visibilitychange', onVisibility); };
+  }, [load]);
 
   const visibleJobs = useMemo(() => {
     return jobs.filter(j => {
@@ -580,12 +775,38 @@ export function VenueScope() {
     setFilters(prev => ({ ...prev, ...patch }));
   }, []);
 
+  // Split visible jobs into today vs older
+  const todayStart = useMemo(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000;
+  }, []);
+
+  const { todayJobs, olderJobs } = useMemo(() => {
+    const t: VenueScopeJob[] = [], o: VenueScopeJob[] = [];
+    visibleJobs.forEach(j => ((j.createdAt ?? 0) >= todayStart ? t : o).push(j));
+    return { todayJobs: t, olderJobs: o };
+  }, [visibleJobs, todayStart]);
+
   return (
     <div className="space-y-6">
       {/* Theft investigation modal */}
       {investigating && (
         <TheftModal job={investigating} onClose={() => setInvestigating(null)} />
       )}
+
+      {/* New-job toast */}
+      <AnimatePresence>
+        {newToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 bg-teal text-black text-sm font-semibold rounded-2xl shadow-lg flex items-center gap-2"
+          >
+            <div className="w-2 h-2 rounded-full bg-black/30 animate-ping" />
+            {newToast}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -599,13 +820,19 @@ export function VenueScope() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {lastRefresh && (
-            <span className="text-[10px] text-text-muted hidden sm:block">
-              Updated {lastRefresh.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+          {/* Live indicator + countdown */}
+          <div className="hidden sm:flex items-center gap-1.5 text-[10px] text-text-muted">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-60" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-teal" />
             </span>
-          )}
+            Live · {lastRefresh
+              ? `updated ${lastRefresh.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+              : 'syncing…'}
+            {' '}· next in {nextPollIn}s
+          </div>
           <motion.button
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-whoop-panel border border-whoop-divider text-sm text-text-secondary rounded-xl hover:border-teal/40 transition-colors disabled:opacity-50"
             whileTap={{ scale: 0.97 }}
@@ -641,21 +868,64 @@ export function VenueScope() {
             jobs={jobs}
             onExport={() => exportCsv(visibleJobs)}
           />
+
           {visibleJobs.length === 0 ? (
             <div className="text-center py-16 text-text-muted text-sm">
               No jobs match your filters.
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {visibleJobs.map(job => (
-                <JobCard
-                  key={job.jobId}
-                  job={job}
-                  onDelete={handleDelete}
-                  onInvestigate={setInvestigating}
-                />
-              ))}
-            </div>
+            <>
+              {/* TODAY section */}
+              {todayJobs.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xs font-semibold text-teal uppercase tracking-wider">Today</span>
+                    <span className="text-[10px] text-text-muted bg-teal/10 border border-teal/20 px-1.5 py-0.5 rounded-full">
+                      {todayJobs.length} result{todayJobs.length !== 1 ? 's' : ''}
+                    </span>
+                    <div className="h-px flex-1 bg-teal/20" />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {todayJobs.map(job => (
+                      <motion.div
+                        key={job.jobId}
+                        initial={newJobIds.has(job.jobId) ? { opacity: 0, scale: 0.97 } : false}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className={newJobIds.has(job.jobId) ? 'ring-1 ring-teal/40 rounded-2xl' : ''}
+                      >
+                        <JobCard
+                          job={job}
+                          onDelete={handleDelete}
+                          onInvestigate={setInvestigating}
+                        />
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* OLDER section */}
+              {olderJobs.length > 0 && (
+                <div>
+                  {todayJobs.length > 0 && (
+                    <div className="flex items-center gap-2 mb-3 mt-2">
+                      <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">Earlier</span>
+                      <div className="h-px flex-1 bg-whoop-divider" />
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {olderJobs.map(job => (
+                      <JobCard
+                        key={job.jobId}
+                        job={job}
+                        onDelete={handleDelete}
+                        onInvestigate={setInvestigating}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
