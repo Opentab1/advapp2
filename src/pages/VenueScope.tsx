@@ -212,18 +212,9 @@ function EmptyState() {
           <Video className="w-7 h-7 text-teal" />
         </div>
         <h2 className="text-white font-semibold mb-2">No results yet</h2>
-        <p className="text-sm text-text-secondary mb-5">
-          Process your first video in the VenueScope app on your Mac, then results will appear here automatically.
+        <p className="text-sm text-text-secondary">
+          Results will appear here automatically once your first video is processed.
         </p>
-        <a
-          href="http://localhost:8501"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-teal/10 border border-teal/30 text-teal text-sm font-medium rounded-xl hover:bg-teal/20 transition-colors"
-        >
-          <ExternalLink className="w-4 h-4" />
-          Open VenueScope on this Mac
-        </a>
       </motion.div>
     </div>
   );
