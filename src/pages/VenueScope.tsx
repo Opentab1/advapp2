@@ -679,11 +679,6 @@ export function VenueScope() {
       ? generateDemoVenueScopeJobs()
       : await venueScopeService.listJobs(venueId, 50);
 
-    // If no real data yet, show demo data so the page is never blank
-    if (!isDemo && data.length === 0) {
-      data = generateDemoVenueScopeJobs();
-    }
-
     // Detect brand-new jobs (not seen before this session's first load)
     if (knownIds.current.size > 0) {
       const incoming = data.filter(j => !knownIds.current.has(j.jobId) && j.status === 'done');
