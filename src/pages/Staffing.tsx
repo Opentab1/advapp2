@@ -7,6 +7,7 @@ import {
 import { format, parseISO, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks } from 'date-fns';
 import dynamoDBService from '../services/dynamodb.service';
 import authService from '../services/auth.service';
+import venueScopeService from '../services/venuescope.service';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { CSVImport } from '../components/common/CSVImport';
 import { isDemoAccount } from '../utils/demoData';
@@ -323,8 +324,59 @@ export function Staffing() {
     try {
       // Get 30 days of sensor data
       const data = await dynamoDBService.getHistoricalSensorData(venueId, '30d');
+
+      // VenueScope fallback — use job data when no IoT sensor
       if (!data?.data?.length) {
-        setPerformance([]);
+        const vsJobs = await venueScopeService.listJobs(venueId, 100);
+        const doneJobs = vsJobs.filter(j => j.status === 'done' && j.finishedAt);
+        if (!doneJobs.length) { setPerformance([]); return; }
+
+        const perfMap = new Map<string, { shifts: number; totalDrinks: number; totalDph: number }>();
+        staffList.forEach(s => perfMap.set(s.id, { shifts: 0, totalDrinks: 0, totalDph: 0 }));
+
+        shiftList.forEach(shift => {
+          const shiftStart = new Date(`${shift.date}T${shift.startTime}`).getTime() / 1000;
+          const shiftEnd   = new Date(`${shift.date}T${shift.endTime}`).getTime() / 1000;
+          const matching   = doneJobs.filter(j => j.createdAt >= shiftStart && j.createdAt <= shiftEnd);
+          if (matching.length && perfMap.has(shift.staffId)) {
+            const p = perfMap.get(shift.staffId)!;
+            p.shifts++;
+            p.totalDrinks += matching.reduce((s, j) => s + (j.totalDrinks || 0), 0);
+            p.totalDph    += matching.reduce((s, j) => s + (j.drinksPerHour || 0), 0) / matching.length;
+          }
+        });
+
+        // If no shift matches, attribute all jobs to bartenders proportionally
+        if ([...perfMap.values()].every(p => p.shifts === 0)) {
+          const bartenders = staffList.filter(s => s.role === 'bartender');
+          const targets = bartenders.length ? bartenders : staffList;
+          const totalDrinks = doneJobs.reduce((s, j) => s + (j.totalDrinks || 0), 0);
+          const avgDph = doneJobs.reduce((s, j) => s + (j.drinksPerHour || 0), 0) / doneJobs.length;
+          targets.forEach(s => {
+            const p = perfMap.get(s.id)!;
+            p.shifts = doneJobs.length;
+            p.totalDrinks = Math.round(totalDrinks / targets.length);
+            p.totalDph = avgDph;
+          });
+        }
+
+        const perfArray: StaffPerformance[] = [];
+        staffList.forEach(s => {
+          const p = perfMap.get(s.id);
+          if (p && p.shifts > 0) {
+            const avgDrinks = Math.round(p.totalDrinks / p.shifts);
+            const avgDph    = p.totalDph / p.shifts;
+            const score     = Math.min(100, Math.round((avgDph / 30) * 60 + (avgDrinks / 20) * 40));
+            perfArray.push({
+              staffId: s.id, staffName: s.name, role: s.role,
+              shiftsWorked: p.shifts, avgGuestsPerShift: avgDrinks,
+              avgStayTime: 45, avgOccupancy: Math.round(avgDph),
+              performanceScore: score,
+            });
+          }
+        });
+        perfArray.sort((a, b) => b.performanceScore - a.performanceScore);
+        setPerformance(perfArray);
         return;
       }
 
