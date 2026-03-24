@@ -76,11 +76,17 @@ const LIST_JOBS_QUERY = `
   query ListVenueScopeJobs($venueId: ID!, $limit: Int, $nextToken: String) {
     listVenueScopeJobs(venueId: $venueId, limit: $limit, nextToken: $nextToken) {
       items {
-        venueId jobId clipLabel analysisMode
+        venueId jobId clipLabel analysisMode activeModes
         totalDrinks drinksPerHour topBartender
         confidenceScore confidenceLabel confidenceColor
         hasTheftFlag unrungDrinks cameraLabel
-        createdAt finishedAt status s3ClipKey
+        createdAt finishedAt status s3ClipKey summaryS3Key
+        progressPct statusMsg updatedAt cameraAngle reviewCount
+        bottleCount peakBottleCount pourCount totalPouredOz
+        overPours walkOutAlerts unknownBottleAlerts parLowEvents
+        totalEntries totalExits peakOccupancy
+        totalTurns avgResponseSec avgDwellMin
+        uniqueStaff peakHeadcount avgIdlePct
       }
       nextToken
     }
