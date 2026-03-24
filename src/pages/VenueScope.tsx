@@ -701,11 +701,13 @@ export function VenueScope() {
   const isDemo = isDemoAccount(venueId);
 
   const load = useCallback(async (silent = false) => {
-    if (!venueId) return;
+    console.log('[VenueScope] load() venueId=', venueId, 'isDemo=', isDemo);
+    if (!venueId) { console.warn('[VenueScope] no venueId — skipping query'); return; }
     if (!silent) setLoading(true);
     let data = isDemo
       ? generateDemoVenueScopeJobs()
       : await venueScopeService.listJobs(venueId, 50);
+    console.log('[VenueScope] listJobs returned', data.length, 'items');
 
     // Detect brand-new jobs (not seen before this session's first load)
     if (knownIds.current.size > 0) {
