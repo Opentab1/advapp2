@@ -56,6 +56,10 @@ interface TonightsPlaybookProps {
   drinksPerHour?: number | null;
   hasTheftFlag?: boolean;
   retentionRate?: number | null;
+  pulseScore?: number | null;
+  dayOfWeek?: string;
+  currentHourLabel?: string;
+  historicalDrop?: number | null;
 }
 
 export function TonightsPlaybook({
@@ -69,6 +73,10 @@ export function TonightsPlaybook({
   drinksPerHour,
   hasTheftFlag,
   retentionRate,
+  pulseScore,
+  dayOfWeek,
+  currentHourLabel,
+  historicalDrop,
 }: TonightsPlaybookProps) {
   const [completedActions, setCompletedActions] = useState<Set<string>>(new Set());
 
@@ -249,11 +257,12 @@ export function TonightsPlaybook({
       }
 
       if (drinksPerHour != null && drinksPerHour > 35) {
+        const overBy = Math.round(((drinksPerHour - 35) / 35) * 100);
         actions.push({
           id: 'vs-rush',
           timeLabel: 'RIGHT NOW',
           title: `Bar running hot — ${drinksPerHour.toFixed(0)} drinks/hr`,
-          description: 'Drink rate is elevated. Consider calling extra staff before the queue builds.',
+          description: `${overBy}% above a typical peak rate${dayOfWeek ? ` for ${dayOfWeek}` : ''}. Call extra staff now before the queue builds.`,
           icon: 'crowd',
           status: 'current',
         });
@@ -264,7 +273,7 @@ export function TonightsPlaybook({
           id: 'vs-retention',
           timeLabel: 'RIGHT NOW',
           title: 'Guests leaving early',
-          description: `${retentionRate}% of tonight's guests are still here. Try a promo or energy boost.`,
+          description: `Only ${retentionRate}% of tonight's guests are still here${currentHourLabel ? ` at ${currentHourLabel}` : ''}. Try a promo, announce last call for specials, or raise the energy.`,
           icon: 'alert',
           status: 'current',
         });
@@ -318,26 +327,29 @@ export function TonightsPlaybook({
     const soundImpact = getPatternImpact('sound');
     const lightImpact = getPatternImpact('light');
 
+    const timeContext = [currentHourLabel, dayOfWeek].filter(Boolean).join(' on ');
+    const dropContext = historicalDrop && historicalDrop > 5 ? `, crowd is down ${historicalDrop}% vs usual` : '';
+
     if (soundStatus === 'good') {
-      actions.push({ id: 'sound-good', timeLabel: 'RIGHT NOW', title: 'Sound is perfect', description: `${currentDecibels}dB is ideal ${contextLabel}. Keep it here.`, icon: 'sound', status: 'current' });
+      actions.push({ id: 'sound-good', timeLabel: 'RIGHT NOW', title: 'Sound is perfect', description: `${Math.round(currentDecibels)}dB is right in the sweet spot ${contextLabel}. Keep it here.`, icon: 'sound', status: 'current' });
     } else if (soundStatus === 'high') {
       const overBy = Math.round(currentDecibels - ranges.sound.max);
-      actions.push({ id: 'sound-high', timeLabel: 'RIGHT NOW', title: 'Sound too loud', description: `${currentDecibels}dB is ${overBy}dB over optimal ${contextLabel}. Lower volume.`, icon: 'alert', status: 'current', impact: soundImpact });
+      actions.push({ id: 'sound-high', timeLabel: 'RIGHT NOW', title: 'Sound too loud', description: `${Math.round(currentDecibels)}dB is ${overBy}dB over target${timeContext ? ` for ${timeContext}` : ''}. Lower to ${ranges.sound.min}–${ranges.sound.max}dB — above ${ranges.sound.max}dB guests start leaving earlier.`, icon: 'alert', status: 'current', impact: soundImpact });
     } else {
       const underBy = Math.round(ranges.sound.min - currentDecibels);
-      actions.push({ id: 'sound-low', timeLabel: 'RIGHT NOW', title: 'Boost the energy', description: `${currentDecibels}dB is ${underBy}dB under optimal ${contextLabel}. Raise volume.`, icon: 'sound', status: 'current', impact: soundImpact });
+      actions.push({ id: 'sound-low', timeLabel: 'RIGHT NOW', title: 'Boost the energy', description: `${Math.round(currentDecibels)}dB is ${underBy}dB below target${timeContext ? ` for ${timeContext}` : ''}${dropContext}. Raise volume to ${ranges.sound.min}–${ranges.sound.max}dB.`, icon: 'sound', status: 'current', impact: soundImpact });
     }
 
     if (lightStatus === 'bright' && !isDaytime) {
-      actions.push({ id: 'light-dim', timeLabel: 'RIGHT NOW', title: 'Dim the lights', description: `${currentLight}% is too bright ${contextLabel}. Target ${ranges.light.min}-${ranges.light.max}%.`, icon: 'light', status: 'current', impact: lightImpact });
+      actions.push({ id: 'light-dim', timeLabel: 'RIGHT NOW', title: 'Dim the lights', description: `${Math.round(currentLight)}% brightness is too high ${contextLabel}. Target ${ranges.light.min}–${ranges.light.max}% — bright lights reduce dwell time at night.`, icon: 'light', status: 'current', impact: lightImpact });
     } else if (lightStatus === 'dim' && isDaytime) {
-      actions.push({ id: 'light-bright', timeLabel: 'RIGHT NOW', title: 'Brighten up', description: `${currentLight}% is too dim for daytime. Target ${ranges.light.min}-${ranges.light.max}%.`, icon: 'light', status: 'current', impact: lightImpact });
+      actions.push({ id: 'light-bright', timeLabel: 'RIGHT NOW', title: 'Brighten up', description: `${Math.round(currentLight)}% is too dim for daytime. Raise to ${ranges.light.min}–${ranges.light.max}% to keep the space inviting.`, icon: 'light', status: 'current', impact: lightImpact });
     }
 
     if (peakPrediction && peakPrediction.minutesUntil > 0 && peakPrediction.minutesUntil < 120) {
       const timeLabel = peakPrediction.minutesUntil <= 30 ? 'SOON' : `IN ${peakPrediction.minutesUntil} MIN`;
       const expectedIncrease = peakPrediction.expectedOccupancy - currentOccupancy;
-      actions.push({ id: 'peak-prep', timeLabel, title: 'Peak hour approaching', description: `Based on past weeks, ${peakPrediction.hour} is typically your busiest.`, icon: 'opportunity', status: 'upcoming', impact: expectedIncrease > 0 ? `~${expectedIncrease} more guests expected` : undefined });
+      actions.push({ id: 'peak-prep', timeLabel, title: 'Rush hour approaching', description: `Based on past weeks, ${peakPrediction.hour} is typically your busiest${dayOfWeek ? ` on ${dayOfWeek}` : ''}. Stock ice, garnishes, and bar tools now.`, icon: 'opportunity', status: 'upcoming', impact: expectedIncrease > 0 ? `~${expectedIncrease} more guests expected` : undefined });
     }
 
     smartActions.slice(0, 2).forEach((action, idx) => {

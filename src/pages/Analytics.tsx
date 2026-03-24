@@ -78,6 +78,7 @@ export function Analytics() {
   
   const [timeRange, setTimeRange] = useState<InsightsTimeRange>('7d');
   const [showRawData, setShowRawData] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   
   const insights = useInsightsData(timeRange);
   
@@ -331,14 +332,36 @@ export function Analytics() {
             </motion.div>
           )}
           
+          {/* View Details toggle */}
+          {!insights.loading && (
+            <div className="flex justify-center">
+              <button
+                onClick={() => setShowDetails(d => !d)}
+                className="flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:text-white border border-whoop-divider rounded-xl hover:border-teal/40 transition-colors"
+              >
+                {showDetails ? 'Hide details' : 'View details'}
+                <ChevronDown className={`w-4 h-4 transition-transform ${showDetails ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+          )}
+
+          <AnimatePresence>
+          {showDetails && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="space-y-6"
+          >
+
           {/* Guest Trend Chart */}
-          <GuestsTrend 
+          <GuestsTrend
             data={rawSensorData as any}
             loading={insights.loading}
           />
-          
+
           {/* Daily Breakdown Table */}
-          <DailyBreakdown 
+          <DailyBreakdown
             data={rawSensorData as any}
             loading={insights.loading}
           />
@@ -691,11 +714,11 @@ export function Analytics() {
           </motion.div>
           
           {/* Raw Metrics - entries, exits, dB, lux, score, top songs */}
-          <RawMetrics 
+          <RawMetrics
             data={rawSensorData as any}
             loading={insights.loading}
           />
-          
+
           {/* Environmental Summary */}
           <EnvironmentalSummary
             data={rawSensorData as any}
@@ -710,6 +733,10 @@ export function Analytics() {
 
           {/* Weekly report download + schedule */}
           <WeeklyReportSection />
+
+          </motion.div>
+          )}
+          </AnimatePresence>
 
         </div>
       </PullToRefresh>

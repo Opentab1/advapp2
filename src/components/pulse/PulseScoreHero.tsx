@@ -12,13 +12,14 @@ interface PulseScoreHeroProps {
   score: number | null;
   statusLabel: string;
   onTap: () => void;
+  contextSentence?: string;
 }
 
-export function PulseScoreHero({ score, statusLabel, onTap }: PulseScoreHeroProps) {
+export function PulseScoreHero({ score, statusLabel, onTap, contextSentence }: PulseScoreHeroProps) {
   const color = getScoreColor(score);
-  
+
   return (
-    <div className="flex justify-center">
+    <div className="flex flex-col items-center">
       <Ring
         score={score}
         label="Pulse Score"
@@ -28,6 +29,11 @@ export function PulseScoreHero({ score, statusLabel, onTap }: PulseScoreHeroProp
         onClick={onTap}
         showHint
       />
+      {contextSentence && (
+        <p className="text-xs text-text-secondary text-center mt-2 max-w-[240px] leading-relaxed">
+          {contextSentence}
+        </p>
+      )}
     </div>
   );
 }

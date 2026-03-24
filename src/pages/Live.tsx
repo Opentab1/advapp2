@@ -13,7 +13,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Zap } from 'lucide-react';
+import { Zap, CheckCircle2, Circle, X, AlertTriangle, Wifi } from 'lucide-react';
 
 // Components
 import { PulseScoreHero } from '../components/pulse/PulseScoreHero';
@@ -81,6 +81,11 @@ export function Live() {
   // Modal state
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [showNightReport, setShowNightReport] = useState(false);
+
+  // Setup guide dismiss state (resets each session)
+  const [setupDismissed, setSetupDismissed] = useState(
+    () => sessionStorage.getItem('setup_guide_dismissed') === '1'
+  );
   
   // Celebration state
   const [celebration, setCelebration] = useState<CelebrationState>({
@@ -168,6 +173,32 @@ export function Live() {
   // Crowd ring now shows retention rate (% of tonight's guests still here)
   // This is 100% accurate from raw entry/exit data
   const crowdScore = pulseData.retentionMetrics.retentionRate;
+
+  // ── Pulse score context sentence ──────────────────────────────────────────
+  const now = new Date();
+  const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+  const hourLabel = now.toLocaleString('en-US', { hour: 'numeric', hour12: true }).toLowerCase();
+  const isWeekendPeak = (now.getDay() === 5 || now.getDay() === 6) && now.getHours() >= 20;
+
+  const pulseContextSentence = (() => {
+    const score = pulseData.pulseScore;
+    if (score === null) return undefined;
+    const prox = pulseData.proximityToBest;
+    const best = pulseData.bestNight;
+    if (pulseData.isUsingHistoricalData && best && prox !== null) {
+      if (prox >= 90) return `On track to match your best ${best.dayOfWeek ?? dayName}.`;
+      if (prox >= 70) return `Close to your best ${best.dayOfWeek ?? dayName} — keep it going.`;
+      if (prox < 50)  return `Quieter than your usual ${dayName} at this hour.`;
+    }
+    if (score >= 80 && isWeekendPeak) return `Strong ${dayName} night so far.`;
+    if (score < 50 && now.getHours() >= 20) return `Below where you want to be for ${hourLabel} on a ${dayName}.`;
+    return undefined;
+  })();
+
+  // ── Context for playbook ──────────────────────────────────────────────────
+  const historicalDrop = pulseData.proximityToBest !== null
+    ? Math.round(100 - pulseData.proximityToBest)
+    : null;
   
   // ============ HANDLERS ============
   
@@ -199,7 +230,79 @@ export function Live() {
   return (
     <PullToRefresh onRefresh={handleRefresh} disabled={pulseData.loading}>
       <div className="space-y-5">
-      
+
+      {/* ── Alert banners ── */}
+      {pulseData.hasTheftFlag && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-start gap-3 px-4 py-3 bg-red-500/15 border border-red-500/30 rounded-2xl"
+        >
+          <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-red-300">Theft flag detected</p>
+            <p className="text-xs text-red-400/80 mt-0.5">VenueScope flagged unrung drinks in a recent shift. Check the VenueScope tab to review.</p>
+          </div>
+        </motion.div>
+      )}
+
+      {!pulseData.isConnected && pulseData.sensorData !== null && pulseData.dataAgeSeconds > 300 && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-start gap-3 px-4 py-3 bg-amber-500/15 border border-amber-500/30 rounded-2xl"
+        >
+          <Wifi className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-amber-300">Sensor offline</p>
+            <p className="text-xs text-amber-400/80 mt-0.5">Last data received {Math.round(pulseData.dataAgeSeconds / 60)} min ago. Check your device connection.</p>
+          </div>
+        </motion.div>
+      )}
+
+      {/* ── Setup guide ── */}
+      {!setupDismissed && (() => {
+        const hasSensor  = !!pulseData.sensorData;
+        const hasVS      = pulseData.hasVenueScopeData;
+        const hasReviews = !!pulseData.reviews;
+        if (hasSensor && hasVS && hasReviews) return null;
+        return (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-warm-800 border border-warm-700 rounded-2xl p-4"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-semibold text-white">Getting started</p>
+              <button
+                onClick={() => { setSetupDismissed(true); sessionStorage.setItem('setup_guide_dismissed', '1'); }}
+                className="text-warm-500 hover:text-warm-300"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2">
+              {[
+                { done: hasSensor,  label: 'Sensor device connected',     sub: 'Live sound, light, and occupancy data' },
+                { done: hasVS,      label: 'VenueScope job processed',     sub: 'CCTV-based drink counting and theft detection' },
+                { done: hasReviews, label: 'Google Reviews linked',        sub: 'Reputation score and review tracking' },
+              ].map(({ done, label, sub }) => (
+                <div key={label} className="flex items-start gap-3">
+                  {done
+                    ? <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
+                    : <Circle className="w-4 h-4 text-warm-600 mt-0.5 flex-shrink-0" />
+                  }
+                  <div>
+                    <p className={`text-sm font-medium ${done ? 'text-warm-400 line-through' : 'text-white'}`}>{label}</p>
+                    {!done && <p className="text-xs text-warm-500 mt-0.5">{sub}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        );
+      })()}
+
       {/* Daily Context + Learning Indicator */}
       <div className="flex items-start justify-between gap-3">
         <DailyContext 
@@ -228,6 +331,7 @@ export function Live() {
           score={pulseData.pulseScore}
           statusLabel={pulseData.pulseStatusLabel}
           onTap={() => setActiveModal('pulse')}
+          contextSentence={pulseContextSentence}
         />
       </motion.div>
       
@@ -261,6 +365,10 @@ export function Live() {
           drinksPerHour={pulseData.drinksPerHour}
           hasTheftFlag={pulseData.hasTheftFlag}
           retentionRate={pulseData.retentionMetrics.retentionRate}
+          pulseScore={pulseData.pulseScore}
+          dayOfWeek={dayName}
+          currentHourLabel={hourLabel}
+          historicalDrop={historicalDrop}
         />
       </motion.div>
       

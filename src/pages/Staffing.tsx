@@ -832,7 +832,13 @@ export function Staffing() {
                               <div className={`text-lg font-bold ${perf.performanceScore >= 70 ? 'text-emerald-400' : perf.performanceScore >= 40 ? 'text-amber-400' : 'text-red-400'}`}>
                                 {perf.performanceScore}
                               </div>
-                              <div className="text-xs text-warm-400">Score</div>
+                              <div className="w-full bg-warm-700 rounded-full h-1.5 mt-1">
+                                <div
+                                  className={`h-1.5 rounded-full ${perf.performanceScore >= 70 ? 'bg-emerald-400' : perf.performanceScore >= 40 ? 'bg-amber-400' : 'bg-red-400'}`}
+                                  style={{ width: `${perf.performanceScore}%` }}
+                                />
+                              </div>
+                              <div className="text-xs text-warm-400 mt-0.5">Score</div>
                             </div>
                           </div>
                         </motion.div>
@@ -840,10 +846,16 @@ export function Staffing() {
                     </div>
                   </div>
                   
-                  <div className="glass-card p-4 border-l-4 border-primary">
-                    <p className="text-sm text-warm-400">
-                      <strong className="text-white">How scores are calculated:</strong> Performance scores combine average guest counts and occupancy levels during each staff member's shifts. Higher scores indicate shifts with more guests and better crowd retention.
+                  <div className="glass-card p-4 space-y-2">
+                    <p className="text-sm font-semibold text-white">How the score works</p>
+                    <p className="text-xs text-warm-400">
+                      Score = avg guests during their shifts (50pts) + avg occupancy % during their shifts (50pts). It reflects how busy the venue was when each person worked — not individual actions.
                     </p>
+                    <div className="flex gap-4 pt-1">
+                      <span className="text-xs text-emerald-400">70–100: Strong night</span>
+                      <span className="text-xs text-amber-400">40–69: Average</span>
+                      <span className="text-xs text-red-400">0–39: Slow shift</span>
+                    </div>
                   </div>
                 </>
               )}

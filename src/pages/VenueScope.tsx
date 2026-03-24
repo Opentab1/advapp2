@@ -198,6 +198,43 @@ function Row({ label, value, color }: {
   );
 }
 
+// ── Weekly story summary ──────────────────────────────────────────────────────
+
+function WeeklyStorySummary({ jobs }: { jobs: VenueScopeJob[] }) {
+  const weekAgo = Date.now() / 1000 - 7 * 86400;
+  const weekJobs = jobs.filter(j => j.status === 'done' && (j.createdAt ?? 0) >= weekAgo);
+  if (weekJobs.length === 0) return null;
+
+  const totalDrinks = weekJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
+  const totalUnrung = weekJobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
+  const hasTheft    = weekJobs.some(j => j.hasTheftFlag);
+  const busiest     = weekJobs.reduce((best, j) =>
+    (j.totalDrinks ?? 0) > (best?.totalDrinks ?? 0) ? j : best, weekJobs[0]);
+  const busiestLabel = busiest?.clipLabel?.replace(/\.[^/.]+$/, '') || busiest?.jobId?.slice(-8) || '—';
+  const theftRisk   = hasTheft ? 'High ⚠️' : totalUnrung > 2 ? 'Medium' : 'Low ✓';
+  const theftColor  = hasTheft ? 'text-red-400' : totalUnrung > 2 ? 'text-amber-400' : 'text-emerald-400';
+
+  const parts: string[] = [];
+  if (totalDrinks > 0) parts.push(`${totalDrinks} drinks counted`);
+  if (totalUnrung > 0) parts.push(`${totalUnrung} unrung`);
+  const narrative = parts.length > 0
+    ? `This week: ${parts.join(', ')}. Busiest clip: ${busiestLabel}.`
+    : `${weekJobs.length} job${weekJobs.length !== 1 ? 's' : ''} processed this week.`;
+
+  return (
+    <div className="bg-teal/10 border border-teal/20 rounded-2xl px-4 py-3 flex items-start gap-3">
+      <TrendingUp className="w-4 h-4 text-teal mt-0.5 flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-text-secondary leading-relaxed">
+          {narrative}{' '}
+          <span className="text-text-muted">Theft risk: </span>
+          <span className={`font-medium ${theftColor}`}>{theftRisk}</span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Empty state ──────────────────────────────────────────────────────────────
 
 function EmptyState() {
@@ -838,6 +875,7 @@ export function VenueScope() {
         <EmptyState />
       ) : (
         <>
+          <WeeklyStorySummary jobs={jobs} />
           <SummaryBar jobs={visibleJobs} />
           <FilterBar
             filters={filters}
