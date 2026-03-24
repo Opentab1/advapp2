@@ -826,15 +826,6 @@ export function VenueScope() {
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </motion.button>
-          <a
-            href="http://localhost:8501"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal/10 border border-teal/30 text-teal text-sm font-medium rounded-xl hover:bg-teal/20 transition-colors"
-          >
-            <TrendingUp className="w-3.5 h-3.5" />
-            Process Video
-          </a>
         </div>
       </div>
 
