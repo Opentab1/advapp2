@@ -97,10 +97,8 @@ const venueScopeService = {
       }) as { data: { listVenueScopeJobs: JobConnection } };
       const items = result?.data?.listVenueScopeJobs?.items ?? [];
       return [...items].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-    } catch (err: any) {
-      console.error('[venuescope] listJobs failed:', JSON.stringify(err, null, 2));
-      console.error('[venuescope] errors array:', err?.errors);
-      console.error('[venuescope] message:', err?.message);
+    } catch (err) {
+      console.warn('[venuescope] listJobs failed:', err);
       return [];
     }
   },
