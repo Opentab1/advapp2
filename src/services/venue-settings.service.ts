@@ -32,6 +32,7 @@ export interface VenueAddress {
 export interface VenueSettings {
   address?: VenueAddress;
   capacity?: number;  // Max capacity of the venue
+  avgDrinkPrice?: number;  // Average drink price in dollars (for theft loss estimates)
   lastUpdated?: string;
 }
 
@@ -358,6 +359,25 @@ class VenueSettingsService {
   async loadCapacityFromCloud(venueId: string): Promise<number | null> {
     const settings = await this.loadSettingsFromCloud(venueId);
     return settings?.capacity ?? null;
+  }
+
+  // ============ DRINK PRICE METHODS ============
+
+  /**
+   * Get average drink price (default $12 if not set)
+   */
+  getAvgDrinkPrice(venueId: string): number {
+    if (isDemoAccount(venueId)) return 12;
+    const settings = this.getSettings(venueId);
+    return settings?.avgDrinkPrice ?? 12;
+  }
+
+  /**
+   * Save average drink price to AWS
+   */
+  async saveAvgDrinkPrice(venueId: string, price: number): Promise<boolean> {
+    const existing = this.getSettings(venueId) || {};
+    return this.saveSettingsToCloud(venueId, { ...existing, avgDrinkPrice: price });
   }
 
   // ============ INITIALIZATION ============

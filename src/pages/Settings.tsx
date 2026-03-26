@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Key, MapPin, Check, Building2,
-  User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell
+  User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell, DollarSign
 } from 'lucide-react';
 import alertsService, { AlertPreferences } from '../services/alerts.service';
 import authService from '../services/auth.service';
@@ -25,27 +25,35 @@ export function Settings() {
   const [capacity, setCapacity] = useState<number | ''>('');
   const [capacitySaving, setCapacitySaving] = useState(false);
   const [capacitySaved, setCapacitySaved] = useState(false);
+  const [avgDrinkPrice, setAvgDrinkPrice] = useState<number | ''>('');
+  const [drinkPriceSaving, setDrinkPriceSaving] = useState(false);
+  const [drinkPriceSaved, setDrinkPriceSaved] = useState(false);
   const user = authService.getStoredUser();
   
   // Use display name (custom name if set by admin, otherwise venueId/venueName)
   const { displayName } = useDisplayName();
 
   useEffect(() => {
-    // Load saved address and capacity
+    // Load saved address, capacity, and drink price
     if (user?.venueId) {
       const address = venueSettingsService.getAddress(user.venueId);
       setSavedAddress(address);
-      
+
       const savedCapacity = venueSettingsService.getCapacity(user.venueId);
       if (savedCapacity) {
         setCapacity(savedCapacity);
       }
+
+      venueSettingsService.loadSettingsFromCloud(user.venueId).then(s => {
+        if (s?.avgDrinkPrice) setAvgDrinkPrice(s.avgDrinkPrice);
+        else setAvgDrinkPrice(12);
+      });
     }
   }, [user?.venueId]);
 
   const handleSaveCapacity = async () => {
     if (!user?.venueId || !capacity) return;
-    
+
     setCapacitySaving(true);
     try {
       await venueSettingsService.saveCapacity(user.venueId, Number(capacity));
@@ -56,6 +64,22 @@ export function Settings() {
       console.error('Failed to save capacity:', error);
     } finally {
       setCapacitySaving(false);
+    }
+  };
+
+  const handleSaveDrinkPrice = async () => {
+    if (!user?.venueId || avgDrinkPrice === '') return;
+
+    setDrinkPriceSaving(true);
+    try {
+      await venueSettingsService.saveAvgDrinkPrice(user.venueId, Number(avgDrinkPrice));
+      haptic('success');
+      setDrinkPriceSaved(true);
+      setTimeout(() => setDrinkPriceSaved(false), 3000);
+    } catch (error) {
+      console.error('Failed to save drink price:', error);
+    } finally {
+      setDrinkPriceSaving(false);
     }
   };
 
@@ -260,6 +284,59 @@ export function Settings() {
                     <p className="text-sm text-yellow-300">
                       Venue ID not configured. Please contact your administrator.
                     </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Average Drink Price */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <DollarSign className="w-5 h-5 text-red-400" />
+                  <h3 className="text-xl font-semibold text-white">Average Drink Price</h3>
+                </div>
+                <p className="text-sm text-warm-400 mb-6">
+                  Used to calculate estimated revenue loss from unrung drinks detected by VenueScope.
+                  Appears in the Theft Investigation modal and summary totals.
+                </p>
+
+                {user?.venueId ? (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-warm-300 mb-2">Price per drink ($)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        step="0.50"
+                        value={avgDrinkPrice}
+                        onChange={e => setAvgDrinkPrice(e.target.value ? Number(e.target.value) : '')}
+                        placeholder="e.g., 12"
+                        className="w-full px-4 py-3 bg-warm-900 border border-warm-700 rounded-lg text-white focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                      />
+                      <p className="text-xs text-warm-500 mt-2">
+                        Industry average is $10–$14. Use your venue's average check per drink.
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={handleSaveDrinkPrice}
+                      disabled={avgDrinkPrice === '' || drinkPriceSaving}
+                      className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-all ${
+                        drinkPriceSaved
+                          ? 'bg-green-500/20 border border-green-500/50 text-green-400'
+                          : 'bg-primary/20 border border-primary/50 text-primary hover:bg-primary/30'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {drinkPriceSaved ? (
+                        <><Check className="w-4 h-4" />Saved!</>
+                      ) : (
+                        <><Save className="w-4 h-4" />{drinkPriceSaving ? 'Saving...' : 'Save Price'}</>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                    <p className="text-sm text-yellow-300">Venue ID not configured.</p>
                   </div>
                 )}
               </div>

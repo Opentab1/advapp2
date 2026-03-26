@@ -38,11 +38,22 @@ function VarianceBadge({ pct }: { pct: number }) {
   );
 }
 
-export function POSComparison({ onVarianceChange }: { onVarianceChange?: (pct: number | null) => void }) {
+export function POSComparison({
+  onVarianceChange,
+  vsDrinkCount,
+}: {
+  onVarianceChange?: (pct: number | null) => void;
+  vsDrinkCount?: number;
+}) {
   const [metrics, setMetrics] = useState<POSMetrics | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [drinkCount, setDrinkCount] = useState<string>(() => localStorage.getItem(DRINK_COUNT_KEY) || '');
+  const [drinkCount, setDrinkCount] = useState<string>(() => {
+    const stored = localStorage.getItem(DRINK_COUNT_KEY);
+    if (stored) return stored;
+    if (vsDrinkCount != null) return String(vsDrinkCount);
+    return '';
+  });
   const [expanded, setExpanded] = useState(false);
 
   const isPOSConfigured = toastPosService.isConfigured();
@@ -65,6 +76,14 @@ export function POSComparison({ onVarianceChange }: { onVarianceChange?: (pct: n
   }, [isPOSConfigured]);
 
   useEffect(() => { fetchMetrics(); }, [fetchMetrics]);
+
+  // Auto-fill from VenueScope when no manual entry and prop arrives
+  useEffect(() => {
+    if (vsDrinkCount != null && drinkCount === '') {
+      setDrinkCount(String(vsDrinkCount));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vsDrinkCount]);
 
   // Compute variance
   const posCount = metrics?.totalOrders ?? null;
@@ -153,7 +172,9 @@ export function POSComparison({ onVarianceChange }: { onVarianceChange?: (pct: n
                     placeholder="—"
                     className="w-full text-2xl font-bold text-white tabular-nums text-center bg-transparent outline-none border-b border-whoop-divider focus:border-teal transition-colors placeholder:text-text-muted"
                   />
-                  <div className="text-[10px] text-text-muted uppercase tracking-wider mt-1">VS Drinks</div>
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider mt-1">
+                    VS Drinks{vsDrinkCount != null && drinkCount === String(vsDrinkCount) ? ' (auto)' : ''}
+                  </div>
                 </div>
 
                 {/* Variance */}

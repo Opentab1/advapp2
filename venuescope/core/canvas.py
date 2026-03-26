@@ -104,6 +104,9 @@ def draw_line_canvas(
     pil_img, cw, ch = _to_pil(frame_rgb)
     canvas_h = int(ch * CANVAS_W / cw) if cw else height
 
+    # Always show reference frame so user can see the venue while drawing
+    st.image(frame_rgb, caption="Reference frame — draw your line on the canvas below",
+             use_container_width=True)
     st.caption("Click to place start point, click again for end point. "
                "Ctrl+Z to undo. Most recent line is used.")
 
@@ -111,7 +114,7 @@ def draw_line_canvas(
         fill_color="rgba(249,115,22,0.15)",
         stroke_width=3,
         stroke_color=stroke_color,
-        background_image=pil_img,
+        background_color="#1e293b",
         update_streamlit=True,
         height=canvas_h,
         width=CANVAS_W,
@@ -163,13 +166,16 @@ def draw_polygon_canvas(
     pil_img, cw, ch = _to_pil(frame_rgb)
     canvas_h = int(ch * CANVAS_W / cw) if cw else height
 
+    # Always show reference frame so user can see the venue while drawing
+    st.image(frame_rgb, caption="Reference frame — draw your zone on the canvas below",
+             use_container_width=True)
     st.caption("Click corners of the zone. Double-click on last point to close. Ctrl+Z to undo.")
 
     result = st_canvas(
         fill_color=fill_rgba,
         stroke_width=2,
         stroke_color=stroke_color,
-        background_image=pil_img,
+        background_color="#1e293b",
         update_streamlit=True,
         height=canvas_h,
         width=CANVAS_W,

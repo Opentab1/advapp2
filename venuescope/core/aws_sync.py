@@ -288,6 +288,75 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
         return False
 
 
+def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float) -> bool:
+    """
+    Push real-time running totals to DynamoDB every ~30 s during live stream processing.
+    Updates the existing job record with current drink counts, headcount, etc.
+    The React dashboard reads these and refreshes the live view.
+    """
+    if not _is_configured():
+        return False
+    if not _cb.allow():
+        return False
+
+    venue_id = _get_venue_id()
+    now      = str(time.time())
+
+    # ── Extract current totals from partial summary ────────────────────────
+    bts          = summary.get("bartenders", {})
+    total_drinks = int(sum(d.get("total_drinks", 0) for d in bts.values()))
+    unrung       = int(sum(d.get("unrung_drinks", 0) or 0 for d in bts.values()))
+
+    people       = summary.get("people", {})
+    people_in    = int(sum(l.get("in_count", 0) for l in people.values()))
+    people_out   = int(sum(l.get("out_count", 0) for l in people.values()))
+    headcount    = max(0, people_in - people_out)
+
+    mode         = summary.get("analysis_mode", summary.get("mode", "drink_count"))
+
+    update_expr = (
+        "SET #st = :s, updatedAt = :u, isLive = :il, "
+        "elapsedSec = :es, analysisMode = :am, "
+        "totalDrinks = :td, unrungDrinks = :ud, "
+        "peopleIn = :pi, peopleOut = :po, currentHeadcount = :hc"
+    )
+    expr_names = {"#st": "status"}
+    expr_vals: Dict[str, Any] = {
+        ":s":  {"S": "running"},
+        ":u":  {"N": now},
+        ":il": {"BOOL": True},
+        ":es": {"N": str(round(elapsed_sec, 1))},
+        ":am": {"S": mode},
+        ":td": {"N": str(total_drinks)},
+        ":ud": {"N": str(unrung)},
+        ":pi": {"N": str(people_in)},
+        ":po": {"N": str(people_out)},
+        ":hc": {"N": str(headcount)},
+    }
+
+    # Include per-bartender breakdown if available
+    if bts:
+        bt_compact = {name: {"drinks": int(d.get("total_drinks", 0)),
+                             "per_hour": round(float(d.get("drinks_per_hour", 0.0)), 1)}
+                      for name, d in bts.items()}
+        update_expr += ", bartenderSummary = :bs"
+        expr_vals[":bs"] = {"S": json.dumps(bt_compact)}
+
+    try:
+        ddb = _get_client("dynamodb")
+        _retry(lambda: ddb.update_item(
+            TableName=DYNAMODB_TABLE,
+            Key={"venueId": {"S": venue_id}, "jobId": {"S": job_id}},
+            UpdateExpression=update_expr,
+            ExpressionAttributeNames=expr_names,
+            ExpressionAttributeValues=expr_vals,
+        ))
+        return True
+    except Exception as e:
+        print(f"[aws_sync] Live metrics push failed: {e}", flush=True)
+        return False
+
+
 def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> bool:
     """
     Push job summary to DynamoDB VenueScopeJobs table.

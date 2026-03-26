@@ -1,7 +1,8 @@
 """
 VenueScope — Live Cameras & Real-Time Dashboard
-Shows rolling live metrics from the last 60 minutes of completed segments.
-Auto-refreshes every 10 seconds. Register cameras, monitor in real time.
+Shows real-time metrics pushed every 30 s from continuous live streams,
+plus rolling 60-minute totals from completed segments.
+Auto-refreshes every 10 seconds.
 """
 from __future__ import annotations
 import json, time, uuid
@@ -128,6 +129,50 @@ def _camera_current_job(cam_name: str) -> dict | None:
     return None
 
 
+def _live_job_metrics() -> list[dict]:
+    """
+    Read live.json written every ~30s by the worker for continuous RTSP jobs.
+    Returns a list of partial summary dicts, one per currently running live job.
+    """
+    results = []
+    for job in list_jobs(100):
+        if job["status"] != "running" or job.get("source_type") != "rtsp":
+            continue
+        rd = Path(RESULT_DIR) / job["job_id"]
+        live_file = rd / "live.json"
+        if not live_file.exists():
+            continue
+        try:
+            data = json.loads(live_file.read_text())
+            # Only show if the data is fresh (written in last 90s)
+            if time.time() - float(data.get("_updated_at", 0)) > 90:
+                continue
+            data["_job"] = job
+            results.append(data)
+        except Exception:
+            pass
+    return results
+
+
+def _live_totals(live_jobs: list[dict]) -> dict:
+    """Aggregate real-time totals across all live running jobs."""
+    t = {"drinks": 0, "unrung": 0, "people_in": 0, "people_out": 0, "bartenders": {}}
+    for d in live_jobs:
+        bts = d.get("bartenders", {})
+        for name, bt in bts.items():
+            t["drinks"] += int(bt.get("total_drinks", 0))
+            t["unrung"] += int(bt.get("unrung_drinks", 0) or 0)
+            if name not in t["bartenders"]:
+                t["bartenders"][name] = {"drinks": 0, "per_hour": 0}
+            t["bartenders"][name]["drinks"] += int(bt.get("total_drinks", 0))
+            t["bartenders"][name]["per_hour"] = round(float(bt.get("drinks_per_hour", 0)), 1)
+        people = d.get("people", {})
+        for line in people.values():
+            t["people_in"]  += int(line.get("in_count", 0))
+            t["people_out"] += int(line.get("out_count", 0))
+    return t
+
+
 # ── Page tabs ─────────────────────────────────────────────────────────────────
 
 tab_live, tab_cameras, tab_add, tab_discover = st.tabs(
@@ -144,14 +189,71 @@ with tab_live:
     hc1, hc2 = st.columns([5, 1])
     with hc1:
         st.markdown("### 🟢 Live Venue Dashboard")
-        st.caption(f"Rolling metrics — last 60 minutes of processed footage. "
-                   f"Auto-refreshes every 10 seconds.")
     with hc2:
         auto = st.checkbox("Auto-refresh", value=True, key="live_auto")
 
-    st.divider()
+    # ── Real-time live job panel ───────────────────────────────────────────────
+    live_jobs = _live_job_metrics()
+    if live_jobs:
+        lt = _live_totals(live_jobs)
+        elapsed_vals = [float(d.get("_elapsed_sec", 0)) for d in live_jobs]
+        max_elapsed  = max(elapsed_vals) if elapsed_vals else 0
+        hrs = int(max_elapsed // 3600)
+        mins = int((max_elapsed % 3600) // 60)
+        secs = int(max_elapsed % 60)
+        elapsed_str = (f"{hrs}h {mins}m" if hrs else f"{mins}m {secs}s")
 
-    # ── Top KPIs ──────────────────────────────────────────────────────────────
+        st.markdown(
+            f'<div style="background:#16a34a22;border:1px solid #16a34a;border-radius:12px;'
+            f'padding:16px 20px;margin-bottom:12px;">'
+            f'<span style="color:#4ade80;font-weight:700;font-size:1.05em">🔴 LIVE — '
+            f'{len(live_jobs)} stream(s) running · {elapsed_str} elapsed</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        lc1, lc2, lc3, lc4 = st.columns(4)
+        with lc1:
+            st.markdown(f'<div class="live-number">{lt["drinks"]}</div>'
+                        f'<div class="live-label">Drinks (live total)</div>',
+                        unsafe_allow_html=True)
+        with lc2:
+            hc = max(0, lt["people_in"] - lt["people_out"])
+            st.markdown(f'<div class="live-number" style="color:#38bdf8">{hc}</div>'
+                        f'<div class="live-label">People in venue</div>',
+                        unsafe_allow_html=True)
+        with lc3:
+            u_color = "#22c55e" if lt["unrung"] == 0 else "#ef4444"
+            st.markdown(f'<div class="live-number" style="color:{u_color}">{lt["unrung"]}</div>'
+                        f'<div class="live-label">Unrung drinks</div>',
+                        unsafe_allow_html=True)
+        with lc4:
+            last_upd = max((float(d.get("_updated_at", 0)) for d in live_jobs), default=0)
+            age_s = int(time.time() - last_upd) if last_upd else "—"
+            st.markdown(f'<div class="live-number" style="color:#94a3b8;font-size:1.8em">'
+                        f'{age_s}s</div>'
+                        f'<div class="live-label">Since last update</div>',
+                        unsafe_allow_html=True)
+
+        # Per-stream detail
+        for d in live_jobs:
+            j = d.get("_job", {})
+            label = j.get("clip_label", j.get("job_id", "?"))
+            es    = float(d.get("_elapsed_sec", 0))
+            bts   = d.get("bartenders", {})
+            drinks_now = sum(int(b.get("total_drinks", 0)) for b in bts.values())
+            st.caption(f"**{label}** · {drinks_now} drinks · "
+                       f"{int(es//60)}m {int(es%60)}s elapsed · "
+                       f"updated {int(time.time()-float(d.get('_updated_at',time.time())))}s ago")
+
+        st.divider()
+    else:
+        st.caption("No continuous live streams running. "
+                   "Add a camera with **Segment length = 0** for real-time mode, "
+                   "or use segmented mode (60-120s) below.")
+        st.divider()
+
+    # ── Top KPIs (rolling 60-min from completed segments) ────────────────────
+    st.caption("Rolling totals — completed segments from the last 60 minutes")
     m = _rolling_metrics()
 
     k1, k2, k3, k4, k5 = st.columns(5)
@@ -216,9 +318,27 @@ with tab_live:
                         f'{ANALYSIS_MODES.get(cam["mode"], cam["mode"])}</span>',
                         unsafe_allow_html=True)
                 with c2:
+                    seg = float(cam.get("segment_seconds", 60))
                     if status == "running":
-                        st.progress(int(prog))
-                        st.caption(f"{prog}% — {cam.get('segment_seconds',60):.0f}s segment")
+                        if seg == 0:
+                            # Continuous — look for live.json
+                            lf = Path(RESULT_DIR) / job["job_id"] / "live.json"
+                            if lf.exists():
+                                try:
+                                    ld = json.loads(lf.read_text())
+                                    es = float(ld.get("_elapsed_sec", 0))
+                                    bts_live = ld.get("bartenders", {})
+                                    d_live = sum(int(b.get("total_drinks",0)) for b in bts_live.values())
+                                    age = int(time.time() - float(ld.get("_updated_at", time.time())))
+                                    st.caption(f"🔴 {int(es//60)}m {int(es%60)}s · "
+                                               f"**{d_live}** drinks · updated {age}s ago")
+                                except Exception:
+                                    st.caption("🔴 Running continuously...")
+                            else:
+                                st.caption("🔴 Starting...")
+                        else:
+                            st.progress(int(prog))
+                            st.caption(f"{prog}% — {seg:.0f}s segment")
                     elif status == "done" and job:
                         s = _parse_summary(job)
                         bts = s.get("bartenders", {})
@@ -236,22 +356,29 @@ with tab_live:
                             rt = cm_m.get("avg_response_sec")
                             st.metric("Avg response", f"{int(rt)}s" if rt else "—")
                 with c4:
-                    # Quick launch next segment button
+                    # Quick launch button
+                    seg = float(cam.get("segment_seconds", 60))
+                    btn_label = "🔴 Go Live" if seg == 0 else "▶ Start"
                     if status not in ("running", "pending"):
-                        if st.button("▶ Start", key=f"quick_{cam['camera_id']}"):
+                        if st.button(btn_label, key=f"quick_{cam['camera_id']}"):
                             jid   = str(uuid.uuid4())[:8]
                             label = f"📡 {cam['name']}"
-                            extra = {"max_seconds": float(cam.get("segment_seconds", 60))}
+                            if seg == 0:
+                                label += " — 🔴 LIVE"
+                            extra = {"max_seconds": seg}
                             create_job(
-                                job_id=jid, analysis_mode=cam["mode"],
+                                job_id=jid, analysis_mode=cam["mode"].split(",")[0],
                                 shift_id=cam.get("shift_id"), shift_json=None,
                                 source_type="rtsp", source_path=cam["rtsp_url"],
                                 model_profile=cam.get("model_profile","balanced"),
                                 config_path=cam.get("config_path"),
                                 annotate=False, clip_label=label,
                             )
+                            modes_list = [m.strip() for m in cam["mode"].split(",") if m.strip()]
+                            extra["extra_modes"] = modes_list[1:]
                             _raw_update(jid, summary_json=json.dumps({"extra_config": extra}))
-                            st.success(f"Queued segment for {cam['name']}")
+                            st.success(f"{'Live stream started' if seg==0 else 'Queued segment'} "
+                                       f"for {cam['name']}")
                             st.rerun()
             st.divider()
 
@@ -305,9 +432,10 @@ with tab_cameras:
                 if cam.get("notes"):
                     st.caption(cam["notes"])
             with col2:
-                st.markdown(ANALYSIS_MODES.get(cam["mode"], cam["mode"]))
-                st.caption(f"{cam.get('segment_seconds', 60):.0f}s segments · "
-                           f"{cam.get('model_profile','balanced')}")
+                st.markdown(ANALYSIS_MODES.get(cam["mode"].split(",")[0], cam["mode"]))
+                seg = float(cam.get("segment_seconds", 60))
+                seg_label = "🔴 Continuous live" if seg == 0 else f"{seg:.0f}s segments"
+                st.caption(f"{seg_label} · {cam.get('model_profile','balanced')}")
             with col3:
                 enabled = cam.get("enabled", True)
                 badge   = "live-badge-green" if enabled else "live-badge-amber"
@@ -340,16 +468,55 @@ with tab_cameras:
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_add:
     st.subheader("Register New Camera")
-    st.caption("Each camera runs a continuous loop — one segment processed at a time, "
-               "back to back. Shorter segments = more real-time results (60-120s recommended).")
 
+    # ── Quick-add Blind Goat cameras ──────────────────────────────────────────
+    _BG_CAMERAS = [
+        ("CH7 — Bar (drink count)",       "http://192.168.1.252/hls/live/CH7/0/livetop.mp4",  "drink_count"),
+        ("CH8 — Bar overhead (drink)",    "http://192.168.1.252/hls/live/CH8/0/livetop.mp4",  "drink_count"),
+        ("CH9 — Behind bar (bottles)",    "http://192.168.1.252/hls/live/CH9/0/livetop.mp4",  "bottle_count"),
+        ("CH2 — Patio seating",           "http://192.168.1.252/hls/live/CH2/0/livetop.mp4",  "people_count"),
+        ("CH5 — Indoor floor",            "http://192.168.1.252/hls/live/CH5/0/livetop.mp4",  "table_turns"),
+        ("CH6 — Dining room",             "http://192.168.1.252/hls/live/CH6/0/livetop.mp4",  "people_count"),
+        ("CH1 — Main floor",              "http://192.168.1.252/hls/live/CH1/0/livetop.mp4",  "people_count"),
+        ("CH3 — Outdoor/entrance",        "http://192.168.1.252/hls/live/CH3/0/livetop.mp4",  "people_count"),
+        ("CH4 — Neon bar area",           "http://192.168.1.252/hls/live/CH4/0/livetop.mp4",  "drink_count"),
+        ("CH10 — Parking/back entrance",  "http://192.168.1.252/hls/live/CH10/0/livetop.mp4", "after_hours"),
+        ("CH12 — Parking lot",            "http://192.168.1.252/hls/live/CH12/0/livetop.mp4", "after_hours"),
+    ]
+    _existing_urls = {c["rtsp_url"] for c in list_cameras()}
+    _unregistered  = [(n, u, m) for n, u, m in _BG_CAMERAS if u not in _existing_urls]
+    if _unregistered:
+        with st.expander(f"⚡ Quick-add Blind Goat cameras ({len(_unregistered)} not yet registered)",
+                         expanded=True):
+            st.caption("One click to add each camera in continuous live mode.")
+            for _cn, _cu, _cm in _unregistered:
+                _qc1, _qc2 = st.columns([5, 2])
+                with _qc1:
+                    st.markdown(f"**{_cn}**")
+                    st.caption(f"`{_cu}`  ·  mode: {ANALYSIS_MODES.get(_cm, _cm)}")
+                with _qc2:
+                    if st.button("➕ Add live", key=f"qadd_{_cn}"):
+                        _cid = str(uuid.uuid4())[:8]
+                        save_camera(
+                            camera_id=_cid, name=_cn.split(" — ")[0] + " Blind Goat",
+                            rtsp_url=_cu, mode=_cm,
+                            config_path=None, model_profile="fast",
+                            segment_seconds=0.0,  # continuous
+                            enabled=True,
+                            notes=f"Blind Goat DVR — {_cn}",
+                        )
+                        st.success(f"✅ {_cn} added in continuous live mode!")
+                        st.rerun()
+                st.divider()
+
+    st.subheader("Custom Camera")
     with st.form("add_cam_form"):
         fc1, fc2 = st.columns(2)
         with fc1:
             cam_name = st.text_input("Camera name *",
                 placeholder="Main Bar — Overhead")
-            cam_url  = st.text_input("RTSP URL *",
-                placeholder="rtsp://admin:pass@192.168.1.100:554/stream1")
+            cam_url  = st.text_input("Stream URL *",
+                placeholder="http://192.168.1.252/hls/live/CH7/0/livetop.mp4  or  rtsp://...")
             st.caption("**What to detect** — select all that apply for this camera")
             all_modes = list(ANALYSIS_MODES.keys())
             selected_modes = st.multiselect(
@@ -365,10 +532,21 @@ with tab_add:
             cam_profile = st.selectbox("Speed vs accuracy",
                 ["fast", "balanced", "accurate"], index=0,
                 help="'fast' recommended for real-time — results every 1-2 minutes.")
-            cam_seg = st.number_input(
-                "Segment length (seconds)",
-                min_value=30, max_value=3600, value=60, step=30,
-                help="60s = near real-time. 300s = more accurate counts but 5 min delay.")
+            cam_continuous = st.checkbox(
+                "🔴 Continuous live mode",
+                value=True,
+                help="Stream runs forever — metrics pushed to dashboard every 30 seconds. "
+                     "Best for always-on monitoring. Disable to use segmented mode instead."
+            )
+            if cam_continuous:
+                cam_seg = 0.0
+                st.caption("Segment length: **continuous** — never stops, "
+                            "live metrics every 30s")
+            else:
+                cam_seg = float(st.number_input(
+                    "Segment length (seconds)",
+                    min_value=30, max_value=3600, value=60, step=30,
+                    help="60s = near real-time. 300s = more accurate but 5 min delay."))
             cam_notes = st.text_area("Notes / location",
                 placeholder="e.g. Left bar, overhead fisheye, covers 3 stations")
 

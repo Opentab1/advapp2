@@ -87,6 +87,28 @@ export function WeeklyReportSection() {
     }
   };
 
+  const handleSendNow = () => {
+    if (!reportData) return;
+    haptic('medium');
+    const d = reportData;
+    const subject = encodeURIComponent(`Weekly Report — ${venueName}`);
+    const lines = [
+      `Weekly Performance Report — ${venueName}`,
+      '',
+      `Avg Guest Stay: ${d.highlights?.avgStayMinutes != null ? `${d.highlights.avgStayMinutes} min` : '—'}`,
+      `Total Guests: ${d.highlights?.totalGuests?.toLocaleString() ?? '—'}`,
+      `Pulse Score: ${d.weeklyAvgScore ?? '—'}`,
+      `Top Genre: ${d.music?.topGenre ?? '—'}`,
+    ];
+    if (d.insights?.length > 0) {
+      lines.push('', 'Key Insights:');
+      d.insights.slice(0, 3).forEach((i: string) => lines.push(`• ${i}`));
+    }
+    const body = encodeURIComponent(lines.join('\n'));
+    const to = encodeURIComponent(schedule.email || user?.email || '');
+    window.open(`mailto:${to}?subject=${subject}&body=${body}`, '_blank');
+  };
+
   const d = reportData;
 
   return (
@@ -211,6 +233,15 @@ export function WeeklyReportSection() {
                     >
                       <Download className="w-4 h-4" />
                       Download PDF
+                    </motion.button>
+                    <motion.button
+                      onClick={handleSendNow}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-teal/20 border border-teal/30 text-teal text-sm font-semibold hover:bg-teal/30 transition-colors"
+                      whileTap={{ scale: 0.97 }}
+                      title="Send via email client"
+                    >
+                      <Send className="w-4 h-4" />
+                      Send Now
                     </motion.button>
                     <motion.button
                       onClick={() => { setShowSchedule(s => !s); haptic('selection'); }}

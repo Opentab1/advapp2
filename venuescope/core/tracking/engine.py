@@ -203,7 +203,8 @@ class VenueProcessor:
     def __init__(self, job_id, analysis_mode, source, source_type,
                  model_profile, bar_config, shift, extra_config,
                  result_dir, annotate=False, progress_cb=None,
-                 extra_modes: List[str] = None):
+                 extra_modes: List[str] = None,
+                 live_event_cb: Optional[Callable] = None):
         self.job_id      = job_id
         # Primary mode drives tracker config + annotation
         self.mode        = analysis_mode
@@ -293,6 +294,12 @@ class VenueProcessor:
 
         # Per-frame timing for performance monitoring
         self._frame_times: List[float] = []   # ms per processed frame
+
+        # Live push — called every ~30s for rtsp streams with max_seconds=0
+        self._live_event_cb:    Optional[Callable] = live_event_cb
+        self._last_live_push:   float = 0.0
+        self._live_push_interval: float = float(
+            self.ec.get("live_push_interval", 30.0))
 
         # Checkpoint / resume
         self._checkpoint_file   = self.result_dir / "checkpoint.json"
@@ -675,6 +682,20 @@ class VenueProcessor:
 
             for ev in evs: writer.add_event(ev)
             writer.add_frame(t_sec, self.shift)
+
+            # Real-time live push — fires every _live_push_interval seconds
+            # Only for rtsp/http sources running continuously (max_seconds == 0)
+            if (self._live_event_cb is not None
+                    and self._max_seconds == 0
+                    and self.source_type == "rtsp"
+                    and (time.time() - self._last_live_push) >= self._live_push_interval):
+                try:
+                    partial = self._build_summary(analyzers, t_sec, fps)
+                    partial["_elapsed_sec"] = t_sec
+                    self._live_event_cb(partial, t_sec)
+                except Exception:
+                    pass
+                self._last_live_push = time.time()
 
             # Track serve flashes for annotation overlay
             for ev in evs:

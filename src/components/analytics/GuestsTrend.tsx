@@ -8,29 +8,37 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  Legend,
 } from 'recharts';
 import { TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 import type { SensorData } from '../../types';
 
+interface DrinkPoint {
+  date: string;  // YYYY-MM-DD
+  drinks: number;
+}
+
 interface GuestsTrendProps {
   data: SensorData[];
   loading: boolean;
+  drinkData?: DrinkPoint[];
 }
 
 interface DayPoint {
   date: string;
   dayLabel: string;
   guests: number;
+  drinks?: number;
 }
 
 function processTrendData(data: SensorData[]): { points: DayPoint[]; avg: number; trend: number } {
@@ -88,9 +96,17 @@ function processTrendData(data: SensorData[]): { points: DayPoint[]; avg: number
   return { points, avg, trend };
 }
 
-export function GuestsTrend({ data, loading }: GuestsTrendProps) {
+export function GuestsTrend({ data, loading, drinkData }: GuestsTrendProps) {
   const [expanded, setExpanded] = useState(true);
-  const { points, avg, trend } = processTrendData(data);
+  const { points: rawPoints, avg, trend } = processTrendData(data);
+
+  // Merge drink data into points by date (YYYY-MM-DD)
+  const drinkByDate = new Map(drinkData?.map(d => [d.date, d.drinks]) ?? []);
+  const points = rawPoints.map(p => {
+    const isoDate = new Date(p.date).toLocaleDateString('en-CA');
+    return { ...p, drinks: drinkByDate.get(isoDate) };
+  });
+  const hasDrinks = points.some(p => (p.drinks ?? 0) > 0);
   
   if (loading) {
     return (
@@ -180,25 +196,48 @@ export function GuestsTrend({ data, loading }: GuestsTrendProps) {
                   }}
                 />
                 
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1f2937', 
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#1f2937',
                     border: '1px solid #374151',
                     borderRadius: '8px',
                     fontSize: '12px',
                   }}
                   labelStyle={{ color: '#9ca3af' }}
-                  formatter={(value: number) => [`${value.toLocaleString()} guests`, 'Guests']}
+                  formatter={(value: number | undefined, name: string) => [
+                    `${(value ?? 0).toLocaleString()}`,
+                    name === 'guests' ? 'Guests' : 'Drinks (VS)',
+                  ] as [string, string]}
                 />
-                
-                <Line 
-                  type="monotone" 
-                  dataKey="guests" 
+
+                {hasDrinks && (
+                  <Legend
+                    wrapperStyle={{ fontSize: 11, color: '#9ca3af' }}
+                    formatter={(v) => v === 'guests' ? 'Guests' : 'Drinks (VenueScope)'}
+                  />
+                )}
+
+                <Line
+                  type="monotone"
+                  dataKey="guests"
                   stroke="#14b8a6"
                   strokeWidth={2}
                   dot={{ fill: '#14b8a6', r: 3 }}
                   activeDot={{ r: 5, fill: '#14b8a6' }}
                 />
+
+                {hasDrinks && (
+                  <Line
+                    type="monotone"
+                    dataKey="drinks"
+                    stroke="#f59e0b"
+                    strokeWidth={2}
+                    strokeDasharray="5 3"
+                    dot={{ fill: '#f59e0b', r: 3 }}
+                    activeDot={{ r: 5, fill: '#f59e0b' }}
+                    connectNulls
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>

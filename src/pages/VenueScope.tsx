@@ -820,12 +820,14 @@ export function VenueScope() {
   }, [load]);
 
   // "Tonight" = after midnight local time (bar shifts that started today)
-  const todayStart = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime() / 1000; }, []);
-  const tonightJobs = useMemo(() => jobs.filter(j => (j.createdAt ?? 0) >= todayStart || j.isLive), [jobs, todayStart]);
-  const olderJobs   = useMemo(() => jobs.filter(j => (j.createdAt ?? 0) < todayStart && !j.isLive), [jobs, todayStart]);
+  const todayStart  = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime() / 1000; }, []);
+  // Guard against null/undefined entries that AppSync occasionally returns
+  const safeJobs    = useMemo(() => jobs.filter((j): j is VenueScopeJob => j != null && typeof j === 'object'), [jobs]);
+  const tonightJobs = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) >= todayStart || j.isLive), [safeJobs, todayStart]);
+  const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !j.isLive), [safeJobs, todayStart]);
 
-  const rooms       = useMemo(() => buildRooms(tonightJobs), [tonightJobs]);
-  const bartenders  = useMemo(() => aggregateBartenders(tonightJobs), [tonightJobs]);
+  const rooms       = useMemo(() => { try { return buildRooms(tonightJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [tonightJobs]);
+  const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
 
   return (
     <div className="space-y-6">

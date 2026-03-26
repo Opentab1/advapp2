@@ -84,4 +84,6 @@ exec python3 -m streamlit run app/main.py \
     --server.headless=true \
     --server.address="$BIND_ADDR" \
     --server.port="${VENUESCOPE_PORT:-8501}" \
+    --server.maxUploadSize=10000 \
+    --server.maxMessageSize=10000 \
     --browser.gatherUsageStats=false

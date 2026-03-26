@@ -178,13 +178,36 @@ with col1:
     with src_tab1:
         uploaded   = st.file_uploader("Video clip (MP4/AVI/MOV)", type=["mp4","avi","mov","mpeg4"])
     with src_tab2:
-        st.caption("Enter your IP camera RTSP stream URL.")
-        rtsp_url   = st.text_input("RTSP URL",
-                                    placeholder="rtsp://admin:password@192.168.1.100:554/stream1")
-        rtsp_dur   = st.number_input("Record duration (seconds)", 30, 3600, 300, 30,
-                                      help="How many seconds to capture before analysis")
-        st.info("ℹ️ The stream will be captured live during analysis. "
-                "Make sure the Pi can reach the camera on the network.")
+        st.caption("Enter your camera stream URL — RTSP or HTTP/HLS.")
+
+        # Quick-select known cameras
+        _KNOWN_CAMERAS = {
+            "— select camera —": "",
+            "CH7 — Bar (drink count)":       "http://192.168.1.252/hls/live/CH7/0/livetop.mp4",
+            "CH8 — Bar overhead (drink)":    "http://192.168.1.252/hls/live/CH8/0/livetop.mp4",
+            "CH9 — Behind bar (bottles)":    "http://192.168.1.252/hls/live/CH9/0/livetop.mp4",
+            "CH2 — Patio seating":           "http://192.168.1.252/hls/live/CH2/0/livetop.mp4",
+            "CH5 — Indoor floor":            "http://192.168.1.252/hls/live/CH5/0/livetop.mp4",
+            "CH6 — Dining room":             "http://192.168.1.252/hls/live/CH6/0/livetop.mp4",
+            "CH1 — Main floor":              "http://192.168.1.252/hls/live/CH1/0/livetop.mp4",
+            "CH3 — Outdoor patio/entrance":  "http://192.168.1.252/hls/live/CH3/0/livetop.mp4",
+            "CH4 — Neon bar area":           "http://192.168.1.252/hls/live/CH4/0/livetop.mp4",
+            "CH10 — Parking/back entrance":  "http://192.168.1.252/hls/live/CH10/0/livetop.mp4",
+            "CH12 — Parking lot":            "http://192.168.1.252/hls/live/CH12/0/livetop.mp4",
+            "IP_CH1 — Main floor (IP)":      "http://192.168.1.252/hls/live/IP_CH1/0/livetop.mp4",
+            "IP_CH2 — Camera 2 (IP)":        "http://192.168.1.252/hls/live/IP_CH2/0/livetop.mp4",
+            "IP_CH3 — Camera 3 (IP)":        "http://192.168.1.252/hls/live/IP_CH3/0/livetop.mp4",
+        }
+        _cam_sel = st.selectbox("Quick-select camera", list(_KNOWN_CAMERAS.keys()),
+                                key="cam_quick_sel")
+        _prefill = _KNOWN_CAMERAS[_cam_sel]
+
+        rtsp_url = st.text_input("Stream URL (RTSP or HTTP/HLS)",
+                                  value=_prefill,
+                                  placeholder="http://192.168.1.252/hls/live/CH7/0/livetop.mp4")
+        rtsp_dur = st.number_input("Record duration (seconds)", 30, 3600, 300, 30,
+                                    help="How many seconds to capture before analysis")
+        st.info("ℹ️ Stream captured live during analysis. Must be on venue WiFi or have remote access.")
     clip_label = st.text_input("Label", placeholder="e.g. Main Bar – Fri 9pm")
 with col2:
     _mode_keys = list(ANALYSIS_MODES.keys())

@@ -45,6 +45,7 @@ import { useInsightsData } from '../hooks/useInsightsData';
 import { useDisplayName } from '../hooks/useDisplayName';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
+import venueScopeService from '../services/venuescope.service';
 import { haptic } from '../utils/haptics';
 import type { InsightsTimeRange } from '../types/insights';
 
@@ -93,7 +94,34 @@ export function Analytics() {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [totalSongs, setTotalSongs] = useState(0);
   const [showSongAnalytics, setShowSongAnalytics] = useState(true);
+  const [vsTodayDrinks, setVsTodayDrinks] = useState<number | undefined>(undefined);
+  const [vsDrinkPoints, setVsDrinkPoints] = useState<Array<{ date: string; drinks: number }>>([]);
   
+  // Load VenueScope drink data for POS auto-fill + trend chart
+  useEffect(() => {
+    const venueId = user?.venueId;
+    if (!venueId) return;
+    const todayStart = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+    venueScopeService.listJobs(venueId, 100).then(jobs => {
+      const done = jobs.filter(j => j.status === 'done' && j.createdAt);
+
+      // Today's total for POS comparison
+      const todayDrinks = done
+        .filter(j => (j.createdAt ?? 0) >= todayStart)
+        .reduce((sum, j) => sum + (j.totalDrinks ?? 0), 0);
+      if (todayDrinks > 0) setVsTodayDrinks(todayDrinks);
+
+      // Per-day totals for trend chart
+      const byDate: Record<string, number> = {};
+      done.forEach(j => {
+        const d = new Date((j.createdAt!) * 1000).toLocaleDateString('en-CA');
+        byDate[d] = (byDate[d] ?? 0) + (j.totalDrinks ?? 0);
+      });
+      const points = Object.entries(byDate).map(([date, drinks]) => ({ date, drinks }));
+      if (points.length > 0) setVsDrinkPoints(points);
+    });
+  }, [user?.venueId]);
+
   // Load songs data
   const loadSongs = useCallback(async () => {
     setSongsLoading(true);
@@ -358,6 +386,7 @@ export function Analytics() {
           <GuestsTrend
             data={rawSensorData as any}
             loading={insights.loading}
+            drinkData={vsDrinkPoints}
           />
 
           {/* Daily Breakdown Table */}
@@ -729,7 +758,7 @@ export function Analytics() {
           <VenueScopeInsights />
 
           {/* POS vs VenueScope comparison */}
-          <POSComparison />
+          <POSComparison vsDrinkCount={vsTodayDrinks} />
 
           {/* Weekly report download + schedule */}
           <WeeklyReportSection />

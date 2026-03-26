@@ -109,6 +109,9 @@ def run_job(job_id: str):
             except Exception:
                 pass
 
+        is_continuous = (job["source_type"] == "rtsp"
+                         and float(extra_config.get("max_seconds", 0)) == 0)
+
         _last_partial_sync = [0.0]
 
         def cb(pct, msg):
@@ -121,6 +124,24 @@ def run_job(job_id: str):
                 except Exception as _pe:
                     log.warning(f"Partial AWS sync error (non-fatal): {_pe}")
                 _last_partial_sync[0] = time.time()
+
+        def live_cb(partial_summary, elapsed_sec):
+            """Called every ~30s for continuous live streams."""
+            # Write to local file so Streamlit dashboard can read it
+            try:
+                live_file = result_dir / "live.json"
+                partial_summary["_updated_at"] = time.time()
+                partial_summary["_elapsed_sec"] = elapsed_sec
+                partial_summary["_job_id"] = job_id
+                live_file.write_text(json.dumps(partial_summary, default=str))
+            except Exception:
+                pass
+            # Push to AWS DynamoDB for React dashboard
+            try:
+                from core.aws_sync import push_live_metrics
+                push_live_metrics(job_id, partial_summary, elapsed_sec)
+            except Exception as _le:
+                log.debug(f"Live metrics push error (non-fatal): {_le}")
 
         proc = VenueProcessor(
             job_id        = job_id,
@@ -135,9 +156,17 @@ def run_job(job_id: str):
             annotate      = bool(job.get("annotate", False)),
             progress_cb   = cb,
             extra_modes   = extra_config.get("extra_modes", []),
+            live_event_cb = live_cb if is_continuous else None,
         )
 
         summary = proc.run()
+
+        if is_continuous:
+            # Stream disconnected — log it. The camera_loop will immediately
+            # create a new continuous job so the stream restarts within seconds.
+            log.warning(f"Continuous job {job_id}: stream ended — "
+                        f"camera_loop will reconnect automatically")
+
         set_done(job_id, str(result_dir), summary)
         log.info(f"Job {job_id} DONE — drinks={summary.get('total_drinks', 0)}, "
                  f"unrung={summary.get('unrung_drinks', 0)}")
@@ -166,10 +195,18 @@ def run_job(job_id: str):
             pass
 
         # Delete source file after processing (file uploads only)
+        # Only delete if no other pending/running jobs share the same source path
         src = Path(job["source_path"])
         if job["source_type"] == "file" and src.exists():
             try:
-                src.unlink()
+                from core.database import list_jobs_by_status
+                pending = list_jobs_by_status("pending", limit=100)
+                running = list_jobs_by_status("running", limit=100)
+                siblings = [j for j in pending + running
+                            if j["job_id"] != job_id
+                            and j.get("source_path") == str(src)]
+                if not siblings:
+                    src.unlink()
             except Exception:
                 pass
 

@@ -39,17 +39,22 @@ def _parse_modes(mode_str: str) -> tuple[str, list[str]]:
 
 
 def _launch_segment(cam: dict, seg_num: int = 0) -> str:
-    """Create one segment job for this camera. Returns job_id."""
+    """Create one segment job for this camera. Returns job_id.
+    If segment_seconds == 0, runs continuously (no duration limit)."""
     from core.database import create_job, _raw_update
     jid   = str(uuid.uuid4())[:8]
     label = f"📡 {cam['name']}"
-    if seg_num > 0:
+    seg_secs = float(cam.get("segment_seconds", 60))
+    continuous = (seg_secs == 0)
+    if seg_num > 0 and not continuous:
         label += f" — seg {seg_num}"
+    if continuous:
+        label += " — 🔴 LIVE"
 
     primary_mode, extra_modes = _parse_modes(cam.get("mode", "drink_count"))
 
     extra = {
-        "max_seconds": float(cam.get("segment_seconds", 60)),
+        "max_seconds": 0 if continuous else seg_secs,
         "extra_modes": extra_modes,   # passed to VenueProcessor
     }
     create_job(
@@ -65,8 +70,9 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
         clip_label    = label,
     )
     _raw_update(jid, summary_json=json.dumps({"extra_config": extra}))
+    mode_str = "continuous" if continuous else f"{seg_secs:.0f}s"
     log.info(f"[camera_loop] Launched {label} → job {jid} "
-             f"({extra['max_seconds']:.0f}s, modes={[primary_mode]+extra_modes})")
+             f"({mode_str}, modes={[primary_mode]+extra_modes})")
     return jid
 
 
@@ -94,19 +100,22 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                 stop_event.wait(10)
                 continue
 
-            # Launch next segment
+            # Launch next segment (or continuous job)
             seg_num += 1
             _launch_segment(current, seg_num)
 
-            # Wait for the segment duration before trying to launch the next one.
-            # In practice the worker picks it up immediately, but we don't want to
-            # flood the queue with hundreds of segments.
             seg_secs = float(current.get("segment_seconds", 60))
-            # Wait at most the segment duration but check for stop every 5s
-            waited = 0.0
-            while waited < seg_secs and not stop_event.is_set():
-                stop_event.wait(min(5, seg_secs - waited))
-                waited += 5
+            if seg_secs == 0:
+                # Continuous mode: just poll every 10s to see if the job ended
+                # (stream disconnect) so we can relaunch immediately
+                stop_event.wait(10)
+            else:
+                # Segmented mode: wait roughly the segment duration before queuing
+                # the next one — avoids flooding the job queue.
+                waited = 0.0
+                while waited < seg_secs and not stop_event.is_set():
+                    stop_event.wait(min(5, seg_secs - waited))
+                    waited += 5
 
         except Exception as e:
             log.error(f"[camera_loop] Error in loop for '{camera_name}': {e}")
