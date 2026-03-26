@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Key, MapPin, Check, Building2,
-  User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell, DollarSign
+  User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell, DollarSign,
+  Camera, Download, Wifi, WifiOff, RefreshCw, Circle
 } from 'lucide-react';
+import connectService, { ConnectStatus } from '../services/connect.service';
 import alertsService, { AlertPreferences } from '../services/alerts.service';
 import authService from '../services/auth.service';
 import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
@@ -17,7 +19,9 @@ import { haptic } from '../utils/haptics';
 import { useDisplayName } from '../hooks/useDisplayName';
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'about'>('account');
+  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'cameras' | 'about'>('account');
+  const [connectStatus, setConnectStatus] = useState<ConnectStatus | null>(null);
+  const [connectLoading, setConnectLoading] = useState(false);
   const [alertPrefs, setAlertPrefs] = useState<AlertPreferences>(() => alertsService.getPreferences());
   const [alertsSaved, setAlertsSaved] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -32,6 +36,13 @@ export function Settings() {
   
   // Use display name (custom name if set by admin, otherwise venueId/venueName)
   const { displayName } = useDisplayName();
+
+  // Poll camera connection status when on cameras tab
+  useEffect(() => {
+    if (activeTab !== 'cameras') return;
+    const stop = connectService.watchStatus(setConnectStatus);
+    return stop;
+  }, [activeTab]);
 
   useEffect(() => {
     // Load saved address, capacity, and drink price
@@ -100,6 +111,7 @@ export function Settings() {
             { id: 'integrations' as const, label: 'Integrations', icon: CreditCard },
             { id: 'calibration' as const, label: 'Calibration', icon: Sliders },
             { id: 'alerts' as const, label: 'Alerts', icon: Bell },
+            { id: 'cameras' as const, label: 'Cameras', icon: Camera },
             { id: 'about' as const, label: 'About', icon: Info },
           ].map((tab) => (
             <motion.button
@@ -502,6 +514,142 @@ export function Settings() {
               >
                 {alertsSaved ? <><Check className="w-4 h-4 text-primary" /> Saved</> : <><Save className="w-4 h-4" /> Save Alert Settings</>}
               </motion.button>
+            </motion.div>
+          )}
+
+          {/* Cameras Tab */}
+          {activeTab === 'cameras' && (
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="space-y-6"
+            >
+              {/* Connection Status */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    {connectStatus?.connected
+                      ? <Wifi className="w-5 h-5 text-green-400" />
+                      : <WifiOff className="w-5 h-5 text-warm-500" />
+                    }
+                    <h3 className="text-xl font-semibold text-white">VenueScope Connect</h3>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setConnectLoading(true);
+                      connectService.clearCache();
+                      const s = await connectService.getStatus();
+                      setConnectStatus(s);
+                      setConnectLoading(false);
+                    }}
+                    className="p-2 text-warm-400 hover:text-white transition-colors"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${connectLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+
+                {connectStatus?.connected ? (
+                  <div className="flex items-center gap-2 px-4 py-2 bg-green-500/10 border border-green-500/30 rounded-lg mb-4">
+                    <Circle className="w-2 h-2 fill-green-400 text-green-400" />
+                    <span className="text-green-400 text-sm font-medium">
+                      Connected — {connectStatus.cameraCount} camera{connectStatus.cameraCount !== 1 ? 's' : ''} active
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-4 py-2 bg-warm-700/50 border border-warm-600 rounded-lg mb-4">
+                    <Circle className="w-2 h-2 fill-warm-500 text-warm-500" />
+                    <span className="text-warm-400 text-sm">
+                      No venue PC connected yet
+                    </span>
+                  </div>
+                )}
+
+                <p className="text-sm text-warm-400 mb-6">
+                  VenueScope Connect runs silently on any always-on PC at the venue.
+                  It links your cameras privately — no ports opened, cameras never exposed to the internet.
+                </p>
+
+                <button
+                  onClick={() => connectService.downloadInstaller()}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary/20 border border-primary/50 text-primary hover:bg-primary/30 rounded-lg font-medium transition-all"
+                >
+                  <Download className="w-4 h-4" />
+                  Download VenueScope Connect
+                </button>
+
+                <div className="mt-4 space-y-3">
+                  {[
+                    { step: '1', text: 'Download and run the installer on any PC at the venue' },
+                    { step: '2', text: 'The installer handles everything automatically — nothing to configure' },
+                    { step: '3', text: 'Cameras appear here within 2 minutes' },
+                  ].map(({ step, text }) => (
+                    <div key={step} className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 border border-primary/40 text-primary text-xs flex items-center justify-center font-bold">
+                        {step}
+                      </span>
+                      <p className="text-sm text-warm-300 pt-0.5">{text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Connected Cameras */}
+              {connectStatus?.cameras && connectStatus.cameras.length > 0 && (
+                <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Camera className="w-5 h-5 text-cyan-400" />
+                    <h3 className="text-xl font-semibold text-white">Connected Cameras</h3>
+                  </div>
+                  <div className="space-y-3">
+                    {connectStatus.cameras.map((cam) => (
+                      <div
+                        key={cam.cameraId}
+                        className="flex items-center justify-between p-4 bg-warm-900/50 border border-warm-700 rounded-xl"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Circle className={`w-2 h-2 flex-shrink-0 ${
+                            cam.isOnline ? 'fill-green-400 text-green-400' : 'fill-red-400 text-red-400'
+                          }`} />
+                          <div>
+                            <p className="text-sm font-medium text-white">{cam.name}</p>
+                            <p className="text-xs text-warm-500">{cam.mode} · {cam.location}</p>
+                          </div>
+                        </div>
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          cam.enabled
+                            ? 'bg-green-500/10 text-green-400 border border-green-500/30'
+                            : 'bg-warm-700 text-warm-400 border border-warm-600'
+                        }`}>
+                          {cam.enabled ? 'Active' : 'Disabled'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Requirements */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <h3 className="text-lg font-semibold text-white mb-3">Requirements</h3>
+                <ul className="space-y-2 text-sm text-warm-400">
+                  <li className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
+                    Any always-on Windows, Mac, or Linux PC at the venue
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
+                    PC must be on the same network as the cameras
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
+                    Internet connection (outbound only — no ports to open)
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
+                    PC plugged into power (installer disables sleep automatically)
+                  </li>
+                </ul>
+              </div>
             </motion.div>
           )}
 
