@@ -283,11 +283,13 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
   const totalDrinks    = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const totalEntries   = jobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
   const totalExits     = jobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
-  // Current occupancy: net line-crossings (people_count) → live peakOccupancy (bar camera guest count) → 0
-  const liveJob        = jobs.find(j => j.isLive);
+  const liveJobs       = jobs.filter(j => j.isLive);
+  // Net line-crossings from entrance camera (most accurate — requires people_count mode)
   const netLineCount   = totalEntries > 0 ? Math.max(0, totalEntries - totalExits) : 0;
-  const liveOccupancy  = liveJob?.peakOccupancy ?? 0;
-  const currentOccupancy = netLineCount > 0 ? netLineCount : liveOccupancy;
+  // Fallback: sum peakOccupancy across ALL live jobs (guest-only counts from bar cameras, updated every 30s)
+  const liveCamOccupancy = liveJobs.reduce((s, j) => s + (j.peakOccupancy ?? 0), 0);
+  const currentOccupancy = netLineCount > 0 ? netLineCount : liveCamOccupancy;
+  const occupancyIsEntrance = netLineCount > 0;
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
   const estRevenue     = totalDrinks * avgDrinkPrice;
@@ -314,7 +316,9 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
       color: 'text-white',
       bg: 'bg-whoop-panel border-whoop-divider',
       iconColor: 'text-text-muted',
-      sub: liveJob && currentOccupancy > 0 ? 'live' : undefined,
+      sub: currentOccupancy > 0
+        ? (occupancyIsEntrance ? 'door count · live' : 'bar area visible')
+        : 'add entrance camera for full count',
     },
     {
       icon: <DollarSign className="w-4 h-4" />,
@@ -755,7 +759,7 @@ function EmptyState() {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = 10_000;
 
 export function VenueScope() {
   const venueId = authService.getStoredUser()?.venueId || '';
