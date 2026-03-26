@@ -57,6 +57,11 @@ export interface VenueScopeJob {
   uniqueStaff?: number;
   peakHeadcount?: number;
   avgIdlePct?: number;
+  // Live camera stream fields (pushed every ~30s from continuous RTSP streams)
+  isLive?: boolean;
+  roomLabel?: string;
+  bartenderBreakdown?: string; // JSON: { [name]: { drinks, per_hour } }
+  elapsedSec?: number;
 }
 
 /** Parsed activeModes helper */
@@ -87,6 +92,7 @@ const LIST_JOBS_QUERY = `
         totalEntries totalExits peakOccupancy
         totalTurns avgResponseSec avgDwellMin
         uniqueStaff peakHeadcount avgIdlePct
+        isLive roomLabel bartenderBreakdown elapsedSec
       }
       nextToken
     }

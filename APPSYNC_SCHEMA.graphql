@@ -113,6 +113,11 @@ type VenueScopeJob {
   uniqueStaff: Int
   peakHeadcount: Int
   avgIdlePct: Float
+  # ── Live camera stream fields (updated every ~30s from continuous RTSP) ────
+  isLive: Boolean
+  roomLabel: String
+  bartenderBreakdown: String
+  elapsedSec: Float
 }
 
 type VenueScopeJobConnection {

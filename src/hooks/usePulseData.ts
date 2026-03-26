@@ -277,7 +277,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     if (!venueId) return;
     try {
       const jobs = await venueScopeService.listJobs(venueId, 20);
-      setVsJobs(jobs.filter(j => j.status === 'done'));
+      // Include completed jobs AND live running streams (isLive=true means continuous RTSP)
+      setVsJobs(jobs.filter(j => j.status === 'done' || j.isLive === true));
       setLastUpdated(new Date());
     } catch (err) {
       console.warn('[usePulseData] VenueScope fetch failed:', err);
@@ -464,6 +465,33 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     vsJobs.some(j => j.hasTheftFlag),
     [vsJobs]
   );
+
+  // Browser push notification when a new theft flag appears
+  const prevTheftJobIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const flagged = vsJobs.filter(j => j.hasTheftFlag);
+    const newFlags = flagged.filter(j => !prevTheftJobIds.current.has(j.jobId));
+    flagged.forEach(j => prevTheftJobIds.current.add(j.jobId));
+
+    if (newFlags.length === 0) return;
+
+    const fire = () => {
+      newFlags.forEach(j => {
+        const unrung = j.unrungDrinks ?? 0;
+        const body = unrung > 0
+          ? `${unrung} unrung drink${unrung !== 1 ? 's' : ''} detected — ${j.clipLabel || j.jobId.slice(0, 8)}`
+          : `Theft flag on ${j.clipLabel || j.jobId.slice(0, 8)}`;
+        new Notification('VenueScope Theft Alert', { body, icon: '/favicon.ico' });
+      });
+    };
+
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'granted') {
+      fire();
+    } else if (Notification.permission === 'default') {
+      Notification.requestPermission().then(p => { if (p === 'granted') fire(); });
+    }
+  }, [vsJobs]);
 
   const vsOccupancy = useMemo(() => {
     if (vsTodayJobs.length === 0) return null;
