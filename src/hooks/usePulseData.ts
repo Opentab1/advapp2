@@ -366,8 +366,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     // Poll occupancy less frequently
     const occupancyInterval = setInterval(fetchOccupancy, POLLING_INTERVALS.occupancy);
 
-    // Poll VenueScope jobs every 30s
-    const vsInterval = setInterval(fetchVenueScopeData, 30_000);
+    // Poll VenueScope jobs every 10s (matches VenueScope tab)
+    const vsInterval = setInterval(fetchVenueScopeData, 10_000);
 
     return () => {
       clearInterval(liveInterval);
@@ -456,10 +456,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     [vsTodayJobs]
   );
 
-  const vsDrinksPerHour = useMemo(() =>
-    vsTodayJobs[0]?.drinksPerHour ?? null,
-    [vsTodayJobs]
-  );
+  const vsDrinksPerHour = useMemo(() => {
+    const liveJob = vsTodayJobs.find(j => j.isLive);
+    return liveJob?.drinksPerHour ?? vsTodayJobs[0]?.drinksPerHour ?? null;
+  }, [vsTodayJobs]);
 
   const vsHasTheftFlag = useMemo(() =>
     vsJobs.some(j => j.hasTheftFlag),
@@ -495,11 +495,14 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
 
   const vsOccupancy = useMemo(() => {
     if (vsTodayJobs.length === 0) return null;
+    // For "current": sum all live cameras' peakOccupancy (updated every 30s during stream)
+    const liveJobs = vsTodayJobs.filter(j => j.isLive);
+    const liveCurrent = liveJobs.reduce((s, j) => s + (j.peakOccupancy ?? 0), 0);
     return {
       todayEntries: vsTodayJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
       todayExits:   vsTodayJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
       peakOccupancy: Math.max(...vsTodayJobs.map(j => j.peakOccupancy ?? 0)),
-      current: vsTodayJobs[0]?.peakOccupancy ?? 0,
+      current: liveCurrent,
     };
   }, [vsTodayJobs]);
 
@@ -845,8 +848,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     lastUpdated,
     dataAgeSeconds,
     
-    // Core Pulse Score
-    pulseScore: sensorData ? pulseScoreResult.score : null,
+    // Core Pulse Score — show when we have sensor OR VenueScope data
+    pulseScore: (sensorData || vsTodayJobs.length > 0) ? pulseScoreResult.score : null,
     pulseStatus: pulseScoreResult.status,
     pulseStatusLabel: pulseScoreResult.statusLabel,
     pulseColor: pulseScoreResult.color,

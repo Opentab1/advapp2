@@ -407,13 +407,20 @@ export function calculatePulseScore(
   let musicWeight = FACTOR_WEIGHTS.music;
   
   if (!hasSound && !hasLight) {
-    const hasVSData = vsActivityScore != null && vsRetentionScore != null;
-    if (hasVSData) {
-      // VenueScope-native formula: Activity 35% + Retention 30% + Crowd 20% + Music 15%
+    const hasVSActivity = vsActivityScore != null;
+    const hasVSRetention = vsRetentionScore != null;
+    if (hasVSActivity && hasVSRetention) {
+      // Full VenueScope formula: Activity 35% + Retention 30% + Crowd 20% + Music 15%
       soundWeight = 0.35;
       lightWeight = 0.30;
       crowdWeight = 0.20;
       musicWeight = 0.15;
+    } else if (hasVSActivity) {
+      // Activity-only (no door counter): Activity 45% + Crowd 35% + Music 20%
+      soundWeight = 0.45;
+      lightWeight = 0;
+      crowdWeight = 0.35;
+      musicWeight = 0.20;
     } else {
       const totalRemaining = crowdWeight + musicWeight;
       crowdWeight = crowdWeight / totalRemaining;
@@ -438,9 +445,9 @@ export function calculatePulseScore(
   }
   
   // Weighted average with adjusted weights
-  const useVSFormula = !hasSound && !hasLight && vsActivityScore != null && vsRetentionScore != null;
+  const useVSFormula = !hasSound && !hasLight && vsActivityScore != null;
   const effectiveSound  = useVSFormula ? (vsActivityScore ?? 0) : soundScore;
-  const effectiveLight  = useVSFormula ? (vsRetentionScore ?? 0) : lightScore;
+  const effectiveLight  = (useVSFormula && vsRetentionScore != null) ? vsRetentionScore : lightScore;
 
   const pulseScore = Math.round(
     (effectiveSound  * soundWeight) +
@@ -493,12 +500,14 @@ export function calculatePulseScore(
           inRange: (vsActivityScore ?? 0) >= 70,
           message: (vsActivityScore ?? 0) >= 80 ? 'Bar is busy' : (vsActivityScore ?? 0) >= 50 ? 'Moderate activity' : 'Quiet at bar',
         },
-        retention: {
-          score: vsRetentionScore ?? 0,
-          value: vsRetentionScore ?? null,
-          inRange: (vsRetentionScore ?? 0) >= 60,
-          message: (vsRetentionScore ?? 0) >= 70 ? 'Guests are staying' : (vsRetentionScore ?? 0) >= 40 ? 'Average retention' : 'Guests leaving early',
-        },
+        ...(vsRetentionScore != null && {
+          retention: {
+            score: vsRetentionScore,
+            value: vsRetentionScore,
+            inRange: vsRetentionScore >= 60,
+            message: vsRetentionScore >= 70 ? 'Guests are staying' : vsRetentionScore >= 40 ? 'Average retention' : 'Guests leaving early',
+          },
+        }),
       }),
     },
     bestNight,
