@@ -282,6 +282,11 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
 function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkPrice: number }) {
   const totalDrinks    = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const totalEntries   = jobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+  const peakOccAll     = Math.max(0, ...jobs.map(j => j.peakOccupancy ?? 0));
+  const peakHeadAll    = Math.max(0, ...jobs.map(j => j.peakHeadcount ?? 0));
+  // Best guest count: line-crossing entries > peak occupancy from people counter > peak headcount from staff
+  const guestCount     = totalEntries > 0 ? totalEntries : peakOccAll > 0 ? peakOccAll : peakHeadAll;
+  const guestLabel     = totalEntries > 0 ? 'Guests In' : peakOccAll > 0 ? 'Peak Occupancy' : peakHeadAll > 0 ? 'Peak Headcount' : 'Guests In';
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
   const estRevenue     = totalDrinks * avgDrinkPrice;
@@ -303,8 +308,8 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
     },
     {
       icon: <Users className="w-4 h-4" />,
-      value: totalEntries > 0 ? totalEntries.toString() : '—',
-      label: 'Guests In',
+      value: guestCount > 0 ? guestCount.toString() : '—',
+      label: guestLabel,
       color: 'text-white',
       bg: 'bg-whoop-panel border-whoop-divider',
       iconColor: 'text-text-muted',
