@@ -282,11 +282,12 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
 function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkPrice: number }) {
   const totalDrinks    = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const totalEntries   = jobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
-  const peakOccAll     = Math.max(0, ...jobs.map(j => j.peakOccupancy ?? 0));
-  const peakHeadAll    = Math.max(0, ...jobs.map(j => j.peakHeadcount ?? 0));
-  // Best guest count: line-crossing entries > peak occupancy from people counter > peak headcount from staff
-  const guestCount     = totalEntries > 0 ? totalEntries : peakOccAll > 0 ? peakOccAll : peakHeadAll;
-  const guestLabel     = totalEntries > 0 ? 'Guests In' : peakOccAll > 0 ? 'Peak Occupancy' : peakHeadAll > 0 ? 'Peak Headcount' : 'Guests In';
+  const totalExits     = jobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
+  // Current occupancy: net line-crossings (people_count) → live peakOccupancy (bar camera guest count) → 0
+  const liveJob        = jobs.find(j => j.isLive);
+  const netLineCount   = totalEntries > 0 ? Math.max(0, totalEntries - totalExits) : 0;
+  const liveOccupancy  = liveJob?.peakOccupancy ?? 0;
+  const currentOccupancy = netLineCount > 0 ? netLineCount : liveOccupancy;
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
   const estRevenue     = totalDrinks * avgDrinkPrice;
@@ -308,11 +309,12 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
     },
     {
       icon: <Users className="w-4 h-4" />,
-      value: guestCount > 0 ? guestCount.toString() : '—',
-      label: guestLabel,
+      value: currentOccupancy > 0 ? currentOccupancy.toString() : '—',
+      label: 'Current Occupancy',
       color: 'text-white',
       bg: 'bg-whoop-panel border-whoop-divider',
       iconColor: 'text-text-muted',
+      sub: liveJob && currentOccupancy > 0 ? 'live' : undefined,
     },
     {
       icon: <DollarSign className="w-4 h-4" />,
@@ -489,10 +491,15 @@ function BartenderBoard({ bartenders }: { bartenders: BartenderStat[] }) {
 
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4">
-      <h2 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-        <Activity className="w-4 h-4 text-teal" />
-        Bartender Performance Tonight
-      </h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+          <Activity className="w-4 h-4 text-teal" />
+          Behind the Bar
+        </h2>
+        <span className="text-[10px] text-text-muted bg-whoop-bg border border-whoop-divider px-2 py-0.5 rounded-full">
+          {bartenders.length} bartender{bartenders.length !== 1 ? 's' : ''}
+        </span>
+      </div>
       <div className="space-y-3">
         {bartenders.map((b, i) => (
           <div key={b.name} className="flex items-center gap-3">
