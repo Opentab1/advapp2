@@ -838,8 +838,15 @@ export function VenueScope() {
   const tonightJobs = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) >= todayStart || j.isLive), [safeJobs, todayStart]);
   const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !j.isLive), [safeJobs, todayStart]);
 
-  const rooms       = useMemo(() => { try { return buildRooms(tonightJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [tonightJobs]);
+  const allRooms    = useMemo(() => { try { return buildRooms(tonightJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [tonightJobs]);
+  const liveRooms   = useMemo(() => allRooms.filter(r => r.isLive), [allRooms]);
+  const doneRooms   = useMemo(() => allRooms.filter(r => !r.isLive), [allRooms]);
   const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
+  // History = today's completed rooms + all older jobs
+  const historyJobs = useMemo(() => [
+    ...doneRooms.map(r => r.job),
+    ...olderJobs,
+  ], [doneRooms, olderJobs]);
 
   return (
     <div className="space-y-6">
@@ -909,22 +916,18 @@ export function VenueScope() {
             <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} />
           )}
 
-          {/* 2. Live cameras — room-by-room */}
-          {rooms.length > 0 && (
+          {/* 2. Live cameras only */}
+          {liveRooms.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold text-teal uppercase tracking-wider">
-                  {rooms.filter(r => r.isLive).length > 0 ? 'Cameras Live Now' : "Tonight's Cameras"}
+                <span className="text-xs font-semibold text-teal uppercase tracking-wider">Cameras Live Now</span>
+                <span className="text-[10px] text-teal bg-teal/10 border border-teal/20 px-1.5 py-0.5 rounded-full">
+                  {liveRooms.length} live
                 </span>
-                {rooms.filter(r => r.isLive).length > 0 && (
-                  <span className="text-[10px] text-teal bg-teal/10 border border-teal/20 px-1.5 py-0.5 rounded-full">
-                    {rooms.filter(r => r.isLive).length} live
-                  </span>
-                )}
                 <div className="h-px flex-1 bg-teal/20" />
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {rooms.map(room => (
+                {liveRooms.map(room => (
                   <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
                 ))}
               </div>
@@ -945,9 +948,9 @@ export function VenueScope() {
             />
           )}
 
-          {/* 5. History */}
+          {/* 5. History — completed tonight + all older jobs */}
           <HistoryAccordion
-            jobs={olderJobs}
+            jobs={historyJobs}
             onInvestigate={setInvestigating}
             onExport={() => exportCsv(jobs)}
           />
