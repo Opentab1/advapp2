@@ -294,10 +294,10 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
   const estRevenue     = totalDrinks * avgDrinkPrice;
 
-  // Drinks/hr: weighted avg across live jobs
-  const liveJobs = jobs.filter(j => j.isLive && (j.drinksPerHour ?? 0) > 0);
-  const pace = liveJobs.length > 0
-    ? liveJobs.reduce((s, j) => s + (j.drinksPerHour ?? 0), 0) / liveJobs.length
+  // Drinks/hr: weighted avg across live jobs that have a rate
+  const liveJobsWithRate = liveJobs.filter(j => (j.drinksPerHour ?? 0) > 0);
+  const pace = liveJobsWithRate.length > 0
+    ? liveJobsWithRate.reduce((s, j) => s + (j.drinksPerHour ?? 0), 0) / liveJobsWithRate.length
     : null;
 
   const stats = [
