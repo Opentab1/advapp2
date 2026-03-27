@@ -463,8 +463,12 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   );
 
   const vsDrinksPerHour = useMemo(() => {
-    const liveJob = vsTodayJobs.find(j => j.isLive);
-    return liveJob?.drinksPerHour ?? vsTodayJobs[0]?.drinksPerHour ?? null;
+    // Only drink_count cameras have meaningful drinksPerHour — never use people_count cameras
+    const drinkLive = vsTodayJobs.find(j => j.isLive && j.analysisMode === 'drink_count');
+    if (drinkLive?.drinksPerHour != null) return drinkLive.drinksPerHour;
+    // Fall back to any drink_count job with a rate (today)
+    const anyDrink = vsTodayJobs.find(j => j.analysisMode === 'drink_count' && (j.drinksPerHour ?? 0) > 0);
+    return anyDrink?.drinksPerHour ?? null;
   }, [vsTodayJobs]);
 
   const vsHasTheftFlag = useMemo(() =>

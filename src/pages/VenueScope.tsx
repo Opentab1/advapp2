@@ -328,7 +328,7 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
       iconColor: 'text-text-muted',
       sub: currentOccupancy > 0
         ? (occupancyIsEntrance ? 'door count · live' : 'in-frame count · live')
-        : 'cameras active · detecting',
+        : liveJobs.length > 0 ? 'cameras live · no activity' : 'no cameras active',
     },
     theftCount > 0
       ? {
@@ -442,13 +442,17 @@ function RoomCard({ room, onInvestigate }: { room: RoomSummary; onInvestigate: (
       {isPeople && (
         <div className="grid grid-cols-2 gap-2">
           <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
-            <div className="text-xl font-bold text-teal">{room.currentOccupancy || room.peakOccupancy}</div>
+            <div className={`text-xl font-bold ${room.currentOccupancy > 0 ? 'text-teal' : 'text-text-muted'}`}>
+              {room.currentOccupancy > 0 ? room.currentOccupancy : (room.isLive ? '—' : room.peakOccupancy)}
+            </div>
             <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">
               {room.isLive ? 'In Room' : 'Peak'}
             </div>
           </div>
           <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
-            <div className="text-xl font-bold text-white">{room.peakOccupancy}</div>
+            <div className={`text-xl font-bold ${room.peakOccupancy > 0 ? 'text-white' : 'text-text-muted'}`}>
+              {room.peakOccupancy > 0 ? room.peakOccupancy : '—'}
+            </div>
             <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Peak</div>
           </div>
         </div>
