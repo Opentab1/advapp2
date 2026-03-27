@@ -151,6 +151,7 @@ interface RoomSummary {
   // meta
   elapsedSec: number;
   updatedAt: number;
+  cameraAngle: string;
   job: VenueScopeJob;
 }
 
@@ -193,6 +194,7 @@ function buildRooms(jobs: VenueScopeJob[]): RoomSummary[] {
       totalEntries,
       elapsedSec: best.elapsedSec ?? 0,
       updatedAt: best.updatedAt ?? best.createdAt ?? 0,
+      cameraAngle: best.cameraAngle ?? '',
       job: best,
     };
   }).sort((a, b) => {
@@ -394,7 +396,14 @@ function RoomCard({ room, onInvestigate }: { room: RoomSummary; onInvestigate: (
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-white truncate">{room.label || 'Camera'}</p>
-            <p className="text-[10px] text-text-muted capitalize">{room.mode.replace(/_/g, ' ')}</p>
+            <p className="text-[10px] text-text-muted capitalize">
+              {room.mode.replace(/_/g, ' ')}
+              {room.cameraAngle && (
+                <span className="ml-1.5 inline-flex items-center gap-0.5 opacity-60">
+                  · {room.cameraAngle}
+                </span>
+              )}
+            </p>
           </div>
         </div>
         {room.isLive ? (
