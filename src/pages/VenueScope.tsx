@@ -12,7 +12,7 @@ import {
   Clock, User, BarChart3,
   Camera, Loader2, X, Download,
   ChevronDown, ChevronUp, FileText,
-  Activity, Users, Zap, DollarSign,
+  Activity, Users, Zap,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
@@ -303,7 +303,6 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
   const occupancyIsEntrance = netLineCount > 0;
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
-  const estRevenue     = totalDrinks * avgDrinkPrice;
 
   // Drinks/hr: weighted avg across live jobs that have a rate
   const liveJobsWithRate = liveJobs.filter(j => (j.drinksPerHour ?? 0) > 0);
@@ -331,15 +330,6 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
         ? (occupancyIsEntrance ? 'door count · live' : 'in-frame count · live')
         : 'cameras active · detecting',
     },
-    {
-      icon: <DollarSign className="w-4 h-4" />,
-      value: estRevenue > 0 ? `$${Math.round(estRevenue).toLocaleString()}` : '—',
-      label: 'Est. Revenue',
-      color: 'text-emerald-400',
-      bg: 'bg-emerald-500/5 border-emerald-500/20',
-      iconColor: 'text-emerald-400',
-      sub: pace != null ? `${pace.toFixed(1)}/hr pace` : undefined,
-    },
     theftCount > 0
       ? {
           icon: <AlertTriangle className="w-4 h-4" />,
@@ -360,7 +350,7 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div className="grid grid-cols-3 gap-3">
       {stats.map(({ icon, value, label, color, bg, iconColor, sub }) => (
         <div key={label} className={`border rounded-2xl p-4 ${bg}`}>
           <div className={`w-7 h-7 rounded-lg bg-black/20 flex items-center justify-center mb-3 ${iconColor}`}>
@@ -450,16 +440,12 @@ function RoomCard({ room, onInvestigate }: { room: RoomSummary; onInvestigate: (
       )}
 
       {isPeople && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
             <div className="text-xl font-bold text-teal">{room.currentOccupancy || room.peakOccupancy}</div>
             <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">
               {room.isLive ? 'In Room' : 'Peak'}
             </div>
-          </div>
-          <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
-            <div className="text-xl font-bold text-white">{room.totalEntries}</div>
-            <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">In</div>
           </div>
           <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
             <div className="text-xl font-bold text-white">{room.peakOccupancy}</div>
