@@ -18,17 +18,17 @@ interface Tab {
   id: TabId;
   label: string;
   icon: LucideIcon;
-  beta?: boolean;
+  comingSoon?: boolean;
 }
 
 const TABS: Tab[] = [
-  { id: 'live', label: 'Live', icon: Zap },
-  { id: 'analytics', label: 'Results', icon: BarChart2 },
-  { id: 'events', label: 'Events', icon: Sparkles },
-  { id: 'staffing', label: 'Staffing', icon: Users },
-  { id: 'leads', label: 'Leads', icon: Smartphone, beta: true },
-  { id: 'venuescope', label: 'VenueScope', icon: Video },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'live',        label: 'Live',        icon: Zap },
+  { id: 'venuescope',  label: 'VenueScope',  icon: Video },
+  { id: 'analytics',   label: 'Results',     icon: BarChart2 },
+  { id: 'events',      label: 'Events',      icon: Sparkles },
+  { id: 'staffing',    label: 'Staffing',    icon: Users },
+  { id: 'leads',       label: 'Leads',       icon: Smartphone, comingSoon: true },
+  { id: 'settings',    label: 'Settings',    icon: Settings },
 ];
 
 interface TabNavProps {
@@ -119,9 +119,9 @@ function TabButton({ tab, isActive, onClick, variant = 'mobile' }: TabButtonProp
         
         <Icon className="w-5 h-5 relative z-10 flex-shrink-0" />
         <span className="text-sm font-medium relative z-10">{tab.label}</span>
-        {tab.beta && (
-          <span className="text-[9px] font-bold bg-primary/20 text-primary px-1.5 py-0.5 rounded-full relative z-10">
-            BETA
+        {tab.comingSoon && (
+          <span className="text-[8px] font-bold bg-whoop-bg text-text-muted px-1.5 py-0.5 rounded-full relative z-10 whitespace-nowrap">
+            SOON
           </span>
         )}
       </motion.button>
@@ -157,9 +157,9 @@ function TabButton({ tab, isActive, onClick, variant = 'mobile' }: TabButtonProp
         )}
       </AnimatePresence>
       
-      {/* Beta dot indicator */}
-      {tab.beta && (
-        <div className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full z-20" />
+      {/* Coming soon dot indicator */}
+      {tab.comingSoon && (
+        <div className="absolute top-1 right-1 w-2 h-2 bg-text-muted/60 rounded-full z-20" />
       )}
       
       {/* Icon with bounce on active */}

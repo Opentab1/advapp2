@@ -103,11 +103,12 @@ export function Analytics() {
     if (!venueId) return;
     const todayStart = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
     venueScopeService.listJobs(venueId, 100).then(jobs => {
-      const done = jobs.filter(j => j.status === 'done' && j.createdAt);
+      // Include done jobs and active live-stream cameras (running/isLive)
+      const done = jobs.filter(j => (j.status === 'done' || j.isLive || j.status === 'running') && j.createdAt);
 
-      // Today's total for POS comparison
+      // Today's total for POS comparison (live cameras count too)
       const todayDrinks = done
-        .filter(j => (j.createdAt ?? 0) >= todayStart)
+        .filter(j => (j.createdAt ?? 0) >= todayStart || j.isLive || (j.jobId ?? '').startsWith('!'))
         .reduce((sum, j) => sum + (j.totalDrinks ?? 0), 0);
       if (todayDrinks > 0) setVsTodayDrinks(todayDrinks);
 

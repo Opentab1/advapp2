@@ -277,8 +277,11 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     if (!venueId) return;
     try {
       const jobs = await venueScopeService.listJobs(venueId, 20);
-      // Include completed jobs AND live running streams (isLive=true means continuous RTSP)
-      setVsJobs(jobs.filter(j => j.status === 'done' || j.isLive === true));
+      // Include done, running, and live-stream jobs (stable '!' IDs always included)
+      setVsJobs(jobs.filter(j =>
+        j.status === 'done' || j.isLive === true || j.status === 'running' ||
+        (j.jobId ?? '').startsWith('!')
+      ));
       setLastUpdated(new Date());
     } catch (err) {
       console.warn('[usePulseData] VenueScope fetch failed:', err);
@@ -448,7 +451,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     barDayStart.setHours(3, 0, 0, 0);
     if (now.getHours() < 3) barDayStart.setDate(barDayStart.getDate() - 1);
     const todayTs = barDayStart.getTime() / 1000;
-    return vsJobs.filter(j => (j.createdAt ?? 0) >= todayTs);
+    // Always include stable live-camera records regardless of createdAt
+    return vsJobs.filter(j =>
+      (j.createdAt ?? 0) >= todayTs || j.isLive || (j.jobId ?? '').startsWith('!')
+    );
   }, [vsJobs]);
 
   const vsTotalDrinks = useMemo(() =>
@@ -495,13 +501,15 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
 
   const vsOccupancy = useMemo(() => {
     if (vsTodayJobs.length === 0) return null;
-    // For "current": sum all live cameras' peakOccupancy (updated every 30s during stream)
-    const liveJobs = vsTodayJobs.filter(j => j.isLive);
-    const liveCurrent = liveJobs.reduce((s, j) => s + (j.peakOccupancy ?? 0), 0);
+    // Only people_count cameras carry meaningful occupancy data
+    const peopleLive = vsTodayJobs.filter(j => j.isLive && j.analysisMode === 'people_count');
+    // peakOccupancy is repurposed as current head-count for live cameras (see aws_sync.py)
+    const liveCurrent = peopleLive.reduce((s, j) => s + (j.peakOccupancy ?? 0), 0);
+    const peoplJobs   = vsTodayJobs.filter(j => j.analysisMode === 'people_count');
     return {
-      todayEntries: vsTodayJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
-      todayExits:   vsTodayJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
-      peakOccupancy: Math.max(...vsTodayJobs.map(j => j.peakOccupancy ?? 0)),
+      todayEntries:  peoplJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
+      todayExits:    peoplJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
+      peakOccupancy: Math.max(...peoplJobs.map(j => j.peakOccupancy ?? 0), 0),
       current: liveCurrent,
     };
   }, [vsTodayJobs]);
