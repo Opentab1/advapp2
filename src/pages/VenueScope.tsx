@@ -176,8 +176,11 @@ function buildRooms(jobs: VenueScopeJob[]): RoomSummary[] {
     const totalDrinks   = roomJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
     const totalEntries  = roomJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
     const peakOccupancy = Math.max(...roomJobs.map(j => j.peakOccupancy ?? 0), 0);
+    // For live cameras, peakOccupancy is repurposed as current in-frame count (see aws_sync.py)
+    // Prefer entries-exits for true entrance cameras, otherwise use the live in-frame count
+    const entriesExits  = Math.max(0, (best.totalEntries ?? 0) - (best.totalExits ?? 0));
     const currentOcc    = best.isLive
-      ? Math.max(0, (best.totalEntries ?? 0) - (best.totalExits ?? 0))
+      ? (entriesExits > 0 ? entriesExits : (best.peakOccupancy ?? 0))
       : 0;
 
     return {
@@ -325,8 +328,8 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
       bg: 'bg-whoop-panel border-whoop-divider',
       iconColor: 'text-text-muted',
       sub: currentOccupancy > 0
-        ? (occupancyIsEntrance ? 'door count · live' : 'bar area visible')
-        : 'add entrance camera for full count',
+        ? (occupancyIsEntrance ? 'door count · live' : 'in-frame count · live')
+        : 'cameras active · detecting',
     },
     {
       icon: <DollarSign className="w-4 h-4" />,
