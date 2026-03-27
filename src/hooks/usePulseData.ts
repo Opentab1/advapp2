@@ -516,6 +516,18 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
 
   // ============ OCCUPANCY CALCULATION ============
   const effectiveOccupancy = useMemo(() => {
+    // VenueScope camera data always takes precedence for current occupancy —
+    // cameras are updated every 15s and are more reliable than BLE/sensor estimates.
+    if (vsOccupancy && (vsOccupancy.current > 0 || vsOccupancy.peakOccupancy > 0)) {
+      return {
+        current:       vsOccupancy.current,
+        todayEntries:  vsOccupancy.todayEntries,
+        todayExits:    vsOccupancy.todayExits,
+        peakOccupancy: vsOccupancy.peakOccupancy,
+        peakTime:      null,
+        isBLEEstimated: false,
+      };
+    }
     if (!sensorData?.occupancy) {
       // Fall back to VenueScope people-count data when no sensor is present
       if (vsOccupancy) {

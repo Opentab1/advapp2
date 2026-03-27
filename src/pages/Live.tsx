@@ -335,42 +335,7 @@ export function Live() {
         />
       </motion.div>
       
-      {/* Quick Actions - Right below Pulse Score */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.05 }}
-      >
-        <TonightsPlaybook
-          currentDecibels={pulseData.currentDecibels ?? 65}
-          currentLight={pulseData.currentLight ?? 50}
-          currentOccupancy={pulseData.currentOccupancy ?? 0}
-          peakPrediction={intelligence.peakPrediction ? {
-            hour: `${intelligence.peakPrediction.predictedPeakHour}:00`,
-            expectedOccupancy: intelligence.peakPrediction.predictedPeakOccupancy,
-            minutesUntil: Math.max(0, (intelligence.peakPrediction.predictedPeakHour - new Date().getHours()) * 60 - new Date().getMinutes()),
-          } : undefined}
-          smartActions={intelligence.smartActions.map(a => ({
-            id: a.id,
-            title: a.title,
-            description: a.description,
-            priority: a.priority === 'critical' ? 'high' : a.priority,
-          }))}
-          venuePatterns={venueLearning.patterns.map(p => ({
-            factor: p.factor,
-            impact: p.impact,
-            confidence: p.confidence,
-          }))}
-          totalDrinks={pulseData.totalDrinks}
-          drinksPerHour={pulseData.drinksPerHour}
-          hasTheftFlag={pulseData.hasTheftFlag}
-          retentionRate={pulseData.retentionMetrics.retentionRate}
-          pulseScore={pulseData.pulseScore}
-          dayOfWeek={dayName}
-          currentHourLabel={hourLabel}
-          historicalDrop={historicalDrop}
-        />
-      </motion.div>
+      {/* Quick Actions - hidden */}
       
       {/* Offline Warning */}
       {!pulseData.isConnected && pulseData.sensorData && (
