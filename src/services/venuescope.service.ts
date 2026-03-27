@@ -101,38 +101,27 @@ const LIST_JOBS_QUERY = `
 
 const venueScopeService = {
   /**
-   * Fetch jobs for a venue. Paginates through ALL DynamoDB pages so live jobs
-   * are never missed regardless of how many historical records exist.
-   * Returns the `limit` most-recent jobs, with live jobs always included.
+   * Fetch jobs for a venue.
+   * Live cameras use stable DynamoDB IDs (live + md5 slug) so there is exactly
+   * one record per camera — no accumulation. A single fetch of 500 items is
+   * always sufficient to capture all live cameras + recent history.
    */
   async listJobs(venueId: string, limit = 50): Promise<VenueScopeJob[]> {
     try {
-      const allItems: VenueScopeJob[] = [];
-      let nextToken: string | undefined;
-      const PAGE = 500; // max per AppSync page
+      const result = await client.graphql({
+        query: LIST_JOBS_QUERY,
+        variables: { venueId, limit: 500 },
+        authMode: 'userPool',
+      }) as { data: { listVenueScopeJobs: JobConnection } };
+      const items = result?.data?.listVenueScopeJobs?.items ?? [];
 
-      // Paginate until we have all items
-      do {
-        const result = await client.graphql({
-          query: LIST_JOBS_QUERY,
-          variables: { venueId, limit: PAGE, nextToken },
-          authMode: 'userPool',
-        }) as { data: { listVenueScopeJobs: JobConnection } };
-        const page = result?.data?.listVenueScopeJobs;
-        allItems.push(...(page?.items ?? []));
-        nextToken = page?.nextToken ?? undefined;
-      } while (nextToken);
-
-      // Always keep all live jobs + the most-recent completed ones
-      const live    = allItems.filter(j => j.isLive);
-      const nonLive = allItems.filter(j => !j.isLive)
+      // Live jobs always surface first, then sort by recency
+      const live    = items.filter(j => j.isLive);
+      const nonLive = items.filter(j => !j.isLive)
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-        .slice(0, Math.max(limit - live.length, 20));
+        .slice(0, Math.max(limit, 50));
 
-      const merged = [...live, ...nonLive]
-        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-
-      return merged.slice(0, Math.max(limit, live.length));
+      return [...live, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
     } catch (err) {
       console.warn('[venuescope] listJobs failed:', err);
       return [];
