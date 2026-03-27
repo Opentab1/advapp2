@@ -189,10 +189,26 @@ const DEMO_PERFORMANCE: StaffPerformance[] = [
   },
 ];
 
-// API endpoints
-const API_BASE = import.meta.env.VITE_STAFFING_API_URL || 'https://4unsp74svc.execute-api.us-east-2.amazonaws.com/prod';
-const STAFF_API = `${API_BASE}/staff`;
-const SHIFTS_API = `${API_BASE}/shifts`;
+// API endpoints — use external API if configured, otherwise localStorage
+const API_BASE = import.meta.env.VITE_STAFFING_API_URL || '';
+const STAFF_API = API_BASE ? `${API_BASE}/staff` : '';
+const SHIFTS_API = API_BASE ? `${API_BASE}/shifts` : '';
+
+// localStorage-based persistence when no external API is configured
+const _lsKey = (venueId: string, type: 'staff' | 'shifts') => `vs_staffing_${type}_${venueId}`;
+
+function _lsGetStaff(venueId: string): StaffMember[] {
+  try { return JSON.parse(localStorage.getItem(_lsKey(venueId, 'staff')) || '[]'); } catch { return []; }
+}
+function _lsSaveStaff(venueId: string, data: StaffMember[]) {
+  localStorage.setItem(_lsKey(venueId, 'staff'), JSON.stringify(data));
+}
+function _lsGetShifts(venueId: string): Shift[] {
+  try { return JSON.parse(localStorage.getItem(_lsKey(venueId, 'shifts')) || '[]'); } catch { return []; }
+}
+function _lsSaveShifts(venueId: string, data: Shift[]) {
+  localStorage.setItem(_lsKey(venueId, 'shifts'), JSON.stringify(data));
+}
 
 interface StaffMember {
   id: string;
@@ -272,33 +288,31 @@ export function Staffing() {
         return;
       }
       
-      // Load staff and shifts from API
-      const [staffRes, shiftsRes] = await Promise.all([
-        fetch(`${STAFF_API}/${venueId}`),
-        fetch(`${SHIFTS_API}/${venueId}`)
-      ]);
-      
-      const staffData = staffRes.ok ? await staffRes.json() : [];
-      const shiftsData = shiftsRes.ok ? await shiftsRes.json() : [];
-      
-      // Map API response to local format
-      const mappedStaff: StaffMember[] = staffData.map((s: { staffId: string; name: string; role: string; color?: string }) => ({
-        id: s.staffId,
-        name: s.name,
-        role: s.role as StaffMember['role'],
-        color: s.color || ROLE_COLORS[s.role] || ROLE_COLORS.other
-      }));
-      
-      const mappedShifts: Shift[] = shiftsData.map((s: { shiftId: string; staffId: string; staffName: string; role: string; date: string; startTime: string; endTime: string }) => ({
-        id: s.shiftId,
-        staffId: s.staffId,
-        staffName: s.staffName,
-        role: s.role,
-        date: s.date,
-        startTime: s.startTime,
-        endTime: s.endTime
-      }));
-      
+      // Load staff and shifts — use external API if configured, else localStorage
+      let mappedStaff: StaffMember[] = [];
+      let mappedShifts: Shift[] = [];
+
+      if (API_BASE) {
+        const [staffRes, shiftsRes] = await Promise.all([
+          fetch(`${STAFF_API}/${venueId}`),
+          fetch(`${SHIFTS_API}/${venueId}`)
+        ]);
+        const staffData = staffRes.ok ? await staffRes.json() : [];
+        const shiftsData = shiftsRes.ok ? await shiftsRes.json() : [];
+        mappedStaff = staffData.map((s: { staffId: string; name: string; role: string; color?: string }) => ({
+          id: s.staffId, name: s.name,
+          role: s.role as StaffMember['role'],
+          color: s.color || ROLE_COLORS[s.role] || ROLE_COLORS.other
+        }));
+        mappedShifts = shiftsData.map((s: { shiftId: string; staffId: string; staffName: string; role: string; date: string; startTime: string; endTime: string }) => ({
+          id: s.shiftId, staffId: s.staffId, staffName: s.staffName,
+          role: s.role, date: s.date, startTime: s.startTime, endTime: s.endTime
+        }));
+      } else {
+        mappedStaff = _lsGetStaff(venueId);
+        mappedShifts = _lsGetShifts(venueId);
+      }
+
       setStaff(mappedStaff);
       setShifts(mappedShifts);
       
@@ -478,16 +492,19 @@ export function Staffing() {
 
   const handleAddStaff = async (name: string, role: StaffMember['role']) => {
     if (!venueId) return;
-    
     try {
-      const response = await fetch(`${STAFF_API}/${venueId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, role, color: ROLE_COLORS[role] })
-      });
-      
-      if (!response.ok) throw new Error('Failed to add staff');
-      
+      if (API_BASE) {
+        const response = await fetch(`${STAFF_API}/${venueId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, role, color: ROLE_COLORS[role] })
+        });
+        if (!response.ok) throw new Error('Failed to add staff');
+      } else {
+        const existing = _lsGetStaff(venueId);
+        existing.push({ id: `staff-${Date.now()}`, name, role, color: ROLE_COLORS[role] });
+        _lsSaveStaff(venueId, existing);
+      }
       setShowAddStaff(false);
       loadData();
     } catch (error) {
@@ -499,17 +516,15 @@ export function Staffing() {
   const handleDeleteStaff = async (staffId: string) => {
     if (!venueId) return;
     if (!confirm('Delete this staff member and all their shifts?')) return;
-    
     try {
-      // Delete staff member
-      await fetch(`${STAFF_API}/${venueId}/${staffId}`, { method: 'DELETE' });
-      
-      // Delete all their shifts
-      const staffShifts = shifts.filter(s => s.staffId === staffId);
-      await Promise.all(
-        staffShifts.map(s => fetch(`${SHIFTS_API}/${venueId}/${s.id}`, { method: 'DELETE' }))
-      );
-      
+      if (API_BASE) {
+        await fetch(`${STAFF_API}/${venueId}/${staffId}`, { method: 'DELETE' });
+        const staffShifts = shifts.filter(s => s.staffId === staffId);
+        await Promise.all(staffShifts.map(s => fetch(`${SHIFTS_API}/${venueId}/${s.id}`, { method: 'DELETE' })));
+      } else {
+        _lsSaveStaff(venueId, _lsGetStaff(venueId).filter(s => s.id !== staffId));
+        _lsSaveShifts(venueId, _lsGetShifts(venueId).filter(s => s.staffId !== staffId));
+      }
       loadData();
     } catch (error) {
       console.error('Error deleting staff:', error);
@@ -519,26 +534,21 @@ export function Staffing() {
 
   const handleAddShift = async (staffId: string, date: string, startTime: string, endTime: string) => {
     if (!venueId) return;
-    
     const staffMember = staff.find(s => s.id === staffId);
     if (!staffMember) return;
-    
     try {
-      const response = await fetch(`${SHIFTS_API}/${venueId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          staffId,
-          staffName: staffMember.name,
-          role: staffMember.role,
-          date,
-          startTime,
-          endTime
-        })
-      });
-      
-      if (!response.ok) throw new Error('Failed to add shift');
-      
+      if (API_BASE) {
+        const response = await fetch(`${SHIFTS_API}/${venueId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ staffId, staffName: staffMember.name, role: staffMember.role, date, startTime, endTime })
+        });
+        if (!response.ok) throw new Error('Failed to add shift');
+      } else {
+        const existing = _lsGetShifts(venueId);
+        existing.push({ id: `shift-${Date.now()}`, staffId, staffName: staffMember.name, role: staffMember.role, date, startTime, endTime });
+        _lsSaveShifts(venueId, existing);
+      }
       setShowAddShift(null);
       loadData();
     } catch (error) {
@@ -549,9 +559,12 @@ export function Staffing() {
 
   const handleDeleteShift = async (shiftId: string) => {
     if (!venueId) return;
-    
     try {
-      await fetch(`${SHIFTS_API}/${venueId}/${shiftId}`, { method: 'DELETE' });
+      if (API_BASE) {
+        await fetch(`${SHIFTS_API}/${venueId}/${shiftId}`, { method: 'DELETE' });
+      } else {
+        _lsSaveShifts(venueId, _lsGetShifts(venueId).filter(s => s.id !== shiftId));
+      }
       loadData();
     } catch (error) {
       console.error('Error deleting shift:', error);
@@ -560,103 +573,75 @@ export function Staffing() {
 
   const handleCSVImport = async (data: Record<string, string>[]): Promise<{ success: number; failed: number }> => {
     if (!venueId) return { success: 0, failed: data.length };
-    
+
     let success = 0;
     let failed = 0;
-    
+    const lsStaff = API_BASE ? null : _lsGetStaff(venueId);
+    const lsShifts = API_BASE ? null : _lsGetShifts(venueId);
+
     for (const row of data) {
       try {
-        // Check if it's a staff member or shift based on columns
         if (row.name && row.role) {
-          // It's a staff member
           const role = row.role.toLowerCase();
-          const validRole = ['bartender', 'server', 'door', 'manager', 'other'].includes(role) 
-            ? role 
-            : 'other';
-          
-          await fetch(`${STAFF_API}/${venueId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: row.name,
-              role: validRole,
-              color: ROLE_COLORS[validRole]
-            })
-          });
+          const validRole = (['bartender', 'server', 'door', 'manager', 'other'].includes(role) ? role : 'other') as StaffMember['role'];
+          if (API_BASE) {
+            await fetch(`${STAFF_API}/${venueId}`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: row.name, role: validRole, color: ROLE_COLORS[validRole] })
+            });
+          } else {
+            lsStaff!.push({ id: `staff-${Date.now()}-${Math.random()}`, name: row.name, role: validRole, color: ROLE_COLORS[validRole] });
+          }
           success++;
         } else if (row.date && row.staffname && row.starttime && row.endtime) {
-          // It's a shift - need to find or create staff member
-          let staffMember = staff.find(s => 
-            s.name.toLowerCase() === row.staffname.toLowerCase()
-          );
-          
+          let staffMember = (lsStaff || staff).find(s => s.name.toLowerCase() === row.staffname.toLowerCase());
           if (!staffMember) {
-            // Create staff member first
             const role = (row.role?.toLowerCase() || 'other') as StaffMember['role'];
-            const validRole = ['bartender', 'server', 'door', 'manager', 'other'].includes(role) 
-              ? role 
-              : 'other';
-            
-            const res = await fetch(`${STAFF_API}/${venueId}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                name: row.staffname,
-                role: validRole,
-                color: ROLE_COLORS[validRole]
-              })
-            });
-            
-            if (res.ok) {
-              const newStaff = await res.json();
-              staffMember = {
-                id: newStaff.staffId,
-                name: newStaff.name,
-                role: newStaff.role,
-                color: newStaff.color
-              };
+            const validRole = ['bartender', 'server', 'door', 'manager', 'other'].includes(role) ? role : 'other' as StaffMember['role'];
+            if (API_BASE) {
+              const res = await fetch(`${STAFF_API}/${venueId}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: row.staffname, role: validRole, color: ROLE_COLORS[validRole] })
+              });
+              if (res.ok) { const ns = await res.json(); staffMember = { id: ns.staffId, name: ns.name, role: ns.role, color: ns.color }; }
+            } else {
+              const ns: StaffMember = { id: `staff-${Date.now()}-${Math.random()}`, name: row.staffname, role: validRole, color: ROLE_COLORS[validRole] };
+              lsStaff!.push(ns);
+              staffMember = ns;
             }
           }
-          
           if (staffMember) {
-            // Format date if needed (handle common formats)
             let formattedDate = row.date;
             if (row.date.includes('/')) {
               const parts = row.date.split('/');
-              if (parts.length === 3) {
-                // Assume MM/DD/YYYY or DD/MM/YYYY
-                formattedDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
-              }
+              if (parts.length === 3) formattedDate = `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`;
             }
-            
-            await fetch(`${SHIFTS_API}/${venueId}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                staffId: staffMember.id,
-                staffName: staffMember.name,
-                role: staffMember.role,
-                date: formattedDate,
-                startTime: row.starttime,
-                endTime: row.endtime
-              })
-            });
+            if (API_BASE) {
+              await fetch(`${SHIFTS_API}/${venueId}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ staffId: staffMember.id, staffName: staffMember.name, role: staffMember.role, date: formattedDate, startTime: row.starttime, endTime: row.endtime })
+              });
+            } else {
+              lsShifts!.push({ id: `shift-${Date.now()}-${Math.random()}`, staffId: staffMember.id, staffName: staffMember.name, role: staffMember.role, date: formattedDate, startTime: row.starttime, endTime: row.endtime });
+            }
             success++;
-          } else {
-            failed++;
-          }
-        } else {
-          failed++;
-        }
+          } else { failed++; }
+        } else { failed++; }
       } catch (error) {
         console.error('Error importing row:', error);
         failed++;
       }
     }
-    
+
+    // Persist localStorage batches if not using external API
+    if (!API_BASE && venueId) {
+      if (lsStaff) _lsSaveStaff(venueId, lsStaff);
+      if (lsShifts) _lsSaveShifts(venueId, lsShifts);
+    }
+
     // Reload data after import
     await loadData();
-    
+
     return { success, failed };
   };
 
