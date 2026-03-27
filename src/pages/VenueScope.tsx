@@ -281,13 +281,19 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
 
 function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkPrice: number }) {
   const totalDrinks    = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
-  const totalEntries   = jobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
-  const totalExits     = jobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
   const liveJobs       = jobs.filter(j => j.isLive);
-  // Net line-crossings from entrance camera (most accurate — requires people_count mode)
+
+  // Only people_count cameras carry meaningful occupancy data
+  const peopleLive     = liveJobs.filter(j => j.analysisMode === 'people_count');
+
+  // Entrance cameras: sum entries - exits across all people_count cameras
+  const totalEntries   = peopleLive.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+  const totalExits     = peopleLive.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
   const netLineCount   = totalEntries > 0 ? Math.max(0, totalEntries - totalExits) : 0;
-  // Fallback: sum peakOccupancy across ALL live jobs (guest-only counts from bar cameras, updated every 30s)
-  const liveCamOccupancy = liveJobs.reduce((s, j) => s + (j.peakOccupancy ?? 0), 0);
+
+  // Fallback: sum peakOccupancy across people_count live cameras only
+  // (excludes bar/bottle cameras that don't measure floor occupancy)
+  const liveCamOccupancy = peopleLive.reduce((s, j) => s + (j.peakOccupancy ?? 0), 0);
   const currentOccupancy = netLineCount > 0 ? netLineCount : liveCamOccupancy;
   const occupancyIsEntrance = netLineCount > 0;
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
