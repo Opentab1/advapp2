@@ -277,10 +277,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     if (!venueId) return;
     try {
       const jobs = await venueScopeService.listJobs(venueId, 20);
-      // Include done, running, and live-stream jobs (stable '!' IDs always included)
+      // Include done, running, and live-stream jobs (stable '~' IDs always included)
       setVsJobs(jobs.filter(j =>
         j.status === 'done' || j.isLive === true || j.status === 'running' ||
-        (j.jobId ?? '').startsWith('!')
+        (j.jobId ?? '').startsWith('~')
       ));
       setLastUpdated(new Date());
     } catch (err) {
@@ -453,7 +453,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     const todayTs = barDayStart.getTime() / 1000;
     // Always include stable live-camera records regardless of createdAt
     return vsJobs.filter(j =>
-      (j.createdAt ?? 0) >= todayTs || j.isLive || (j.jobId ?? '').startsWith('!')
+      (j.createdAt ?? 0) >= todayTs || j.isLive || (j.jobId ?? '').startsWith('~')
     );
   }, [vsJobs]);
 

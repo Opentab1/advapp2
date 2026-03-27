@@ -108,7 +108,7 @@ export function Analytics() {
 
       // Today's total for POS comparison (live cameras count too)
       const todayDrinks = done
-        .filter(j => (j.createdAt ?? 0) >= todayStart || j.isLive || (j.jobId ?? '').startsWith('!'))
+        .filter(j => (j.createdAt ?? 0) >= todayStart || j.isLive || (j.jobId ?? '').startsWith('~'))
         .reduce((sum, j) => sum + (j.totalDrinks ?? 0), 0);
       if (todayDrinks > 0) setVsTodayDrinks(todayDrinks);
 
