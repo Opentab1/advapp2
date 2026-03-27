@@ -666,7 +666,7 @@ export function Settings() {
                   <div className="text-4xl font-bold bg-gradient-to-r from-primary to-cyan-400 bg-clip-text text-transparent mb-2">Pulse</div>
                   <div className="text-warm-400 mb-1">by Advizia</div>
                   <div className="text-sm text-warm-500">Version 2.0.0</div>
-                  <div className="text-xs text-warm-600 mt-2">Last Updated: Jan 2, 2026</div>
+                  <div className="text-xs text-warm-600 mt-2">Last Updated: March 2026</div>
                 </div>
 
                 <div className="space-y-3">
