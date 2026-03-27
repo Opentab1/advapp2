@@ -360,6 +360,9 @@ export function Analytics() {
             </motion.div>
           )}
           
+          {/* VenueScope CCTV Analytics — always visible, primary for camera-only accounts */}
+          <VenueScopeInsights />
+
           {/* View Details toggle */}
           {!insights.loading && (
             <div className="flex justify-center">
@@ -395,8 +398,8 @@ export function Analytics() {
             loading={insights.loading}
           />
           
-          {/* Song Analytics Section */}
-          <motion.div
+          {/* Song Analytics Section — only show if music integration is active */}
+          {(totalSongs > 0 || songsLoading) && <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className="bg-warm-800/50 rounded-xl border border-warm-700 overflow-hidden"
@@ -740,8 +743,8 @@ export function Analytics() {
                 </motion.div>
               )}
             </AnimatePresence>
-          </motion.div>
-          
+          </motion.div>}
+
           {/* Raw Metrics - entries, exits, dB, lux, score, top songs */}
           <RawMetrics
             data={rawSensorData as any}
@@ -753,9 +756,6 @@ export function Analytics() {
             data={rawSensorData as any}
             loading={insights.loading}
           />
-
-          {/* VenueScope CCTV analytics — shows if server is configured */}
-          <VenueScopeInsights />
 
           {/* POS vs VenueScope comparison */}
           <POSComparison vsDrinkCount={vsTodayDrinks} />

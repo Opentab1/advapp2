@@ -102,13 +102,18 @@ const LIST_JOBS_QUERY = `
 const venueScopeService = {
   async listJobs(venueId: string, limit = 50): Promise<VenueScopeJob[]> {
     try {
+      // DynamoDB sorts by jobId (UUID), not createdAt. Fetch a large batch so
+      // client-side sort always captures the most-recent and live jobs.
+      const fetchLimit = Math.max(limit, 500);
       const result = await client.graphql({
         query: LIST_JOBS_QUERY,
-        variables: { venueId, limit },
+        variables: { venueId, limit: fetchLimit },
         authMode: 'userPool',
       }) as { data: { listVenueScopeJobs: JobConnection } };
       const items = result?.data?.listVenueScopeJobs?.items ?? [];
-      return [...items].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      // Sort newest first, then cap to the caller's requested limit
+      const sorted = [...items].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      return sorted.slice(0, limit);
     } catch (err) {
       console.warn('[venuescope] listJobs failed:', err);
       return [];

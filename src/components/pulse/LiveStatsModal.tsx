@@ -221,7 +221,7 @@ export function LiveStatsModal({
             <div className="grid grid-cols-2 gap-3">
               <StatCard
                 icon={GlassWater}
-                label="Drinks Tonight"
+                label="Drinks Today"
                 value={totalDrinks}
                 unit=""
                 status="neutral"

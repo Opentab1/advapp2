@@ -70,7 +70,7 @@ export function RevenueHero({
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2 text-warm-400 text-sm font-medium">
             <Sparkles className="w-4 h-4 text-amber-400" />
-            <span>Tonight's Revenue Impact</span>
+            <span>Today's Revenue Impact</span>
           </div>
           {impact.confidence > 0.5 && (
             <div className="flex items-center gap-1 text-xs text-warm-500">

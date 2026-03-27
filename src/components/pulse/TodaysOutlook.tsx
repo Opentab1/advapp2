@@ -85,7 +85,7 @@ export function TodaysOutlook({
       {/* Header */}
       <div className="mb-4">
         <h3 className="font-semibold text-white">Today's Outlook</h3>
-        <p className="text-xs text-text-secondary mt-0.5">External factors affecting tonight</p>
+        <p className="text-xs text-text-secondary mt-0.5">External factors affecting today</p>
       </div>
       
       <div className="space-y-3">

@@ -83,16 +83,39 @@ export function LiveStats({
         </div>
       </div>
       
-      {/* Stats Grid — always show all chips; "setup" state when sensor not present */}
+      {/* Stats Grid */}
       {(() => {
         const hasSound  = decibels !== null && decibels !== 0;
         const hasLight  = light !== null && light > 0;
+        const hasSensor = hasSound || hasLight;
         const hasDrinks = totalDrinks !== null;
-        const cols = hasDrinks ? 'grid-cols-2' : 'grid-cols-3';
 
+        // VenueScope-only (no sensor): show crowd + drinks prominently
+        if (!hasSensor && hasDrinks) {
+          return (
+            <div className="grid grid-cols-2 gap-3">
+              <StatChip
+                icon={Users}
+                label="Crowd"
+                value={occupancy}
+                unit="people"
+                status="neutral"
+              />
+              <StatChip
+                icon={GlassWater}
+                label={drinksPerHour !== null ? `${drinksPerHour.toFixed(0)}/hr` : 'Drinks'}
+                value={totalDrinks}
+                unit="today"
+                status="neutral"
+              />
+            </div>
+          );
+        }
+
+        // Sensor present: show all chips
+        const cols = hasDrinks ? 'grid-cols-2' : 'grid-cols-3';
         return (
           <div className={`grid ${cols} gap-3`}>
-            {/* Sound */}
             {hasSound ? (
               <StatChip
                 icon={Volume2}
@@ -106,7 +129,6 @@ export function LiveStats({
               <SetupChip icon={Volume2} label="Sound" />
             )}
 
-            {/* Light */}
             {hasLight ? (
               <StatChip
                 icon={Sun}
@@ -119,7 +141,6 @@ export function LiveStats({
               <SetupChip icon={Sun} label="Light" />
             )}
 
-            {/* Crowd — always has a value (VenueScope or sensor) */}
             <StatChip
               icon={Users}
               label="Crowd"
@@ -128,7 +149,6 @@ export function LiveStats({
               status="neutral"
             />
 
-            {/* Drinks from VenueScope (today's total) */}
             {hasDrinks && (
               <StatChip
                 icon={GlassWater}

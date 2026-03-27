@@ -82,7 +82,9 @@ export function TonightsPlaybook({
 
   const now = new Date();
   const currentHour = now.getHours();
-  const isPeakHours = currentHour >= 20 && currentHour < 2;
+  // Bar is open 11 AM – 2 AM; "business hours" = any hour >= 11 or < 2
+  const isBusinessHours = currentHour >= 11 || currentHour < 2;
+  const isPeakHours = (currentHour >= 20 || currentHour < 2);
   
   // Helper: Find a pattern for a specific factor with sufficient confidence
   const getPatternImpact = (factor: 'sound' | 'light' | 'temperature'): string | undefined => {
@@ -268,12 +270,12 @@ export function TonightsPlaybook({
         });
       }
 
-      if (retentionRate != null && retentionRate < 45 && isPeakHours) {
+      if (retentionRate != null && retentionRate < 45 && isBusinessHours) {
         actions.push({
           id: 'vs-retention',
           timeLabel: 'RIGHT NOW',
           title: 'Guests leaving early',
-          description: `Only ${retentionRate}% of tonight's guests are still here${currentHourLabel ? ` at ${currentHourLabel}` : ''}. Try a promo, announce last call for specials, or raise the energy.`,
+          description: `Only ${retentionRate}% of today's guests are still here${currentHourLabel ? ` at ${currentHourLabel}` : ''}. Try a promo, announce last call for specials, or raise the energy.`,
           icon: 'alert',
           status: 'current',
         });
@@ -298,7 +300,7 @@ export function TonightsPlaybook({
           id: 'vs-all-good',
           timeLabel: 'RIGHT NOW',
           title: totalDrinks != null && totalDrinks > 0
-            ? `${totalDrinks} drinks served tonight`
+            ? `${totalDrinks} drinks served today`
             : 'Bar monitoring active',
           description: totalDrinks != null && totalDrinks > 0
             ? 'Drink counts are being tracked by VenueScope. Stay consistent.'

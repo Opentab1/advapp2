@@ -67,7 +67,7 @@ export function ContextBar({ games, nextHoliday, weather }: ContextBarProps) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      <h4 className="text-sm font-medium text-warm-400">Tonight</h4>
+      <h4 className="text-sm font-medium text-warm-400">Today</h4>
       <div className="flex flex-wrap gap-2">
         {items.map((item, index) => (
           <ContextChip key={index} item={item} />

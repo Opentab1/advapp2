@@ -304,7 +304,7 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
     {
       icon: <Zap className="w-4 h-4" />,
       value: totalDrinks.toString(),
-      label: 'Drinks Tonight',
+      label: 'Drinks Today',
       color: 'text-teal',
       bg: 'bg-teal/10 border-teal/20',
       iconColor: 'text-teal',
@@ -737,7 +737,7 @@ function HistoryRow({ job, onInvestigate }: {
 
 // ── Empty state ───────────────────────────────────────────────────────────────
 
-function EmptyState() {
+function EmptyState({ venueId }: { venueId: string }) {
   return (
     <div className="flex items-center justify-center min-h-[60vh] px-4">
       <motion.div
@@ -752,6 +752,11 @@ function EmptyState() {
         <p className="text-sm text-text-secondary">
           Results will appear here automatically once your cameras start processing.
         </p>
+        {venueId && (
+          <p className="text-[10px] text-text-muted mt-3 font-mono opacity-60">
+            querying: {venueId}
+          </p>
+        )}
       </motion.div>
     </div>
   );
@@ -812,7 +817,7 @@ export function VenueScope() {
   useEffect(() => {
     if (!isDemo) return;
     const t = setTimeout(() => {
-      setNewToast('New result: Main Bar — Tonight');
+      setNewToast('New result: Main Bar — Today');
       setTimeout(() => setNewToast(null), 5000);
     }, 20_000);
     return () => clearTimeout(t);
@@ -912,10 +917,10 @@ export function VenueScope() {
           <RefreshCw className="w-6 h-6 text-text-muted animate-spin" />
         </div>
       ) : jobs.length === 0 ? (
-        <EmptyState />
+        <EmptyState venueId={venueId} />
       ) : (
         <>
-          {/* 1. Tonight's hero numbers */}
+          {/* 1. Today's hero numbers */}
           {tonightJobs.length > 0 && (
             <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} />
           )}

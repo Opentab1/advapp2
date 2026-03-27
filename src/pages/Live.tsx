@@ -220,7 +220,7 @@ export function Live() {
   
   // ============ LOADING STATE ============
   
-  if (pulseData.loading && !pulseData.sensorData) {
+  if (pulseData.loading && !pulseData.sensorData && !pulseData.hasVenueScopeData) {
     return <PulsePageSkeleton />;
   }
   
@@ -265,7 +265,7 @@ export function Live() {
         const hasSensor  = !!pulseData.sensorData;
         const hasVS      = pulseData.hasVenueScopeData;
         const hasReviews = !!pulseData.reviews;
-        if (hasSensor && hasVS && hasReviews) return null;
+        if (hasVS) return null;
         return (
           <motion.div
             initial={{ opacity: 0, y: -8 }}

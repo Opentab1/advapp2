@@ -34,7 +34,11 @@ export function VenueScopeInsights() {
     if (!venueId) { setLoading(false); return; }
     let cancelled = false;
     venueScopeService.listJobs(venueId, 30).then(data => {
-      if (!cancelled) { setJobs(data.filter(j => j.status === 'done')); setLoading(false); }
+      if (!cancelled) {
+        // Include live running jobs AND completed jobs
+        setJobs(data.filter(j => j.status === 'done' || j.isLive || j.status === 'running'));
+        setLoading(false);
+      }
     });
     return () => { cancelled = true; };
   }, [venueId, lastRefresh]);
@@ -96,12 +100,21 @@ export function VenueScopeInsights() {
       <div className="px-4 pb-3 border-b border-whoop-divider">
         <div className="flex items-start justify-between mb-2">
           <div>
-            <p className="text-xs text-warm-500 uppercase tracking-wide mb-0.5">Last Analysis</p>
+            <p className="text-xs text-warm-500 uppercase tracking-wide mb-0.5">
+              {latest.isLive ? 'Live Now' : 'Last Analysis'}
+            </p>
             <p className="text-sm text-warm-300 truncate max-w-[200px]">
-              {latest.clipLabel || latest.jobId}
+              {latest.roomLabel || latest.clipLabel || latest.jobId}
             </p>
           </div>
-          <ConfidenceBadge color={latest.confidenceColor} label={latest.confidenceLabel} />
+          {latest.isLive ? (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+              LIVE
+            </span>
+          ) : (
+            <ConfidenceBadge color={latest.confidenceColor} label={latest.confidenceLabel} />
+          )}
         </div>
 
         <div className="grid grid-cols-3 gap-2">
