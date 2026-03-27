@@ -863,8 +863,9 @@ export function VenueScope() {
   const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !j.isLive), [safeJobs, todayStart]);
 
   const allRooms    = useMemo(() => { try { return buildRooms(tonightJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [tonightJobs]);
-  const liveRooms   = useMemo(() => allRooms.filter(r => r.isLive), [allRooms]);
-  const doneRooms   = useMemo(() => allRooms.filter(r => !r.isLive), [allRooms]);
+  // Keep reconnecting cameras (stable '!' IDs) in the live section so they never disappear
+  const liveRooms   = useMemo(() => allRooms.filter(r => r.isLive || (r.job?.jobId ?? '').startsWith('!')), [allRooms]);
+  const doneRooms   = useMemo(() => allRooms.filter(r => !r.isLive && !(r.job?.jobId ?? '').startsWith('!')), [allRooms]);
   const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
   // History = today's completed rooms + all older jobs
   const historyJobs = useMemo(() => [
@@ -946,7 +947,7 @@ export function VenueScope() {
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-xs font-semibold text-teal uppercase tracking-wider">Cameras Live Now</span>
                 <span className="text-[10px] text-teal bg-teal/10 border border-teal/20 px-1.5 py-0.5 rounded-full">
-                  {liveRooms.length} live
+                  {liveRooms.filter(r => r.isLive).length}/{liveRooms.length} live
                 </span>
                 <div className="h-px flex-1 bg-teal/20" />
               </div>
