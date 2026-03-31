@@ -12,10 +12,12 @@ import {
   Clock, User, BarChart3,
   Camera, Loader2, X, Download,
   ChevronDown, ChevronUp, FileText,
-  Activity, Users, Zap,
+  Activity, Users, Zap, DollarSign, Calendar, TrendingUp,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
+import sportsService from '../services/sports.service';
+import { SportsGame } from '../types';
 import venueSettingsService from '../services/venue-settings.service';
 import { isDemoAccount, generateDemoVenueScopeJobs } from '../utils/demoData';
 
@@ -320,6 +322,15 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
       iconColor: 'text-teal',
     },
     {
+      icon: <DollarSign className="w-4 h-4" />,
+      value: `$${(totalDrinks * avgDrinkPrice).toLocaleString()}`,
+      label: 'Est. Revenue',
+      color: 'text-emerald-400',
+      bg: 'bg-emerald-500/5 border-emerald-500/20',
+      iconColor: 'text-emerald-400',
+      sub: `${totalDrinks} drinks × $${avgDrinkPrice}`,
+    },
+    {
       icon: <Users className="w-4 h-4" />,
       value: currentOccupancy > 0 ? currentOccupancy.toString() : '—',
       label: 'Current Occupancy',
@@ -350,7 +361,7 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
   ];
 
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
       {stats.map(({ icon, value, label, color, bg, iconColor, sub }) => (
         <div key={label} className={`border rounded-2xl p-4 ${bg}`}>
           <div className={`w-7 h-7 rounded-lg bg-black/20 flex items-center justify-center mb-3 ${iconColor}`}>
@@ -748,6 +759,127 @@ function HistoryRow({ job, onInvestigate }: {
   );
 }
 
+// ── Tonight section (sports + day context) ────────────────────────────────────
+
+function TonightSection() {
+  const [games, setGames] = useState<SportsGame[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    sportsService.getTodaysGames()
+      .then(g => { setGames(g); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const liveGames = games.filter(g => g.status === 'live');
+  const upcomingGames = games.filter(g => g.status === 'scheduled');
+  const displayGames = [...liveGames, ...upcomingGames].slice(0, 6);
+
+  const dayName = new Date().toLocaleDateString(undefined, { weekday: 'long' });
+  const isWeekend = [0, 5, 6].includes(new Date().getDay());
+
+  if (loading) return null;
+
+  return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-text-muted" />
+          Tonight
+        </h2>
+        <span className="text-[10px] text-text-muted">
+          {isWeekend ? '🟢 Peak night' : '🟡 Weeknight'} · {dayName}
+        </span>
+      </div>
+
+      {displayGames.length === 0 ? (
+        <p className="text-xs text-text-muted">No major games scheduled today.</p>
+      ) : (
+        <div className="space-y-2">
+          {displayGames.map(game => (
+            <div key={game.id} className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs ${
+              game.status === 'live'
+                ? 'bg-red-500/10 border border-red-500/20'
+                : 'bg-whoop-bg border border-whoop-divider'
+            }`}>
+              <div className="flex items-center gap-2 min-w-0">
+                {game.status === 'live' && (
+                  <span className="relative flex h-1.5 w-1.5 flex-shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-400" />
+                  </span>
+                )}
+                <span className="text-[10px] text-text-muted font-medium flex-shrink-0">{game.sport}</span>
+                <span className="text-white font-medium truncate">
+                  {game.awayTeam} @ {game.homeTeam}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                {game.status === 'live' ? (
+                  <span className="text-red-400 font-bold">
+                    {game.awayScore} – {game.homeScore}
+                    {game.network && <span className="text-text-muted font-normal ml-1">· {game.network}</span>}
+                  </span>
+                ) : (
+                  <span className="text-text-muted">
+                    {new Date(game.startTime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                    {game.network && ` · ${game.network}`}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Drink pace chart ──────────────────────────────────────────────────────────
+
+function PaceChart({ jobs }: { jobs: VenueScopeJob[] }) {
+  // Bucket completed drink_count jobs into 15-min windows over last 60 min
+  const now = Date.now() / 1000;
+  const buckets = [45, 30, 15, 0].map(minsAgo => {
+    const bucketStart = now - (minsAgo + 15) * 60;
+    const bucketEnd   = now - minsAgo * 60;
+    const label = minsAgo === 0 ? 'Now' : `-${minsAgo + 15}m`;
+    const drinks = jobs
+      .filter(j => !j.isLive && j.status === 'done')
+      .filter(j => (j.createdAt ?? 0) >= bucketStart && (j.createdAt ?? 0) < bucketEnd)
+      .reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
+    return { label, drinks };
+  });
+
+  const maxDrinks = Math.max(...buckets.map(b => b.drinks), 1);
+  const hasData = buckets.some(b => b.drinks > 0);
+
+  if (!hasData) return null;
+
+  return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4">
+      <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
+        <TrendingUp className="w-4 h-4 text-teal" />
+        Drink Pace — Last Hour
+      </h2>
+      <div className="flex items-end gap-2 h-16">
+        {buckets.map(({ label, drinks }) => (
+          <div key={label} className="flex-1 flex flex-col items-center gap-1">
+            <span className="text-[10px] text-text-muted font-medium">{drinks > 0 ? drinks : ''}</span>
+            <div className="w-full rounded-t-md bg-teal/20 flex items-end overflow-hidden" style={{ height: '44px' }}>
+              <div
+                className="w-full bg-teal rounded-t-md transition-all duration-700"
+                style={{ height: `${(drinks / maxDrinks) * 44}px` }}
+              />
+            </div>
+            <span className="text-[9px] text-text-muted">{label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 function EmptyState({ venueId }: { venueId: string }) {
@@ -942,6 +1074,12 @@ export function VenueScope() {
           {tonightJobs.length > 0 && (
             <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} />
           )}
+
+          {/* Tonight — sports + day context */}
+          <TonightSection />
+
+          {/* Drink pace chart */}
+          <PaceChart jobs={tonightJobs} />
 
           {/* 2. Live cameras only */}
           {liveRooms.length > 0 && (
