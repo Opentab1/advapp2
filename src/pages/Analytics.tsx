@@ -15,10 +15,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
+import {
   RefreshCw, Download, Calendar, Clock, Music, TrendingUp, TrendingDown,
   Zap, ListMusic, ChevronDown, Disc3, FileText, FileJson, ShieldCheck,
-  DollarSign, ArrowRight
+  DollarSign, ArrowRight, AlertTriangle, User, Video, ChevronRight, Award
 } from 'lucide-react';
 import { format } from 'date-fns';
 import songLogService, { 
@@ -45,12 +45,245 @@ import { useInsightsData } from '../hooks/useInsightsData';
 import { useDisplayName } from '../hooks/useDisplayName';
 import apiService from '../services/api.service';
 import authService from '../services/auth.service';
-import venueScopeService from '../services/venuescope.service';
+import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
 import { haptic } from '../utils/haptics';
 import type { InsightsTimeRange } from '../types/insights';
 
 // Revenue per minute estimate (industry average for bars)
 const REVENUE_PER_MINUTE = 0.62;
+
+// ── Shift History ─────────────────────────────────────────────────────────────
+function ShiftHistory({ jobs }: { jobs: VenueScopeJob[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? jobs : jobs.slice(0, 6);
+
+  if (jobs.length === 0) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden"
+    >
+      <div className="flex items-center justify-between px-4 py-3 border-b border-whoop-divider">
+        <div className="flex items-center gap-2">
+          <Video className="w-4 h-4 text-teal" />
+          <span className="text-sm font-semibold text-white">Shift History</span>
+          <span className="text-xs text-warm-500 bg-warm-800 px-1.5 py-0.5 rounded">{jobs.length}</span>
+        </div>
+      </div>
+
+      <div className="divide-y divide-whoop-divider">
+        {visible.map((job) => {
+          const date = job.createdAt
+            ? new Date(job.createdAt * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            : '—';
+          const time = job.createdAt
+            ? new Date(job.createdAt * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+            : '';
+          const dph = job.drinksPerHour != null ? job.drinksPerHour.toFixed(0) : '—';
+          const confidenceColors: Record<string, string> = {
+            green:  'text-emerald-400',
+            yellow: 'text-amber-400',
+            red:    'text-red-400',
+          };
+
+          return (
+            <div key={job.jobId} className="flex items-center gap-3 px-4 py-3 hover:bg-warm-800/30 transition-colors">
+              {/* Date */}
+              <div className="w-14 flex-shrink-0">
+                <div className="text-xs font-semibold text-white">{date}</div>
+                <div className="text-[10px] text-warm-500">{time}</div>
+              </div>
+
+              {/* Label */}
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-warm-300 truncate">
+                  {job.roomLabel || job.clipLabel || job.jobId.slice(0, 10)}
+                </div>
+                {job.topBartender && (
+                  <div className="text-[10px] text-warm-500 truncate">
+                    <User className="w-2.5 h-2.5 inline mr-0.5" />{job.topBartender}
+                  </div>
+                )}
+              </div>
+
+              {/* Drinks */}
+              <div className="text-center flex-shrink-0 w-12">
+                <div className="text-sm font-bold text-teal">{job.totalDrinks ?? 0}</div>
+                <div className="text-[9px] text-warm-500">{dph}/hr</div>
+              </div>
+
+              {/* Theft / clean */}
+              <div className="flex-shrink-0 w-16 text-right">
+                {job.hasTheftFlag ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5">
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    {job.unrungDrinks ? `${job.unrungDrinks} unrung` : 'Flag'}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400">
+                    <ShieldCheck className="w-2.5 h-2.5" />
+                    Clean
+                  </span>
+                )}
+              </div>
+
+              {/* Confidence */}
+              <div className={`flex-shrink-0 text-[10px] font-semibold w-10 text-right ${confidenceColors[job.confidenceColor] ?? 'text-warm-400'}`}>
+                {job.confidenceScore ? `${job.confidenceScore}%` : job.confidenceLabel || '—'}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {jobs.length > 6 && (
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="w-full flex items-center justify-center gap-1 py-2.5 text-xs text-warm-500 hover:text-warm-300 border-t border-whoop-divider transition-colors"
+        >
+          {expanded ? 'Show less' : `Show all ${jobs.length} shifts`}
+          <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </button>
+      )}
+    </motion.div>
+  );
+}
+
+// ── Staff Leaderboard ─────────────────────────────────────────────────────────
+function StaffLeaderboard({ jobs }: { jobs: VenueScopeJob[] }) {
+  // Aggregate bartender stats across all jobs
+  const stats: Record<string, { drinks: number; shifts: number; theftShifts: number }> = {};
+
+  jobs.forEach(job => {
+    // Try bartenderBreakdown JSON first
+    if (job.bartenderBreakdown) {
+      try {
+        const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks: number }>;
+        Object.entries(bd).forEach(([name, data]) => {
+          if (!stats[name]) stats[name] = { drinks: 0, shifts: 0, theftShifts: 0 };
+          stats[name].drinks += data.drinks ?? 0;
+          stats[name].shifts += 1;
+          if (job.hasTheftFlag) stats[name].theftShifts += 1;
+        });
+        return;
+      } catch { /* fall through */ }
+    }
+    // Fall back to topBartender
+    if (job.topBartender) {
+      const name = job.topBartender;
+      if (!stats[name]) stats[name] = { drinks: 0, shifts: 0, theftShifts: 0 };
+      stats[name].drinks += job.totalDrinks ?? 0;
+      stats[name].shifts += 1;
+      if (job.hasTheftFlag) stats[name].theftShifts += 1;
+    }
+  });
+
+  const leaders = Object.entries(stats)
+    .map(([name, s]) => ({ name, ...s, avg: s.shifts ? Math.round(s.drinks / s.shifts) : 0 }))
+    .sort((a, b) => b.drinks - a.drinks)
+    .slice(0, 5);
+
+  if (leaders.length === 0) return null;
+
+  const rankColors = ['text-amber-400', 'text-slate-300', 'text-amber-700', 'text-warm-400', 'text-warm-400'];
+  const rankIcons  = ['🥇', '🥈', '🥉', '4', '5'];
+  const maxDrinks  = leaders[0]?.drinks ?? 1;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden"
+    >
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+        <Award className="w-4 h-4 text-amber-400" />
+        <span className="text-sm font-semibold text-white">Staff Performance</span>
+        <span className="text-[10px] text-warm-500 ml-auto">All-time totals</span>
+      </div>
+
+      <div className="p-4 space-y-3">
+        {leaders.map((person, i) => {
+          const barPct = (person.drinks / maxDrinks) * 100;
+          return (
+            <div key={person.name}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm w-5 text-center">{rankIcons[i]}</span>
+                  <span className="text-sm text-white font-medium">{person.name}</span>
+                  {person.theftShifts > 0 && (
+                    <span className="text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-1">
+                      {person.theftShifts} flag{person.theftShifts > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="text-right">
+                  <span className={`text-sm font-bold ${rankColors[i]}`}>{person.drinks.toLocaleString()}</span>
+                  <span className="text-[10px] text-warm-500 ml-1">drinks</span>
+                </div>
+              </div>
+              <div className="h-1.5 bg-warm-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${i === 0 ? 'bg-amber-400' : i === 1 ? 'bg-slate-300' : 'bg-teal/60'}`}
+                  style={{ width: `${barPct}%` }}
+                />
+              </div>
+              <div className="flex justify-between mt-0.5">
+                <span className="text-[9px] text-warm-600">{person.shifts} shift{person.shifts !== 1 ? 's' : ''}</span>
+                <span className="text-[9px] text-warm-600">{person.avg} avg/shift</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </motion.div>
+  );
+}
+
+// ── Theft Alert Banner ────────────────────────────────────────────────────────
+function TheftAlertBanner({ jobs }: { jobs: VenueScopeJob[] }) {
+  const flagged = jobs.filter(j => j.hasTheftFlag);
+  if (flagged.length === 0) return null;
+
+  const totalUnrung = flagged.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
+  const latest = flagged[0];
+  const latestDate = latest.createdAt
+    ? new Date(latest.createdAt * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : 'recent shift';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4"
+    >
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <AlertTriangle className="w-4 h-4 text-red-400" />
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-sm font-bold text-red-400">Theft Risk Detected</span>
+            <span className="text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5 font-semibold">
+              {flagged.length} shift{flagged.length > 1 ? 's' : ''}
+            </span>
+          </div>
+          <p className="text-xs text-warm-300">
+            {totalUnrung > 0
+              ? `${totalUnrung} unrung drink${totalUnrung !== 1 ? 's' : ''} detected across ${flagged.length} shift${flagged.length > 1 ? 's' : ''}.`
+              : `Suspicious activity flagged on ${flagged.length} shift${flagged.length > 1 ? 's' : ''}.`
+            } Most recent: <span className="text-red-300 font-medium">{latestDate}</span>
+            {latest.topBartender && ` — ${latest.topBartender}`}.
+          </p>
+          <p className="text-[11px] text-warm-500 mt-1">
+            Review flagged shifts in the shift history below.
+          </p>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
 
 function formatStayDuration(minutes: number | null): string {
   if (minutes === null) return '--';
@@ -96,6 +329,7 @@ export function Analytics() {
   const [showSongAnalytics, setShowSongAnalytics] = useState(true);
   const [vsTodayDrinks, setVsTodayDrinks] = useState<number | undefined>(undefined);
   const [vsDrinkPoints, setVsDrinkPoints] = useState<Array<{ date: string; drinks: number }>>([]);
+  const [allVsJobs, setAllVsJobs] = useState<VenueScopeJob[]>([]);
   
   // Load VenueScope drink data for POS auto-fill + trend chart
   useEffect(() => {
@@ -105,6 +339,7 @@ export function Analytics() {
     venueScopeService.listJobs(venueId, 100).then(jobs => {
       // Include done jobs and active live-stream cameras (running/isLive)
       const done = jobs.filter(j => (j.status === 'done' || j.isLive || j.status === 'running') && j.createdAt);
+      setAllVsJobs(done);
 
       // Today's total for POS comparison (live cameras count too)
       const todayDrinks = done
@@ -275,6 +510,20 @@ export function Analytics() {
             loading={insights.loading} 
           />
           
+          {/* ============ THEFT ALERT BANNER ============ */}
+          {allVsJobs.length > 0 && <TheftAlertBanner jobs={allVsJobs} />}
+
+          {/* ============ VENUESCOPE CCTV ANALYTICS ============ */}
+          <VenueScopeInsights />
+
+          {/* ============ SHIFT HISTORY + STAFF LEADERBOARD ============ */}
+          {allVsJobs.length > 0 && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <ShiftHistory jobs={allVsJobs} />
+              <StaffLeaderboard jobs={allVsJobs} />
+            </div>
+          )}
+
           {/* ============ DWELL TIME HERO ============ */}
           {/* This is THE metric. How long guests stay = how much they spend. */}
           {insights.loading ? (
@@ -361,9 +610,6 @@ export function Analytics() {
             </motion.div>
           )}
           
-          {/* VenueScope CCTV Analytics — always visible, primary for camera-only accounts */}
-          <VenueScopeInsights />
-
           {/* View Details toggle */}
           {!insights.loading && (
             <div className="flex justify-center">
