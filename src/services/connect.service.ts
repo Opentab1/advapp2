@@ -197,7 +197,7 @@ class ConnectService {
       default:
         return {
           script:   macScript(venueId),
-          filename: 'connect-venuescope.command', // .command = double-click opens Terminal on Mac
+          filename: 'connect-venuescope.sh',
           mime:     'application/x-sh',
         };
     }

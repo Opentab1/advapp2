@@ -636,7 +636,7 @@ export function Settings() {
                   <p className="text-xs text-warm-500 mb-2 uppercase tracking-wide font-medium">Venue computer's operating system</p>
                   <div className="grid grid-cols-3 gap-2">
                     {([
-                      { id: 'mac'     as VenueOS, label: '🍎  Mac',     file: '.command' },
+                      { id: 'mac'     as VenueOS, label: '🍎  Mac',     file: '.sh' },
                       { id: 'windows' as VenueOS, label: '🪟  Windows', file: '.bat'     },
                       { id: 'linux'   as VenueOS, label: '🐧  Linux',   file: '.sh'      },
                     ]).map(({ id, label, file }) => (
@@ -669,7 +669,7 @@ export function Settings() {
 
                 <div className="mt-4 space-y-3">
                   {(selectedOS === 'mac' ? [
-                    { step: '1', text: 'Download the file, then open Terminal and paste this:', code: 'bash ~/Downloads/connect-venuescope.command' },
+                    { step: '1', text: 'Download the file, then open Terminal and paste this:', code: 'bash ~/Downloads/connect-venuescope.sh' },
                     { step: '2', text: 'Script installs Tailscale and joins the VenueScope network — no login needed' },
                     { step: '3', text: 'Cameras appear in your dashboard within 2 minutes' },
                   ] : selectedOS === 'windows' ? [
