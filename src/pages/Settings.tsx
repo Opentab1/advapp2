@@ -669,23 +669,30 @@ export function Settings() {
 
                 <div className="mt-4 space-y-3">
                   {(selectedOS === 'mac' ? [
-                    { step: '1', text: 'Download the file and double-click it — Terminal opens automatically' },
-                    { step: '2', text: 'Script installs Tailscale and joins the VenueScope network (no login needed)' },
+                    { step: '1', text: 'Download the file, then open Terminal and paste this:', code: 'bash ~/Downloads/connect-venuescope.command' },
+                    { step: '2', text: 'Script installs Tailscale and joins the VenueScope network — no login needed' },
                     { step: '3', text: 'Cameras appear in your dashboard within 2 minutes' },
                   ] : selectedOS === 'windows' ? [
                     { step: '1', text: 'Download the file and double-click it — Command Prompt opens automatically' },
                     { step: '2', text: 'If Tailscale is not installed, the script opens the installer — run it, then double-click the file again' },
                     { step: '3', text: 'Cameras appear in your dashboard within 2 minutes' },
                   ] : [
-                    { step: '1', text: 'Download the file, then run: chmod +x connect-venuescope.sh && ./connect-venuescope.sh' },
+                    { step: '1', text: 'Download the file, then open Terminal and paste this:', code: 'bash ~/Downloads/connect-venuescope.sh' },
                     { step: '2', text: 'Script installs Tailscale and joins the VenueScope network' },
                     { step: '3', text: 'Cameras appear in your dashboard within 2 minutes' },
-                  ]).map(({ step, text }) => (
+                  ]).map(({ step, text, code }: { step: string; text: string; code?: string }) => (
                     <div key={step} className="flex items-start gap-3">
                       <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 border border-primary/40 text-primary text-xs flex items-center justify-center font-bold">
                         {step}
                       </span>
-                      <p className="text-sm text-warm-300 pt-0.5">{text}</p>
+                      <div className="flex-1">
+                        <p className="text-sm text-warm-300 pt-0.5">{text}</p>
+                        {code && (
+                          <code className="mt-1.5 block text-xs bg-warm-900 border border-warm-700 rounded-lg px-3 py-2 text-teal font-mono select-all">
+                            {code}
+                          </code>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
