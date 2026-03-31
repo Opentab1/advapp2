@@ -120,37 +120,44 @@ function Ring({
   closed?: boolean;
 }) {
   const offset = RING_CIRC * (1 - Math.min(100, Math.max(0, pct)) / 100);
-  const dim = noData || closed;
+  // closed = bar not open yet; noData = open but no historical baseline
+  // Both suppress the fill arc, but closed still shows the ring track + labels clearly
+  const suppressFill = noData || closed;
 
   return (
     <div className="flex flex-col items-center gap-2">
       <div className="relative w-36 h-36">
         <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
-          {/* Track */}
+          {/* Track — always visible */}
           <circle
             cx="50" cy="50" r={RING_R}
             fill="none"
             stroke="currentColor"
             strokeWidth="8"
-            className="text-warm-700"
+            className={closed ? 'text-warm-600' : 'text-warm-700'}
           />
-          {/* Progress */}
-          <circle
-            cx="50" cy="50" r={RING_R}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="8"
-            strokeLinecap="round"
-            strokeDasharray={RING_CIRC}
-            strokeDashoffset={dim ? RING_CIRC : offset}
-            className={`${dim ? 'text-warm-700' : color} transition-all duration-700`}
-          />
+          {/* Progress arc — hidden when closed or no data */}
+          {!suppressFill && (
+            <circle
+              cx="50" cy="50" r={RING_R}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="8"
+              strokeLinecap="round"
+              strokeDasharray={RING_CIRC}
+              strokeDashoffset={offset}
+              className={`${color} transition-all duration-700`}
+            />
+          )}
         </svg>
         {/* Center text */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className={`text-2xl font-bold tabular-nums leading-none ${dim ? 'text-warm-600' : 'text-white'}`}>
+          <span className={`text-2xl font-bold tabular-nums leading-none ${closed ? 'text-warm-500' : noData ? 'text-warm-500' : 'text-white'}`}>
             {noData ? '—' : closed ? '—' : `${Math.round(pct)}%`}
           </span>
+          {closed && (
+            <span className="text-[9px] text-warm-600 mt-0.5 uppercase tracking-wide">Closed</span>
+          )}
           {!noData && !closed && sub && (
             <span className="text-[10px] text-warm-500 mt-0.5">{sub}</span>
           )}
@@ -158,10 +165,10 @@ function Ring({
       </div>
       {/* Label below ring */}
       <div className="text-center">
-        <div className={`text-xs font-semibold uppercase tracking-wider ${dim ? 'text-warm-600' : 'text-warm-400'}`}>
+        <div className={`text-xs font-semibold uppercase tracking-wider ${closed ? 'text-warm-500' : noData ? 'text-warm-600' : 'text-warm-400'}`}>
           {label}
         </div>
-        <div className={`text-sm font-bold mt-0.5 ${dim ? 'text-warm-600' : 'text-white'}`}>
+        <div className={`text-sm font-bold mt-0.5 ${closed ? 'text-warm-400' : noData ? 'text-warm-600' : 'text-white'}`}>
           {value}
         </div>
       </div>
