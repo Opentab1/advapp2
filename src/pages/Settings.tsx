@@ -625,8 +625,8 @@ export function Settings() {
                 )}
 
                 <p className="text-sm text-warm-400 mb-6">
-                  VenueScope Connect runs silently on any always-on PC at the venue.
-                  It links your cameras privately — no ports opened, cameras never exposed to the internet.
+                  Run this setup script once on the Mac at your venue. It installs Tailscale,
+                  disables sleep, and configures VenueScope to start automatically on every boot.
                 </p>
 
                 <button
@@ -634,14 +634,14 @@ export function Settings() {
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary/20 border border-primary/50 text-primary hover:bg-primary/30 rounded-lg font-medium transition-all"
                 >
                   <Download className="w-4 h-4" />
-                  Download VenueScope Connect
+                  Download Setup Script
                 </button>
 
                 <div className="mt-4 space-y-3">
                   {[
-                    { step: '1', text: 'Download and run the installer on any PC at the venue' },
-                    { step: '2', text: 'The installer handles everything automatically — nothing to configure' },
-                    { step: '3', text: 'Cameras appear here within 2 minutes' },
+                    { step: '1', text: 'Download the script to the venue Mac' },
+                    { step: '2', text: 'Open Terminal and run: bash ~/Downloads/venuescope_setup.sh' },
+                    { step: '3', text: 'Script installs Tailscale, disables sleep, and sets up autostart — done' },
                   ].map(({ step, text }) => (
                     <div key={step} className="flex items-start gap-3">
                       <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 border border-primary/40 text-primary text-xs flex items-center justify-center font-bold">
@@ -694,11 +694,11 @@ export function Settings() {
                 <ul className="space-y-2 text-sm text-warm-400">
                   <li className="flex items-center gap-2">
                     <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
-                    Any always-on Windows, Mac, or Linux PC at the venue
+                    The Mac at your venue with VenueScope already installed
                   </li>
                   <li className="flex items-center gap-2">
                     <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
-                    PC must be on the same network as the cameras
+                    Mac must be on the same network as the cameras
                   </li>
                   <li className="flex items-center gap-2">
                     <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
@@ -706,7 +706,11 @@ export function Settings() {
                   </li>
                   <li className="flex items-center gap-2">
                     <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
-                    PC plugged into power (installer disables sleep automatically)
+                    Mac plugged into power (script disables sleep automatically)
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
+                    Homebrew installed (script uses it to install Tailscale)
                   </li>
                 </ul>
               </div>

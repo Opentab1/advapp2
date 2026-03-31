@@ -116,39 +116,10 @@ class ConnectService {
    * In production this would be a packaged .exe/.pkg.
    */
   downloadInstaller(): void {
-    const user = authService.getStoredUser();
-    const venueId = user?.venueId || '';
-
-    if (this.serverUrl) {
-      // If server is reachable, offer a configured installer
-      window.open(`${this.serverUrl}/api/connect/installer?venue_id=${venueId}`, '_blank');
-    } else {
-      // Fallback: open instructions page
-      const blob = new Blob([this._getInstallerInstructions(venueId)], { type: 'text/plain' });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href     = url;
-      a.download = 'venuescope_connect_instructions.txt';
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  private _getInstallerInstructions(venueId: string): string {
-    return `VenueScope Connect — Setup Instructions
-=========================================
-
-1. Contact VenueScope support to receive your configured installer
-   Email: support@venuescope.com
-   Venue ID: ${venueId}
-
-2. Run the installer on any always-on PC at the venue
-   (Double-click — no technical knowledge needed)
-
-3. Cameras will appear in your VenueScope dashboard automatically
-
-That's it. The installer handles everything else.
-`;
+    const a    = document.createElement('a');
+    a.href     = '/venuescope_setup.sh';
+    a.download = 'venuescope_setup.sh';
+    a.click();
   }
 
   /**
