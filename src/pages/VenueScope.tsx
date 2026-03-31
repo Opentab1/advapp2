@@ -286,7 +286,7 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
 
 // ── Tonight hero numbers ──────────────────────────────────────────────────────
 
-function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkPrice: number }) {
+function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScopeJob[]; avgDrinkPrice: number; barOpen?: boolean }) {
   const totalDrinks    = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const liveJobs       = jobs.filter(j => j.isLive);
 
@@ -315,15 +315,15 @@ function TonightHero({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
   const stats = [
     {
       icon: <Zap className="w-4 h-4" />,
-      value: totalDrinks.toString(),
-      label: 'Drinks Today',
+      value: barOpen ? totalDrinks.toString() : '—',
+      label: barOpen ? 'Drinks Today' : 'Bar Closed',
       color: 'text-teal',
       bg: 'bg-teal/10 border-teal/20',
       iconColor: 'text-teal',
     },
     {
       icon: <DollarSign className="w-4 h-4" />,
-      value: `$${(totalDrinks * avgDrinkPrice).toLocaleString()}`,
+      value: barOpen ? `$${(totalDrinks * avgDrinkPrice).toLocaleString()}` : '—',
       label: 'Est. Revenue',
       color: 'text-emerald-400',
       bg: 'bg-emerald-500/5 border-emerald-500/20',
@@ -1094,6 +1094,23 @@ export function VenueScope() {
 
   // "Tonight" = after midnight local time (bar shifts that started today)
   const todayStart  = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime() / 1000; }, []);
+
+  // Business hours — read from localStorage (set in Settings > Venue)
+  const barIsOpen = useMemo(() => {
+    try {
+      const saved = localStorage.getItem('pulse_biz_hours');
+      if (!saved) return true; // no hours set = always show
+      const { open, close } = JSON.parse(saved) as { open: string; close: string };
+      const now = new Date();
+      const [oH, oM] = open.split(':').map(Number);
+      const [cH, cM] = close.split(':').map(Number);
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const openMin = oH * 60 + oM;
+      const closeMin = cH * 60 + cM;
+      if (closeMin <= openMin) return nowMin >= openMin || nowMin < closeMin;
+      return nowMin >= openMin && nowMin < closeMin;
+    } catch { return true; }
+  }, []);
   // Guard against null/undefined entries that AppSync occasionally returns
   const safeJobs    = useMemo(() => jobs.filter((j): j is VenueScopeJob => j != null && typeof j === 'object'), [jobs]);
   // Always include stable live-camera records (jobId starts with '~') regardless of
@@ -1199,42 +1216,74 @@ export function VenueScope() {
             );
           })()}
 
-          {/* ── Shift Scoreboard ── */}
-          {safeJobs.length > 0 && <ShiftScoreboard jobs={safeJobs} />}
-
           {/* 1. Today's hero numbers */}
           {tonightJobs.length > 0 && (
-            <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} />
+            <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} />
           )}
 
-          {/* Tonight — sports + day context */}
-          <TonightSection />
+          {/* Behind the Bar — bartender performance */}
+          {bartenders.length > 0 && (
+            <BartenderBoard bartenders={bartenders} />
+          )}
 
           {/* Drink pace chart */}
           <PaceChart jobs={tonightJobs} />
 
-          {/* 2. Live cameras only */}
-          {liveRooms.length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold text-teal uppercase tracking-wider">Cameras Live Now</span>
-                <span className="text-[10px] text-teal bg-teal/10 border border-teal/20 px-1.5 py-0.5 rounded-full">
-                  {liveRooms.filter(r => r.isLive).length}/{liveRooms.length} live
-                </span>
-                <div className="h-px flex-1 bg-teal/20" />
+          {/* 2. Live cameras — split by mode */}
+          {liveRooms.length > 0 && (() => {
+            const barCams    = liveRooms.filter(r => r.mode === 'drink_count');
+            const peopleCams = liveRooms.filter(r => r.mode === 'people_count');
+            const otherCams  = liveRooms.filter(r => r.mode !== 'drink_count' && r.mode !== 'people_count');
+            return (
+              <div className="space-y-5">
+                {barCams.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-xs font-semibold text-teal uppercase tracking-wider">Bar Cameras — Drink Count</span>
+                      <span className="text-[10px] text-teal bg-teal/10 border border-teal/20 px-1.5 py-0.5 rounded-full">
+                        {barCams.filter(r => r.isLive).length} live
+                      </span>
+                      <div className="h-px flex-1 bg-teal/20" />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {barCams.map(room => (
+                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {peopleCams.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-xs font-semibold text-warm-400 uppercase tracking-wider">Floor Cameras — People Count</span>
+                      <span className="text-[10px] text-warm-400 bg-warm-700/40 border border-warm-700 px-1.5 py-0.5 rounded-full">
+                        {peopleCams.filter(r => r.isLive).length} live
+                      </span>
+                      <div className="h-px flex-1 bg-warm-700/40" />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {peopleCams.map(room => (
+                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {otherCams.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">Other Cameras</span>
+                      <div className="h-px flex-1 bg-whoop-divider" />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {otherCams.map(room => (
+                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {liveRooms.map(room => (
-                  <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 3. Bartender leaderboard */}
-          {bartenders.length > 0 && (
-            <BartenderBoard bartenders={bartenders} />
-          )}
+            );
+          })()}
 
           {/* 4. Theft alerts */}
           {tonightJobs.some(j => j.hasTheftFlag) && (

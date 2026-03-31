@@ -8,6 +8,7 @@ import { format, parseISO, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks }
 import dynamoDBService from '../services/dynamodb.service';
 import authService from '../services/auth.service';
 import venueScopeService from '../services/venuescope.service';
+import type { VenueScopeJob } from '../services/venuescope.service';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { CSVImport } from '../components/common/CSVImport';
 import { isDemoAccount } from '../utils/demoData';
@@ -254,6 +255,104 @@ const ROLE_LABELS: Record<string, string> = {
   other: 'Other'
 };
 
+// ── Shift Scoreboard (mirrors VenueScope tab) ──────────────────────────────
+function StaffingShiftScoreboard({ jobs }: { jobs: VenueScopeJob[] }) {
+  if (jobs.length === 0) return null;
+
+  const latestJob = jobs[0];
+  const latestDow = latestJob.createdAt ? new Date(latestJob.createdAt * 1000).getDay() : -1;
+  const compareJob = jobs.slice(1).find(j => {
+    if (!j.createdAt || !latestJob.createdAt) return false;
+    const ageDays = (latestJob.createdAt - j.createdAt) / 86400;
+    return ageDays >= 6 && new Date(j.createdAt * 1000).getDay() === latestDow;
+  });
+  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const dayLabel = latestDow >= 0 ? dayNames[latestDow] : 'last week';
+  const pctDiff = (compareJob && (compareJob.totalDrinks ?? 0) > 0 && (latestJob.totalDrinks ?? 0) > 0)
+    ? Math.round(((latestJob.totalDrinks! - compareJob.totalDrinks!) / compareJob.totalDrinks!) * 100)
+    : null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-warm-800/50 border border-warm-700 rounded-2xl p-4"
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <TrendingUp className="w-4 h-4 text-teal" />
+        <h2 className="text-sm font-semibold text-white">Shift Scoreboard</h2>
+        {compareJob && (
+          <span className="text-[10px] text-warm-500 ml-auto">vs last {dayLabel}</span>
+        )}
+      </div>
+      <div className={`grid ${compareJob ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+        <div className="space-y-2">
+          <p className="text-[10px] text-teal uppercase tracking-wider font-semibold">Last Shift</p>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-warm-500">Drinks</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-white font-bold">{latestJob.totalDrinks ?? 0}</span>
+                {pctDiff !== null && (
+                  <span className={`flex items-center gap-0.5 text-[10px] font-semibold ${pctDiff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {pctDiff >= 0 ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
+                    {pctDiff >= 0 ? '+' : ''}{pctDiff}%
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-warm-500">Per Hour</span>
+              <span className="text-white font-semibold">{latestJob.drinksPerHour != null ? latestJob.drinksPerHour.toFixed(0) : '—'}</span>
+            </div>
+            {latestJob.topBartender && (
+              <div className="flex items-center justify-between">
+                <span className="text-warm-500">Top Performer</span>
+                <span className="text-white font-semibold truncate max-w-[120px]">{latestJob.topBartender}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-warm-500">Theft</span>
+              {latestJob.hasTheftFlag
+                ? <span className="text-red-400 font-semibold text-[10px]">{latestJob.unrungDrinks ?? 0} unrung</span>
+                : <span className="text-emerald-400 font-semibold text-[10px]">✓ Clean</span>
+              }
+            </div>
+          </div>
+        </div>
+        {compareJob && (
+          <div className="space-y-2 pl-4 border-l border-warm-700">
+            <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold">Last {dayLabel}</p>
+            <div className="space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-warm-500">Drinks</span>
+                <span className="text-warm-300 font-semibold">{compareJob.totalDrinks ?? 0}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-warm-500">Per Hour</span>
+                <span className="text-warm-300 font-semibold">{compareJob.drinksPerHour != null ? compareJob.drinksPerHour.toFixed(0) : '—'}</span>
+              </div>
+              {compareJob.topBartender && (
+                <div className="flex items-center justify-between">
+                  <span className="text-warm-500">Top</span>
+                  <span className="text-warm-300 font-semibold truncate max-w-[100px]">{compareJob.topBartender}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <span className="text-warm-500">Theft</span>
+                {compareJob.hasTheftFlag
+                  ? <span className="text-red-400/70 font-semibold text-[10px]">{compareJob.unrungDrinks ?? 0} unrung</span>
+                  : <span className="text-emerald-400/70 font-semibold text-[10px]">✓ Clean</span>
+                }
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 export function Staffing() {
   const [activeTab, setActiveTab] = useState<'schedule' | 'performance'>('schedule');
   const [staff, setStaff] = useState<StaffMember[]>([]);
@@ -265,6 +364,7 @@ export function Staffing() {
   const [showAddShift, setShowAddShift] = useState<string | null>(null); // date string
   const [showCSVImport, setShowCSVImport] = useState(false);
   const [bartenderStats, setBartenderStats] = useState<Record<string, { drinks: number; shifts: number; theftFlags: number }>>({});
+  const [scoreboardJobs, setScoreboardJobs] = useState<VenueScopeJob[]>([]);
 
   const user = authService.getStoredUser();
   const venueId = user?.venueId;
@@ -295,6 +395,7 @@ export function Staffing() {
         }
       });
       setBartenderStats(stats);
+      setScoreboardJobs(jobs.filter(j => j.status === 'done' || j.isLive));
     }).catch(() => {});
   }, [venueId]);
 
@@ -701,6 +802,9 @@ export function Staffing() {
               <p className="text-warm-400 mt-1">Track schedules and measure staff impact</p>
             </div>
           </div>
+
+          {/* Shift Scoreboard */}
+          <StaffingShiftScoreboard jobs={scoreboardJobs} />
 
           {/* Tabs */}
           <div className="flex gap-2 mb-6">
