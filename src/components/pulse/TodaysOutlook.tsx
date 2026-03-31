@@ -64,15 +64,21 @@ export function TodaysOutlook({
   holidays: providedHolidays,
 }: TodaysOutlookProps) {
   const holidays = providedHolidays || getTodaysHolidays();
-  
-  // Don't render if nothing to show
+
   const hasWeather = weather && weather.temperature;
   const hasHolidays = holidays.length > 0;
   const hasGames = todayGames.length > 0;
-  
-  if (!hasWeather && !hasHolidays && !hasGames) {
-    return null;
-  }
+
+  // Always render the card — never return null for MY DAY section
+  const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+  const dayOfWeek = new Date().getDay(); // 0=Sun ... 6=Sat
+  // Simple heuristic ranking message based on day
+  const dayRankMsg = (() => {
+    if (dayOfWeek === 5 || dayOfWeek === 6) return `${dayName}s are typically your busiest nights.`;
+    if (dayOfWeek === 0) return `${dayName}s tend to be quieter — a good night for regulars.`;
+    if (dayOfWeek === 4) return `${dayName}s often pick up early — expect a decent crowd.`;
+    return `${dayName}s are typically a moderate night for most bars.`;
+  })();
   
   const WeatherIcon = weather ? getWeatherIcon(weather.icon) : CloudSun;
   
@@ -148,36 +154,55 @@ export function TodaysOutlook({
         ))}
         
         {/* Sports Games */}
-        {hasGames && todayGames.slice(0, 3).map((game, idx) => (
-          <motion.div
-            key={game.id}
-            className="flex items-center gap-3 p-3 rounded-xl bg-whoop-panel-secondary border border-whoop-divider"
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.1 * (idx + (hasHolidays ? holidays.length : 0)) }}
-          >
-            <div className="w-10 h-10 rounded-full bg-teal/20 flex items-center justify-center flex-shrink-0">
-              <Trophy className="w-5 h-5 text-teal" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-white truncate">
-                {game.homeTeam} vs {game.awayTeam}
+        {hasGames ? (
+          todayGames.slice(0, 3).map((game, idx) => (
+            <motion.div
+              key={game.id}
+              className="flex items-center gap-3 p-3 rounded-xl bg-whoop-panel-secondary border border-whoop-divider"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.1 * (idx + (hasHolidays ? holidays.length : 0)) }}
+            >
+              <div className="w-10 h-10 rounded-full bg-teal/20 flex items-center justify-center flex-shrink-0">
+                <Trophy className="w-5 h-5 text-teal" />
               </div>
-              <div className="text-xs text-text-muted">
-                {game.sport} • {new Date(game.startTime).toLocaleTimeString('en-US', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-white truncate">
+                  {game.homeTeam} vs {game.awayTeam}
+                </div>
+                <div className="text-xs text-text-muted">
+                  {game.sport} • {new Date(game.startTime).toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
+                </div>
+              </div>
+              {game.status === 'live' && (
+                <span className="px-2 py-1 text-xs font-medium bg-recovery-low/20 text-recovery-low rounded-full animate-pulse">
+                  Live
+                </span>
+              )}
+            </motion.div>
+          ))
+        ) : (
+          !hasWeather && !hasHolidays && (
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-whoop-panel-secondary border border-whoop-divider">
+              <div className="w-10 h-10 rounded-full bg-warm-700/40 flex items-center justify-center flex-shrink-0">
+                <Trophy className="w-5 h-5 text-warm-500" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-warm-400">No major games today</div>
+                <div className="text-xs text-text-muted">{dayRankMsg}</div>
               </div>
             </div>
-            {game.status === 'live' && (
-              <span className="px-2 py-1 text-xs font-medium bg-recovery-low/20 text-recovery-low rounded-full animate-pulse">
-                Live
-              </span>
-            )}
-          </motion.div>
-        ))}
-        
+          )
+        )}
+
+        {/* No games sub-line when other context exists */}
+        {!hasGames && (hasWeather || hasHolidays) && (
+          <div className="text-xs text-text-muted py-1 pl-1">No major games scheduled today.</div>
+        )}
+
         {/* More games indicator */}
         {todayGames.length > 3 && (
           <div className="text-center text-xs text-text-muted py-1">

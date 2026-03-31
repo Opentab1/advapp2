@@ -14,7 +14,7 @@
  */
 
 import { motion } from 'framer-motion';
-import { Volume2, Sun, Users, Music, ChevronRight, GlassWater, Settings } from 'lucide-react';
+import { Volume2, Sun, Users, Music, ChevronRight, GlassWater } from 'lucide-react';
 import { OPTIMAL_RANGES } from '../../utils/constants';
 import { SoundVisualizer } from '../common/SoundVisualizer';
 import { AnimatedNumber } from '../common/AnimatedNumber';
@@ -103,10 +103,11 @@ export function LiveStats({
               />
               <StatChip
                 icon={GlassWater}
-                label={drinksPerHour !== null ? `${drinksPerHour.toFixed(0)}/hr` : 'Drinks'}
+                label="Drinks"
                 value={totalDrinks}
                 unit="today"
                 status="neutral"
+                sub={drinksPerHour !== null ? `${drinksPerHour.toFixed(0)}/hr` : undefined}
               />
             </div>
           );
@@ -152,29 +153,18 @@ export function LiveStats({
             {hasDrinks && (
               <StatChip
                 icon={GlassWater}
-                label={drinksPerHour !== null ? `${drinksPerHour.toFixed(0)}/hr` : 'Drinks'}
+                label="Drinks"
                 value={totalDrinks}
                 unit="today"
                 status="neutral"
+                sub={drinksPerHour !== null ? `${drinksPerHour.toFixed(0)}/hr` : undefined}
               />
             )}
           </div>
         );
       })()}
       
-      {/* Now Playing — show setup prompt when no music integration */}
-      {!currentSong && (
-        <div className="mt-3 pt-3 border-t border-warm-700 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-warm-700/40 flex items-center justify-center flex-shrink-0">
-            <Music className="w-4 h-4 text-warm-600" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-warm-500">Music integration</p>
-            <p className="text-[10px] text-warm-600">Contact us to set up</p>
-          </div>
-          <Settings className="w-3.5 h-3.5 text-warm-600 flex-shrink-0" />
-        </div>
-      )}
+      {/* Now Playing — only show when music data is available */}
       {currentSong && (
         <motion.div
           className="mt-3 pt-3 border-t border-warm-700 flex items-center gap-3"
@@ -239,6 +229,7 @@ interface StatChipProps {
   unit: string;
   status: Status;
   extra?: React.ReactNode;
+  sub?: string;
 }
 
 const STATUS_STYLES: Record<Status, { bg: string; text: string; icon: string }> = {
@@ -248,9 +239,9 @@ const STATUS_STYLES: Record<Status, { bg: string; text: string; icon: string }> 
   neutral: { bg: 'bg-warm-700/50', text: 'text-warm-200', icon: 'text-warm-400' },
 };
 
-function StatChip({ icon: Icon, label, value, unit, status, extra }: StatChipProps) {
+function StatChip({ icon: Icon, label, value, unit, status, extra, sub }: StatChipProps) {
   const style = STATUS_STYLES[status];
-  
+
   return (
     <div className={`p-2.5 rounded-xl ${style.bg} transition-colors`}>
       <div className="flex items-center justify-between mb-1">
@@ -261,13 +252,14 @@ function StatChip({ icon: Icon, label, value, unit, status, extra }: StatChipPro
         {extra}
       </div>
       <div className="flex items-baseline gap-1">
-        <AnimatedNumber 
-          value={value} 
+        <AnimatedNumber
+          value={value}
           className={`text-lg font-bold ${style.text}`}
           formatFn={(v) => v.toFixed(0)}
         />
         <span className="text-xs text-warm-500">{unit}</span>
       </div>
+      {sub && <span className="text-[10px] text-warm-500 mt-0.5 block">{sub}</span>}
     </div>
   );
 }

@@ -52,10 +52,31 @@ import type { InsightsTimeRange } from '../types/insights';
 // Revenue per minute estimate (industry average for bars)
 const REVENUE_PER_MINUTE = 0.62;
 
+// ── Shift Grade ───────────────────────────────────────────────────────────────
+function gradeShift(job: VenueScopeJob, avgDrinksPerShift: number): { grade: string; color: string } {
+  let score = 0;
+  if (!job.hasTheftFlag) score += 40;
+  score += Math.round((job.confidenceScore ?? 50) * 0.3);
+  if (avgDrinksPerShift > 0) {
+    const ratio = (job.totalDrinks ?? 0) / avgDrinksPerShift;
+    score += Math.min(30, Math.round(ratio * 20));
+  } else {
+    score += 20;
+  }
+  if (score >= 85) return { grade: 'A', color: 'text-emerald-400' };
+  if (score >= 70) return { grade: 'B', color: 'text-teal' };
+  if (score >= 55) return { grade: 'C', color: 'text-amber-400' };
+  if (score >= 40) return { grade: 'D', color: 'text-orange-400' };
+  return { grade: 'F', color: 'text-red-400' };
+}
+
 // ── Shift History ─────────────────────────────────────────────────────────────
 function ShiftHistory({ jobs }: { jobs: VenueScopeJob[] }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? jobs : jobs.slice(0, 6);
+  const avgDrinksPerShift = jobs.length
+    ? Math.round(jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0) / jobs.length)
+    : 0;
 
   if (jobs.length === 0) return null;
 
@@ -88,6 +109,8 @@ function ShiftHistory({ jobs }: { jobs: VenueScopeJob[] }) {
             red:    'text-red-400',
           };
 
+          const { grade, color: gradeColor } = gradeShift(job, avgDrinksPerShift);
+
           return (
             <div key={job.jobId} className="flex items-center gap-3 px-4 py-3 hover:bg-warm-800/30 transition-colors">
               {/* Date */}
@@ -113,6 +136,9 @@ function ShiftHistory({ jobs }: { jobs: VenueScopeJob[] }) {
                 <div className="text-sm font-bold text-teal">{job.totalDrinks ?? 0}</div>
                 <div className="text-[9px] text-warm-500">{dph}/hr</div>
               </div>
+
+              {/* Grade */}
+              <span className={`text-sm font-bold w-6 text-center flex-shrink-0 ${gradeColor}`}>{grade}</span>
 
               {/* Theft / clean */}
               <div className="flex-shrink-0 w-16 text-right">
@@ -236,6 +262,45 @@ function StaffLeaderboard({ jobs }: { jobs: VenueScopeJob[] }) {
             </div>
           );
         })}
+      </div>
+    </motion.div>
+  );
+}
+
+// ── Revenue Recovery Card ─────────────────────────────────────────────────────
+const AVG_DRINK_PRICE = 8;
+
+function RevenueRecovery({ jobs }: { jobs: VenueScopeJob[] }) {
+  const totalUnrung = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
+  const recovered = totalUnrung * AVG_DRINK_PRICE;
+  const flaggedShifts = jobs.filter(j => j.hasTheftFlag).length;
+
+  if (totalUnrung === 0 && flaggedShifts === 0) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-whoop-panel border-l-4 border-l-teal border border-whoop-divider rounded-2xl p-4"
+    >
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-full bg-teal/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <ShieldCheck className="w-4 h-4 text-teal" />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-bold text-white">Revenue Protection</p>
+          <p className="text-xs text-warm-300 mt-1">
+            VenueScope flagged{' '}
+            <span className="text-teal font-semibold">${recovered.toLocaleString()}</span>{' '}
+            in potential theft this period.
+          </p>
+          {totalUnrung > 0 && (
+            <p className="text-[11px] text-warm-500 mt-0.5">
+              {totalUnrung} unrung drink{totalUnrung !== 1 ? 's' : ''} across{' '}
+              {flaggedShifts} shift{flaggedShifts !== 1 ? 's' : ''} × ${AVG_DRINK_PRICE} avg drink price
+            </p>
+          )}
+        </div>
       </div>
     </motion.div>
   );
@@ -512,6 +577,9 @@ export function Analytics() {
           
           {/* ============ THEFT ALERT BANNER ============ */}
           {allVsJobs.length > 0 && <TheftAlertBanner jobs={allVsJobs} />}
+
+          {/* ============ REVENUE RECOVERY ============ */}
+          {allVsJobs.length > 0 && <RevenueRecovery jobs={allVsJobs} />}
 
           {/* ============ VENUESCOPE CCTV ANALYTICS ============ */}
           <VenueScopeInsights />

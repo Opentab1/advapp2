@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Sparkles, 
+import {
+  Sparkles,
   Music,
   Calendar,
   Flame,
@@ -10,10 +10,13 @@ import {
   Clock,
   RefreshCw,
   BarChart3,
+  Tv,
 } from 'lucide-react';
 import { eventsService, EventSuggestion, VenueVibe } from '../services/events.service';
 import { EventROITracker } from '../components/events/EventROITracker';
 import authService from '../services/auth.service';
+import sportsService from '../services/sports.service';
+import type { SportsGame } from '../types';
 
 type EventsTab = 'suggestions' | 'performance';
 
@@ -245,6 +248,7 @@ export default function Events() {
   const [quickWins, setQuickWins] = useState<EventSuggestion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'theme_night' | 'special_event' | 'recurring'>('all');
+  const [weekGames, setWeekGames] = useState<SportsGame[]>([]);
   
   // Fetch vibe and suggestions on mount
   useEffect(() => {
@@ -270,8 +274,21 @@ export default function Events() {
     loadData();
   }, [venueId]);
   
-  const filteredSuggestions = filter === 'all' 
-    ? suggestions 
+  useEffect(() => {
+    sportsService.getGames().then(games => {
+      const now = Date.now();
+      const week = now + 7 * 24 * 60 * 60 * 1000;
+      setWeekGames(
+        games.filter(g => {
+          const t = new Date(g.startTime).getTime();
+          return t >= now - 3600000 && t <= week;
+        }).slice(0, 5)
+      );
+    }).catch(() => {});
+  }, []);
+
+  const filteredSuggestions = filter === 'all'
+    ? suggestions
     : suggestions.filter(e => e.category === filter);
   
   return (
@@ -319,6 +336,52 @@ export default function Events() {
       ) : (
         <>
         {/* Suggestions Tab Content */}
+
+      {/* This Week's Opportunities */}
+      {weekGames.length > 0 && (
+        <div className="mb-6 bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+            <Tv className="w-4 h-4 text-teal" />
+            <span className="text-sm font-semibold text-white">This Week's Opportunities</span>
+            <span className="text-[10px] text-warm-500 ml-auto">Game nights drive traffic</span>
+          </div>
+          <div className="divide-y divide-whoop-divider">
+            {weekGames.map(game => {
+              const gameDate = new Date(game.startTime);
+              const isToday = gameDate.toDateString() === new Date().toDateString();
+              const isLive = game.status === 'live';
+              return (
+                <div key={game.id} className="flex items-center gap-3 px-4 py-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-white truncate">
+                      {game.homeTeam} vs {game.awayTeam}
+                    </div>
+                    <div className="text-[10px] text-warm-500">
+                      {game.sport} · {isToday ? 'Today' : gameDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                      {' · '}{gameDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                    </div>
+                  </div>
+                  {isLive ? (
+                    <span className="flex items-center gap-1 text-[10px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded-full px-2 py-0.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                      LIVE
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-warm-400 bg-warm-800 rounded px-2 py-0.5">
+                      {isToday ? 'Tonight' : gameDate.toLocaleDateString('en-US', { weekday: 'short' })}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="px-4 py-3 bg-teal/5 border-t border-whoop-divider">
+            <p className="text-[11px] text-warm-400">
+              💡 Tip: Game nights typically drive 20–40% higher bar traffic. Consider extended hours or extra staff for these dates.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Vibe Profile */}
       <div className="mb-6">

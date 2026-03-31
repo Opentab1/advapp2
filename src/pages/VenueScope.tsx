@@ -907,6 +907,113 @@ function EmptyState({ venueId }: { venueId: string }) {
   );
 }
 
+// ── Shift Scoreboard ──────────────────────────────────────────────────────────
+
+function ShiftScoreboard({ jobs }: { jobs: VenueScopeJob[] }) {
+  const latestJob = jobs[0];
+  if (!latestJob) return null;
+
+  const latestDow = latestJob.createdAt ? new Date(latestJob.createdAt * 1000).getDay() : -1;
+  const compareJob = jobs.slice(1).find(j => {
+    if (!j.createdAt || !latestJob.createdAt) return false;
+    const ageDays = (latestJob.createdAt - j.createdAt) / 86400;
+    return ageDays >= 6 && new Date(j.createdAt * 1000).getDay() === latestDow;
+  });
+
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayLabel = latestDow >= 0 ? dayNames[latestDow] : 'last week';
+
+  const pctDiff = (compareJob && (compareJob.totalDrinks ?? 0) > 0 && (latestJob.totalDrinks ?? 0) > 0)
+    ? Math.round(((latestJob.totalDrinks! - compareJob.totalDrinks!) / compareJob.totalDrinks!) * 100)
+    : null;
+
+  return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <TrendingUp className="w-4 h-4 text-teal" />
+        <h2 className="text-sm font-semibold text-white">Shift Scoreboard</h2>
+        {compareJob && (
+          <span className="text-[10px] text-warm-500 ml-auto">vs last {dayLabel}</span>
+        )}
+      </div>
+
+      <div className={`grid ${compareJob ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+        {/* Current / Tonight */}
+        <div className="space-y-2">
+          <p className="text-[10px] text-teal uppercase tracking-wider font-semibold">Tonight</p>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-warm-500">Drinks</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-white font-bold">{latestJob.totalDrinks ?? 0}</span>
+                {pctDiff !== null && (
+                  <span className={`flex items-center gap-0.5 text-[10px] font-semibold ${pctDiff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {pctDiff >= 0
+                      ? <TrendingUp className="w-2.5 h-2.5" />
+                      : <TrendingUp className="w-2.5 h-2.5 rotate-180" />}
+                    {pctDiff >= 0 ? '+' : ''}{pctDiff}%
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-warm-500">Per Hour</span>
+              <span className="text-white font-semibold">
+                {latestJob.drinksPerHour != null ? latestJob.drinksPerHour.toFixed(0) : '—'}
+              </span>
+            </div>
+            {latestJob.topBartender && (
+              <div className="flex items-center justify-between">
+                <span className="text-warm-500">Top</span>
+                <span className="text-white font-semibold truncate max-w-[100px]">{latestJob.topBartender}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-warm-500">Theft</span>
+              {latestJob.hasTheftFlag
+                ? <span className="text-red-400 font-semibold text-[10px]">{latestJob.unrungDrinks ?? 0} unrung</span>
+                : <span className="text-emerald-400 font-semibold text-[10px]">✓ Clean</span>
+              }
+            </div>
+          </div>
+        </div>
+
+        {/* Compare column */}
+        {compareJob && (
+          <div className="space-y-2 pl-4 border-l border-whoop-divider">
+            <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold">Last {dayLabel}</p>
+            <div className="space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-warm-500">Drinks</span>
+                <span className="text-warm-300 font-semibold">{compareJob.totalDrinks ?? 0}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-warm-500">Per Hour</span>
+                <span className="text-warm-300 font-semibold">
+                  {compareJob.drinksPerHour != null ? compareJob.drinksPerHour.toFixed(0) : '—'}
+                </span>
+              </div>
+              {compareJob.topBartender && (
+                <div className="flex items-center justify-between">
+                  <span className="text-warm-500">Top</span>
+                  <span className="text-warm-300 font-semibold truncate max-w-[100px]">{compareJob.topBartender}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <span className="text-warm-500">Theft</span>
+                {compareJob.hasTheftFlag
+                  ? <span className="text-red-400/70 font-semibold text-[10px]">{compareJob.unrungDrinks ?? 0} unrung</span>
+                  : <span className="text-emerald-400/70 font-semibold text-[10px]">✓ Clean</span>
+                }
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 const POLL_INTERVAL_MS = 10_000;
@@ -1070,6 +1177,31 @@ export function VenueScope() {
         <EmptyState venueId={venueId} />
       ) : (
         <>
+          {/* ── Theft alert top banner (last 7 days) ── */}
+          {(() => {
+            const sevenDaysAgo = Date.now() / 1000 - 7 * 86400;
+            const recentFlaggedJobs = safeJobs.filter(j => j.hasTheftFlag && (j.createdAt ?? 0) >= sevenDaysAgo);
+            const totalUnrungRecent = recentFlaggedJobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
+            if (recentFlaggedJobs.length === 0) return null;
+            return (
+              <div className="bg-red-500/15 border border-red-500/40 rounded-xl p-4 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-bold text-red-400">
+                    Theft Alert — {totalUnrungRecent} unrung drink{totalUnrungRecent !== 1 ? 's' : ''} detected
+                  </p>
+                  <p className="text-xs text-warm-300 mt-0.5">
+                    {recentFlaggedJobs.length} shift{recentFlaggedJobs.length > 1 ? 's' : ''} flagged in the last 7 days.{' '}
+                    Review the shift history below.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Shift Scoreboard ── */}
+          {safeJobs.length > 0 && <ShiftScoreboard jobs={safeJobs} />}
+
           {/* 1. Today's hero numbers */}
           {tonightJobs.length > 0 && (
             <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} />

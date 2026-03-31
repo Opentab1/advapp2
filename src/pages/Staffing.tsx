@@ -264,9 +264,39 @@ export function Staffing() {
   const [showAddStaff, setShowAddStaff] = useState(false);
   const [showAddShift, setShowAddShift] = useState<string | null>(null); // date string
   const [showCSVImport, setShowCSVImport] = useState(false);
-  
+  const [bartenderStats, setBartenderStats] = useState<Record<string, { drinks: number; shifts: number; theftFlags: number }>>({});
+
   const user = authService.getStoredUser();
   const venueId = user?.venueId;
+
+  useEffect(() => {
+    if (!venueId) return;
+    venueScopeService.listJobs(venueId, 50).then(jobs => {
+      const stats: Record<string, { drinks: number; shifts: number; theftFlags: number }> = {};
+      jobs.filter(j => j.status === 'done' || j.isLive).forEach(job => {
+        if (job.bartenderBreakdown) {
+          try {
+            const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks: number }>;
+            Object.entries(bd).forEach(([name, data]) => {
+              if (!stats[name]) stats[name] = { drinks: 0, shifts: 0, theftFlags: 0 };
+              stats[name].drinks += data.drinks ?? 0;
+              stats[name].shifts += 1;
+              if (job.hasTheftFlag) stats[name].theftFlags += 1;
+            });
+            return;
+          } catch { /* fall through */ }
+        }
+        if (job.topBartender) {
+          const n = job.topBartender;
+          if (!stats[n]) stats[n] = { drinks: 0, shifts: 0, theftFlags: 0 };
+          stats[n].drinks += job.totalDrinks ?? 0;
+          stats[n].shifts += 1;
+          if (job.hasTheftFlag) stats[n].theftFlags += 1;
+        }
+      });
+      setBartenderStats(stats);
+    }).catch(() => {});
+  }, [venueId]);
 
   // Calculate current week based on offset
   const currentWeekStart = startOfWeek(addWeeks(new Date(), weekOffset), { weekStartsOn: 1 });
@@ -739,8 +769,24 @@ export function Staffing() {
                         className="flex items-center gap-2 px-3 py-2 bg-warm-800 rounded-lg group"
                       >
                         <div className={`w-3 h-3 rounded-full ${ROLE_COLORS[s.role]}`} />
-                        <span className="text-white">{s.name}</span>
-                        <span className="text-xs text-warm-400">({ROLE_LABELS[s.role]})</span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-white">{s.name}</span>
+                            <span className="text-xs text-warm-400">({ROLE_LABELS[s.role]})</span>
+                          </div>
+                          {bartenderStats[s.name] && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <span className="text-[10px] text-teal">
+                                {bartenderStats[s.name].drinks} drinks · {bartenderStats[s.name].shifts} shifts
+                              </span>
+                              {bartenderStats[s.name].theftFlags > 0 && (
+                                <span className="text-[10px] text-red-400">
+                                  · {bartenderStats[s.name].theftFlags} flag{bartenderStats[s.name].theftFlags > 1 ? 's' : ''}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                         <button
                           onClick={() => handleDeleteStaff(s.id)}
                           className="opacity-0 group-hover:opacity-100 text-warm-500 hover:text-red-400 transition-all"
