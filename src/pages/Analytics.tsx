@@ -279,58 +279,52 @@ function DateRangePicker({
   quickRange: string;
   onQuickRange: (r: 'yesterday' | '7days' | 'custom') => void;
 }) {
-  // Generate last 30 days (today excluded)
-  const days: Date[] = [];
+  // Build a Set of valid date strings for the past 30 days (today excluded)
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const todayStr = today.toISOString().slice(0, 10);
+
+  const validDates = new Set<string>();
   for (let i = 1; i <= 30; i++) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
-    days.push(d);
-  }
-  // days[0] = yesterday, days[29] = 30 days ago
-
-  // Build a calendar grid: we need rows of 7 days (Sun-Sat)
-  // Find the starting weekday offset for the oldest day
-  const oldestDay = days[days.length - 1];
-  // We'll fill a grid starting from the Sunday on or before oldestDay
-  const startDay = new Date(oldestDay);
-  startDay.setDate(startDay.getDate() - startDay.getDay()); // rewind to Sunday
-
-  const gridDays: (Date | null)[] = [];
-  const cursor = new Date(startDay);
-  // Fill until we've passed yesterday
-  const yesterday = days[0];
-  while (cursor <= yesterday) {
-    gridDays.push(new Date(cursor));
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  // Pad to complete last row
-  while (gridDays.length % 7 !== 0) {
-    gridDays.push(null);
+    validDates.add(d.toISOString().slice(0, 10));
   }
 
-  const todayStr = today.toISOString().slice(0, 10);
+  const yesterdayStr = (() => {
+    const y = new Date(today);
+    y.setDate(today.getDate() - 1);
+    return y.toISOString().slice(0, 10);
+  })();
+
+  // Build calendar: start from Sunday on/before (today - 30 days)
+  const oldest = new Date(today);
+  oldest.setDate(today.getDate() - 30);
+  const gridStart = new Date(oldest);
+  gridStart.setDate(oldest.getDate() - oldest.getDay()); // back to Sunday
+
+  // Build weeks array cleanly
+  const weeks: string[][] = [];
+  const cursor = new Date(gridStart);
+  while (cursor < today) {
+    const week: string[] = [];
+    for (let d = 0; d < 7; d++) {
+      week.push(cursor.toISOString().slice(0, 10));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    weeks.push(week);
+  }
 
   function toggleDate(dateStr: string) {
     const next = new Set(selectedDates);
-    if (next.has(dateStr)) {
-      next.delete(dateStr);
-    } else {
-      next.add(dateStr);
-    }
+    if (next.has(dateStr)) next.delete(dateStr);
+    else next.add(dateStr);
     onChange(next);
     onQuickRange('custom');
   }
 
-  // Group grid into weeks to show month dividers
-  const weeks: (Date | null)[][] = [];
-  for (let i = 0; i < gridDays.length; i += 7) {
-    weeks.push(gridDays.slice(i, i + 7));
-  }
-
-  // Track month label per week (show when month changes)
-  let lastMonth = -1;
+  // Month label: track per-render with a ref-like accumulator inside the map
+  let renderedMonth = -1;
 
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 space-y-3">
@@ -363,7 +357,7 @@ function DateRangePicker({
         )}
       </div>
 
-      {/* Calendar grid */}
+      {/* Calendar */}
       <div>
         {/* Day-of-week header */}
         <div className="grid grid-cols-7 mb-1">
@@ -373,14 +367,14 @@ function DateRangePicker({
         </div>
 
         {weeks.map((week, wi) => {
-          // Find first non-null day in week for month label
-          const firstDay = week.find(d => d !== null);
+          // Show month label when month changes within the visible range
+          const firstValidInWeek = week.find(ds => validDates.has(ds));
           let monthLabel: string | null = null;
-          if (firstDay) {
-            const m = firstDay.getMonth();
-            if (m !== lastMonth) {
-              monthLabel = firstDay.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-              lastMonth = m;
+          if (firstValidInWeek) {
+            const m = new Date(firstValidInWeek + 'T12:00:00').getMonth();
+            if (m !== renderedMonth) {
+              monthLabel = new Date(firstValidInWeek + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+              renderedMonth = m;
             }
           }
 
@@ -389,38 +383,40 @@ function DateRangePicker({
               {monthLabel && (
                 <div className="text-[10px] text-warm-500 font-semibold mt-2 mb-0.5 px-0.5">{monthLabel}</div>
               )}
-              <div className="grid grid-cols-7 gap-0.5">
-                {week.map((day, di) => {
-                  if (!day) {
-                    return <div key={di} />;
-                  }
-                  const dateStr = day.toISOString().slice(0, 10);
+              <div className="grid grid-cols-7">
+                {week.map((dateStr) => {
+                  const isValid = validDates.has(dateStr);
                   const isSelected = selectedDates.has(dateStr);
-                  const isYesterday = dateStr === days[0].toISOString().slice(0, 10);
-                  // Disable today and future dates
-                  const isDisabled = dateStr >= todayStr;
-                  // Only valid dates in our 30-day window
-                  const isInRange = days.some(d => d.toISOString().slice(0, 10) === dateStr);
+                  const isYesterday = dateStr === yesterdayStr;
+                  const dayNum = new Date(dateStr + 'T12:00:00').getDate();
 
-                  if (!isInRange) {
-                    return <div key={di} className="aspect-square" />;
+                  if (!isValid) {
+                    // Outside the 30-day window — render blank placeholder
+                    return (
+                      <div key={dateStr} className="flex items-center justify-center h-9">
+                        <span className="text-xs text-warm-800">{dayNum}</span>
+                      </div>
+                    );
                   }
+
+                  const isFuture = dateStr >= todayStr;
 
                   return (
-                    <button
-                      key={di}
-                      disabled={isDisabled}
-                      onClick={() => toggleDate(dateStr)}
-                      className={`
-                        aspect-square flex items-center justify-center text-xs rounded-lg font-medium transition-colors
-                        ${isDisabled ? 'text-warm-700 cursor-not-allowed' : ''}
-                        ${isSelected && !isDisabled ? 'bg-teal text-white' : ''}
-                        ${!isSelected && !isDisabled ? 'text-warm-300 hover:bg-warm-700 hover:text-white' : ''}
-                        ${isYesterday && !isSelected ? 'ring-1 ring-teal/40' : ''}
-                      `}
-                    >
-                      {day.getDate()}
-                    </button>
+                    <div key={dateStr} className="flex items-center justify-center h-9">
+                      <button
+                        disabled={isFuture}
+                        onClick={() => toggleDate(dateStr)}
+                        className={`
+                          w-8 h-8 flex items-center justify-center text-xs rounded-full font-medium transition-all
+                          ${isFuture ? 'text-warm-700 cursor-not-allowed' : ''}
+                          ${isSelected ? 'bg-teal text-white shadow-sm' : ''}
+                          ${!isSelected && !isFuture ? 'text-warm-300 hover:bg-warm-700 hover:text-white' : ''}
+                          ${isYesterday && !isSelected ? 'ring-1 ring-teal/50' : ''}
+                        `}
+                      >
+                        {dayNum}
+                      </button>
+                    </div>
                   );
                 })}
               </div>
