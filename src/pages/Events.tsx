@@ -320,7 +320,7 @@ export default function Events() {
       setWeekGames(
         games.filter(g => {
           const t = new Date(g.startTime).getTime();
-          return t >= now - 3600000 && t <= week;
+          return (t > now || g.status === 'live') && t <= week;
         })
       );
     }).catch(() => {});

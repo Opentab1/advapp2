@@ -15,7 +15,9 @@ import { PullToRefresh } from '../components/common/PullToRefresh';
 import { useDisplayName } from '../hooks/useDisplayName';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
+import venueSettingsService from '../services/venue-settings.service';
 import { haptic } from '../utils/haptics';
+import { isDemoAccount } from '../utils/demoData';
 
 // ── Shift Grade ───────────────────────────────────────────────────────────────
 function gradeShift(job: VenueScopeJob, avgDrinksPerShift: number): { grade: string; color: string } {
@@ -229,11 +231,9 @@ function StaffLeaderboard({ jobs }: { jobs: VenueScopeJob[] }) {
 }
 
 // ── Revenue Recovery Card ─────────────────────────────────────────────────────
-const AVG_DRINK_PRICE = 8;
-
-function RevenueRecovery({ jobs }: { jobs: VenueScopeJob[] }) {
+function RevenueRecovery({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkPrice: number | null }) {
   const totalUnrung = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
-  const recovered = totalUnrung * AVG_DRINK_PRICE;
+  const recovered = avgDrinkPrice != null ? totalUnrung * avgDrinkPrice : null;
   const flaggedShifts = jobs.filter(j => j.hasTheftFlag).length;
 
   if (totalUnrung === 0 && flaggedShifts === 0) return null;
@@ -252,13 +252,16 @@ function RevenueRecovery({ jobs }: { jobs: VenueScopeJob[] }) {
           <p className="text-sm font-bold text-white">Revenue Protection</p>
           <p className="text-xs text-warm-300 mt-1">
             VenueScope flagged{' '}
-            <span className="text-teal font-semibold">${recovered.toLocaleString()}</span>{' '}
+            {recovered != null
+              ? <span className="text-teal font-semibold">${recovered.toLocaleString()}</span>
+              : <span className="text-teal font-semibold">{totalUnrung} unrung drink{totalUnrung !== 1 ? 's' : ''}</span>
+            }{' '}
             in potential theft this period.
           </p>
-          {totalUnrung > 0 && (
+          {totalUnrung > 0 && recovered != null && (
             <p className="text-[11px] text-warm-500 mt-0.5">
               {totalUnrung} unrung drink{totalUnrung !== 1 ? 's' : ''} across{' '}
-              {flaggedShifts} shift{flaggedShifts !== 1 ? 's' : ''} × ${AVG_DRINK_PRICE} avg drink price
+              {flaggedShifts} shift{flaggedShifts !== 1 ? 's' : ''} × ${avgDrinkPrice} avg drink price
             </p>
           )}
         </div>
@@ -437,7 +440,7 @@ function NoDataRow() {
   );
 }
 
-function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDates: Set<string> }) {
+function ReportView({ jobs, selectedDates, avgDrinkPrice }: { jobs: VenueScopeJob[]; selectedDates: Set<string>; avgDrinkPrice: number | null }) {
   const hasData = jobs.length > 0;
 
   const peopleCntJobs = jobs.filter(j => (j.analysisMode ?? '').includes('people'));
@@ -745,7 +748,7 @@ function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDa
       </div>
 
       {/* Revenue protection summary (only when data exists) */}
-      {hasData && <RevenueRecovery jobs={jobs} />}
+      {hasData && <RevenueRecovery jobs={jobs} avgDrinkPrice={avgDrinkPrice} />}
 
       {/* Staff & shift history (only when data exists) */}
       {hasData && <StaffLeaderboard jobs={jobs} />}
@@ -756,9 +759,9 @@ function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDa
 
 // ── Helper: bar-day date key ──────────────────────────────────────────────────
 function jobDateKey(job: VenueScopeJob): string {
-  // Bar day starts at noon — jobs between midnight and noon belong to prior calendar day
+  // Bar day starts at 3 AM — jobs between midnight and 3 AM belong to prior calendar day
   const d = new Date((job.createdAt ?? 0) * 1000);
-  if (d.getHours() < 12) d.setDate(d.getDate() - 1);
+  if (d.getHours() < 3) d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
 }
 
@@ -778,6 +781,7 @@ export function Analytics() {
   const [allVsJobs, setAllVsJobs] = useState<VenueScopeJob[]>([]);
   const [vsLoading, setVsLoading] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [avgDrinkPrice, setAvgDrinkPrice] = useState<number | null>(null);
 
   const loadJobs = useCallback(async () => {
     const venueId = authService.getStoredUser()?.venueId ?? '';
@@ -793,6 +797,14 @@ export function Analytics() {
 
   useEffect(() => { loadJobs(); }, [loadJobs]);
 
+  useEffect(() => {
+    const venueId = authService.getStoredUser()?.venueId ?? '';
+    if (!venueId) return;
+    venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
+      if (s?.avgDrinkPrice && s.avgDrinkPrice > 0) setAvgDrinkPrice(s.avgDrinkPrice);
+    }).catch(() => {});
+  }, []);
+
   const handleRefresh = async () => {
     haptic('medium');
     setLoading(true);
@@ -801,10 +813,19 @@ export function Analytics() {
   };
 
   const reportJobs = allVsJobs.filter(j => !j.isLive && selectedDates.has(jobDateKey(j)));
+  const venueId = authService.getStoredUser()?.venueId ?? '';
+  const isDemo = isDemoAccount(venueId);
 
   return (
     <PullToRefresh onRefresh={handleRefresh}>
       <div className="space-y-4 pb-24">
+        {/* Demo banner */}
+        {isDemo && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium no-print">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+            Demo venue — all data is sample data and does not reflect real activity
+          </div>
+        )}
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -853,7 +874,7 @@ export function Analytics() {
         {vsLoading ? (
           <div className="text-center py-12 text-warm-500 text-sm">Loading report...</div>
         ) : (
-          <ReportView jobs={reportJobs} selectedDates={selectedDates} />
+          <ReportView jobs={reportJobs} selectedDates={selectedDates} avgDrinkPrice={avgDrinkPrice} />
         )}
       </div>
     </PullToRefresh>

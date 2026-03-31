@@ -115,13 +115,23 @@ const venueScopeService = {
       }) as { data: { listVenueScopeJobs: JobConnection } };
       const items = result?.data?.listVenueScopeJobs?.items ?? [];
 
-      // Live jobs always surface first, then sort by recency
-      const live    = items.filter(j => j.isLive);
+      // Deduplicate live jobs by cameraLabel — keep only the most recent per camera
+      const liveDeduped = Array.from(
+        items
+          .filter(j => j.isLive)
+          .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+          .reduce((map, j) => {
+            const key = j.cameraLabel || j.jobId;
+            if (!map.has(key)) map.set(key, j);
+            return map;
+          }, new Map<string, VenueScopeJob>())
+          .values()
+      );
       const nonLive = items.filter(j => !j.isLive)
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
         .slice(0, Math.max(limit, 50));
 
-      return [...live, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      return [...liveDeduped, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
     } catch (err) {
       console.warn('[venuescope] listJobs failed:', err);
       return [];

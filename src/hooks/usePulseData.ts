@@ -122,7 +122,7 @@ export interface PulseData {
   
   // Accurate retention metrics (100% accurate from raw data)
   retentionMetrics: {
-    retentionRate: number;       // 0-100% of guests still here
+    retentionRate: number | null; // 0-100% of guests still here; null when no entries yet today
     turnoverRate: number;        // exits per hour / avg occupancy
     entryExitRatio: number;      // >1 growing, <1 shrinking
     crowdTrend: 'growing' | 'stable' | 'shrinking';
@@ -765,8 +765,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     const avgDwell = Math.round(totalDwellMinutes / matchedExits);
     
-    // Sanity check
-    if (avgDwell < 5 || avgDwell > 240) {
+    // Sanity check — allow 1 min (fast bar) to 8 hrs (sports bar/late night)
+    if (avgDwell < 1 || avgDwell > 480) {
       return null;
     }
     
@@ -815,9 +815,9 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     
     // 1. Retention Rate: What % of tonight's guests are still here
     // 100% accurate - just math on entry/exit counts
-    const retentionRate = todayEntries > 0 
-      ? Math.round((current / todayEntries) * 100) 
-      : 0;
+    const retentionRate = todayEntries > 0
+      ? Math.round((current / todayEntries) * 100)
+      : null;
     
     // 2. Hourly Turnover Rate: Exits per hour relative to average crowd
     // Shows how fast people are churning

@@ -82,8 +82,23 @@ export function TonightsPlaybook({
 
   const now = new Date();
   const currentHour = now.getHours();
-  // Bar is open 11 AM – 2 AM; "business hours" = any hour >= 11 or < 2
-  const isBusinessHours = currentHour >= 11 || currentHour < 2;
+  // Business hours from localStorage (set in Settings), fallback to 5 PM – 2 AM
+  const isBusinessHours = (() => {
+    try {
+      const stored = localStorage.getItem('pulse_biz_hours');
+      if (stored) {
+        const { open, close } = JSON.parse(stored) as { open: string; close: string };
+        const openH = parseInt(open.split(':')[0], 10);
+        const closeH = parseInt(close.split(':')[0], 10);
+        if (closeH < openH) {
+          // Overnight span (e.g. 17:00 – 02:00)
+          return currentHour >= openH || currentHour < closeH;
+        }
+        return currentHour >= openH && currentHour < closeH;
+      }
+    } catch { /* ignore */ }
+    return currentHour >= 17 || currentHour < 2;
+  })();
   const isPeakHours = (currentHour >= 20 || currentHour < 2);
   
   // Helper: Find a pattern for a specific factor with sufficient confidence
