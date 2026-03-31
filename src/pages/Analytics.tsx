@@ -1,56 +1,21 @@
 /**
- * Analytics Page - Results Report
- * 
- * This is where bar owners come to see RESULTS.
- * Not abstract scores - real numbers with context.
- * 
- * Structure:
- * 1. Dwell Time Hero - THE number. How long guests stay = money.
- * 2. Period Summary - Total guests, peak hours, best day
- * 3. Guest Trend - Line chart over time
- * 4. Daily Breakdown - Table with each day's performance
- * 5. Song Analytics - What music keeps people
- * 6. Raw Metrics + Environment - The proof
+ * Analytics Page - Date-Based Reporting System
+ *
+ * Bar owners select one or more past dates and see a full shift report:
+ * overview tiles, theft alerts, room breakdown, drink stats, staff performance.
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
-  RefreshCw, Download, Calendar, Clock, Music, TrendingUp, TrendingDown,
-  Zap, ListMusic, ChevronDown, Disc3, FileText, FileJson, ShieldCheck,
-  DollarSign, ArrowRight, AlertTriangle, User, Video, ChevronRight, Award
+  RefreshCw, Download, Calendar, AlertTriangle, User, Video, Award, ShieldCheck,
 } from 'lucide-react';
 import { format } from 'date-fns';
-import songLogService, { 
-  PerformingSong, 
-  PlaylistSong, 
-  GenreStats, 
-  AnalyticsTimeRange 
-} from '../services/song-log.service';
-import type { SongLogEntry } from '../types';
-import {
-  DailyBreakdown,
-  RawMetrics,
-  EnvironmentalSummary,
-  GuestsTrend,
-  TimeRangePicker,
-  RawDataView,
-} from '../components/analytics';
 import { PullToRefresh } from '../components/common/PullToRefresh';
-import { ErrorState } from '../components/common/LoadingState';
-import { POSComparison } from '../components/analytics/POSComparison';
-import { WeeklyReportSection } from '../components/reports/WeeklyReportSection';
-import { VenueScopeInsights } from '../components/analytics/VenueScopeInsights';
-import { useInsightsData } from '../hooks/useInsightsData';
 import { useDisplayName } from '../hooks/useDisplayName';
-import apiService from '../services/api.service';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
 import { haptic } from '../utils/haptics';
-import type { InsightsTimeRange } from '../types/insights';
-
-// Revenue per minute estimate (industry average for bars)
-const REVENUE_PER_MINUTE = 0.62;
 
 // ── Shift Grade ───────────────────────────────────────────────────────────────
 function gradeShift(job: VenueScopeJob, avgDrinksPerShift: number): { grade: string; color: string } {
@@ -170,7 +135,6 @@ function ShiftHistory({ jobs }: { jobs: VenueScopeJob[] }) {
           className="w-full flex items-center justify-center gap-1 py-2.5 text-xs text-warm-500 hover:text-warm-300 border-t border-whoop-divider transition-colors"
         >
           {expanded ? 'Show less' : `Show all ${jobs.length} shifts`}
-          <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </button>
       )}
     </motion.div>
@@ -179,11 +143,9 @@ function ShiftHistory({ jobs }: { jobs: VenueScopeJob[] }) {
 
 // ── Staff Leaderboard ─────────────────────────────────────────────────────────
 function StaffLeaderboard({ jobs }: { jobs: VenueScopeJob[] }) {
-  // Aggregate bartender stats across all jobs
   const stats: Record<string, { drinks: number; shifts: number; theftShifts: number }> = {};
 
   jobs.forEach(job => {
-    // Try bartenderBreakdown JSON first
     if (job.bartenderBreakdown) {
       try {
         const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks: number }>;
@@ -196,7 +158,6 @@ function StaffLeaderboard({ jobs }: { jobs: VenueScopeJob[] }) {
         return;
       } catch { /* fall through */ }
     }
-    // Fall back to topBartender
     if (job.topBartender) {
       const name = job.topBartender;
       if (!stats[name]) stats[name] = { drinks: 0, shifts: 0, theftShifts: 0 };
@@ -226,7 +187,7 @@ function StaffLeaderboard({ jobs }: { jobs: VenueScopeJob[] }) {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
         <Award className="w-4 h-4 text-amber-400" />
         <span className="text-sm font-semibold text-white">Staff Performance</span>
-        <span className="text-[10px] text-warm-500 ml-auto">All-time totals</span>
+        <span className="text-[10px] text-warm-500 ml-auto">Period totals</span>
       </div>
 
       <div className="p-4 space-y-3">
@@ -306,799 +267,527 @@ function RevenueRecovery({ jobs }: { jobs: VenueScopeJob[] }) {
   );
 }
 
-// ── Theft Alert Banner ────────────────────────────────────────────────────────
-function TheftAlertBanner({ jobs }: { jobs: VenueScopeJob[] }) {
-  const flagged = jobs.filter(j => j.hasTheftFlag);
-  if (flagged.length === 0) return null;
+// ── DateRangePicker ───────────────────────────────────────────────────────────
+function DateRangePicker({
+  selectedDates,
+  onChange,
+  quickRange,
+  onQuickRange,
+}: {
+  selectedDates: Set<string>;
+  onChange: (dates: Set<string>) => void;
+  quickRange: string;
+  onQuickRange: (r: 'yesterday' | '7days' | 'custom') => void;
+}) {
+  // Generate last 30 days (today excluded)
+  const days: Date[] = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (let i = 1; i <= 30; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    days.push(d);
+  }
+  // days[0] = yesterday, days[29] = 30 days ago
 
-  const totalUnrung = flagged.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
-  const latest = flagged[0];
-  const latestDate = latest.createdAt
-    ? new Date(latest.createdAt * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    : 'recent shift';
+  // Build a calendar grid: we need rows of 7 days (Sun-Sat)
+  // Find the starting weekday offset for the oldest day
+  const oldestDay = days[days.length - 1];
+  // We'll fill a grid starting from the Sunday on or before oldestDay
+  const startDay = new Date(oldestDay);
+  startDay.setDate(startDay.getDate() - startDay.getDay()); // rewind to Sunday
+
+  const gridDays: (Date | null)[] = [];
+  const cursor = new Date(startDay);
+  // Fill until we've passed yesterday
+  const yesterday = days[0];
+  while (cursor <= yesterday) {
+    gridDays.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  // Pad to complete last row
+  while (gridDays.length % 7 !== 0) {
+    gridDays.push(null);
+  }
+
+  const todayStr = today.toISOString().slice(0, 10);
+
+  function toggleDate(dateStr: string) {
+    const next = new Set(selectedDates);
+    if (next.has(dateStr)) {
+      next.delete(dateStr);
+    } else {
+      next.add(dateStr);
+    }
+    onChange(next);
+    onQuickRange('custom');
+  }
+
+  // Group grid into weeks to show month dividers
+  const weeks: (Date | null)[][] = [];
+  for (let i = 0; i < gridDays.length; i += 7) {
+    weeks.push(gridDays.slice(i, i + 7));
+  }
+
+  // Track month label per week (show when month changes)
+  let lastMonth = -1;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4"
-    >
-      <div className="flex items-start gap-3">
-        <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <AlertTriangle className="w-4 h-4 text-red-400" />
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 space-y-3">
+      {/* Quick buttons */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onQuickRange('yesterday')}
+          className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${
+            quickRange === 'yesterday'
+              ? 'bg-teal text-white'
+              : 'bg-warm-800 text-warm-400 hover:text-white border border-warm-700'
+          }`}
+        >
+          Yesterday
+        </button>
+        <button
+          onClick={() => onQuickRange('7days')}
+          className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${
+            quickRange === '7days'
+              ? 'bg-teal text-white'
+              : 'bg-warm-800 text-warm-400 hover:text-white border border-warm-700'
+          }`}
+        >
+          Last 7 Days
+        </button>
+        {selectedDates.size > 0 && (
+          <span className="ml-auto text-xs text-warm-500">
+            {selectedDates.size} day{selectedDates.size !== 1 ? 's' : ''} selected
+          </span>
+        )}
+      </div>
+
+      {/* Calendar grid */}
+      <div>
+        {/* Day-of-week header */}
+        <div className="grid grid-cols-7 mb-1">
+          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => (
+            <div key={d} className="text-center text-[10px] text-warm-600 font-medium py-1">{d}</div>
+          ))}
         </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-bold text-red-400">Theft Risk Detected</span>
+
+        {weeks.map((week, wi) => {
+          // Find first non-null day in week for month label
+          const firstDay = week.find(d => d !== null);
+          let monthLabel: string | null = null;
+          if (firstDay) {
+            const m = firstDay.getMonth();
+            if (m !== lastMonth) {
+              monthLabel = firstDay.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+              lastMonth = m;
+            }
+          }
+
+          return (
+            <div key={wi}>
+              {monthLabel && (
+                <div className="text-[10px] text-warm-500 font-semibold mt-2 mb-0.5 px-0.5">{monthLabel}</div>
+              )}
+              <div className="grid grid-cols-7 gap-0.5">
+                {week.map((day, di) => {
+                  if (!day) {
+                    return <div key={di} />;
+                  }
+                  const dateStr = day.toISOString().slice(0, 10);
+                  const isSelected = selectedDates.has(dateStr);
+                  const isYesterday = dateStr === days[0].toISOString().slice(0, 10);
+                  // Disable today and future dates
+                  const isDisabled = dateStr >= todayStr;
+                  // Only valid dates in our 30-day window
+                  const isInRange = days.some(d => d.toISOString().slice(0, 10) === dateStr);
+
+                  if (!isInRange) {
+                    return <div key={di} className="aspect-square" />;
+                  }
+
+                  return (
+                    <button
+                      key={di}
+                      disabled={isDisabled}
+                      onClick={() => toggleDate(dateStr)}
+                      className={`
+                        aspect-square flex items-center justify-center text-xs rounded-lg font-medium transition-colors
+                        ${isDisabled ? 'text-warm-700 cursor-not-allowed' : ''}
+                        ${isSelected && !isDisabled ? 'bg-teal text-white' : ''}
+                        ${!isSelected && !isDisabled ? 'text-warm-300 hover:bg-warm-700 hover:text-white' : ''}
+                        ${isYesterday && !isSelected ? 'ring-1 ring-teal/40' : ''}
+                      `}
+                    >
+                      {day.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── ReportView ────────────────────────────────────────────────────────────────
+function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDates: Set<string> }) {
+  const peopleCntJobs = jobs.filter(j => (j.analysisMode ?? '') === 'people_count' || (j.analysisMode ?? '').includes('people'));
+  const drinkCntJobs  = jobs.filter(j => (j.analysisMode ?? '') === 'drink_count'  || (j.analysisMode ?? '').includes('drink'));
+
+  // Section A — Overview tiles
+  const totalGuestsIn  = peopleCntJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0)
+    || jobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+
+  let peakOcc = 0;
+  let peakTime = '';
+  jobs.forEach(j => {
+    if ((j.peakOccupancy ?? 0) > peakOcc) {
+      peakOcc = j.peakOccupancy ?? 0;
+      peakTime = j.createdAt ? format(new Date(j.createdAt * 1000), 'h:mm a') : '';
+    }
+  });
+
+  const dwellJobs = jobs.filter(j => j.avgDwellMin != null);
+  const avgDwell = dwellJobs.length
+    ? Math.round(dwellJobs.reduce((s, j) => s + (j.avgDwellMin ?? 0), 0) / dwellJobs.length)
+    : null;
+
+  const totalDrinks = drinkCntJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0)
+    || jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
+
+  // Section B — Theft alerts
+  const theftJobs = jobs.filter(j => j.hasTheftFlag);
+
+  // Section C — Room-by-room
+  const roomMap = new Map<string, VenueScopeJob[]>();
+  jobs.forEach(j => {
+    const room = j.roomLabel || j.cameraLabel || 'Unknown Room';
+    if (!roomMap.has(room)) roomMap.set(room, []);
+    roomMap.get(room)!.push(j);
+  });
+
+  // Section D — Drink stats by bar (drink_count jobs only)
+  const barMap = new Map<string, VenueScopeJob[]>();
+  drinkCntJobs.forEach(j => {
+    const bar = j.roomLabel || j.cameraLabel || 'Unknown Bar';
+    if (!barMap.has(bar)) barMap.set(bar, []);
+    barMap.get(bar)!.push(j);
+  });
+
+  const dateLabel = selectedDates.size === 1
+    ? format(new Date([...selectedDates][0] + 'T12:00:00'), 'MMMM d, yyyy')
+    : `${selectedDates.size} days`;
+
+  return (
+    <div className="space-y-6">
+      <style>{`@media print { .no-print { display: none; } }`}</style>
+
+      {/* Report title */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl px-5 py-4">
+        <p className="text-xs text-warm-500 uppercase tracking-wider font-semibold">Shift Report</p>
+        <h2 className="text-lg font-bold text-white mt-0.5">{dateLabel}</h2>
+        <p className="text-xs text-warm-500 mt-0.5">{jobs.length} session{jobs.length !== 1 ? 's' : ''} analyzed</p>
+      </div>
+
+      {/* Section A — Overview tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {/* Guests In */}
+        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 text-center">
+          <div className="text-2xl font-bold text-white tabular-nums">{totalGuestsIn > 0 ? totalGuestsIn.toLocaleString() : '—'}</div>
+          <div className="text-[11px] text-warm-500 mt-1 uppercase tracking-wider">Guests In</div>
+        </div>
+        {/* Peak Occupancy */}
+        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 text-center">
+          <div className="text-2xl font-bold text-white tabular-nums">{peakOcc > 0 ? peakOcc : '—'}</div>
+          <div className="text-[11px] text-warm-500 mt-1 uppercase tracking-wider">Peak Occupancy</div>
+          {peakTime && <div className="text-[10px] text-warm-600 mt-0.5">{peakTime}</div>}
+        </div>
+        {/* Avg Dwell */}
+        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 text-center">
+          <div className="text-2xl font-bold text-white tabular-nums">{avgDwell != null ? `${avgDwell}m` : '—'}</div>
+          <div className="text-[11px] text-warm-500 mt-1 uppercase tracking-wider">Avg Dwell</div>
+        </div>
+        {/* Total Drinks */}
+        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 text-center">
+          <div className="text-2xl font-bold text-teal tabular-nums">{totalDrinks > 0 ? totalDrinks.toLocaleString() : '—'}</div>
+          <div className="text-[11px] text-warm-500 mt-1 uppercase tracking-wider">Total Drinks</div>
+        </div>
+      </div>
+
+      {/* Section B — Theft Alerts */}
+      {theftJobs.length > 0 && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-2xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-red-500/20">
+            <AlertTriangle className="w-4 h-4 text-red-400" />
+            <span className="text-sm font-bold text-red-400">Theft Alerts</span>
             <span className="text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5 font-semibold">
-              {flagged.length} shift{flagged.length > 1 ? 's' : ''}
+              {theftJobs.length} shift{theftJobs.length > 1 ? 's' : ''}
             </span>
           </div>
-          <p className="text-xs text-warm-300">
-            {totalUnrung > 0
-              ? `${totalUnrung} unrung drink${totalUnrung !== 1 ? 's' : ''} detected across ${flagged.length} shift${flagged.length > 1 ? 's' : ''}.`
-              : `Suspicious activity flagged on ${flagged.length} shift${flagged.length > 1 ? 's' : ''}.`
-            } Most recent: <span className="text-red-300 font-medium">{latestDate}</span>
-            {latest.topBartender && ` — ${latest.topBartender}`}.
-          </p>
-          <p className="text-[11px] text-warm-500 mt-1">
-            Review flagged shifts in the shift history below.
-          </p>
+          <div className="divide-y divide-red-500/10">
+            {theftJobs.map(job => {
+              const cameraName = job.roomLabel || job.cameraLabel || 'Camera';
+              const timeStr = job.createdAt ? format(new Date(job.createdAt * 1000), 'h:mm a') : '—';
+              return (
+                <div key={job.jobId} className="px-4 py-3 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">{cameraName}</span>
+                    <span className="text-xs text-warm-400">{timeStr}</span>
+                  </div>
+                  {job.unrungDrinks != null && job.unrungDrinks > 0 && (
+                    <p className="text-xs text-red-300">
+                      {job.unrungDrinks} unrung drink{job.unrungDrinks !== 1 ? 's' : ''} detected
+                    </p>
+                  )}
+                  <p className="text-[11px] text-warm-500">
+                    Review {cameraName} footage around {timeStr} on your NVR/DVR
+                  </p>
+                </div>
+              );
+            })}
+          </div>
         </div>
+      )}
+
+      {/* Revenue protection summary */}
+      <RevenueRecovery jobs={jobs} />
+
+      {/* Section C — Room-by-Room Breakdown */}
+      {roomMap.size > 0 && (
+        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+            <Video className="w-4 h-4 text-teal" />
+            <span className="text-sm font-semibold text-white">Room-by-Room Breakdown</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-whoop-divider">
+                  <th className="text-left px-4 py-2 text-warm-500 font-semibold">Room</th>
+                  <th className="text-left px-3 py-2 text-warm-500 font-semibold">Mode</th>
+                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Guests In</th>
+                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Peak</th>
+                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Dwell</th>
+                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Drinks</th>
+                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-whoop-divider">
+                {[...roomMap.entries()].map(([room, rJobs]) => {
+                  const rGuests   = rJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+                  const rPeak     = Math.max(...rJobs.map(j => j.peakOccupancy ?? 0));
+                  const rDwellJs  = rJobs.filter(j => j.avgDwellMin != null);
+                  const rDwell    = rDwellJs.length
+                    ? Math.round(rDwellJs.reduce((s, j) => s + (j.avgDwellMin ?? 0), 0) / rDwellJs.length)
+                    : null;
+                  const rDrinks   = rJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
+                  const rTheft    = rJobs.some(j => j.hasTheftFlag);
+                  const rMode     = rJobs[0]?.analysisMode ?? 'drink_count';
+                  const isDrink   = rMode.includes('drink');
+
+                  return (
+                    <tr key={room} className="hover:bg-warm-800/20 transition-colors">
+                      <td className="px-4 py-2.5 text-white font-medium">{room}</td>
+                      <td className="px-3 py-2.5">
+                        {isDrink
+                          ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal/20 text-teal border border-teal/30">Drink Count</span>
+                          : <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">People Count</span>
+                        }
+                      </td>
+                      <td className="px-3 py-2.5 text-center text-warm-300">{rGuests > 0 ? rGuests : '—'}</td>
+                      <td className="px-3 py-2.5 text-center text-warm-300">{rPeak > 0 ? rPeak : '—'}</td>
+                      <td className="px-3 py-2.5 text-center text-warm-300">{rDwell != null ? `${rDwell}m` : '—'}</td>
+                      <td className="px-3 py-2.5 text-center font-semibold text-teal">{rDrinks > 0 ? rDrinks : '—'}</td>
+                      <td className="px-3 py-2.5 text-center">
+                        {rTheft
+                          ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5"><AlertTriangle className="w-2.5 h-2.5" />Theft</span>
+                          : <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400"><ShieldCheck className="w-2.5 h-2.5" />Clean</span>
+                        }
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Section D — Drink Stats by Bar */}
+      {barMap.size > 0 && (
+        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+            <ShieldCheck className="w-4 h-4 text-teal" />
+            <span className="text-sm font-semibold text-white">Drink Stats by Bar</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-whoop-divider">
+                  <th className="text-left px-4 py-2 text-warm-500 font-semibold">Bar / Camera</th>
+                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Total Drinks</th>
+                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Rate (drinks/hr)</th>
+                  <th className="text-left px-3 py-2 text-warm-500 font-semibold">Top Bartender</th>
+                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Theft</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-whoop-divider">
+                {[...barMap.entries()].map(([bar, bJobs]) => {
+                  const bDrinks = bJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
+                  const bRate   = bJobs.reduce((s, j) => s + (j.drinksPerHour ?? 0), 0) / bJobs.length;
+                  const bTop    = bJobs.find(j => j.topBartender)?.topBartender ?? '—';
+                  const bTheft  = bJobs.some(j => j.hasTheftFlag);
+                  return (
+                    <tr key={bar} className="hover:bg-warm-800/20 transition-colors">
+                      <td className="px-4 py-2.5 text-white font-medium">{bar}</td>
+                      <td className="px-3 py-2.5 text-center font-bold text-teal">{bDrinks}</td>
+                      <td className="px-3 py-2.5 text-center text-warm-300">{isNaN(bRate) ? '—' : bRate.toFixed(1)}</td>
+                      <td className="px-3 py-2.5 text-warm-300">{bTop}</td>
+                      <td className="px-3 py-2.5 text-center">
+                        {bTheft
+                          ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-400"><AlertTriangle className="w-2.5 h-2.5" />Yes</span>
+                          : <span className="text-[10px] text-emerald-400">No</span>
+                        }
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Section E — Staff Performance */}
+      <StaffLeaderboard jobs={jobs} />
+
+      {/* Section F — Shift History detail */}
+      <ShiftHistory jobs={jobs} />
+
+      {/* Section G — Print/Download */}
+      <div className="no-print flex justify-center pt-2">
+        <button
+          onClick={() => window.print()}
+          className="flex items-center gap-2 px-5 py-2.5 bg-teal text-white rounded-xl font-semibold text-sm hover:bg-teal/90 transition-colors"
+        >
+          <Download className="w-4 h-4" /> Download / Print Report
+        </button>
       </div>
-    </motion.div>
+    </div>
   );
 }
 
-function formatStayDuration(minutes: number | null): string {
-  if (minutes === null) return '--';
-  if (minutes >= 60) {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
-  }
-  return `${minutes}m`;
+// ── Helper: bar-day date key ──────────────────────────────────────────────────
+function jobDateKey(job: VenueScopeJob): string {
+  // Bar day starts at noon — jobs between midnight and noon belong to prior calendar day
+  const d = new Date((job.createdAt ?? 0) * 1000);
+  if (d.getHours() < 12) d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
-function getTimeRangeComparisonLabel(range: InsightsTimeRange): string {
-  switch (range) {
-    case 'last_night': return 'vs previous night';
-    case '7d': return 'vs prior week';
-    case '14d': return 'vs prior 2 weeks';
-    case '30d': return 'vs prior month';
-    default: return 'vs prior period';
-  }
-}
-
+// ── Analytics (main export) ───────────────────────────────────────────────────
 export function Analytics() {
-  const user = authService.getStoredUser();
-  const { displayName } = useDisplayName();
-  const venueName = displayName || user?.venueName || 'Venue';
-  
-  const [timeRange, setTimeRange] = useState<InsightsTimeRange>('7d');
-  const [showRawData, setShowRawData] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
-  
-  const insights = useInsightsData(timeRange);
-  
-  // Song Analytics State
-  const [songs, setSongs] = useState<SongLogEntry[]>([]);
-  const [topSongs, setTopSongs] = useState<Array<{ song: string; artist: string; plays: number }>>([]);
-  const [genreStats, setGenreStats] = useState<GenreStats[]>([]);
-  const [highestPerforming, setHighestPerforming] = useState<PerformingSong[]>([]);
-  const [topPerformersPlaylist, setTopPerformersPlaylist] = useState<PlaylistSong[]>([]);
-  const [songsLoading, setSongsLoading] = useState(true);
-  const [songTimeRange, setSongTimeRange] = useState<AnalyticsTimeRange>('30d');
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const [totalSongs, setTotalSongs] = useState(0);
-  const [showSongAnalytics, setShowSongAnalytics] = useState(true);
-  const [vsTodayDrinks, setVsTodayDrinks] = useState<number | undefined>(undefined);
-  const [vsDrinkPoints, setVsDrinkPoints] = useState<Array<{ date: string; drinks: number }>>([]);
+  useDisplayName(); // keep import alive
+
+  // Date picker state
+  const [selectedDates, setSelectedDates] = useState<Set<string>>(() => {
+    const y = new Date();
+    y.setDate(y.getDate() - 1);
+    return new Set([y.toISOString().slice(0, 10)]);
+  });
+  const [quickRange, setQuickRange] = useState<'yesterday' | '7days' | 'custom'>('yesterday');
+
+  // VenueScope jobs state
   const [allVsJobs, setAllVsJobs] = useState<VenueScopeJob[]>([]);
-  
-  // Load VenueScope drink data for POS auto-fill + trend chart
-  useEffect(() => {
-    const venueId = user?.venueId;
-    if (!venueId) return;
-    const todayStart = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
-    venueScopeService.listJobs(venueId, 100).then(jobs => {
-      // Include done jobs and active live-stream cameras (running/isLive)
-      const done = jobs.filter(j => (j.status === 'done' || j.isLive || j.status === 'running') && j.createdAt);
-      setAllVsJobs(done);
+  const [vsLoading, setVsLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
-      // Today's total for POS comparison (live cameras count too)
-      const todayDrinks = done
-        .filter(j => (j.createdAt ?? 0) >= todayStart || j.isLive || (j.jobId ?? '').startsWith('~'))
-        .reduce((sum, j) => sum + (j.totalDrinks ?? 0), 0);
-      if (todayDrinks > 0) setVsTodayDrinks(todayDrinks);
-
-      // Per-day totals for trend chart
-      const byDate: Record<string, number> = {};
-      done.forEach(j => {
-        const d = new Date((j.createdAt!) * 1000).toLocaleDateString('en-CA');
-        byDate[d] = (byDate[d] ?? 0) + (j.totalDrinks ?? 0);
-      });
-      const points = Object.entries(byDate).map(([date, drinks]) => ({ date, drinks }));
-      if (points.length > 0) setVsDrinkPoints(points);
-    });
-  }, [user?.venueId]);
-
-  // Load songs data
-  const loadSongs = useCallback(async () => {
-    setSongsLoading(true);
+  const loadJobs = useCallback(async () => {
+    const venueId = authService.getStoredUser()?.venueId ?? '';
+    if (!venueId) { setVsLoading(false); return; }
+    setVsLoading(true);
     try {
-      const allSongs = await songLogService.getAllSongs();
-      setSongs(allSongs.slice(0, 200));
-      setTotalSongs(allSongs.length);
-      
-      const top = await songLogService.getTopSongsFromAll(10);
-      setTopSongs(top);
-    } catch (error) {
-      console.error('Error loading songs:', error);
+      const jobs = await venueScopeService.listJobs(venueId, 200);
+      setAllVsJobs(jobs.filter(j => !j.isLive));
     } finally {
-      setSongsLoading(false);
+      setVsLoading(false);
     }
   }, []);
-  
-  // Load song analytics
-  const loadSongAnalytics = useCallback(async (range: AnalyticsTimeRange) => {
-    try {
-      const performing = await songLogService.getHighestPerformingSongs(10, range);
-      setHighestPerforming(performing);
-      
-      const playlist = await songLogService.getTopPerformersPlaylist(20, range);
-      setTopPerformersPlaylist(playlist);
-      
-      const genres = await songLogService.getGenreStats(10, range);
-      setGenreStats(genres);
-    } catch (error) {
-      console.error('Error loading song analytics:', error);
-    }
-  }, []);
-  
-  useEffect(() => {
-    loadSongs();
-  }, [loadSongs]);
-  
-  useEffect(() => {
-    if (!songsLoading) {
-      loadSongAnalytics(songTimeRange);
-    }
-  }, [songTimeRange, songsLoading, loadSongAnalytics]);
-  
-  const handleExportPlaylist = async (fmt: 'csv' | 'txt' | 'json') => {
-    await songLogService.exportPlaylist(fmt, songTimeRange, venueName);
-    setShowExportMenu(false);
-  };
-  
-  // Use full sensor data (with entries/exits) for charts that need it
-  const rawSensorData = insights.sensorData;
-  
+
+  useEffect(() => { loadJobs(); }, [loadJobs]);
+
   const handleRefresh = async () => {
     haptic('medium');
-    await insights.refresh();
+    setLoading(true);
+    await loadJobs();
+    setLoading(false);
   };
-  
-  const handleExportCSV = () => {
-    haptic('medium');
-    if (insights.rawData.length > 0) {
-      const exportData = insights.rawData.map(d => ({
-        timestamp: d.timestamp.toISOString(),
-        score: d.score,
-        decibels: d.decibels,
-        light: d.light,
-        temperature: d.temperature,
-        occupancy: d.occupancy,
-      }));
-      apiService.exportToCSV(exportData as any, true, venueName);
-    }
-  };
-  
-  // Derived values for the hero
-  const avgStay = insights.summary?.avgStayMinutes ?? null;
-  const avgStayDelta = insights.summary?.avgStayDelta ?? null;
-  const totalGuests = insights.summary?.totalGuests ?? 0;
-  const guestsDelta = insights.summary?.guestsDelta ?? null;
-  const estRevenuePerGuest = avgStay !== null ? Math.round(avgStay * REVENUE_PER_MINUTE) : null;
-  const prevAvgStay = (avgStay !== null && avgStayDelta !== null && avgStayDelta !== 0) 
-    ? Math.round(avgStay / (1 + avgStayDelta / 100)) 
-    : null;
-  const stayDeltaMinutes = (avgStay !== null && prevAvgStay !== null) 
-    ? avgStay - prevAvgStay 
-    : null;
-  const revenueDelta = stayDeltaMinutes !== null 
-    ? Math.round(stayDeltaMinutes * REVENUE_PER_MINUTE * totalGuests) 
-    : null;
-  
-  if (insights.error && !insights.summary) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-white">Results</h1>
-          <TimeRangePicker value={timeRange} onChange={setTimeRange} loading={insights.loading} />
-        </div>
-        <ErrorState 
-          title="Couldn't load data" 
-          message={insights.error} 
-          onRetry={handleRefresh} 
-        />
-      </div>
-    );
-  }
-  
+
+  const reportJobs = allVsJobs.filter(j => !j.isLive && selectedDates.has(jobDateKey(j)));
+
   return (
-    <>
-      <PullToRefresh onRefresh={handleRefresh} disabled={insights.loading}>
-        <div className="space-y-6 pb-24">
-          
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <h1 className="text-xl font-bold text-white">Results</h1>
-            
-            <div className="flex items-center gap-2">
-              <motion.button
-                onClick={handleRefresh}
-                disabled={insights.loading}
-                className="p-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-400 hover:text-white transition-colors"
-                whileTap={{ scale: 0.95 }}
-                title="Refresh"
-              >
-                <RefreshCw className={`w-4 h-4 ${insights.loading ? 'animate-spin' : ''}`} />
-              </motion.button>
-              
-              <motion.button
-                onClick={handleExportCSV}
-                disabled={insights.loading || insights.rawData.length === 0}
-                className="p-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-400 hover:text-white transition-colors disabled:opacity-50"
-                whileTap={{ scale: 0.95 }}
-                title="Export CSV"
-              >
-                <Download className="w-4 h-4" />
-              </motion.button>
-              
-              <motion.button
-                onClick={() => { haptic('light'); setShowRawData(true); }}
-                disabled={insights.loading}
-                className="p-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-400 hover:text-white transition-colors"
-                whileTap={{ scale: 0.95 }}
-                title="View Raw Data"
-              >
-                <Calendar className="w-4 h-4" />
-              </motion.button>
-            </div>
+    <PullToRefresh onRefresh={handleRefresh}>
+      <div className="space-y-4 pb-24">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-white">Reports</h1>
+            <p className="text-xs text-text-secondary mt-0.5">
+              {selectedDates.size === 1
+                ? format(new Date([...selectedDates][0] + 'T12:00:00'), 'MMMM d, yyyy')
+                : `${selectedDates.size} days selected`}
+            </p>
           </div>
-          
-          {/* Time Range Picker */}
-          <TimeRangePicker 
-            value={timeRange} 
-            onChange={setTimeRange} 
-            loading={insights.loading} 
-          />
-          
-          {/* ============ THEFT ALERT BANNER ============ */}
-          {allVsJobs.length > 0 && <TheftAlertBanner jobs={allVsJobs} />}
-
-          {/* ============ REVENUE RECOVERY ============ */}
-          {allVsJobs.length > 0 && <RevenueRecovery jobs={allVsJobs} />}
-
-          {/* ============ VENUESCOPE CCTV ANALYTICS ============ */}
-          <VenueScopeInsights />
-
-          {/* ============ SHIFT HISTORY + STAFF LEADERBOARD ============ */}
-          {allVsJobs.length > 0 && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <ShiftHistory jobs={allVsJobs} />
-              <StaffLeaderboard jobs={allVsJobs} />
-            </div>
-          )}
-
-          {/* ============ DWELL TIME HERO ============ */}
-          {/* This is THE metric. How long guests stay = how much they spend. */}
-          {insights.loading ? (
-            <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-6">
-              <div className="h-8 bg-warm-700 rounded w-48 mb-4 animate-pulse" />
-              <div className="h-16 bg-warm-700 rounded w-32 animate-pulse" />
-            </div>
-          ) : (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden"
-            >
-              {/* Main hero area */}
-              <div className="p-6 pb-5">
-                <div className="flex items-center gap-2 mb-1">
-                  <Clock className="w-4 h-4 text-teal" />
-                  <span className="text-xs text-text-secondary uppercase tracking-whoop font-semibold">Avg Guest Stay</span>
-                </div>
-                
-                <div className="flex items-end gap-4 mt-2">
-                  <span className="text-5xl font-bold text-white leading-none tabular-nums">
-                    {avgStay !== null ? formatStayDuration(avgStay) : '--'}
-                  </span>
-                  
-                  {avgStayDelta !== null && avgStayDelta !== 0 && (
-                    <div className={`flex items-center gap-1 pb-1 text-sm font-medium ${avgStayDelta > 0 ? 'text-recovery-high' : 'text-recovery-low'}`}>
-                      {avgStayDelta > 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                      <span>{avgStayDelta > 0 ? '+' : ''}{avgStayDelta}%</span>
-                      <span className="text-text-muted text-xs font-normal ml-1">{getTimeRangeComparisonLabel(timeRange)}</span>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Revenue translation */}
-                {estRevenuePerGuest !== null && (
-                  <div className="mt-4 flex items-center gap-3">
-                    <div className="flex items-center gap-1.5 text-sm text-text-secondary">
-                      <DollarSign className="w-3.5 h-3.5 text-teal" />
-                      <span>~${estRevenuePerGuest}/guest estimated spend</span>
-                    </div>
-                    {revenueDelta !== null && revenueDelta !== 0 && (
-                      <div className={`flex items-center gap-1 text-xs font-medium ${revenueDelta > 0 ? 'text-recovery-high' : 'text-recovery-low'}`}>
-                        <ArrowRight className="w-3 h-3" />
-                        <span>{revenueDelta > 0 ? '+' : ''}{revenueDelta < 0 ? '-' : ''}${Math.abs(revenueDelta).toLocaleString()} total impact</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              {/* Supporting stats row */}
-              <div className="border-t border-whoop-divider bg-bg-panel-secondary/50 grid grid-cols-3 divide-x divide-whoop-divider">
-                <div className="p-4 text-center">
-                  <div className="text-lg font-bold text-white tabular-nums">
-                    {totalGuests > 0 
-                      ? (insights.summary?.guestsIsEstimate ? '~' : '') + totalGuests.toLocaleString() 
-                      : '--'}
-                  </div>
-                  <div className="text-[10px] text-text-muted uppercase tracking-whoop mt-0.5">Total Guests</div>
-                  {guestsDelta !== null && guestsDelta !== 0 && (
-                    <div className={`flex items-center justify-center gap-0.5 mt-1 text-[10px] font-medium ${guestsDelta > 0 ? 'text-recovery-high' : 'text-recovery-low'}`}>
-                      {guestsDelta > 0 ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
-                      {guestsDelta > 0 ? '+' : ''}{guestsDelta}%
-                    </div>
-                  )}
-                </div>
-                <div className="p-4 text-center">
-                  <div className="text-lg font-bold text-white">
-                    {insights.summary?.peakHours !== 'N/A' ? insights.summary?.peakHours : '--'}
-                  </div>
-                  <div className="text-[10px] text-text-muted uppercase tracking-whoop mt-0.5">Peak Hours</div>
-                </div>
-                <div className="p-4 text-center">
-                  <div className="text-lg font-bold text-white">
-                    {insights.trend?.bestDay?.date || '--'}
-                  </div>
-                  <div className="text-[10px] text-text-muted uppercase tracking-whoop mt-0.5">Best Day</div>
-                  {insights.trend?.bestDay?.label && (
-                    <div className="text-[10px] text-text-muted mt-1 truncate">{insights.trend.bestDay.label}</div>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          )}
-          
-          {/* View Details toggle */}
-          {!insights.loading && (
-            <div className="flex justify-center">
-              <button
-                onClick={() => setShowDetails(d => !d)}
-                className="flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:text-white border border-whoop-divider rounded-xl hover:border-teal/40 transition-colors"
-              >
-                {showDetails ? 'Hide details' : 'View details'}
-                <ChevronDown className={`w-4 h-4 transition-transform ${showDetails ? 'rotate-180' : ''}`} />
-              </button>
-            </div>
-          )}
-
-          <AnimatePresence>
-          {showDetails && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="space-y-6"
+          <button
+            onClick={handleRefresh}
+            className="p-2 rounded-lg bg-warm-800 border border-warm-700 text-warm-400 hover:text-white transition-colors"
           >
-
-          {/* Guest Trend Chart */}
-          <GuestsTrend
-            data={rawSensorData as any}
-            loading={insights.loading}
-            drinkData={vsDrinkPoints}
-          />
-
-          {/* Daily Breakdown Table */}
-          <DailyBreakdown
-            data={rawSensorData as any}
-            loading={insights.loading}
-          />
-          
-          {/* Song Analytics Section — only show if music integration is active */}
-          {(totalSongs > 0 || songsLoading) && <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-warm-800/50 rounded-xl border border-warm-700 overflow-hidden"
-          >
-            {/* Section Header */}
-            <button
-              onClick={() => setShowSongAnalytics(!showSongAnalytics)}
-              className="w-full flex items-center justify-between p-5 hover:bg-warm-700/30 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <Music className="w-5 h-5 text-primary" />
-                <h2 className="text-lg font-semibold text-white">What Kept People</h2>
-                {totalSongs > 0 && (
-                  <span className="text-xs text-warm-400 bg-warm-700 px-2 py-0.5 rounded">
-                    {totalSongs.toLocaleString()} songs tracked
-                  </span>
-                )}
-              </div>
-              <ChevronDown className={`w-5 h-5 text-warm-400 transition-transform ${showSongAnalytics ? 'rotate-180' : ''}`} />
-            </button>
-            
-            <AnimatePresence>
-              {showSongAnalytics && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="overflow-hidden"
-                >
-                  <div className="p-5 pt-0 space-y-6">
-                    {/* Song Time Range Selector */}
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-1 bg-warm-700 rounded-lg p-1">
-                        {(['7d', '14d', '30d'] as AnalyticsTimeRange[]).map((range) => (
-                          <motion.button
-                            key={range}
-                            onClick={() => setSongTimeRange(range)}
-                            className={`px-3 py-1.5 text-sm rounded-md transition-all ${
-                              songTimeRange === range
-                                ? 'bg-primary/20 text-primary border border-cyan/30'
-                                : 'text-warm-400 hover:text-white hover:bg-warm-800'
-                            }`}
-                            whileTap={{ scale: 0.95 }}
-                          >
-                            {range}
-                          </motion.button>
-                        ))}
-                      </div>
-                      
-                      <motion.button
-                        onClick={() => { songLogService.clearCache(); loadSongs(); }}
-                        disabled={songsLoading}
-                        className="flex items-center gap-2 px-3 py-1.5 text-sm bg-warm-700 rounded-lg text-warm-400 hover:text-white transition-colors"
-                        whileTap={{ scale: 0.95 }}
-                      >
-                        <RefreshCw className={`w-4 h-4 ${songsLoading ? 'animate-spin' : ''}`} />
-                        Refresh
-                      </motion.button>
-                    </div>
-                    
-                    {/* Top Performers Grid */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      {/* Highest Retention Songs */}
-                      <div className="bg-warm-700/50 rounded-xl p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                            <h3 className="text-base font-semibold text-white">Highest Retention</h3>
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-emerald-400">
-                            <TrendingUp className="w-3 h-3" />
-                            <span>Real Data</span>
-                          </div>
-                        </div>
-                        <p className="text-xs text-warm-400 mb-3">Songs where crowd stayed or grew</p>
-                        
-                        <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar">
-                          {songsLoading ? (
-                            <div className="text-center py-6">
-                              <RefreshCw className="w-6 h-6 text-emerald-400 animate-spin mx-auto mb-2" />
-                              <p className="text-sm text-warm-400">Calculating retention...</p>
-                            </div>
-                          ) : highestPerforming.length > 0 ? (
-                            highestPerforming.slice(0, 5).map((song, index) => (
-                              <motion.div
-                                key={`${song.song}-${song.artist}`}
-                                className="flex items-center gap-2 p-2 rounded-lg bg-gradient-to-r from-emerald-500/10 to-cyan-600/10 border border-emerald-500/20"
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: 0.1 + index * 0.05 }}
-                              >
-                                <div className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs">
-                                  {index + 1}
-                                </div>
-                                {song.albumArt ? (
-                                  <img src={song.albumArt} alt={song.song} className="w-8 h-8 rounded object-cover" />
-                                ) : (
-                                  <div className="w-8 h-8 rounded bg-emerald-500/20 flex items-center justify-center">
-                                    <Music className="w-4 h-4 text-emerald-400" />
-                                  </div>
-                                )}
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-sm font-medium text-white truncate">{song.song}</div>
-                                  <div className="text-xs text-warm-400 truncate">{song.artist}</div>
-                                </div>
-                                <div className="text-right">
-                                  <div className={`text-sm font-bold ${(song.retentionRate ?? 100) >= 100 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                    {(song.retentionRate ?? 100) >= 100 ? '+' : ''}{((song.retentionRate ?? 100) - 100).toFixed(1)}%
-                                  </div>
-                                  <div className="text-[10px] text-warm-500">{song.plays} plays</div>
-                                </div>
-                              </motion.div>
-                            ))
-                          ) : (
-                            <div className="text-center py-6 text-warm-400 text-sm">
-                              No retention data yet
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      
-                      {/* Top Performers Playlist */}
-                      <div className="bg-warm-700/50 rounded-xl p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            <ListMusic className="w-5 h-5 text-green-400" />
-                            <h3 className="text-base font-semibold text-white">Top Performers</h3>
-                          </div>
-                          
-                          {/* Export Dropdown */}
-                          <div className="relative">
-                            <button
-                              onClick={() => setShowExportMenu(!showExportMenu)}
-                              className="flex items-center gap-1 px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded hover:bg-green-500/30 transition-colors"
-                              disabled={topPerformersPlaylist.length === 0}
-                            >
-                              <Download className="w-3 h-3" />
-                              Export
-                              <ChevronDown className="w-3 h-3" />
-                            </button>
-                            
-                            <AnimatePresence>
-                              {showExportMenu && (
-                                <motion.div
-                                  initial={{ opacity: 0, y: -10 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  exit={{ opacity: 0, y: -10 }}
-                                  className="absolute right-0 top-full mt-1 bg-warm-800 border border-warm-700 rounded-lg shadow-xl z-10 overflow-hidden"
-                                >
-                                  <button
-                                    onClick={() => handleExportPlaylist('csv')}
-                                    className="flex items-center gap-2 px-3 py-2 text-xs text-white hover:bg-warm-700 w-full"
-                                  >
-                                    <FileText className="w-3 h-3 text-green-400" />
-                                    Export CSV
-                                  </button>
-                                  <button
-                                    onClick={() => handleExportPlaylist('txt')}
-                                    className="flex items-center gap-2 px-3 py-2 text-xs text-white hover:bg-warm-700 w-full"
-                                  >
-                                    <FileText className="w-3 h-3 text-blue-400" />
-                                    Export Text
-                                  </button>
-                                  <button
-                                    onClick={() => handleExportPlaylist('json')}
-                                    className="flex items-center gap-2 px-3 py-2 text-xs text-white hover:bg-warm-700 w-full"
-                                  >
-                                    <FileJson className="w-3 h-3 text-purple-400" />
-                                    Export JSON
-                                  </button>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        </div>
-                        <p className="text-xs text-warm-400 mb-3">Crowd-favorite tracks, ready to export</p>
-                        
-                        <div className="space-y-1.5 max-h-[300px] overflow-y-auto custom-scrollbar">
-                          {songsLoading ? (
-                            <div className="text-center py-6">
-                              <RefreshCw className="w-6 h-6 text-green-400 animate-spin mx-auto mb-2" />
-                              <p className="text-sm text-warm-400">Building playlist...</p>
-                            </div>
-                          ) : topPerformersPlaylist.length > 0 ? (
-                            topPerformersPlaylist.slice(0, 8).map((song, index) => (
-                              <motion.div
-                                key={`${song.song}-${song.artist}-${index}`}
-                                className="flex items-center gap-2 p-2 rounded-lg bg-gradient-to-r from-green-500/10 to-emerald-500/10 hover:from-green-500/20 hover:to-emerald-500/20 transition-colors"
-                                initial={{ opacity: 0, x: 10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: 0.15 + index * 0.03 }}
-                              >
-                                <div className="w-5 text-center text-green-400 font-mono text-xs">{song.position}</div>
-                                {song.albumArt ? (
-                                  <img src={song.albumArt} alt={song.song} className="w-7 h-7 rounded object-cover" />
-                                ) : (
-                                  <div className="w-7 h-7 rounded bg-green-500/20 flex items-center justify-center">
-                                    <Music className="w-3 h-3 text-green-400" />
-                                  </div>
-                                )}
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-xs font-medium text-white truncate">{song.song}</div>
-                                  <div className="text-[10px] text-warm-400 truncate">{song.artist}</div>
-                                </div>
-                                <div className="flex items-center gap-1.5 flex-shrink-0">
-                                  <span className="text-[10px] text-warm-500">{song.plays}x</span>
-                                  <Zap className="w-3 h-3 text-green-400" />
-                                  <span className={`text-[10px] ${(song.retentionRate ?? 100) >= 100 ? 'text-green-400' : 'text-amber-400'}`}>
-                                    {(song.retentionRate ?? 100) >= 100 ? '+' : ''}{((song.retentionRate ?? 100) - 100).toFixed(1)}%
-                                  </span>
-                                </div>
-                              </motion.div>
-                            ))
-                          ) : (
-                            <div className="text-center py-6 text-warm-400 text-sm">
-                              No playlist data yet
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Genres & Most Played Row */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {/* Top Genres */}
-                      <div className="bg-warm-700/50 rounded-xl p-4">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Disc3 className="w-5 h-5 text-purple-400" />
-                          <h3 className="text-base font-semibold text-white">Top Genres</h3>
-                        </div>
-                        
-                        <div className="space-y-2 max-h-[250px] overflow-y-auto custom-scrollbar">
-                          {genreStats.length > 0 ? (
-                            genreStats.slice(0, 6).map((genre, index) => (
-                              <motion.div
-                                key={genre.genre}
-                                className="p-2 rounded-lg bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20"
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: 0.2 + index * 0.05 }}
-                              >
-                                <div className="flex items-center justify-between mb-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-purple-400 font-bold text-xs">{index + 1}</span>
-                                    <span className="text-sm font-medium text-white">{genre.genre}</span>
-                                  </div>
-                                  <span className="text-purple-400 font-bold text-sm">{genre.plays}</span>
-                                </div>
-                                {genre.performanceScore > 0 && (
-                                  <div className="h-1 bg-purple-500/20 rounded-full overflow-hidden">
-                                    <div 
-                                      className="h-full bg-gradient-to-r from-purple-400 to-pink-400 rounded-full"
-                                      style={{ width: `${genre.performanceScore}%` }}
-                                    />
-                                  </div>
-                                )}
-                              </motion.div>
-                            ))
-                          ) : (
-                            <div className="text-center py-6 text-warm-400 text-sm">
-                              No genre data yet
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      
-                      {/* Most Played */}
-                      <div className="bg-warm-700/50 rounded-xl p-4">
-                        <div className="flex items-center gap-2 mb-3">
-                          <TrendingUp className="w-5 h-5 text-primary" />
-                          <h3 className="text-base font-semibold text-white">Most Played</h3>
-                        </div>
-                        
-                        <div className="space-y-2 max-h-[250px] overflow-y-auto custom-scrollbar">
-                          {topSongs.length > 0 ? topSongs.slice(0, 6).map((song, index) => (
-                            <motion.div
-                              key={`${song.song}-${song.artist}`}
-                              className="flex items-center justify-between p-2 rounded-lg bg-warm-600/50"
-                              initial={{ opacity: 0, x: -10 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              transition={{ delay: 0.2 + index * 0.05 }}
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="text-primary font-bold text-xs w-4">{index + 1}</span>
-                                <div className="min-w-0">
-                                  <div className="text-sm font-medium text-white truncate">{song.song}</div>
-                                  <div className="text-[10px] text-warm-400 truncate">{song.artist}</div>
-                                </div>
-                              </div>
-                              <div className="text-primary font-bold text-sm flex-shrink-0">{song.plays}x</div>
-                            </motion.div>
-                          )) : (
-                            <div className="text-center py-6 text-warm-400 text-sm">
-                              No songs tracked yet
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      
-                      {/* Recent Plays */}
-                      <div className="bg-warm-700/50 rounded-xl p-4">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Clock className="w-5 h-5 text-primary" />
-                          <h3 className="text-base font-semibold text-white">Recent Plays</h3>
-                        </div>
-                        
-                        <div className="space-y-1.5 max-h-[250px] overflow-y-auto custom-scrollbar">
-                          {songs.length > 0 ? songs.slice(0, 8).map((song, index) => (
-                            <motion.div
-                              key={song.id}
-                              className="flex items-center gap-2 p-1.5 rounded-lg bg-warm-600/50"
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: 0.3 + index * 0.02 }}
-                            >
-                              {song.albumArt ? (
-                                <img src={song.albumArt} alt={song.songName} className="w-7 h-7 rounded object-cover" />
-                              ) : (
-                                <div className="w-7 h-7 rounded bg-primary/20 flex items-center justify-center">
-                                  <Music className="w-3 h-3 text-primary" />
-                                </div>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <div className="text-xs font-medium text-white truncate">{song.songName}</div>
-                                <div className="text-[10px] text-warm-400 truncate">{song.artist}</div>
-                              </div>
-                              <div className="text-[10px] text-warm-500 flex-shrink-0">
-                                {song.timestamp ? format(new Date(song.timestamp), 'h:mm a') : '—'}
-                              </div>
-                            </motion.div>
-                          )) : (
-                            <div className="text-center py-6 text-warm-400 text-sm">
-                              No songs played yet
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>}
-
-          {/* Raw Metrics - entries, exits, dB, lux, score, top songs */}
-          <RawMetrics
-            data={rawSensorData as any}
-            loading={insights.loading}
-          />
-
-          {/* Environmental Summary */}
-          <EnvironmentalSummary
-            data={rawSensorData as any}
-            loading={insights.loading}
-          />
-
-          {/* POS vs VenueScope comparison */}
-          <POSComparison vsDrinkCount={vsTodayDrinks} />
-
-          {/* Weekly report download + schedule */}
-          <WeeklyReportSection />
-
-          </motion.div>
-          )}
-          </AnimatePresence>
-
+            <RefreshCw className={`w-4 h-4 ${loading || vsLoading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
-      </PullToRefresh>
-      
-      {/* Raw Data View Modal */}
-      {showRawData && (
-        <RawDataView 
-          isOpen 
-          onClose={() => setShowRawData(false)} 
-          data={insights.rawData} 
-          timeRange={timeRange} 
-          onTimeRangeChange={setTimeRange} 
-          initialMetric={'score' as any} 
-          onExport={handleExportCSV} 
-        />
-      )}
-    </>
+
+        {/* Date Picker — no-print */}
+        <div className="no-print">
+          <DateRangePicker
+            selectedDates={selectedDates}
+            onChange={dates => { setSelectedDates(dates); setQuickRange('custom'); }}
+            quickRange={quickRange}
+            onQuickRange={(r) => {
+              setQuickRange(r);
+              const today = new Date();
+              if (r === 'yesterday') {
+                const y = new Date(today);
+                y.setDate(y.getDate() - 1);
+                setSelectedDates(new Set([y.toISOString().slice(0, 10)]));
+              } else if (r === '7days') {
+                const dates = new Set<string>();
+                for (let i = 1; i <= 7; i++) {
+                  const d = new Date(today);
+                  d.setDate(d.getDate() - i);
+                  dates.add(d.toISOString().slice(0, 10));
+                }
+                setSelectedDates(dates);
+              }
+            }}
+          />
+        </div>
+
+        {/* Report */}
+        {vsLoading ? (
+          <div className="text-center py-12 text-warm-500">Loading report...</div>
+        ) : reportJobs.length === 0 ? (
+          <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-8 text-center">
+            <Calendar className="w-8 h-8 text-warm-600 mx-auto mb-3" />
+            <p className="text-warm-400 font-medium">No data for selected date{selectedDates.size > 1 ? 's' : ''}</p>
+            <p className="text-xs text-warm-600 mt-1">Try selecting a different date range</p>
+          </div>
+        ) : (
+          <ReportView jobs={reportJobs} selectedDates={selectedDates} />
+        )}
+      </div>
+    </PullToRefresh>
   );
 }
-
-export default Analytics;
