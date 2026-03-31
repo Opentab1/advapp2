@@ -5,7 +5,7 @@ import {
   User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell, DollarSign,
   Camera, Download, Wifi, WifiOff, RefreshCw, Circle, Clock
 } from 'lucide-react';
-import connectService, { ConnectStatus } from '../services/connect.service';
+import connectService, { ConnectStatus, VenueOS, detectOS } from '../services/connect.service';
 import alertsService, { AlertPreferences } from '../services/alerts.service';
 import authService from '../services/auth.service';
 import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
@@ -22,6 +22,7 @@ export function Settings() {
   const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'cameras' | 'about'>('account');
   const [connectStatus, setConnectStatus] = useState<ConnectStatus | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
+  const [selectedOS, setSelectedOS] = useState<VenueOS>(detectOS());
   const [alertPrefs, setAlertPrefs] = useState<AlertPreferences>(() => alertsService.getPreferences());
   const [alertsSaved, setAlertsSaved] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -624,25 +625,62 @@ export function Settings() {
                   </div>
                 )}
 
-                <p className="text-sm text-warm-400 mb-6">
-                  Run this setup script once on the Mac at your venue. It installs Tailscale,
-                  disables sleep, and configures VenueScope to start automatically on every boot.
+                <p className="text-sm text-warm-400 mb-5">
+                  Download the setup file for the venue's computer. Double-clicking it
+                  automatically installs Tailscale, connects to VenueScope, and notifies
+                  your dashboard — no configuration needed.
                 </p>
 
+                {/* OS Selector */}
+                <div className="mb-5">
+                  <p className="text-xs text-warm-500 mb-2 uppercase tracking-wide font-medium">Venue computer's operating system</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      { id: 'mac'     as VenueOS, label: '🍎  Mac',     file: '.command' },
+                      { id: 'windows' as VenueOS, label: '🪟  Windows', file: '.bat'     },
+                      { id: 'linux'   as VenueOS, label: '🐧  Linux',   file: '.sh'      },
+                    ]).map(({ id, label, file }) => (
+                      <button
+                        key={id}
+                        onClick={() => setSelectedOS(id)}
+                        className={`flex flex-col items-center gap-1 px-3 py-3 rounded-xl border text-sm font-medium transition-all ${
+                          selectedOS === id
+                            ? 'bg-primary/20 border-primary/60 text-white'
+                            : 'bg-warm-800 border-warm-700 text-warm-400 hover:text-white hover:border-warm-600'
+                        }`}
+                      >
+                        <span>{label}</span>
+                        <span className="text-[10px] text-warm-500">{file}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {selectedOS === detectOS() && (
+                    <p className="text-[11px] text-teal mt-2">✓ Auto-detected from your browser</p>
+                  )}
+                </div>
+
                 <button
-                  onClick={() => connectService.downloadInstaller()}
+                  onClick={() => connectService.downloadInstaller(selectedOS)}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary/20 border border-primary/50 text-primary hover:bg-primary/30 rounded-lg font-medium transition-all"
                 >
                   <Download className="w-4 h-4" />
-                  Download Setup Script
+                  Download Setup File
                 </button>
 
                 <div className="mt-4 space-y-3">
-                  {[
-                    { step: '1', text: 'Download the script to the venue Mac' },
-                    { step: '2', text: 'Open Terminal and run: bash ~/Downloads/venuescope_setup.sh' },
-                    { step: '3', text: 'Script installs Tailscale, disables sleep, and sets up autostart — done' },
-                  ].map(({ step, text }) => (
+                  {(selectedOS === 'mac' ? [
+                    { step: '1', text: 'Download the file and double-click it — Terminal opens automatically' },
+                    { step: '2', text: 'Script installs Tailscale and joins the VenueScope network (no login needed)' },
+                    { step: '3', text: 'Cameras appear in your dashboard within 2 minutes' },
+                  ] : selectedOS === 'windows' ? [
+                    { step: '1', text: 'Download the file and double-click it — Command Prompt opens automatically' },
+                    { step: '2', text: 'If Tailscale is not installed, the script opens the installer — run it, then double-click the file again' },
+                    { step: '3', text: 'Cameras appear in your dashboard within 2 minutes' },
+                  ] : [
+                    { step: '1', text: 'Download the file, then run: chmod +x connect-venuescope.sh && ./connect-venuescope.sh' },
+                    { step: '2', text: 'Script installs Tailscale and joins the VenueScope network' },
+                    { step: '3', text: 'Cameras appear in your dashboard within 2 minutes' },
+                  ]).map(({ step, text }) => (
                     <div key={step} className="flex items-start gap-3">
                       <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 border border-primary/40 text-primary text-xs flex items-center justify-center font-bold">
                         {step}
@@ -694,11 +732,11 @@ export function Settings() {
                 <ul className="space-y-2 text-sm text-warm-400">
                   <li className="flex items-center gap-2">
                     <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
-                    The Mac at your venue with VenueScope already installed
+                    Any always-on Windows, Mac, or Linux PC at the venue
                   </li>
                   <li className="flex items-center gap-2">
                     <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
-                    Mac must be on the same network as the cameras
+                    PC must be on the same network as the cameras
                   </li>
                   <li className="flex items-center gap-2">
                     <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
@@ -706,11 +744,7 @@ export function Settings() {
                   </li>
                   <li className="flex items-center gap-2">
                     <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
-                    Mac plugged into power (script disables sleep automatically)
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
-                    Homebrew installed (script uses it to install Tailscale)
+                    PC plugged into power
                   </li>
                 </ul>
               </div>
