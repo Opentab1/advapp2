@@ -429,12 +429,22 @@ function DateRangePicker({
 }
 
 // ── ReportView ────────────────────────────────────────────────────────────────
-function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDates: Set<string> }) {
-  const peopleCntJobs = jobs.filter(j => (j.analysisMode ?? '') === 'people_count' || (j.analysisMode ?? '').includes('people'));
-  const drinkCntJobs  = jobs.filter(j => (j.analysisMode ?? '') === 'drink_count'  || (j.analysisMode ?? '').includes('drink'));
+function NoDataRow() {
+  return (
+    <div className="px-4 py-6 text-center text-warm-600 text-xs italic">
+      No data for selected date(s)
+    </div>
+  );
+}
 
-  // Section A — Overview tiles
-  const totalGuestsIn  = peopleCntJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0)
+function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDates: Set<string> }) {
+  const hasData = jobs.length > 0;
+
+  const peopleCntJobs = jobs.filter(j => (j.analysisMode ?? '').includes('people'));
+  const drinkCntJobs  = jobs.filter(j => (j.analysisMode ?? '').includes('drink'));
+
+  // Foot traffic metrics
+  const totalGuestsIn = peopleCntJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0)
     || jobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
 
   let peakOcc = 0;
@@ -446,6 +456,17 @@ function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDa
     }
   });
 
+  // People by hour: group jobs by hour of createdAt
+  const byHour: Record<number, number> = {};
+  jobs.forEach(j => {
+    if (!j.createdAt || !j.totalEntries) return;
+    const hr = new Date(j.createdAt * 1000).getHours();
+    byHour[hr] = (byHour[hr] ?? 0) + j.totalEntries;
+  });
+  const hourEntries = Object.entries(byHour)
+    .map(([hr, count]) => ({ hr: Number(hr), count }))
+    .sort((a, b) => a.hr - b.hr);
+
   const dwellJobs = jobs.filter(j => j.avgDwellMin != null);
   const avgDwell = dwellJobs.length
     ? Math.round(dwellJobs.reduce((s, j) => s + (j.avgDwellMin ?? 0), 0) / dwellJobs.length)
@@ -454,10 +475,10 @@ function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDa
   const totalDrinks = drinkCntJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0)
     || jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
 
-  // Section B — Theft alerts
+  // Theft
   const theftJobs = jobs.filter(j => j.hasTheftFlag);
 
-  // Section C — Room-by-room
+  // Room-by-room
   const roomMap = new Map<string, VenueScopeJob[]>();
   jobs.forEach(j => {
     const room = j.roomLabel || j.cameraLabel || 'Unknown Room';
@@ -465,7 +486,7 @@ function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDa
     roomMap.get(room)!.push(j);
   });
 
-  // Section D — Drink stats by bar (drink_count jobs only)
+  // Drink stats by bar
   const barMap = new Map<string, VenueScopeJob[]>();
   drinkCntJobs.forEach(j => {
     const bar = j.roomLabel || j.cameraLabel || 'Unknown Bar';
@@ -475,128 +496,123 @@ function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDa
 
   const dateLabel = selectedDates.size === 1
     ? format(new Date([...selectedDates][0] + 'T12:00:00'), 'MMMM d, yyyy')
-    : `${selectedDates.size} days`;
+    : `${selectedDates.size} days selected`;
 
   return (
-    <div className="space-y-6">
-      <style>{`@media print { .no-print { display: none; } }`}</style>
+    <div className="space-y-5">
+      <style>{`@media print { .no-print { display: none !important; } }`}</style>
 
-      {/* Report title */}
-      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl px-5 py-4">
-        <p className="text-xs text-warm-500 uppercase tracking-wider font-semibold">Shift Report</p>
-        <h2 className="text-lg font-bold text-white mt-0.5">{dateLabel}</h2>
-        <p className="text-xs text-warm-500 mt-0.5">{jobs.length} session{jobs.length !== 1 ? 's' : ''} analyzed</p>
-      </div>
-
-      {/* Section A — Overview tiles */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {/* Guests In */}
-        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 text-center">
-          <div className="text-2xl font-bold text-white tabular-nums">{totalGuestsIn > 0 ? totalGuestsIn.toLocaleString() : '—'}</div>
-          <div className="text-[11px] text-warm-500 mt-1 uppercase tracking-wider">Guests In</div>
+      {/* Report header */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl px-5 py-4 flex items-start justify-between">
+        <div>
+          <p className="text-[10px] text-warm-500 uppercase tracking-widest font-semibold">Shift Report</p>
+          <h2 className="text-lg font-bold text-white mt-0.5">{dateLabel}</h2>
+          <p className="text-xs text-warm-500 mt-0.5">
+            {hasData ? `${jobs.length} session${jobs.length !== 1 ? 's' : ''} analyzed` : 'No sessions for this date'}
+          </p>
         </div>
-        {/* Peak Occupancy */}
-        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 text-center">
-          <div className="text-2xl font-bold text-white tabular-nums">{peakOcc > 0 ? peakOcc : '—'}</div>
-          <div className="text-[11px] text-warm-500 mt-1 uppercase tracking-wider">Peak Occupancy</div>
-          {peakTime && <div className="text-[10px] text-warm-600 mt-0.5">{peakTime}</div>}
-        </div>
-        {/* Avg Dwell */}
-        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 text-center">
-          <div className="text-2xl font-bold text-white tabular-nums">{avgDwell != null ? `${avgDwell}m` : '—'}</div>
-          <div className="text-[11px] text-warm-500 mt-1 uppercase tracking-wider">Avg Dwell</div>
-        </div>
-        {/* Total Drinks */}
-        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 text-center">
-          <div className="text-2xl font-bold text-teal tabular-nums">{totalDrinks > 0 ? totalDrinks.toLocaleString() : '—'}</div>
-          <div className="text-[11px] text-warm-500 mt-1 uppercase tracking-wider">Total Drinks</div>
+        <div className="no-print">
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-2 px-4 py-2 bg-teal text-white rounded-xl font-semibold text-xs hover:bg-teal/90 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" /> Download PDF
+          </button>
         </div>
       </div>
 
-      {/* Section B — Theft Alerts */}
-      {theftJobs.length > 0 && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-2xl overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-red-500/20">
-            <AlertTriangle className="w-4 h-4 text-red-400" />
-            <span className="text-sm font-bold text-red-400">Theft Alerts</span>
-            <span className="text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5 font-semibold">
-              {theftJobs.length} shift{theftJobs.length > 1 ? 's' : ''}
-            </span>
-          </div>
-          <div className="divide-y divide-red-500/10">
-            {theftJobs.map(job => {
-              const cameraName = job.roomLabel || job.cameraLabel || 'Camera';
-              const timeStr = job.createdAt ? format(new Date(job.createdAt * 1000), 'h:mm a') : '—';
-              return (
-                <div key={job.jobId} className="px-4 py-3 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-white">{cameraName}</span>
-                    <span className="text-xs text-warm-400">{timeStr}</span>
-                  </div>
-                  {job.unrungDrinks != null && job.unrungDrinks > 0 && (
-                    <p className="text-xs text-red-300">
-                      {job.unrungDrinks} unrung drink{job.unrungDrinks !== 1 ? 's' : ''} detected
-                    </p>
-                  )}
-                  <p className="text-[11px] text-warm-500">
-                    Review {cameraName} footage around {timeStr} on your NVR/DVR
-                  </p>
+      {/* ── SECTION 1: Foot Traffic ─────────────────────────────── */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+          <User className="w-4 h-4 text-teal" />
+          <span className="text-sm font-semibold text-white">Foot Traffic</span>
+          <span className="text-[10px] text-warm-500 ml-1">— how many people and at what time</span>
+        </div>
+
+        {!hasData ? <NoDataRow /> : (
+          <div className="p-4 space-y-4">
+            {/* Summary tiles */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-whoop-panel-secondary border border-whoop-divider rounded-xl p-3 text-center">
+                <div className="text-xl font-bold text-white tabular-nums">{totalGuestsIn > 0 ? totalGuestsIn.toLocaleString() : '—'}</div>
+                <div className="text-[10px] text-warm-500 mt-1 uppercase tracking-wider">Total Guests In</div>
+              </div>
+              <div className="bg-whoop-panel-secondary border border-whoop-divider rounded-xl p-3 text-center">
+                <div className="text-xl font-bold text-white tabular-nums">{peakOcc > 0 ? peakOcc : '—'}</div>
+                <div className="text-[10px] text-warm-500 mt-1 uppercase tracking-wider">Peak Occupancy</div>
+                {peakTime && <div className="text-[10px] text-teal mt-0.5">{peakTime}</div>}
+              </div>
+              <div className="bg-whoop-panel-secondary border border-whoop-divider rounded-xl p-3 text-center">
+                <div className="text-xl font-bold text-white tabular-nums">{avgDwell != null ? `${avgDwell}m` : '—'}</div>
+                <div className="text-[10px] text-warm-500 mt-1 uppercase tracking-wider">Avg Dwell Time</div>
+                {avgDwell != null && <div className="text-[10px] text-warm-600 mt-0.5">avg time in venue</div>}
+              </div>
+            </div>
+
+            {/* Guests by hour */}
+            {hourEntries.length > 0 && (
+              <div>
+                <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-2">Guests by Hour</p>
+                <div className="space-y-1.5">
+                  {hourEntries.map(({ hr, count }) => {
+                    const label = new Date(2000, 0, 1, hr).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+                    const maxCount = Math.max(...hourEntries.map(e => e.count));
+                    const pct = maxCount > 0 ? Math.round((count / maxCount) * 100) : 0;
+                    return (
+                      <div key={hr} className="flex items-center gap-2">
+                        <span className="text-[10px] text-warm-500 w-14 text-right flex-shrink-0">{label}</span>
+                        <div className="flex-1 h-4 bg-warm-800 rounded-full overflow-hidden">
+                          <div className="h-full bg-teal/60 rounded-full" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="text-[10px] text-warm-400 w-8 flex-shrink-0">{count}</span>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </div>
+            )}
           </div>
+        )}
+      </div>
+
+      {/* ── SECTION 2: Room-by-Room Breakdown ───────────────────── */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+          <Video className="w-4 h-4 text-teal" />
+          <span className="text-sm font-semibold text-white">Room-by-Room Breakdown</span>
+          <span className="text-[10px] text-warm-500 ml-1">— where people were &amp; dwell time</span>
         </div>
-      )}
 
-      {/* Revenue protection summary */}
-      <RevenueRecovery jobs={jobs} />
-
-      {/* Section C — Room-by-Room Breakdown */}
-      {roomMap.size > 0 && (
-        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
-            <Video className="w-4 h-4 text-teal" />
-            <span className="text-sm font-semibold text-white">Room-by-Room Breakdown</span>
-          </div>
+        {!hasData || roomMap.size === 0 ? <NoDataRow /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-whoop-divider">
-                  <th className="text-left px-4 py-2 text-warm-500 font-semibold">Room</th>
-                  <th className="text-left px-3 py-2 text-warm-500 font-semibold">Mode</th>
-                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Guests In</th>
-                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Peak</th>
-                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Dwell</th>
-                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Drinks</th>
-                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Status</th>
+                <tr className="border-b border-whoop-divider bg-warm-900/40">
+                  <th className="text-left px-4 py-2.5 text-warm-500 font-semibold">Room / Area</th>
+                  <th className="text-left px-3 py-2.5 text-warm-500 font-semibold">Camera</th>
+                  <th className="text-center px-3 py-2.5 text-warm-500 font-semibold">Guests In</th>
+                  <th className="text-center px-3 py-2.5 text-warm-500 font-semibold">Peak</th>
+                  <th className="text-center px-3 py-2.5 text-warm-500 font-semibold">Avg Dwell</th>
+                  <th className="text-center px-3 py-2.5 text-warm-500 font-semibold">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-whoop-divider">
                 {[...roomMap.entries()].map(([room, rJobs]) => {
-                  const rGuests   = rJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
-                  const rPeak     = Math.max(...rJobs.map(j => j.peakOccupancy ?? 0));
-                  const rDwellJs  = rJobs.filter(j => j.avgDwellMin != null);
-                  const rDwell    = rDwellJs.length
+                  const rGuests  = rJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+                  const rPeak    = Math.max(0, ...rJobs.map(j => j.peakOccupancy ?? 0));
+                  const rDwellJs = rJobs.filter(j => j.avgDwellMin != null);
+                  const rDwell   = rDwellJs.length
                     ? Math.round(rDwellJs.reduce((s, j) => s + (j.avgDwellMin ?? 0), 0) / rDwellJs.length)
                     : null;
-                  const rDrinks   = rJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
-                  const rTheft    = rJobs.some(j => j.hasTheftFlag);
-                  const rMode     = rJobs[0]?.analysisMode ?? 'drink_count';
-                  const isDrink   = rMode.includes('drink');
-
+                  const rTheft   = rJobs.some(j => j.hasTheftFlag);
+                  const camLabel = rJobs[0]?.cameraLabel || room;
                   return (
                     <tr key={room} className="hover:bg-warm-800/20 transition-colors">
                       <td className="px-4 py-2.5 text-white font-medium">{room}</td>
-                      <td className="px-3 py-2.5">
-                        {isDrink
-                          ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal/20 text-teal border border-teal/30">Drink Count</span>
-                          : <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">People Count</span>
-                        }
-                      </td>
+                      <td className="px-3 py-2.5 text-warm-400 text-[11px]">{camLabel}</td>
                       <td className="px-3 py-2.5 text-center text-warm-300">{rGuests > 0 ? rGuests : '—'}</td>
                       <td className="px-3 py-2.5 text-center text-warm-300">{rPeak > 0 ? rPeak : '—'}</td>
                       <td className="px-3 py-2.5 text-center text-warm-300">{rDwell != null ? `${rDwell}m` : '—'}</td>
-                      <td className="px-3 py-2.5 text-center font-semibold text-teal">{rDrinks > 0 ? rDrinks : '—'}</td>
                       <td className="px-3 py-2.5 text-center">
                         {rTheft
                           ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5"><AlertTriangle className="w-2.5 h-2.5" />Theft</span>
@@ -609,69 +625,131 @@ function ReportView({ jobs, selectedDates }: { jobs: VenueScopeJob[]; selectedDa
               </tbody>
             </table>
           </div>
-        </div>
-      )}
-
-      {/* Section D — Drink Stats by Bar */}
-      {barMap.size > 0 && (
-        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
-            <ShieldCheck className="w-4 h-4 text-teal" />
-            <span className="text-sm font-semibold text-white">Drink Stats by Bar</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-whoop-divider">
-                  <th className="text-left px-4 py-2 text-warm-500 font-semibold">Bar / Camera</th>
-                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Total Drinks</th>
-                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Rate (drinks/hr)</th>
-                  <th className="text-left px-3 py-2 text-warm-500 font-semibold">Top Bartender</th>
-                  <th className="text-center px-3 py-2 text-warm-500 font-semibold">Theft</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-whoop-divider">
-                {[...barMap.entries()].map(([bar, bJobs]) => {
-                  const bDrinks = bJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
-                  const bRate   = bJobs.reduce((s, j) => s + (j.drinksPerHour ?? 0), 0) / bJobs.length;
-                  const bTop    = bJobs.find(j => j.topBartender)?.topBartender ?? '—';
-                  const bTheft  = bJobs.some(j => j.hasTheftFlag);
-                  return (
-                    <tr key={bar} className="hover:bg-warm-800/20 transition-colors">
-                      <td className="px-4 py-2.5 text-white font-medium">{bar}</td>
-                      <td className="px-3 py-2.5 text-center font-bold text-teal">{bDrinks}</td>
-                      <td className="px-3 py-2.5 text-center text-warm-300">{isNaN(bRate) ? '—' : bRate.toFixed(1)}</td>
-                      <td className="px-3 py-2.5 text-warm-300">{bTop}</td>
-                      <td className="px-3 py-2.5 text-center">
-                        {bTheft
-                          ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-400"><AlertTriangle className="w-2.5 h-2.5" />Yes</span>
-                          : <span className="text-[10px] text-emerald-400">No</span>
-                        }
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Section E — Staff Performance */}
-      <StaffLeaderboard jobs={jobs} />
-
-      {/* Section F — Shift History detail */}
-      <ShiftHistory jobs={jobs} />
-
-      {/* Section G — Print/Download */}
-      <div className="no-print flex justify-center pt-2">
-        <button
-          onClick={() => window.print()}
-          className="flex items-center gap-2 px-5 py-2.5 bg-teal text-white rounded-xl font-semibold text-sm hover:bg-teal/90 transition-colors"
-        >
-          <Download className="w-4 h-4" /> Download / Print Report
-        </button>
+        )}
       </div>
+
+      {/* ── SECTION 3: Drink Stats by Bar ───────────────────────── */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+          <ShieldCheck className="w-4 h-4 text-teal" />
+          <span className="text-sm font-semibold text-white">Drink Stats by Bar</span>
+          <span className="text-[10px] text-warm-500 ml-1">— which camera watches which bar</span>
+        </div>
+
+        {!hasData ? (
+          <NoDataRow />
+        ) : (
+          <>
+            {/* Total drinks hero */}
+            <div className="px-4 py-3 border-b border-whoop-divider flex items-center gap-4">
+              <div>
+                <span className="text-2xl font-bold text-teal tabular-nums">{totalDrinks > 0 ? totalDrinks.toLocaleString() : '—'}</span>
+                <span className="text-xs text-warm-500 ml-2">total drinks detected</span>
+              </div>
+            </div>
+
+            {barMap.size === 0 ? <NoDataRow /> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-whoop-divider bg-warm-900/40">
+                      <th className="text-left px-4 py-2.5 text-warm-500 font-semibold">Bar</th>
+                      <th className="text-left px-3 py-2.5 text-warm-500 font-semibold">Camera Watching</th>
+                      <th className="text-center px-3 py-2.5 text-warm-500 font-semibold">Total Drinks</th>
+                      <th className="text-center px-3 py-2.5 text-warm-500 font-semibold">Drinks/hr</th>
+                      <th className="text-left px-3 py-2.5 text-warm-500 font-semibold">Top Bartender</th>
+                      <th className="text-center px-3 py-2.5 text-warm-500 font-semibold">Theft</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-whoop-divider">
+                    {[...barMap.entries()].map(([bar, bJobs]) => {
+                      const bDrinks = bJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
+                      const bRate   = bJobs.length ? bJobs.reduce((s, j) => s + (j.drinksPerHour ?? 0), 0) / bJobs.length : 0;
+                      const bTop    = bJobs.find(j => j.topBartender)?.topBartender ?? '—';
+                      const bCam    = bJobs[0]?.cameraLabel || bar;
+                      const bTheft  = bJobs.some(j => j.hasTheftFlag);
+                      return (
+                        <tr key={bar} className="hover:bg-warm-800/20 transition-colors">
+                          <td className="px-4 py-2.5 text-white font-medium">{bar}</td>
+                          <td className="px-3 py-2.5 text-warm-400 text-[11px]">{bCam}</td>
+                          <td className="px-3 py-2.5 text-center font-bold text-teal">{bDrinks}</td>
+                          <td className="px-3 py-2.5 text-center text-warm-300">{bRate > 0 ? bRate.toFixed(1) : '—'}</td>
+                          <td className="px-3 py-2.5 text-warm-300">{bTop}</td>
+                          <td className="px-3 py-2.5 text-center">
+                            {bTheft
+                              ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-400"><AlertTriangle className="w-2.5 h-2.5" />Yes</span>
+                              : <span className="text-[10px] text-emerald-400">No</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── SECTION 4: Theft Flags ──────────────────────────────── */}
+      <div className={`border rounded-2xl overflow-hidden ${theftJobs.length > 0 ? 'bg-red-500/10 border-red-500/30' : 'bg-whoop-panel border-whoop-divider'}`}>
+        <div className={`flex items-center gap-2 px-4 py-3 border-b ${theftJobs.length > 0 ? 'border-red-500/20' : 'border-whoop-divider'}`}>
+          <AlertTriangle className={`w-4 h-4 ${theftJobs.length > 0 ? 'text-red-400' : 'text-warm-500'}`} />
+          <span className={`text-sm font-semibold ${theftJobs.length > 0 ? 'text-red-400' : 'text-white'}`}>Theft Flags</span>
+          <span className="text-[10px] text-warm-500 ml-1">— time and place of potential theft</span>
+          {theftJobs.length > 0 && (
+            <span className="ml-auto text-[10px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded px-1.5 py-0.5">
+              {theftJobs.length} flag{theftJobs.length !== 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+
+        {!hasData || theftJobs.length === 0 ? (
+          <div className="px-4 py-6 text-center">
+            {!hasData
+              ? <p className="text-warm-600 text-xs italic">No data for selected date(s)</p>
+              : <p className="text-emerald-400 text-xs flex items-center justify-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> No theft flags detected for this period</p>
+            }
+          </div>
+        ) : (
+          <div className="divide-y divide-red-500/10">
+            {theftJobs.map(job => {
+              const cameraName = job.roomLabel || job.cameraLabel || 'Camera';
+              const timeStr    = job.createdAt ? format(new Date(job.createdAt * 1000), 'h:mm a') : '—';
+              const dateStr    = job.createdAt ? format(new Date(job.createdAt * 1000), 'MMM d, yyyy') : '—';
+              return (
+                <div key={job.jobId} className="px-4 py-4 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{cameraName}</p>
+                      <p className="text-[11px] text-warm-400 mt-0.5">{dateStr} · {timeStr}</p>
+                    </div>
+                    {job.unrungDrinks != null && job.unrungDrinks > 0 && (
+                      <span className="flex-shrink-0 text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1">
+                        {job.unrungDrinks} unrung
+                      </span>
+                    )}
+                  </div>
+                  <div className="bg-red-500/5 border border-red-500/15 rounded-lg px-3 py-2">
+                    <p className="text-[11px] text-warm-300">
+                      <span className="font-semibold text-red-300">NVR Review: </span>
+                      Go to <span className="text-white font-semibold">{cameraName}</span> on your NVR/DVR and scrub to approximately <span className="text-white font-semibold">{timeStr}</span> on <span className="text-white font-semibold">{dateStr}</span>.
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Revenue protection summary (only when data exists) */}
+      {hasData && <RevenueRecovery jobs={jobs} />}
+
+      {/* Staff & shift history (only when data exists) */}
+      {hasData && <StaffLeaderboard jobs={jobs} />}
+      {hasData && <ShiftHistory jobs={jobs} />}
     </div>
   );
 }
@@ -771,15 +849,9 @@ export function Analytics() {
           />
         </div>
 
-        {/* Report */}
+        {/* Report — always shown; sections display "No data" when empty */}
         {vsLoading ? (
-          <div className="text-center py-12 text-warm-500">Loading report...</div>
-        ) : reportJobs.length === 0 ? (
-          <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-8 text-center">
-            <Calendar className="w-8 h-8 text-warm-600 mx-auto mb-3" />
-            <p className="text-warm-400 font-medium">No data for selected date{selectedDates.size > 1 ? 's' : ''}</p>
-            <p className="text-xs text-warm-600 mt-1">Try selecting a different date range</p>
-          </div>
+          <div className="text-center py-12 text-warm-500 text-sm">Loading report...</div>
         ) : (
           <ReportView jobs={reportJobs} selectedDates={selectedDates} />
         )}
