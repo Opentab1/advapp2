@@ -7,9 +7,10 @@
  * - Sports games
  */
 
-import { motion } from 'framer-motion';
-import { 
-  Calendar, CloudSun, Trophy, 
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Calendar, CloudSun, Trophy, ChevronDown,
   Sun, Cloud, CloudRain, Snowflake, Wind
 } from 'lucide-react';
 import type { SportsGame } from '../../types';
@@ -64,6 +65,7 @@ export function TodaysOutlook({
   holidays: providedHolidays,
 }: TodaysOutlookProps) {
   const holidays = providedHolidays || getTodaysHolidays();
+  const [showAllGames, setShowAllGames] = useState(false);
 
   const hasWeather = weather && weather.temperature;
   const hasHolidays = holidays.length > 0;
@@ -155,7 +157,7 @@ export function TodaysOutlook({
         
         {/* Sports Games */}
         {hasGames ? (
-          todayGames.slice(0, 3).map((game, idx) => (
+          (showAllGames ? todayGames : todayGames.slice(0, 3)).map((game, idx) => (
             <motion.div
               key={game.id}
               className="flex items-center gap-3 p-3 rounded-xl bg-whoop-panel-secondary border border-whoop-divider"
@@ -203,11 +205,15 @@ export function TodaysOutlook({
           <div className="text-xs text-text-muted py-1 pl-1">No major games scheduled today.</div>
         )}
 
-        {/* More games indicator */}
+        {/* More games toggle */}
         {todayGames.length > 3 && (
-          <div className="text-center text-xs text-text-muted py-1">
-            +{todayGames.length - 3} more games today
-          </div>
+          <button
+            onClick={() => setShowAllGames(s => !s)}
+            className="w-full flex items-center justify-center gap-1.5 py-2 text-xs text-teal hover:text-teal/80 transition-colors"
+          >
+            {showAllGames ? 'Show less' : `+${todayGames.length - 3} more games today`}
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAllGames ? 'rotate-180' : ''}`} />
+          </button>
         )}
       </div>
     </motion.div>

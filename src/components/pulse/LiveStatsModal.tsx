@@ -327,17 +327,7 @@ export function LiveStatsModal({
               })()}
             </div>
           </section>
-        ) : (
-          <section>
-            <h3 className="text-sm font-semibold text-warm-400 uppercase tracking-wide mb-3">
-              Audience Profile
-            </h3>
-            <div className="p-4 rounded-xl bg-warm-700/20 border border-dashed border-warm-700/50 text-center">
-              <p className="text-xs text-warm-500">BLE audience tracking</p>
-              <p className="text-[10px] text-warm-600 mt-0.5">Contact us to set up</p>
-            </div>
-          </section>
-        )}
+        ) : null}
 
         {/* ============ DWELL TIME (BLE) ============ */}
         {(bleDwellTime || longestVisitorMinutes) && (

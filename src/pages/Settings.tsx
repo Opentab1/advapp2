@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import {
   Key, MapPin, Check, Building2,
   User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell, DollarSign,
-  Camera, Download, Wifi, WifiOff, RefreshCw, Circle
+  Camera, Download, Wifi, WifiOff, RefreshCw, Circle, Clock
 } from 'lucide-react';
 import connectService, { ConnectStatus } from '../services/connect.service';
 import alertsService, { AlertPreferences } from '../services/alerts.service';
@@ -32,6 +32,10 @@ export function Settings() {
   const [avgDrinkPrice, setAvgDrinkPrice] = useState<number | ''>('');
   const [drinkPriceSaving, setDrinkPriceSaving] = useState(false);
   const [drinkPriceSaved, setDrinkPriceSaved] = useState(false);
+  // Business hours
+  const [bizOpen, setBizOpen] = useState('17:00');
+  const [bizClose, setBizClose] = useState('02:00');
+  const [bizHoursSaved, setBizHoursSaved] = useState(false);
   const user = authService.getStoredUser();
   
   // Use display name (custom name if set by admin, otherwise venueId/venueName)
@@ -59,6 +63,15 @@ export function Settings() {
         if (s?.avgDrinkPrice) setAvgDrinkPrice(s.avgDrinkPrice);
         else setAvgDrinkPrice(12);
       });
+      // Load business hours from localStorage
+      try {
+        const saved = localStorage.getItem('pulse_biz_hours');
+        if (saved) {
+          const { open, close } = JSON.parse(saved);
+          if (open) setBizOpen(open);
+          if (close) setBizClose(close);
+        }
+      } catch { /* ignore */ }
     }
   }, [user?.venueId]);
 
@@ -351,6 +364,53 @@ export function Settings() {
                     <p className="text-sm text-yellow-300">Venue ID not configured.</p>
                   </div>
                 )}
+              </div>
+
+              {/* Business Hours */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <Clock className="w-5 h-5 text-teal" />
+                  <h3 className="text-xl font-semibold text-white">Business Hours</h3>
+                </div>
+                <p className="text-sm text-warm-400 mb-6">
+                  Set your opening and closing times. Pulse uses this to determine when your bar is open and filter drink counts to your active shift only.
+                </p>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Opens at</label>
+                    <input
+                      type="time"
+                      value={bizOpen}
+                      onChange={e => setBizOpen(e.target.value)}
+                      className="w-full px-4 py-3 bg-warm-900 border border-warm-700 rounded-lg text-white focus:border-teal focus:ring-1 focus:ring-teal transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Closes at</label>
+                    <input
+                      type="time"
+                      value={bizClose}
+                      onChange={e => setBizClose(e.target.value)}
+                      className="w-full px-4 py-3 bg-warm-900 border border-warm-700 rounded-lg text-white focus:border-teal focus:ring-1 focus:ring-teal transition-colors"
+                    />
+                    <p className="text-xs text-warm-500 mt-1.5">Can be after midnight (e.g. 2:00 AM)</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    localStorage.setItem('pulse_biz_hours', JSON.stringify({ open: bizOpen, close: bizClose }));
+                    haptic('success');
+                    setBizHoursSaved(true);
+                    setTimeout(() => setBizHoursSaved(false), 3000);
+                  }}
+                  className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-all ${
+                    bizHoursSaved
+                      ? 'bg-green-500/20 border border-green-500/50 text-green-400'
+                      : 'bg-teal/20 border border-teal/50 text-teal hover:bg-teal/30'
+                  }`}
+                >
+                  {bizHoursSaved ? <><Check className="w-4 h-4" />Saved!</> : <><Save className="w-4 h-4" />Save Hours</>}
+                </button>
               </div>
 
               {/* Venue Info (read-only) */}

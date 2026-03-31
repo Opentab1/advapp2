@@ -13,7 +13,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Zap, CheckCircle2, Circle, X, AlertTriangle, Wifi } from 'lucide-react';
+import { Zap, CheckCircle2, Circle, X, AlertTriangle, Wifi, GlassWater, DollarSign, ShieldCheck, Clock } from 'lucide-react';
 
 // Components
 import { PulseScoreHero } from '../components/pulse/PulseScoreHero';
@@ -45,6 +45,8 @@ import { useVenueLearning } from '../hooks/useVenueLearning';
 import { useDisplayName } from '../hooks/useDisplayName';
 import sportsService from '../services/sports.service';
 import authService from '../services/auth.service';
+import venueScopeService from '../services/venuescope.service';
+import venueSettingsService from '../services/venue-settings.service';
 import staffService from '../services/staff.service';
 import { pulseStore } from '../stores/pulseStore';
 import type { SportsGame } from '../types';
@@ -66,6 +68,157 @@ interface CelebrationState {
   value: string | number;
   previousValue?: string | number;
   detail?: string;
+}
+
+// ── Business hours helper ────────────────────────────────────────────────────
+function getBusinessHours(): { open: string; close: string } | null {
+  try {
+    const saved = localStorage.getItem('pulse_biz_hours');
+    if (saved) return JSON.parse(saved);
+  } catch { /* ignore */ }
+  return null;
+}
+
+function isBarOpen(hours: { open: string; close: string }): boolean {
+  const now = new Date();
+  const [oH, oM] = hours.open.split(':').map(Number);
+  const [cH, cM] = hours.close.split(':').map(Number);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const openMin = oH * 60 + oM;
+  const closeMin = cH * 60 + cM;
+  // Overnight: e.g. 17:00 – 02:00
+  if (closeMin <= openMin) return nowMin >= openMin || nowMin < closeMin;
+  return nowMin >= openMin && nowMin < closeMin;
+}
+
+function formatTime12(t: string): string {
+  const [h, m] = t.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+// ── Shift Hero Card ───────────────────────────────────────────────────────────
+function ShiftHeroCard({
+  totalDrinks,
+  drinksPerHour,
+  hasTheftFlag,
+  unrungDrinks,
+  topBartender,
+  avgDrinkPrice = 12,
+  onTap,
+}: {
+  totalDrinks: number | null;
+  drinksPerHour: number | null;
+  hasTheftFlag: boolean;
+  unrungDrinks?: number;
+  topBartender?: string | null;
+  avgDrinkPrice?: number;
+  onTap?: () => void;
+}) {
+  const hours = getBusinessHours();
+  const open = hours ? isBarOpen(hours) : null; // null = no hours configured
+
+  const estRevenue = totalDrinks != null ? Math.round(totalDrinks * avgDrinkPrice) : null;
+
+  return (
+    <motion.div
+      className={`bg-warm-800 rounded-2xl border border-warm-700 p-5 ${onTap ? 'cursor-pointer' : ''}`}
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      onClick={onTap}
+      whileTap={onTap ? { scale: 0.98 } : undefined}
+    >
+      {/* Status badge */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${open === false ? 'bg-warm-600' : 'bg-green-500 animate-pulse'}`} />
+          <span className={`text-xs font-semibold uppercase tracking-wide ${open === false ? 'text-warm-500' : 'text-green-400'}`}>
+            {open === false ? 'Bar Closed' : open === true ? 'Shift Active' : 'Tonight'}
+          </span>
+          {hours && open === false && (
+            <span className="text-xs text-warm-600">· Opens {formatTime12(hours.open)}</span>
+          )}
+        </div>
+        {hasTheftFlag && (
+          <span className="flex items-center gap-1 text-[10px] font-semibold text-red-400 bg-red-500/15 border border-red-500/25 rounded-full px-2 py-0.5">
+            <AlertTriangle className="w-2.5 h-2.5" />
+            {unrungDrinks ? `${unrungDrinks} unrung` : 'Theft Flag'}
+          </span>
+        )}
+      </div>
+
+      {/* Key metrics */}
+      {open !== false ? (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-warm-700/40 rounded-xl p-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <GlassWater className="w-3.5 h-3.5 text-teal" />
+              <span className="text-[10px] text-warm-400 uppercase tracking-wide">Drinks</span>
+            </div>
+            <div className="text-2xl font-bold text-teal tabular-nums">
+              {totalDrinks ?? '--'}
+            </div>
+            {drinksPerHour != null && drinksPerHour > 0 && drinksPerHour < 200 && (
+              <div className="text-[10px] text-warm-500 mt-0.5">{drinksPerHour.toFixed(0)}/hr</div>
+            )}
+          </div>
+          <div className="bg-warm-700/40 rounded-xl p-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[10px] text-warm-400 uppercase tracking-wide">Est. Revenue</span>
+            </div>
+            <div className="text-2xl font-bold text-emerald-400 tabular-nums">
+              {estRevenue != null ? `$${estRevenue.toLocaleString()}` : '--'}
+            </div>
+            <div className="text-[10px] text-warm-500 mt-0.5">@ ${avgDrinkPrice} avg</div>
+          </div>
+          {topBartender && (
+            <div className="col-span-2 bg-warm-700/40 rounded-xl p-3 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] text-warm-400 uppercase tracking-wide mb-0.5">Top Bartender</div>
+                <div className="text-sm font-semibold text-white">{topBartender}</div>
+              </div>
+              <div>
+                {hasTheftFlag ? (
+                  <div className="flex items-center gap-1.5 text-red-400">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Review needed</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-emerald-400">
+                    <ShieldCheck className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Clean</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {!topBartender && (
+            <div className="col-span-2 flex items-center justify-end gap-1.5">
+              {hasTheftFlag ? (
+                <span className="text-xs text-red-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Theft flag — review VenueScope tab</span>
+              ) : (
+                <span className="text-xs text-emerald-400 flex items-center gap-1"><ShieldCheck className="w-3 h-3" />No theft flags</span>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        /* Bar is closed */
+        <div className="flex items-center gap-3 py-2">
+          <Clock className="w-8 h-8 text-warm-600 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-warm-400">No active shift</p>
+            {hours && <p className="text-xs text-warm-600 mt-0.5">Opens at {formatTime12(hours.open)}</p>}
+            {totalDrinks != null && totalDrinks > 0 && (
+              <p className="text-xs text-warm-600 mt-0.5">Last recorded: {totalDrinks} drinks</p>
+            )}
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
 }
 
 // ============ MAIN COMPONENT ============
@@ -98,6 +251,7 @@ export function Live() {
   
   // External data
   const [todayGames, setTodayGames] = useState<SportsGame[]>([]);
+  const [latestJobMeta, setLatestJobMeta] = useState<{ topBartender?: string; unrungDrinks?: number; avgDrinkPrice?: number } | null>(null);
   
   // Fetch all pulse data
   const pulseData = usePulseData({ enabled: true });
@@ -140,7 +294,24 @@ export function Live() {
     }
     loadExternalData();
   }, []);
-  
+
+  // Load latest VenueScope job meta (topBartender, unrungDrinks) + avg drink price
+  useEffect(() => {
+    if (!venueId) return;
+    venueScopeService.listJobs(venueId, 5).then(jobs => {
+      const latest = jobs.find(j => j.status === 'done' || j.isLive || j.status === 'running');
+      if (latest) {
+        setLatestJobMeta({
+          topBartender: latest.topBartender || undefined,
+          unrungDrinks: latest.unrungDrinks ?? undefined,
+        });
+      }
+    }).catch(() => {});
+    venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
+      if (s?.avgDrinkPrice) setLatestJobMeta(prev => ({ ...prev, avgDrinkPrice: s.avgDrinkPrice }));
+    }).catch(() => {});
+  }, [venueId]);
+
   // Share pulse score, weather, and connection status with header via store
   useEffect(() => {
     pulseStore.setScore(pulseData.pulseScore);
@@ -322,18 +493,16 @@ export function Live() {
         />
       </div>
 
-      {/* Pulse Score Hero - Always at top */}
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-      >
-        <PulseScoreHero
-          score={pulseData.pulseScore}
-          statusLabel={pulseData.pulseStatusLabel}
-          onTap={() => setActiveModal('pulse')}
-          contextSentence={pulseContextSentence}
-        />
-      </motion.div>
+      {/* Shift Hero Card — replaces Pulse Score ring */}
+      <ShiftHeroCard
+        totalDrinks={pulseData.totalDrinks}
+        drinksPerHour={pulseData.drinksPerHour}
+        hasTheftFlag={pulseData.hasTheftFlag}
+        unrungDrinks={latestJobMeta?.unrungDrinks}
+        topBartender={latestJobMeta?.topBartender}
+        avgDrinkPrice={latestJobMeta?.avgDrinkPrice ?? 12}
+        onTap={() => setActiveModal('livestats')}
+      />
       
       {/* Quick Actions - hidden */}
       
