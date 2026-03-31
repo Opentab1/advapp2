@@ -13,7 +13,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Zap, CheckCircle2, Circle, X, AlertTriangle, Wifi, GlassWater, DollarSign, ShieldCheck, Clock } from 'lucide-react';
+import { Zap, CheckCircle2, Circle, X, AlertTriangle, Wifi, ShieldCheck } from 'lucide-react';
 
 // Components
 import { PulseScoreHero } from '../components/pulse/PulseScoreHero';
@@ -98,28 +98,130 @@ function formatTime12(t: string): string {
   return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-// ── Shift Hero Card ───────────────────────────────────────────────────────────
-function ShiftHeroCard({
+// ── Dual Ring Hero ────────────────────────────────────────────────────────────
+const RING_R = 40;
+const RING_CIRC = 2 * Math.PI * RING_R; // 251.33
+
+function Ring({
+  pct,
+  color,
+  label,
+  value,
+  sub,
+  noData,
+  closed,
+}: {
+  pct: number;          // 0-100
+  color: string;        // stroke color class
+  label: string;
+  value: string;
+  sub?: string;
+  noData?: boolean;
+  closed?: boolean;
+}) {
+  const offset = RING_CIRC * (1 - Math.min(100, Math.max(0, pct)) / 100);
+  const dim = noData || closed;
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className="relative w-36 h-36">
+        <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+          {/* Track */}
+          <circle
+            cx="50" cy="50" r={RING_R}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="8"
+            className="text-warm-700"
+          />
+          {/* Progress */}
+          <circle
+            cx="50" cy="50" r={RING_R}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeDasharray={RING_CIRC}
+            strokeDashoffset={dim ? RING_CIRC : offset}
+            className={`${dim ? 'text-warm-700' : color} transition-all duration-700`}
+          />
+        </svg>
+        {/* Center text */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className={`text-2xl font-bold tabular-nums leading-none ${dim ? 'text-warm-600' : 'text-white'}`}>
+            {noData ? '—' : closed ? '—' : `${Math.round(pct)}%`}
+          </span>
+          {!noData && !closed && sub && (
+            <span className="text-[10px] text-warm-500 mt-0.5">{sub}</span>
+          )}
+        </div>
+      </div>
+      {/* Label below ring */}
+      <div className="text-center">
+        <div className={`text-xs font-semibold uppercase tracking-wider ${dim ? 'text-warm-600' : 'text-warm-400'}`}>
+          {label}
+        </div>
+        <div className={`text-sm font-bold mt-0.5 ${dim ? 'text-warm-600' : 'text-white'}`}>
+          {value}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TripleRingHero({
   totalDrinks,
   drinksPerHour,
+  avgDrinksForDow,
+  currentOccupancy,
+  venueCapacity,
+  avgDwellToday,
+  avgDwellLastWeekSameDay,
   hasTheftFlag,
   unrungDrinks,
-  topBartender,
-  avgDrinkPrice = 12,
   onTap,
 }: {
   totalDrinks: number | null;
   drinksPerHour: number | null;
+  avgDrinksForDow: number | null;
+  currentOccupancy: number | null;
+  venueCapacity: number | null;
+  avgDwellToday: number | null;       // minutes
+  avgDwellLastWeekSameDay: number | null; // minutes, same DOW last week
   hasTheftFlag: boolean;
   unrungDrinks?: number;
-  topBartender?: string | null;
-  avgDrinkPrice?: number;
   onTap?: () => void;
 }) {
   const hours = getBusinessHours();
-  const open = hours ? isBarOpen(hours) : null; // null = no hours configured
+  const open = hours ? isBarOpen(hours) : null;
+  const isClosed = open === false;
 
-  const estRevenue = totalDrinks != null ? Math.round(totalDrinks * avgDrinkPrice) : null;
+  // Ring 1 — Drinks % vs historical avg for this DOW
+  const drinksPct = (() => {
+    if (isClosed || totalDrinks == null || !avgDrinksForDow) return null;
+    return Math.min(120, Math.round((totalDrinks / avgDrinksForDow) * 100));
+  })();
+
+  // Ring 2 — Capacity %
+  const capacityPct = (() => {
+    if (isClosed || currentOccupancy == null || !venueCapacity) return null;
+    return Math.min(100, Math.round((currentOccupancy / venueCapacity) * 100));
+  })();
+
+  // Ring 3 — Dwell time % vs same day last week
+  const dwellPct = (() => {
+    if (isClosed || avgDwellToday == null || !avgDwellLastWeekSameDay) return null;
+    return Math.min(150, Math.round((avgDwellToday / avgDwellLastWeekSameDay) * 100));
+  })();
+
+  function fmtDwell(mins: number | null) {
+    if (mins == null) return '—';
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 
   return (
     <motion.div
@@ -129,92 +231,67 @@ function ShiftHeroCard({
       onClick={onTap}
       whileTap={onTap ? { scale: 0.98 } : undefined}
     >
-      {/* Status badge */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Status row */}
+      <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${open === false ? 'bg-warm-600' : 'bg-green-500 animate-pulse'}`} />
-          <span className={`text-xs font-semibold uppercase tracking-wide ${open === false ? 'text-warm-500' : 'text-green-400'}`}>
-            {open === false ? 'Bar Closed' : open === true ? 'Shift Active' : 'Tonight'}
+          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isClosed ? 'bg-warm-600' : 'bg-green-500 animate-pulse'}`} />
+          <span className={`text-xs font-semibold uppercase tracking-wide ${isClosed ? 'text-warm-500' : 'text-green-400'}`}>
+            {isClosed ? 'Bar Closed' : open === true ? 'Shift Active' : 'Tonight'}
           </span>
-          {hours && open === false && (
+          {hours && isClosed && (
             <span className="text-xs text-warm-600">· Opens {formatTime12(hours.open)}</span>
           )}
         </div>
-        {hasTheftFlag && (
+        {hasTheftFlag && !isClosed && (
           <span className="flex items-center gap-1 text-[10px] font-semibold text-red-400 bg-red-500/15 border border-red-500/25 rounded-full px-2 py-0.5">
             <AlertTriangle className="w-2.5 h-2.5" />
             {unrungDrinks ? `${unrungDrinks} unrung` : 'Theft Flag'}
           </span>
         )}
+        {!hasTheftFlag && !isClosed && (
+          <span className="flex items-center gap-1 text-[10px] text-emerald-400">
+            <ShieldCheck className="w-3 h-3" />No theft flags
+          </span>
+        )}
       </div>
 
-      {/* Key metrics */}
-      {open !== false ? (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-warm-700/40 rounded-xl p-3">
-            <div className="flex items-center gap-1.5 mb-1">
-              <GlassWater className="w-3.5 h-3.5 text-teal" />
-              <span className="text-[10px] text-warm-400 uppercase tracking-wide">Drinks</span>
-            </div>
-            <div className="text-2xl font-bold text-teal tabular-nums">
-              {totalDrinks ?? '--'}
-            </div>
-            {drinksPerHour != null && drinksPerHour > 0 && drinksPerHour < 200 && (
-              <div className="text-[10px] text-warm-500 mt-0.5">{drinksPerHour.toFixed(0)}/hr</div>
-            )}
-          </div>
-          <div className="bg-warm-700/40 rounded-xl p-3">
-            <div className="flex items-center gap-1.5 mb-1">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-[10px] text-warm-400 uppercase tracking-wide">Est. Revenue</span>
-            </div>
-            <div className="text-2xl font-bold text-emerald-400 tabular-nums">
-              {estRevenue != null ? `$${estRevenue.toLocaleString()}` : '--'}
-            </div>
-            <div className="text-[10px] text-warm-500 mt-0.5">@ ${avgDrinkPrice} avg</div>
-          </div>
-          {topBartender && (
-            <div className="col-span-2 bg-warm-700/40 rounded-xl p-3 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-warm-400 uppercase tracking-wide mb-0.5">Top Bartender</div>
-                <div className="text-sm font-semibold text-white">{topBartender}</div>
-              </div>
-              <div>
-                {hasTheftFlag ? (
-                  <div className="flex items-center gap-1.5 text-red-400">
-                    <AlertTriangle className="w-4 h-4" />
-                    <span className="text-xs font-semibold">Review needed</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 text-emerald-400">
-                    <ShieldCheck className="w-4 h-4" />
-                    <span className="text-xs font-semibold">Clean</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          {!topBartender && (
-            <div className="col-span-2 flex items-center justify-end gap-1.5">
-              {hasTheftFlag ? (
-                <span className="text-xs text-red-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Theft flag — review VenueScope tab</span>
-              ) : (
-                <span className="text-xs text-emerald-400 flex items-center gap-1"><ShieldCheck className="w-3 h-3" />No theft flags</span>
-              )}
-            </div>
-          )}
-        </div>
-      ) : (
-        /* Bar is closed */
-        <div className="flex items-center gap-3 py-2">
-          <Clock className="w-8 h-8 text-warm-600 flex-shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-warm-400">No active shift</p>
-            {hours && <p className="text-xs text-warm-600 mt-0.5">Opens at {formatTime12(hours.open)}</p>}
-            {totalDrinks != null && totalDrinks > 0 && (
-              <p className="text-xs text-warm-600 mt-0.5">Last recorded: {totalDrinks} drinks</p>
-            )}
-          </div>
+      {/* Three rings */}
+      <div className="flex items-start justify-around gap-2">
+        <Ring
+          pct={drinksPct ?? 0}
+          color="text-teal"
+          label="Drinks"
+          value={totalDrinks != null ? `${totalDrinks}` : '—'}
+          sub={drinksPerHour != null && drinksPerHour > 0 && drinksPerHour < 200 ? `${Math.round(drinksPerHour)}/hr` : avgDrinksForDow ? `avg ${avgDrinksForDow}` : undefined}
+          noData={drinksPct === null && !isClosed}
+          closed={isClosed}
+        />
+        <Ring
+          pct={capacityPct ?? 0}
+          color="text-amber-400"
+          label="Capacity"
+          value={currentOccupancy != null ? `${currentOccupancy}` : '—'}
+          sub={venueCapacity ? `of ${venueCapacity}` : undefined}
+          noData={capacityPct === null && !isClosed}
+          closed={isClosed}
+        />
+        <Ring
+          pct={dwellPct ?? 0}
+          color="text-purple-400"
+          label="Dwell Time"
+          value={fmtDwell(avgDwellToday)}
+          sub={avgDwellLastWeekSameDay ? `last ${today.slice(0, 3)}: ${fmtDwell(avgDwellLastWeekSameDay)}` : undefined}
+          noData={dwellPct === null && !isClosed}
+          closed={isClosed}
+        />
+      </div>
+
+      {/* Footnote */}
+      {!isClosed && (
+        <div className="mt-4 pt-3 border-t border-warm-700/50 text-[10px] text-warm-600 flex flex-wrap gap-x-3 gap-y-1">
+          {drinksPct === null && <span>No drink history yet for {today}s</span>}
+          {capacityPct === null && venueCapacity == null && <span>Set venue capacity in Settings</span>}
+          {dwellPct === null && <span>No dwell history for last {today}</span>}
         </div>
       )}
     </motion.div>
@@ -252,6 +329,12 @@ export function Live() {
   // External data
   const [todayGames, setTodayGames] = useState<SportsGame[]>([]);
   const [latestJobMeta, setLatestJobMeta] = useState<{ topBartender?: string; unrungDrinks?: number; avgDrinkPrice?: number } | null>(null);
+
+  // Ring data
+  const [avgDrinksForDow, setAvgDrinksForDow]           = useState<number | null>(null);
+  const [venueCapacity, setVenueCapacity]                 = useState<number | null>(null);
+  const [avgDwellToday, setAvgDwellToday]                 = useState<number | null>(null);
+  const [avgDwellLastWeekSameDay, setAvgDwellLastWeekSameDay] = useState<number | null>(null);
   
   // Fetch all pulse data
   const pulseData = usePulseData({ enabled: true });
@@ -295,20 +378,65 @@ export function Live() {
     loadExternalData();
   }, []);
 
-  // Load latest VenueScope job meta (topBartender, unrungDrinks) + avg drink price
+  // Load VenueScope job history for rings + latest job meta + venue settings
   useEffect(() => {
     if (!venueId) return;
-    venueScopeService.listJobs(venueId, 5).then(jobs => {
-      const latest = jobs.find(j => j.status === 'done' || j.isLive || j.status === 'running');
+
+    venueScopeService.listJobs(venueId, 200).then(jobs => {
+      const nonLive = jobs.filter(j => !j.isLive && (j.status === 'done' || j.status === 'completed'));
+
+      // Latest job meta
+      const latest = jobs.find(j => j.isLive || j.status === 'done' || j.status === 'running');
       if (latest) {
-        setLatestJobMeta({
+        setLatestJobMeta(prev => ({
+          ...prev,
           topBartender: latest.topBartender || undefined,
           unrungDrinks: latest.unrungDrinks ?? undefined,
-        });
+        }));
+      }
+
+      const todayDow = new Date().getDay(); // 0=Sun..6=Sat
+
+      // Ring 1 — avg drinks for today's day-of-week (exclude today's jobs)
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const sameDowJobs = nonLive.filter(j => {
+        const d = new Date((j.createdAt ?? 0) * 1000);
+        return d.getDay() === todayDow && d < todayStart && (j.totalDrinks ?? 0) > 0;
+      });
+      if (sameDowJobs.length >= 2) {
+        const avg = Math.round(sameDowJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0) / sameDowJobs.length);
+        setAvgDrinksForDow(avg);
+      }
+
+      // Ring 3 — dwell: today's jobs avg + same DOW last week avg
+      const oneWeekAgoStart = new Date(todayStart); oneWeekAgoStart.setDate(oneWeekAgoStart.getDate() - 7);
+      const oneWeekAgoEnd   = new Date(oneWeekAgoStart); oneWeekAgoEnd.setDate(oneWeekAgoEnd.getDate() + 1);
+
+      const todayDwellJobs = nonLive.filter(j => {
+        const d = new Date((j.createdAt ?? 0) * 1000);
+        return d >= todayStart && j.avgDwellMin != null;
+      });
+      if (todayDwellJobs.length > 0) {
+        setAvgDwellToday(Math.round(
+          todayDwellJobs.reduce((s, j) => s + (j.avgDwellMin ?? 0), 0) / todayDwellJobs.length
+        ));
+      }
+
+      const lastWeekDwellJobs = nonLive.filter(j => {
+        const d = new Date((j.createdAt ?? 0) * 1000);
+        return d >= oneWeekAgoStart && d < oneWeekAgoEnd && j.avgDwellMin != null;
+      });
+      if (lastWeekDwellJobs.length > 0) {
+        setAvgDwellLastWeekSameDay(Math.round(
+          lastWeekDwellJobs.reduce((s, j) => s + (j.avgDwellMin ?? 0), 0) / lastWeekDwellJobs.length
+        ));
       }
     }).catch(() => {});
+
+    // Ring 2 + avg drink price from settings
     venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
       if (s?.avgDrinkPrice) setLatestJobMeta(prev => ({ ...prev, avgDrinkPrice: s.avgDrinkPrice }));
+      if (s?.capacity)      setVenueCapacity(s.capacity);
     }).catch(() => {});
   }, [venueId]);
 
@@ -493,14 +621,17 @@ export function Live() {
         />
       </div>
 
-      {/* Shift Hero Card — replaces Pulse Score ring */}
-      <ShiftHeroCard
+      {/* Triple Ring Hero */}
+      <TripleRingHero
         totalDrinks={pulseData.totalDrinks}
         drinksPerHour={pulseData.drinksPerHour}
+        avgDrinksForDow={avgDrinksForDow}
+        currentOccupancy={pulseData.currentOccupancy}
+        venueCapacity={venueCapacity}
+        avgDwellToday={avgDwellToday}
+        avgDwellLastWeekSameDay={avgDwellLastWeekSameDay}
         hasTheftFlag={pulseData.hasTheftFlag}
         unrungDrinks={latestJobMeta?.unrungDrinks}
-        topBartender={latestJobMeta?.topBartender}
-        avgDrinkPrice={latestJobMeta?.avgDrinkPrice ?? 12}
         onTap={() => setActiveModal('livestats')}
       />
       
