@@ -36,6 +36,7 @@ from core.auth import require_auth, logout
 require_auth()
 
 PAGES = {
+    "🎯  VenueScope":      "app/pages/00_venuescope.py",
     "🏠  Dashboard":       "app/pages/00_dashboard.py",
     "▶️  Run Analysis":     "app/pages/01_run.py",
     "📊  Results":          "app/pages/02_results.py",

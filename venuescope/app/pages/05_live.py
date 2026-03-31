@@ -38,6 +38,30 @@ h1,h2,h3,label,p,.stMarkdown{color:#f1f5f9!important;}
 .status-queued{color:#facc15;font-weight:700;}
 .status-done{color:#94a3b8;}
 .status-failed{color:#ef4444;font-weight:700;}
+.hero-card{background:#1e293b;border-left:4px solid #f97316;border-radius:12px;
+  padding:20px 22px;margin:4px 0;height:100%;}
+.alert-banner{background:#7f1d1d33;border:1px solid #dc2626;border-radius:10px;
+  padding:14px 20px;margin:10px 0;color:#fca5a5;font-weight:700;font-size:1.02em;}
+.clear-banner{background:#14532d33;border:1px solid #16a34a;border-radius:10px;
+  padding:10px 20px;margin:10px 0;color:#86efac;font-weight:600;font-size:0.92em;}
+.bt-card{background:#1e293b;border:1px solid #334155;border-radius:12px;
+  padding:18px 16px;text-align:center;position:relative;}
+.bt-rank-gold{background:#92400e;color:#fcd34d;border-radius:50%;width:28px;height:28px;
+  display:inline-flex;align-items:center;justify-content:center;font-weight:800;
+  font-size:0.85em;margin-bottom:8px;}
+.bt-rank-silver{background:#374151;color:#d1d5db;border-radius:50%;width:28px;height:28px;
+  display:inline-flex;align-items:center;justify-content:center;font-weight:800;
+  font-size:0.85em;margin-bottom:8px;}
+.bt-rank-bronze{background:#431407;color:#fb923c;border-radius:50%;width:28px;height:28px;
+  display:inline-flex;align-items:center;justify-content:center;font-weight:800;
+  font-size:0.85em;margin-bottom:8px;}
+.bt-rank-other{background:#1e293b;color:#64748b;border-radius:50%;width:28px;height:28px;
+  display:inline-flex;align-items:center;justify-content:center;font-weight:800;
+  font-size:0.85em;margin-bottom:8px;}
+.event-card{background:#1e293b;border:1px solid #334155;border-radius:10px;
+  padding:12px 16px;margin:5px 0;color:#f1f5f9;}
+.pace-placeholder{background:#1e293b;border:1px dashed #334155;border-radius:10px;
+  padding:24px;text-align:center;color:#475569;font-size:0.9em;margin:10px 0;}
 </style>""", unsafe_allow_html=True)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -173,6 +197,152 @@ def _live_totals(live_jobs: list[dict]) -> dict:
     return t
 
 
+# ── ESPN helper ───────────────────────────────────────────────────────────────
+
+def _fetch_espn_games() -> list[dict]:
+    """
+    Fetch today's games from ESPN public scoreboard API (no key required).
+    Returns a list of game dicts with keys: sport, home, away, status, network, time_str.
+    Results cached in session_state for 5 minutes.
+    """
+    import urllib.request
+    import urllib.error
+    import datetime
+
+    cache_key = "espn_cache"
+    cache_ts_key = "espn_cache_ts"
+    now = time.time()
+
+    if (cache_key in st.session_state
+            and now - st.session_state.get(cache_ts_key, 0) < 300):
+        return st.session_state[cache_key]
+
+    endpoints = {
+        "NFL":   "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+        "NBA":   "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+        "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
+        "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
+        "NCAAF": "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard",
+    }
+
+    games = []
+    for sport, url in endpoints.items():
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "VenueScope/1.0"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode())
+            for event in data.get("events", []):
+                comp = (event.get("competitions") or [{}])[0]
+                competitors = comp.get("competitors", [])
+                home = next((c["team"]["shortDisplayName"] for c in competitors
+                             if c.get("homeAway") == "home"), "?")
+                away = next((c["team"]["shortDisplayName"] for c in competitors
+                             if c.get("homeAway") == "away"), "?")
+                status_obj = event.get("status", {})
+                status_type = status_obj.get("type", {})
+                status_desc = status_type.get("shortDetail", status_type.get("description", ""))
+                state = status_type.get("state", "pre")  # pre / in / post
+
+                broadcasts = comp.get("broadcasts", [])
+                network = ""
+                if broadcasts:
+                    names = broadcasts[0].get("names", [])
+                    network = names[0] if names else ""
+
+                # Parse start time to local-friendly string
+                date_str = event.get("date", "")
+                time_str = status_desc
+                if state == "pre" and date_str:
+                    try:
+                        dt = datetime.datetime.fromisoformat(
+                            date_str.replace("Z", "+00:00"))
+                        # Convert to local time (simple UTC offset)
+                        import datetime as _dt
+                        local = dt.astimezone(_dt.timezone(
+                            _dt.timedelta(hours=-5)))  # ET fallback
+                        time_str = local.strftime("%-I:%M %p ET")
+                    except Exception:
+                        pass
+
+                games.append({
+                    "sport": sport,
+                    "home": home,
+                    "away": away,
+                    "status": status_desc,
+                    "state": state,
+                    "network": network,
+                    "time_str": time_str,
+                })
+        except Exception:
+            pass
+
+    st.session_state[cache_key] = games
+    st.session_state[cache_ts_key] = now
+    return games
+
+
+def _fetch_holidays() -> list[str]:
+    """
+    Fetch US public holidays for the current year from Nager.at API (free, no key).
+    Returns list of holiday names if today is a holiday, else empty list.
+    """
+    import urllib.request
+    import datetime
+
+    today = datetime.date.today()
+    cache_key = "holiday_cache"
+    if cache_key in st.session_state:
+        holidays_map = st.session_state[cache_key]
+    else:
+        holidays_map = {}
+        try:
+            url = f"https://date.nager.at/api/v3/PublicHolidays/{today.year}/US"
+            req = urllib.request.Request(url, headers={"User-Agent": "VenueScope/1.0"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode())
+            for h in data:
+                holidays_map[h["date"]] = h["localName"]
+        except Exception:
+            pass
+        st.session_state[cache_key] = holidays_map
+
+    today_str = today.isoformat()
+    if today_str in holidays_map:
+        return [holidays_map[today_str]]
+    return []
+
+
+def _pace_buckets() -> dict:
+    """
+    Build 4 time buckets of 15 minutes each for the last 60 minutes.
+    Returns {"-60min": N, "-45min": N, "-30min": N, "-15min": N}.
+    """
+    now = time.time()
+    buckets = {"-60 min": 0, "-45 min": 0, "-30 min": 0, "-15 min": 0}
+    bucket_edges = [
+        ("-60 min", now - 3600, now - 2700),
+        ("-45 min", now - 2700, now - 1800),
+        ("-30 min", now - 1800, now - 900),
+        ("-15 min", now - 900,  now),
+    ]
+    cutoff = now - 3600
+    all_jobs = list_jobs(500)
+    recent = [j for j in all_jobs
+              if j["status"] == "done"
+              and j.get("created_at", 0) > cutoff
+              and j.get("analysis_mode") == "drink_count"]
+    for job in recent:
+        created = float(job.get("created_at", 0))
+        s = _parse_summary(job)
+        drinks = sum(int(d.get("total_drinks", 0))
+                     for d in s.get("bartenders", {}).values())
+        for label, start, end in bucket_edges:
+            if start <= created < end:
+                buckets[label] += drinks
+                break
+    return buckets
+
+
 # ── Page tabs ─────────────────────────────────────────────────────────────────
 
 tab_live, tab_cameras, tab_add, tab_discover = st.tabs(
@@ -180,122 +350,379 @@ tab_live, tab_cameras, tab_add, tab_discover = st.tabs(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — Live Now
+# TAB 1 — Live Now (redesigned)
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_live:
+    import datetime as _datetime
+
     cameras = list_cameras()
 
-    # Header row
-    hc1, hc2 = st.columns([5, 1])
-    with hc1:
-        st.markdown("### 🟢 Live Venue Dashboard")
-    with hc2:
-        auto = st.checkbox("Auto-refresh", value=True, key="live_auto")
+    # ── Header row with auto-refresh toggle ───────────────────────────────────
+    hdr_col, ctrl_col = st.columns([6, 2])
+    with hdr_col:
+        st.markdown("## 🟢 Live Venue Dashboard")
+        st.caption(f"Rolling 60-minute window · updated {_datetime.datetime.now().strftime('%H:%M:%S')}")
+    with ctrl_col:
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        auto = st.checkbox("Auto-refresh (10s)", value=True, key="live_auto")
 
-    # ── Real-time live job panel ───────────────────────────────────────────────
+    # ── Shift settings expander ───────────────────────────────────────────────
+    with st.expander("⚙️ Shift settings", expanded=False):
+        ss_col1, ss_col2 = st.columns(2)
+        with ss_col1:
+            avg_drink_price = st.number_input(
+                "Avg drink price ($)",
+                min_value=1, max_value=100, value=12, step=1,
+                key="avg_drink_price",
+                help="Used to estimate revenue from drinks served",
+            )
+        with ss_col2:
+            shift_start_input = st.text_input(
+                "Shift start time (HH:MM, 24h)",
+                value="",
+                placeholder="e.g. 17:00",
+                key="shift_start_time",
+                help="If set, the Shift Time KPI shows elapsed time",
+            )
+
+    # Resolve shift settings from session state
+    avg_price = st.session_state.get("avg_drink_price", 12)
+    shift_start_raw = st.session_state.get("shift_start_time", "").strip()
+    shift_elapsed_str = None
+    if shift_start_raw:
+        try:
+            now_dt = _datetime.datetime.now()
+            sh, sm = [int(x) for x in shift_start_raw.split(":")]
+            shift_dt = now_dt.replace(hour=sh, minute=sm, second=0, microsecond=0)
+            if shift_dt > now_dt:
+                shift_dt -= _datetime.timedelta(days=1)
+            elapsed_sec = int((now_dt - shift_dt).total_seconds())
+            eh = elapsed_sec // 3600
+            em = (elapsed_sec % 3600) // 60
+            shift_elapsed_str = f"{eh}h {em}m" if eh else f"{em}m"
+        except Exception:
+            shift_elapsed_str = None
+
+    # ── Collect data ──────────────────────────────────────────────────────────
     live_jobs = _live_job_metrics()
+    lt = _live_totals(live_jobs) if live_jobs else {"drinks": 0, "unrung": 0, "people_in": 0, "people_out": 0, "bartenders": {}}
+    m = _rolling_metrics()
+
+    total_drinks = m["total_drinks"] + lt["drinks"]
+    total_unrung = m["unrung_drinks"] + lt["unrung"]
+    headcount    = max(m["current_headcount"], max(0, lt["people_in"] - lt["people_out"]))
+    est_revenue  = total_drinks * avg_price
+
+    # Merge bartender data from rolling + live
+    all_bartenders: dict = {}
+    for name, data in m["bartenders"].items():
+        all_bartenders[name] = {"drinks": data["drinks"], "per_hour": data["per_hour"]}
+    for name, data in lt["bartenders"].items():
+        if name in all_bartenders:
+            all_bartenders[name]["drinks"] += data["drinks"]
+        else:
+            all_bartenders[name] = {"drinks": data["drinks"], "per_hour": data["per_hour"]}
+
+    # ── Live streams panel (compact, shown at top when active) ────────────────
     if live_jobs:
-        lt = _live_totals(live_jobs)
         elapsed_vals = [float(d.get("_elapsed_sec", 0)) for d in live_jobs]
         max_elapsed  = max(elapsed_vals) if elapsed_vals else 0
-        hrs = int(max_elapsed // 3600)
+        hrs  = int(max_elapsed // 3600)
         mins = int((max_elapsed % 3600) // 60)
-        secs = int(max_elapsed % 60)
-        elapsed_str = (f"{hrs}h {mins}m" if hrs else f"{mins}m {secs}s")
+        elapsed_str = (f"{hrs}h {mins}m" if hrs else f"{mins}m {int(max_elapsed % 60)}s")
 
         st.markdown(
-            f'<div style="background:#16a34a22;border:1px solid #16a34a;border-radius:12px;'
-            f'padding:16px 20px;margin-bottom:12px;">'
-            f'<span style="color:#4ade80;font-weight:700;font-size:1.05em">🔴 LIVE — '
-            f'{len(live_jobs)} stream(s) running · {elapsed_str} elapsed</span>'
+            f'<div style="background:#052e16;border:1px solid #16a34a;border-radius:12px;'
+            f'padding:14px 20px;margin-bottom:14px;">'
+            f'<span style="color:#4ade80;font-weight:700;font-size:1.05em">🔴 LIVE &nbsp;—&nbsp; '
+            f'{len(live_jobs)} stream(s) active &nbsp;·&nbsp; {elapsed_str} elapsed</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
-        lc1, lc2, lc3, lc4 = st.columns(4)
-        with lc1:
-            st.markdown(f'<div class="live-number">{lt["drinks"]}</div>'
-                        f'<div class="live-label">Drinks (live total)</div>',
-                        unsafe_allow_html=True)
-        with lc2:
-            hc = max(0, lt["people_in"] - lt["people_out"])
-            st.markdown(f'<div class="live-number" style="color:#38bdf8">{hc}</div>'
-                        f'<div class="live-label">People in venue</div>',
-                        unsafe_allow_html=True)
-        with lc3:
-            u_color = "#22c55e" if lt["unrung"] == 0 else "#ef4444"
-            st.markdown(f'<div class="live-number" style="color:{u_color}">{lt["unrung"]}</div>'
-                        f'<div class="live-label">Unrung drinks</div>',
-                        unsafe_allow_html=True)
-        with lc4:
-            last_upd = max((float(d.get("_updated_at", 0)) for d in live_jobs), default=0)
-            age_s = int(time.time() - last_upd) if last_upd else "—"
-            st.markdown(f'<div class="live-number" style="color:#94a3b8;font-size:1.8em">'
-                        f'{age_s}s</div>'
-                        f'<div class="live-label">Since last update</div>',
-                        unsafe_allow_html=True)
-
-        # Per-stream detail
+        # Per-stream compact table
+        rows_html = ""
         for d in live_jobs:
             j = d.get("_job", {})
             label = j.get("clip_label", j.get("job_id", "?"))
-            es    = float(d.get("_elapsed_sec", 0))
-            bts   = d.get("bartenders", {})
+            es = float(d.get("_elapsed_sec", 0))
+            bts = d.get("bartenders", {})
             drinks_now = sum(int(b.get("total_drinks", 0)) for b in bts.values())
-            st.caption(f"**{label}** · {drinks_now} drinks · "
-                       f"{int(es//60)}m {int(es%60)}s elapsed · "
-                       f"updated {int(time.time()-float(d.get('_updated_at',time.time())))}s ago")
+            age_s = int(time.time() - float(d.get("_updated_at", time.time())))
+            rows_html += (
+                f'<tr style="border-bottom:1px solid #1e293b;">'
+                f'<td style="padding:6px 12px;color:#f1f5f9;font-weight:600">{label}</td>'
+                f'<td style="padding:6px 12px;color:#f97316;font-weight:700">{drinks_now}</td>'
+                f'<td style="padding:6px 12px;color:#94a3b8">{int(es//60)}m {int(es%60)}s</td>'
+                f'<td style="padding:6px 12px;color:#64748b">{age_s}s ago</td>'
+                f'</tr>'
+            )
+        st.markdown(
+            f'<table style="width:100%;border-collapse:collapse;background:#0f172a;'
+            f'border-radius:8px;overflow:hidden;font-size:0.88em;">'
+            f'<thead><tr style="background:#1e293b;">'
+            f'<th style="padding:6px 12px;color:#64748b;text-align:left;font-weight:600">Stream</th>'
+            f'<th style="padding:6px 12px;color:#64748b;text-align:left;font-weight:600">Drinks</th>'
+            f'<th style="padding:6px 12px;color:#64748b;text-align:left;font-weight:600">Elapsed</th>'
+            f'<th style="padding:6px 12px;color:#64748b;text-align:left;font-weight:600">Updated</th>'
+            f'</tr></thead><tbody>{rows_html}</tbody></table>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
-        st.divider()
+    # ── Alert / clear banner ──────────────────────────────────────────────────
+    if total_unrung > 0 or m["theft_flags"] > 0:
+        loss_est = total_unrung * avg_price
+        st.markdown(
+            f'<div class="alert-banner">'
+            f'⚠️ &nbsp;<strong>{total_unrung} unrung drink(s) detected</strong>'
+            f' — possible revenue loss of '
+            f'<strong>${loss_est:,.0f}</strong>. '
+            f'Review the Results page for details.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
     else:
-        st.caption("No continuous live streams running. "
-                   "Add a camera with **Segment length = 0** for real-time mode, "
-                   "or use segmented mode (60-120s) below.")
-        st.divider()
+        st.markdown(
+            '<div class="clear-banner">✓ &nbsp;All clear — no unrung drinks or theft flags detected</div>',
+            unsafe_allow_html=True,
+        )
 
-    # ── Top KPIs (rolling 60-min from completed segments) ────────────────────
-    st.caption("Rolling totals — completed segments from the last 60 minutes")
-    m = _rolling_metrics()
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
+    # ── Hero KPI strip ────────────────────────────────────────────────────────
     k1, k2, k3, k4, k5 = st.columns(5)
-    with k1:
-        st.markdown(f'<div class="live-number">{m["total_drinks"]}</div>'
-                    f'<div class="live-label">Drinks Served (60 min)</div>',
-                    unsafe_allow_html=True)
-    with k2:
-        color = "live-number" if m["current_headcount"] == 0 else "live-number"
-        st.markdown(f'<div class="live-number" style="color:#38bdf8">'
-                    f'{m["current_headcount"]}</div>'
-                    f'<div class="live-label">People In Venue</div>',
-                    unsafe_allow_html=True)
-    with k3:
-        rt = m["avg_response_sec"]
-        rt_str = f"{int(rt)}s" if rt else "—"
-        rt_color = "#22c55e" if rt and rt < 120 else "#f97316" if rt and rt < 300 else "#ef4444"
-        st.markdown(f'<div class="live-number" style="color:{rt_color}">{rt_str}</div>'
-                    f'<div class="live-label">Avg Server Response</div>',
-                    unsafe_allow_html=True)
-    with k4:
-        u = m["unrung_drinks"]
-        u_color = "#22c55e" if u == 0 else "#ef4444"
-        st.markdown(f'<div class="live-number" style="color:{u_color}">{u}</div>'
-                    f'<div class="live-label">Unrung Drinks</div>',
-                    unsafe_allow_html=True)
-    with k5:
-        n_cams = len(cameras)
-        active_cams = sum(1 for c in cameras
-                          if (_camera_current_job(c["name"]) or {}).get("status")
-                          in ("running", "pending"))
-        st.markdown(f'<div class="live-number" style="color:#a78bfa">{active_cams}/{n_cams}</div>'
-                    f'<div class="live-label">Cameras Active</div>',
-                    unsafe_allow_html=True)
 
-    st.divider()
+    with k1:
+        st.markdown(
+            '<div class="hero-card">'
+            f'<div class="live-number">{total_drinks}</div>'
+            '<div class="live-label">Drinks Served</div>'
+            '<div style="color:#64748b;font-size:0.75em;margin-top:4px">last 60 min + live</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with k2:
+        rev_str = f"${est_revenue:,.0f}"
+        st.markdown(
+            '<div class="hero-card" style="border-left-color:#22c55e">'
+            f'<div class="live-number" style="color:#4ade80">{rev_str}</div>'
+            '<div class="live-label">Est. Revenue</div>'
+            f'<div style="color:#64748b;font-size:0.75em;margin-top:4px">${avg_price}/drink</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with k3:
+        st.markdown(
+            '<div class="hero-card" style="border-left-color:#38bdf8">'
+            f'<div class="live-number" style="color:#38bdf8">{headcount}</div>'
+            '<div class="live-label">People in Venue</div>'
+            '<div style="color:#64748b;font-size:0.75em;margin-top:4px">current headcount</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with k4:
+        u_color = "#ef4444" if total_unrung > 0 else "#4ade80"
+        u_border = "#ef4444" if total_unrung > 0 else "#22c55e"
+        st.markdown(
+            f'<div class="hero-card" style="border-left-color:{u_border}">'
+            f'<div class="live-number" style="color:{u_color}">{total_unrung}</div>'
+            '<div class="live-label">Unrung Drinks</div>'
+            '<div style="color:#64748b;font-size:0.75em;margin-top:4px">last 60 min</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with k5:
+        if shift_elapsed_str:
+            shift_display = shift_elapsed_str
+            shift_sub = f"since {shift_start_raw}"
+        else:
+            shift_display = _datetime.datetime.now().strftime("%H:%M")
+            shift_sub = "current time"
+        st.markdown(
+            '<div class="hero-card" style="border-left-color:#a78bfa">'
+            f'<div class="live-number" style="color:#a78bfa;font-size:2em">{shift_display}</div>'
+            '<div class="live-label">Shift Time</div>'
+            f'<div style="color:#64748b;font-size:0.75em;margin-top:4px">{shift_sub}</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    # ── Tonight section ───────────────────────────────────────────────────────
+    st.markdown("### 📅 Tonight")
+    tonight_left, tonight_right = st.columns([3, 2])
+
+    with tonight_left:
+        st.markdown("##### 🏟️ Sports Tonight")
+        with st.spinner("Loading sports schedule..."):
+            games = _fetch_espn_games()
+
+        if not games:
+            st.markdown(
+                '<div class="pace-placeholder">No major games found tonight</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            # Group by sport
+            by_sport: dict[str, list] = {}
+            for g in games:
+                by_sport.setdefault(g["sport"], []).append(g)
+
+            for sport, sport_games in by_sport.items():
+                st.markdown(f"<span style='color:#94a3b8;font-size:0.8em;font-weight:700;"
+                            f"text-transform:uppercase;letter-spacing:.08em'>{sport}</span>",
+                            unsafe_allow_html=True)
+                for g in sport_games[:6]:  # cap per sport
+                    state_dot = "🔴" if g["state"] == "in" else ("✓" if g["state"] == "post" else "🕐")
+                    network_str = f" · <span style='color:#64748b'>{g['network']}</span>" if g["network"] else ""
+                    st.markdown(
+                        f'<div class="event-card" style="margin:3px 0;padding:9px 14px;">'
+                        f'<span style="font-weight:600">{g["away"]} vs {g["home"]}</span>'
+                        f' &nbsp;{state_dot}&nbsp; '
+                        f'<span style="color:#94a3b8;font-size:0.88em">{g["time_str"]}</span>'
+                        f'{network_str}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+    with tonight_right:
+        st.markdown("##### 📆 Day & Events")
+        today_dt = _datetime.date.today()
+        day_name = today_dt.strftime("%A")
+        month_day = today_dt.strftime("%B %-d")
+
+        # Day context
+        dow = today_dt.weekday()  # 0=Mon, 6=Sun
+        if dow == 4:
+            day_context = "Friday — expect late crowd"
+        elif dow == 5:
+            day_context = "Saturday — peak night"
+        elif dow == 6:
+            day_context = "Sunday — wrap-up crowd"
+        elif dow == 3:
+            day_context = "Thursday — weekend kickoff"
+        else:
+            day_names_full = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            day_context = day_names_full[dow]
+
+        st.markdown(
+            f'<div class="event-card">'
+            f'<div style="font-size:1.4em;font-weight:800;color:#f97316">{day_name}</div>'
+            f'<div style="color:#94a3b8;font-size:0.9em">{month_day}</div>'
+            f'<div style="color:#cbd5e1;font-size:0.85em;margin-top:6px">{day_context}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Holidays
+        try:
+            holidays = _fetch_holidays()
+        except Exception:
+            holidays = []
+
+        if holidays:
+            for hname in holidays:
+                st.markdown(
+                    f'<div class="event-card" style="border-color:#f97316;margin-top:6px">'
+                    f'<span style="font-size:1.2em">🎉</span> '
+                    f'<strong style="color:#fb923c">Holiday:</strong> '
+                    f'<span style="color:#f1f5f9">{hname}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                '<div style="color:#475569;font-size:0.82em;margin-top:8px">'
+                'No US public holidays today</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    # ── Bartender leaderboard ─────────────────────────────────────────────────
+    st.markdown("### 🍺 Bartender Performance")
+
+    if not all_bartenders:
+        st.markdown(
+            '<div class="pace-placeholder">'
+            'Waiting for data... Bartender cards will appear once drink-count jobs complete.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        sorted_bts = sorted(all_bartenders.items(),
+                            key=lambda x: x[1]["drinks"], reverse=True)
+        rank_styles = [
+            ("bt-rank-gold",   "#92400e", "#fcd34d", "#f97316"),   # #1
+            ("bt-rank-silver", "#374151", "#d1d5db", "#94a3b8"),   # #2
+            ("bt-rank-bronze", "#431407", "#fb923c", "#fb923c"),   # #3
+            ("bt-rank-other",  "#1e293b", "#64748b", "#64748b"),   # #4
+        ]
+        bt_cols = st.columns(min(len(sorted_bts), 4))
+        for i, (name, data) in enumerate(sorted_bts[:4]):
+            rank_cls, rank_bg, rank_fg, num_color = rank_styles[i] if i < 4 else rank_styles[3]
+            pace = float(data.get("per_hour", 0))
+            if pace > 20:
+                pace_color = "#4ade80"
+                pace_label = "Fast pace"
+            elif pace >= 10:
+                pace_color = "#fbbf24"
+                pace_label = "Moderate"
+            else:
+                pace_color = "#f87171"
+                pace_label = "Slow"
+
+            with bt_cols[i]:
+                st.markdown(
+                    f'<div class="bt-card">'
+                    f'<div style="display:flex;justify-content:center;margin-bottom:6px">'
+                    f'<div style="background:{rank_bg};color:{rank_fg};border-radius:50%;'
+                    f'width:30px;height:30px;display:flex;align-items:center;'
+                    f'justify-content:center;font-weight:800;font-size:0.9em">#{i+1}</div>'
+                    f'</div>'
+                    f'<div style="font-size:2.2em;font-weight:800;color:{num_color};line-height:1">'
+                    f'{data["drinks"]}</div>'
+                    f'<div style="color:#f1f5f9;font-weight:600;margin:6px 0 4px;font-size:0.95em">'
+                    f'{name}</div>'
+                    f'<div style="color:{pace_color};font-size:0.8em;font-weight:600">'
+                    f'{pace:.1f}/hr &nbsp;·&nbsp; {pace_label}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    # ── Drink pace chart ──────────────────────────────────────────────────────
+    st.markdown("### 📈 Drink Pace — Last 60 Minutes")
+
+    buckets = _pace_buckets()
+    total_bucketed = sum(buckets.values())
+
+    if total_bucketed == 0:
+        st.markdown(
+            '<div class="pace-placeholder">'
+            'No data yet — pace chart will appear once jobs complete'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        import pandas as pd
+        pace_df = pd.DataFrame({
+            "Window": list(buckets.keys()),
+            "Drinks": list(buckets.values()),
+        }).set_index("Window")
+        st.bar_chart(pace_df, use_container_width=True, height=200)
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
     # ── Per-camera status ──────────────────────────────────────────────────────
-    if not cameras:
-        st.info("No cameras registered. Go to **➕ Add Camera** to get started.")
-    else:
-        st.subheader("Camera Status")
+    if cameras:
+        st.markdown("### 📷 Camera Status")
         for cam in cameras:
             job    = _camera_current_job(cam["name"])
             status = job["status"] if job else "idle"
@@ -321,14 +748,13 @@ with tab_live:
                     seg = float(cam.get("segment_seconds", 60))
                     if status == "running":
                         if seg == 0:
-                            # Continuous — look for live.json
                             lf = Path(RESULT_DIR) / job["job_id"] / "live.json"
                             if lf.exists():
                                 try:
                                     ld = json.loads(lf.read_text())
                                     es = float(ld.get("_elapsed_sec", 0))
                                     bts_live = ld.get("bartenders", {})
-                                    d_live = sum(int(b.get("total_drinks",0)) for b in bts_live.values())
+                                    d_live = sum(int(b.get("total_drinks", 0)) for b in bts_live.values())
                                     age = int(time.time() - float(ld.get("_updated_at", time.time())))
                                     st.caption(f"🔴 {int(es//60)}m {int(es%60)}s · "
                                                f"**{d_live}** drinks · updated {age}s ago")
@@ -356,7 +782,6 @@ with tab_live:
                             rt = cm_m.get("avg_response_sec")
                             st.metric("Avg response", f"{int(rt)}s" if rt else "—")
                 with c4:
-                    # Quick launch button
                     seg = float(cam.get("segment_seconds", 60))
                     btn_label = "🔴 Go Live" if seg == 0 else "▶ Start"
                     if status not in ("running", "pending"):
@@ -370,43 +795,21 @@ with tab_live:
                                 job_id=jid, analysis_mode=cam["mode"].split(",")[0],
                                 shift_id=cam.get("shift_id"), shift_json=None,
                                 source_type="rtsp", source_path=cam["rtsp_url"],
-                                model_profile=cam.get("model_profile","balanced"),
+                                model_profile=cam.get("model_profile", "balanced"),
                                 config_path=cam.get("config_path"),
                                 annotate=False, clip_label=label,
                             )
-                            modes_list = [m.strip() for m in cam["mode"].split(",") if m.strip()]
+                            modes_list = [mm.strip() for mm in cam["mode"].split(",") if mm.strip()]
                             extra["extra_modes"] = modes_list[1:]
                             _raw_update(jid, summary_json=json.dumps({"extra_config": extra}))
                             st.success(f"{'Live stream started' if seg==0 else 'Queued segment'} "
                                        f"for {cam['name']}")
                             st.rerun()
             st.divider()
+    else:
+        st.info("No cameras registered. Go to **➕ Add Camera** to get started.")
 
-    # ── Bartender leaderboard ──────────────────────────────────────────────────
-    if m["bartenders"]:
-        st.subheader("Bartender Performance — Last 60 Minutes")
-        sorted_bts = sorted(m["bartenders"].items(),
-                            key=lambda x: x[1]["drinks"], reverse=True)
-        bt_cols = st.columns(min(len(sorted_bts), 4))
-        for i, (name, data) in enumerate(sorted_bts[:4]):
-            with bt_cols[i]:
-                st.markdown(
-                    f'<div style="background:#1e293b;border:1px solid #334155;'
-                    f'border-radius:10px;padding:14px;text-align:center;">'
-                    f'<div style="font-size:2em;font-weight:800;color:#f97316">'
-                    f'{data["drinks"]}</div>'
-                    f'<div style="color:#f1f5f9;font-weight:600;margin:4px 0">{name}</div>'
-                    f'<div style="color:#94a3b8;font-size:0.8em">'
-                    f'{data["per_hour"]:.1f} drinks/hr</div>'
-                    f'</div>',
-                    unsafe_allow_html=True)
-
-    # Theft alert banner
-    if m["unrung_drinks"] > 0:
-        st.error(f"⚠️ **{m['unrung_drinks']} unrung drink(s) detected** in the last 60 minutes. "
-                 f"Review the Results page for details.")
-
-    # Auto-refresh
+    # ── Auto-refresh ──────────────────────────────────────────────────────────
     if auto:
         time.sleep(10)
         st.rerun()
