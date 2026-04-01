@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   Key, MapPin, Check, Building2,
   User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell, DollarSign,
-  Camera, Download, Wifi, WifiOff, RefreshCw, Circle, Clock
+  Camera, Download, Wifi, WifiOff, RefreshCw, Circle, Clock, Pencil, X
 } from 'lucide-react';
 import connectService, { ConnectStatus, VenueOS, detectOS } from '../services/connect.service';
 import alertsService, { AlertPreferences } from '../services/alerts.service';
@@ -22,6 +22,10 @@ export function Settings() {
   const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'cameras' | 'about'>('account');
   const [connectStatus, setConnectStatus] = useState<ConnectStatus | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameSaving, setRenameSaving] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const [selectedOS, setSelectedOS] = useState<VenueOS>(detectOS());
   const [alertPrefs, setAlertPrefs] = useState<AlertPreferences>(() => alertsService.getPreferences());
   const [alertsSaved, setAlertsSaved] = useState(false);
@@ -75,6 +79,31 @@ export function Settings() {
       } catch { /* ignore */ }
     }
   }, [user?.venueId]);
+
+  const startRename = (cam: { cameraId: string; name: string }) => {
+    setRenamingId(cam.cameraId);
+    setRenameValue(cam.name);
+    setTimeout(() => renameInputRef.current?.select(), 50);
+  };
+
+  const saveRename = async () => {
+    if (!renamingId || !renameValue.trim()) return;
+    setRenameSaving(true);
+    try {
+      const serverUrl = (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
+      await fetch(`${serverUrl}/api/cameras/${renamingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: renameValue.trim() }),
+      });
+      connectService.clearCache();
+      const updated = await connectService.getStatus();
+      if (updated) setConnectStatus(updated);
+    } finally {
+      setRenameSaving(false);
+      setRenamingId(null);
+    }
+  };
 
   const handleSaveCapacity = async () => {
     if (!user?.venueId || !capacity) return;
@@ -709,18 +738,45 @@ export function Settings() {
                     {connectStatus.cameras.map((cam) => (
                       <div
                         key={cam.cameraId}
-                        className="flex items-center justify-between p-4 bg-warm-900/50 border border-warm-700 rounded-xl"
+                        className="flex items-center justify-between p-4 bg-warm-900/50 border border-warm-700 rounded-xl gap-3"
                       >
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
                           <Circle className={`w-2 h-2 flex-shrink-0 ${
                             cam.isOnline ? 'fill-green-400 text-green-400' : 'fill-red-400 text-red-400'
                           }`} />
-                          <div>
-                            <p className="text-sm font-medium text-white">{cam.name}</p>
-                            <p className="text-xs text-warm-500">{cam.mode} · {cam.location}</p>
+                          <div className="min-w-0 flex-1">
+                            {renamingId === cam.cameraId ? (
+                              <div className="flex items-center gap-2">
+                                <input
+                                  ref={renameInputRef}
+                                  value={renameValue}
+                                  onChange={e => setRenameValue(e.target.value)}
+                                  onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setRenamingId(null); }}
+                                  className="text-sm font-medium bg-warm-800 border border-teal/50 rounded px-2 py-0.5 text-white w-full focus:outline-none focus:border-teal"
+                                  autoFocus
+                                />
+                                <button onClick={saveRename} disabled={renameSaving} className="text-teal hover:text-teal/80 flex-shrink-0">
+                                  {renameSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                                </button>
+                                <button onClick={() => setRenamingId(null)} className="text-warm-500 hover:text-warm-300 flex-shrink-0">
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 group">
+                                <p className="text-sm font-medium text-white truncate">{cam.name}</p>
+                                <button
+                                  onClick={() => startRename(cam)}
+                                  className="opacity-0 group-hover:opacity-100 text-warm-500 hover:text-warm-300 flex-shrink-0 transition-opacity"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                            <p className="text-xs text-warm-500">{cam.cameraId} · {cam.mode}</p>
                           </div>
                         </div>
-                        <span className={`text-xs px-2 py-1 rounded-full ${
+                        <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${
                           cam.enabled
                             ? 'bg-green-500/10 text-green-400 border border-green-500/30'
                             : 'bg-warm-700 text-warm-400 border border-warm-600'
