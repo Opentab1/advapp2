@@ -121,6 +121,170 @@ def _rtsp_read(cap: cv2.VideoCapture, timeout_sec: float = 10.0):
     return result[0], result[1], False
 
 
+import io as _io_module
+
+class _HLSCapture:
+    """
+    Streaming PyAV capture for NVR fragmented-MP4 live streams.
+
+    The NVR at 192.168.1.252 serves /hls/live/CHn/0/livetop.mp4 as a
+    fragmented MP4 (fMP4) live stream over HTTP:
+      • First ~64 KB: ftyp + moov header (delivered at full network speed)
+      • Remainder:    moof + mdat fragments at live encoding rate (~30 fps)
+      • Connection resets after some buffer window
+
+    On reconnect the stream restarts PTS from 0 (or from session start).
+    We track last_pts and skip duplicate frames efficiently as they arrive.
+
+    Uses a non-seekable streaming IO so PyAV reads the response without
+    issuing secondary seek/range requests.
+    """
+
+    _QUEUE_MAXSIZE = 60
+
+    def __init__(self, url: str, w: int, h: int):
+        import av as _av, requests as _req, logging, queue, threading, io
+        logging.getLogger("libav").setLevel(logging.CRITICAL)
+        self._url    = url
+        self._w      = w
+        self._h      = h
+        self._av     = _av
+        self._req    = _req
+        self._io_mod = io
+        self._threading = threading
+        self._q: queue.Queue = queue.Queue(maxsize=self._QUEUE_MAXSIZE)
+        self._opened = False
+        self._stop   = threading.Event()
+        self._thread = threading.Thread(target=self._bg, daemon=True)
+        self._thread.start()
+        # Wait up to 20 s for first frame
+        import time as _time
+        deadline = _time.time() + 20.0
+        while _time.time() < deadline:
+            if not self._q.empty():
+                self._opened = True
+                break
+            _time.sleep(0.2)
+
+    # ── non-seekable streaming IO ──────────────────────────────────────────
+
+    class _StreamIO(_io_module.RawIOBase):
+        """File-like object backed by a streaming HTTP response."""
+        def __init__(self, url, req_module, stop_event, chunk_q):
+            self._buf   = b""
+            self._q     = chunk_q
+            self._done  = False
+            self._stop  = stop_event
+
+        def readable(self)  -> bool: return True
+        def seekable(self)  -> bool: return False
+        def writable(self)  -> bool: return False
+
+        def readinto(self, b):
+            target = len(b)
+            while len(self._buf) < target:
+                if self._done:
+                    break
+                try:
+                    chunk = self._q.get(timeout=10.0)
+                except Exception:
+                    self._done = True
+                    break
+                if chunk is None:
+                    self._done = True
+                    break
+                self._buf += chunk
+            n = min(target, len(self._buf))
+            b[:n] = self._buf[:n]
+            self._buf = self._buf[n:]
+            return n
+
+    def _stream_connection(self, last_pts: float) -> float:
+        """
+        Open one HTTP connection, stream fMP4 frames via PyAV, return updated last_pts.
+        Returns when the connection resets or self._stop is set.
+        """
+        import queue as _qmod
+        chunk_q: _qmod.Queue = _qmod.Queue(maxsize=64)
+
+        def _reader():
+            try:
+                r = self._req.get(self._url, stream=True, timeout=30)
+                for chunk in r.iter_content(32768):
+                    if self._stop.is_set():
+                        break
+                    chunk_q.put(chunk)
+                r.close()
+            except Exception:
+                pass
+            chunk_q.put(None)  # sentinel
+
+        t = self._threading.Thread(target=_reader, daemon=True)
+        t.start()
+
+        sio = self._StreamIO(self._url, self._req, self._stop, chunk_q)
+        try:
+            container = self._av.open(sio, format="mp4")
+            for frame in container.decode(video=0):
+                if self._stop.is_set():
+                    break
+                pts = (float(frame.pts * frame.time_base)
+                       if frame.pts is not None else -1.0)
+                if pts <= last_pts:
+                    continue   # duplicate from reconnect
+
+                arr = frame.to_ndarray(format="bgr24")
+                if arr.shape[1] != self._w or arr.shape[0] != self._h:
+                    arr = cv2.resize(arr, (self._w, self._h),
+                                     interpolation=cv2.INTER_LINEAR)
+                try:
+                    self._q.put(arr, timeout=5.0)
+                    last_pts = pts
+                except Exception:
+                    pass   # queue full — drop frame
+            container.close()
+        except Exception:
+            pass
+        chunk_q.put(None)   # ensure reader thread can exit
+        return last_pts
+
+    def _bg(self):
+        import time as _time
+        last_pts = -1.0
+        while not self._stop.is_set():
+            last_pts = self._stream_connection(last_pts)
+            if not self._stop.is_set():
+                _time.sleep(1.0)   # brief pause before reconnect
+
+    # ── Public cap interface ───────────────────────────────────────────────
+
+    def read(self):
+        import queue
+        if not self._opened:
+            return False, None
+        try:
+            frame = self._q.get(timeout=30.0)
+            return True, frame
+        except queue.Empty:
+            self._opened = False
+            return False, None
+
+    def isOpened(self) -> bool:
+        return self._opened
+
+    def release(self):
+        self._stop.set()
+        self._opened = False
+        try:
+            while not self._q.empty():
+                self._q.get_nowait()
+        except Exception:
+            pass
+
+    def get(self, prop_id: int) -> float:
+        return 0.0
+
+
 # Gap 3: Mode-specific ByteTrack configs
 # Lower match_thresh = tracks survive more occlusion; higher track_buffer = longer ID persistence
 _TRACKER_PARAMS = {
@@ -317,8 +481,12 @@ class VenueProcessor:
 
     def run(self) -> Dict[str, Any]:
         self.cb(0, "Opening video...")
+        _is_hls     = (self.source_type == "rtsp"
+                       and str(self.source).startswith("http")
+                       and str(self.source).endswith(".m3u8"))
+        _use_ffmpeg = (self.source_type == "rtsp" and not _is_hls)
         cap = (cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
-               if self.source_type == "rtsp"
+               if _use_ffmpeg
                else cv2.VideoCapture(str(self.source)))
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open: {self.source}")
@@ -379,14 +547,22 @@ class VenueProcessor:
             except Exception as _ce:
                 self.cb(0, f"Checkpoint load failed (starting fresh): {_ce}")
 
+        # For HLS live streams: switch to ffmpeg-subprocess capture now that we have W/H.
+        # cv2.VideoCapture works for metadata but fails on frame reads ("partial file" errors)
+        # because the NVR serves a continuously-written MP4 buffer.
+        if _is_hls:
+            cap.release()
+            cap = _HLSCapture(self.source, W, H)
+            self.cb(0, "HLS live stream: switched to ffmpeg pipe reader")
+
         _rtsp_consecutive_errors = 0
-        _MAX_RTSP_ERRORS         = 30   # give up after 30 consecutive read failures
-        _RTSP_RECONNECT_AFTER    = 5    # try to reopen cap after this many consecutive errors
+        _MAX_RTSP_ERRORS         = 60   # ~2 min of consecutive failures before giving up
+        _RTSP_RECONNECT_AFTER    = 5    # reconnect after 5 consecutive failures
 
         while True:
             _ft_start = time.perf_counter()
 
-            if self.source_type == "rtsp":
+            if _use_ffmpeg:
                 ret, frame, timed_out = _rtsp_read(cap, timeout_sec=10.0)
                 if timed_out:
                     self._rtsp_timeouts      += 1
@@ -424,7 +600,12 @@ class VenueProcessor:
                         try:
                             cap.release()
                             time.sleep(2.0)
-                            cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+                            if _is_hls:
+                                cap = _HLSCapture(self.source, W, H)
+                            elif _use_ffmpeg:
+                                cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+                            else:
+                                cap = cv2.VideoCapture(self.source)
                             if cap.isOpened():
                                 self.cb(0, "RTSP: reconnected")
                         except Exception as _re:
@@ -651,7 +832,13 @@ class VenueProcessor:
                                 self.cb(0, f"Auto-adjusting confidence threshold to {self._conf_threshold:.2f} (low detection quality)")
 
             t_sec     = frame_idx / fps
-            if self._max_seconds > 0 and t_sec >= self._max_seconds:
+            # For live streams (rtsp/http sources), use wall-clock time for the
+            # segment limit — the NVR may buffer frames and deliver them faster
+            # than the nominal fps, causing frame_idx/fps to advance faster than
+            # real time and ending the segment prematurely.
+            _wall_elapsed = time.time() - t0
+            _seg_elapsed  = _wall_elapsed if self.source_type == "rtsp" else t_sec
+            if self._max_seconds > 0 and _seg_elapsed >= self._max_seconds:
                 self.cb(95, f"Segment limit reached ({self._max_seconds:.0f}s) — stopping.")
                 break
             centroids = _centroids(boxes_px)
