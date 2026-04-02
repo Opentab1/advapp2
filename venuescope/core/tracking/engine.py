@@ -381,6 +381,7 @@ class VenueProcessor:
 
         _rtsp_consecutive_errors = 0
         _MAX_RTSP_ERRORS         = 30   # give up after 30 consecutive read failures
+        _RTSP_RECONNECT_AFTER    = 5    # try to reopen cap after this many consecutive errors
 
         while True:
             _ft_start = time.perf_counter()
@@ -395,6 +396,17 @@ class VenueProcessor:
                     if _rtsp_consecutive_errors >= _MAX_RTSP_ERRORS:
                         self.cb(0, f"RTSP: {_MAX_RTSP_ERRORS} consecutive errors — aborting stream")
                         break
+                    # Try to reopen the connection after a few consecutive timeouts
+                    if _rtsp_consecutive_errors % _RTSP_RECONNECT_AFTER == 0:
+                        self.cb(0, f"RTSP: reconnecting (attempt {_rtsp_consecutive_errors // _RTSP_RECONNECT_AFTER})...")
+                        try:
+                            cap.release()
+                            time.sleep(2.0)
+                            cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+                            if cap.isOpened():
+                                self.cb(0, "RTSP: reconnected successfully")
+                        except Exception as _re:
+                            self.cb(0, f"RTSP: reconnect failed: {_re}")
                     continue
             else:
                 ret, frame = cap.read()
@@ -406,7 +418,19 @@ class VenueProcessor:
                     _rtsp_consecutive_errors += 1
                     if _rtsp_consecutive_errors >= _MAX_RTSP_ERRORS:
                         break
-                    time.sleep(0.1)
+                    # Try to reopen after a few consecutive failures
+                    if _rtsp_consecutive_errors % _RTSP_RECONNECT_AFTER == 0:
+                        self.cb(0, f"RTSP: reconnecting after {_rtsp_consecutive_errors} read failures...")
+                        try:
+                            cap.release()
+                            time.sleep(2.0)
+                            cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+                            if cap.isOpened():
+                                self.cb(0, "RTSP: reconnected")
+                        except Exception as _re:
+                            self.cb(0, f"RTSP: reconnect failed: {_re}")
+                    else:
+                        time.sleep(0.1)
                     continue
                 break
 

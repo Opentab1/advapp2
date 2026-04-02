@@ -382,7 +382,7 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
         return False
 
     venue_id  = _get_venue_id()
-    has_theft = bool(summary.get("has_theft_flag") or summary.get("unrung_drinks", 0) > 0)
+    has_theft = bool(summary.get("has_theft_flag"))
 
     # Always upload full summary JSON to S3 for web app detail view
     summary_s3_key = _upload_summary_to_s3(summary, job_id, venue_id)

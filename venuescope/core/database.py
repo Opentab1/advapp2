@@ -207,7 +207,7 @@ def set_done(job_id, rdir, summary):
                 progress=100.0,
                 finished_at=time.time(),
                 result_dir=str(rdir),
-                summary_json=json.dumps(summary))
+                summary_json=json.dumps(summary, default=str))
     audit("job_done", job_id=job_id,
           detail=f"drinks={summary.get('total_drinks', 0)}, unrung={summary.get('unrung_drinks', 0)}")
 
