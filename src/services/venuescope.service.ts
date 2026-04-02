@@ -1,12 +1,103 @@
 /**
  * venuescope.service.ts
  *
- * Reads VenueScope job results from DynamoDB via AppSync.
+ * Reads VenueScope job results from DynamoDB via AppSync (primary)
+ * or direct DynamoDB SDK (fallback when AppSync is unavailable).
  * Full summary JSON is fetched from S3 on demand for the detail view.
  */
 import { generateClient } from '@aws-amplify/api';
+import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 
 const client = generateClient();
+
+// Direct DynamoDB client — used as fallback when AppSync is unavailable
+const _ddbRegion = import.meta.env.VITE_AWS_REGION || 'us-east-2';
+const _ddbKeyId  = import.meta.env.VITE_AWS_ACCESS_KEY_ID;
+const _ddbSecret = import.meta.env.VITE_AWS_SECRET_ACCESS_KEY;
+const _directDDB: DynamoDBClient | null = (_ddbKeyId && _ddbSecret)
+  ? new DynamoDBClient({
+      region: _ddbRegion,
+      credentials: { accessKeyId: _ddbKeyId, secretAccessKey: _ddbSecret },
+    })
+  : null;
+
+function _ddbVal(attr: Record<string, unknown> | undefined): unknown {
+  if (!attr) return undefined;
+  return (attr as Record<string, unknown>).S ?? (attr as Record<string, unknown>).N ?? (attr as Record<string, unknown>).BOOL;
+}
+
+function _itemToJob(item: Record<string, Record<string, unknown>>): VenueScopeJob {
+  const n = (k: string) => { const v = _ddbVal(item[k]); return v !== undefined ? Number(v) : undefined; };
+  const s = (k: string) => { const v = _ddbVal(item[k]); return v !== undefined ? String(v) : undefined; };
+  const b = (k: string) => _ddbVal(item[k]) as boolean | undefined;
+  return {
+    venueId:         s('venueId') ?? '',
+    jobId:           s('jobId') ?? '',
+    clipLabel:       s('clipLabel') ?? '',
+    analysisMode:    s('analysisMode') ?? 'drink_count',
+    activeModes:     s('activeModes'),
+    totalDrinks:     n('totalDrinks') ?? 0,
+    drinksPerHour:   n('drinksPerHour') ?? 0,
+    topBartender:    s('topBartender') ?? '',
+    confidenceScore: n('confidenceScore') ?? 0,
+    confidenceLabel: s('confidenceLabel') ?? '',
+    confidenceColor: (s('confidenceColor') ?? 'yellow') as 'green'|'yellow'|'red',
+    hasTheftFlag:    b('hasTheftFlag') ?? false,
+    unrungDrinks:    n('unrungDrinks') ?? 0,
+    cameraLabel:     s('cameraLabel') ?? '',
+    createdAt:       n('createdAt') ?? 0,
+    finishedAt:      n('finishedAt') ?? 0,
+    status:          s('status') ?? '',
+    s3ClipKey:       s('s3ClipKey'),
+    summaryS3Key:    s('summaryS3Key'),
+    progressPct:     n('progressPct'),
+    statusMsg:       s('statusMsg'),
+    updatedAt:       n('updatedAt'),
+    cameraAngle:     s('cameraAngle'),
+    reviewCount:     n('reviewCount'),
+    bottleCount:     n('bottleCount'),
+    peakBottleCount: n('peakBottleCount'),
+    pourCount:       n('pourCount'),
+    totalPouredOz:   n('totalPouredOz'),
+    overPours:       n('overPours'),
+    walkOutAlerts:   n('walkOutAlerts'),
+    unknownBottleAlerts: n('unknownBottleAlerts'),
+    parLowEvents:    n('parLowEvents'),
+    totalEntries:    n('totalEntries'),
+    totalExits:      n('totalExits'),
+    peakOccupancy:   n('peakOccupancy'),
+    totalTurns:      n('totalTurns'),
+    avgResponseSec:  n('avgResponseSec'),
+    avgDwellMin:     n('avgDwellMin'),
+    uniqueStaff:     n('uniqueStaff'),
+    peakHeadcount:   n('peakHeadcount'),
+    avgIdlePct:      n('avgIdlePct'),
+    isLive:          b('isLive'),
+    roomLabel:       s('roomLabel'),
+    bartenderBreakdown: s('bartenderBreakdown') ?? s('bartenderSummary'),
+    elapsedSec:      n('elapsedSec'),
+    currentHeadcount: n('currentHeadcount'),
+    peopleIn:        n('peopleIn'),
+    peopleOut:       n('peopleOut'),
+  } as VenueScopeJob;
+}
+
+async function _listJobsDirect(venueId: string): Promise<VenueScopeJob[]> {
+  if (!_directDDB) return [];
+  try {
+    const r = await _directDDB.send(new QueryCommand({
+      TableName: 'VenueScopeJobs',
+      KeyConditionExpression: 'venueId = :v',
+      ExpressionAttributeValues: { ':v': { S: venueId } },
+      Limit: 500,
+      // Ascending sort (default): '!'-prefixed new items sort first (ASCII 33 < all hex chars)
+    }));
+    return (r.Items ?? []).map(item => _itemToJob(item as Record<string, Record<string, unknown>>));
+  } catch (err) {
+    console.warn('[venuescope] direct DynamoDB fallback failed:', err);
+    return [];
+  }
+}
 
 export interface VenueScopeJob {
   venueId: string;
@@ -62,6 +153,9 @@ export interface VenueScopeJob {
   roomLabel?: string;
   bartenderBreakdown?: string; // JSON: { [name]: { drinks, per_hour } }
   elapsedSec?: number;
+  currentHeadcount?: number;
+  peopleIn?: number;
+  peopleOut?: number;
   // POS reconciliation
   posProvider?: string;
   posRevenue?: number;
@@ -123,7 +217,11 @@ const venueScopeService = {
         variables: { venueId, limit: 500 },
         authMode: 'userPool',
       }) as { data: { listVenueScopeJobs: JobConnection } };
-      const items = result?.data?.listVenueScopeJobs?.items ?? [];
+      // If AppSync resolver is not attached, the field returns null (not an error).
+      // Treat null as a resolver-not-configured signal and fall through to direct DDB.
+      const connection = result?.data?.listVenueScopeJobs;
+      if (!connection) throw new Error('AppSync resolver returned null — resolver not attached');
+      const items = connection.items ?? [];
 
       // Deduplicate live jobs by cameraLabel — keep only the most recent per camera
       const liveDeduped = Array.from(
@@ -143,8 +241,25 @@ const venueScopeService = {
 
       return [...liveDeduped, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
     } catch (err) {
-      console.warn('[venuescope] listJobs failed:', err);
-      return [];
+      console.warn('[venuescope] AppSync listJobs failed, trying direct DynamoDB:', err);
+      return _listJobsDirect(venueId).then(items => {
+        // Same dedup/sort logic as AppSync path
+        const liveDeduped = Array.from(
+          items
+            .filter(j => j.isLive)
+            .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+            .reduce((map, j) => {
+              const key = j.cameraLabel || j.jobId;
+              if (!map.has(key)) map.set(key, j);
+              return map;
+            }, new Map<string, VenueScopeJob>())
+            .values()
+        );
+        const nonLive = items.filter(j => !j.isLive)
+          .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+          .slice(0, 50);
+        return [...liveDeduped, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      });
     }
   },
 
