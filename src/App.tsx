@@ -25,6 +25,7 @@ import { Staffing } from './pages/Staffing';
 import { Leads } from './pages/Leads';
 import Events from './pages/Events';
 import { VenueScope } from './pages/VenueScope';
+import { BartenderProfiles } from './pages/BartenderProfiles';
 
 // Layout
 import { DashboardLayout } from './layouts/DashboardLayout';
@@ -85,6 +86,9 @@ function ProtectedDashboard() {
         break;
       case 'venuescope':
         content = <VenueScope />;
+        break;
+      case 'bartenders':
+        content = <BartenderProfiles />;
         break;
       case 'settings':
         content = <Settings />;

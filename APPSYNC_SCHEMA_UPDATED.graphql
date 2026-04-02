@@ -176,7 +176,116 @@ type ArchiveDeviceResponse {
 }
 
 # Queries
+# ── VenueScope Camera Analysis Types ─────────────────────────────────────────
+
+# Bartender cross-shift performance profile
+type BartenderProfile {
+  venueId: ID!
+  bartenderId: String!
+  name: String
+  displayName: String
+  totalShifts: Int
+  totalDrinks: Int
+  totalHours: Float
+  avgDrinksPerHour: Float
+  peakDrinksPerHour: Float
+  theftFlags: Int
+  lastSeen: String
+  shiftHistory: String
+  avgIdlePct: Float
+  tableVisits: Int
+  createdAt: String
+  updatedAt: String
+}
+
+type BartenderProfileConnection {
+  items: [BartenderProfile]
+  nextToken: String
+}
+
+type VenueScopeJob {
+  venueId: ID!
+  jobId: String!
+  clipLabel: String
+  analysisMode: String
+  activeModes: String
+  totalDrinks: Int
+  drinksPerHour: Float
+  topBartender: String
+  confidenceScore: Int
+  confidenceLabel: String
+  confidenceColor: String
+  hasTheftFlag: Boolean
+  unrungDrinks: Int
+  cameraLabel: String
+  createdAt: Float
+  finishedAt: Float
+  status: String
+  s3ClipKey: String
+  summaryS3Key: String
+  progressPct: Float
+  statusMsg: String
+  updatedAt: Float
+  cameraAngle: String
+  reviewCount: Int
+  bottleCount: Int
+  peakBottleCount: Int
+  pourCount: Int
+  totalPouredOz: Float
+  overPours: Int
+  walkOutAlerts: Int
+  unknownBottleAlerts: Int
+  parLowEvents: Int
+  totalEntries: Int
+  totalExits: Int
+  peakOccupancy: Int
+  totalTurns: Int
+  avgResponseSec: Float
+  avgDwellMin: Float
+  uniqueStaff: Int
+  peakHeadcount: Int
+  avgIdlePct: Float
+  isLive: Boolean
+  roomLabel: String
+  bartenderBreakdown: String
+  elapsedSec: Float
+  posProvider: String
+  posRevenue: Float
+  posItemCount: Int
+  posCameraCount: Int
+  posVariancePct: Float
+  posVarianceDrinks: Int
+  posLostRevenue: Float
+  tableVisitsByStaff: String
+}
+
+type VenueScopeJobConnection {
+  items: [VenueScopeJob]
+  nextToken: String
+}
+
 type Query {
+  # VenueScope Camera Analysis
+  listVenueScopeJobs(
+    venueId: ID!
+    limit: Int
+    nextToken: String
+  ): VenueScopeJobConnection
+    @aws_cognito_user_pools
+
+  listBartenderProfiles(
+    venueId: ID!
+    limit: Int
+    nextToken: String
+  ): BartenderProfileConnection
+    @aws_cognito_user_pools
+
+  getBartenderProfile(
+    venueId: ID!
+    bartenderId: String!
+  ): BartenderProfile
+    @aws_cognito_user_pools
+
   # Sensor Data Queries
   getSensorData(venueId: ID!, timestamp: String!): SensorData
     @aws_cognito_user_pools

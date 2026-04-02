@@ -66,6 +66,8 @@ class _TableState:
         self._occupant_ids:    Set[int]           = set()  # IDs present at seating
         self._visitor_enters:  Dict[int, float]   = {}     # {track_id: enter_t_sec}
         self._current_session: Optional[TableSession] = None
+        # Per-staff visit attribution: {track_id: visit_count}
+        self._staff_visits:    Dict[int, int]     = {}
 
 
 class TableTurnTracker:
@@ -159,6 +161,7 @@ class TableTurnTracker:
                     if _SERVER_MIN_VISIT_SEC <= visit_dur <= _SERVER_MAX_VISIT_SEC:
                         # Record server visit
                         sess.service_visits.append(round(enter_t, 1))
+                        state._staff_visits[vtid] = state._staff_visits.get(vtid, 0) + 1
                         if sess.first_service_t is None:
                             sess.first_service_t = round(enter_t, 1)
                             ev = {"event_type": "table_served", "table_id": tid,
@@ -169,6 +172,14 @@ class TableTurnTracker:
                             self.events.append(ev); evs.append(ev)
 
         return evs
+
+    def get_staff_attribution(self) -> Dict[str, Dict[int, int]]:
+        """Returns {table_id: {track_id: visit_count}} for all tables with visits."""
+        return {
+            tid: dict(state._staff_visits)
+            for tid, state in self._states.items()
+            if state._staff_visits
+        }
 
     def summary(self) -> Dict[str, Any]:
         result = {}
@@ -191,5 +202,7 @@ class TableTurnTracker:
                 "max_response_sec":   round(max(responses), 1) if responses else None,
                 "min_response_sec":   round(min(responses), 1) if responses else None,
                 "total_service_visits": total_visits,
+                # Per-staff visit attribution: {track_id: visit_count}
+                "staff_attribution":  dict(state._staff_visits),
             }
         return result

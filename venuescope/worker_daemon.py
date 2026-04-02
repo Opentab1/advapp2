@@ -178,6 +178,28 @@ def run_job(job_id: str):
         except Exception as _ae:
             log.warning(f"Theft alert error (non-fatal): {_ae}")
 
+        # Trigger POS reconciliation if a provider is configured
+        try:
+            from core.pos.reconciliation import reconcile, get_configured_provider
+            _pos_provider = get_configured_provider()
+            if _pos_provider and summary.get("total_drinks", 0) > 0:
+                _created_at = summary.get("created_at", time.time())
+                _duration   = summary.get("video_seconds", 0)
+                _pos_result = reconcile(
+                    camera_drink_count=summary.get("total_drinks", 0),
+                    job_start_time=_created_at,
+                    job_duration_sec=_duration,
+                    provider=_pos_provider,
+                )
+                summary["pos_reconciliation"] = _pos_result
+                log.info(
+                    f"POS reconciliation ({_pos_provider}): "
+                    f"variance={_pos_result.get('variance_drinks', 0):+d} drinks "
+                    f"({_pos_result.get('variance_pct', 0):.1f}%)"
+                )
+        except Exception as _pos_err:
+            log.warning(f"POS reconciliation skipped (non-fatal): {_pos_err}")
+
         # Sync final results to AWS
         try:
             from core.aws_sync import sync_job_to_aws

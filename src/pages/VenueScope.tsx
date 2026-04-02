@@ -13,6 +13,7 @@ import {
   Camera, Loader2, X, Download,
   ChevronDown, ChevronUp, FileText,
   Activity, Users, Zap, DollarSign, Calendar, TrendingUp,
+  CreditCard,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
@@ -239,7 +240,7 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
             </button>
           </div>
           <div className="p-5 space-y-4">
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { v: job.unrungDrinks ?? 0, l: 'Unrung', c: 'text-red-400' },
                 { v: job.totalDrinks ?? 0,  l: 'Total',  c: 'text-white' },
@@ -507,6 +508,9 @@ function RoomCard({ room, onInvestigate }: { room: RoomSummary; onInvestigate: (
           </span>
         )}
       </div>
+
+      {/* Table visits by staff */}
+      <TableVisitsSection job={room.job} />
     </motion.div>
   );
 }
@@ -590,9 +594,9 @@ function TheftAlerts({ jobs, avgDrinkPrice, onInvestigate }: {
       </div>
       <div className="space-y-2">
         {flagged.map(job => (
-          <div key={job.jobId} className="bg-whoop-bg border border-red-500/20 rounded-xl px-3 py-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-white">
+          <div key={job.jobId} className="bg-whoop-bg border border-red-500/20 rounded-xl px-3 py-2.5 flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-white truncate">
                 {job.roomLabel || job.clipLabel || job.cameraLabel || 'Camera'}
               </p>
               <p className="text-[10px] text-text-muted mt-0.5">
@@ -602,7 +606,7 @@ function TheftAlerts({ jobs, avgDrinkPrice, onInvestigate }: {
             </div>
             <button
               onClick={() => onInvestigate(job)}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors flex-shrink-0 ml-3"
+              className="flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-xl text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors flex-shrink-0"
             >
               Investigate
             </button>
@@ -880,6 +884,132 @@ function PaceChart({ jobs }: { jobs: VenueScopeJob[] }) {
   );
 }
 
+// ── POS Reconciliation Panel ──────────────────────────────────────────────────
+
+function POSReconciliationPanel({ jobs }: { jobs: VenueScopeJob[] }) {
+  // Only show when at least one job has POS variance data
+  const posJobs = jobs.filter(j => j.posVariancePct != null);
+  if (posJobs.length === 0) return null;
+
+  // Aggregate across all POS-enabled jobs
+  const cameraCount  = posJobs.reduce((s, j) => s + (j.posCameraCount ?? 0), 0);
+  const posCount     = posJobs.reduce((s, j) => s + (j.posItemCount ?? 0), 0);
+  const varianceDrks = posJobs.reduce((s, j) => s + (j.posVarianceDrinks ?? 0), 0);
+  const lostRevenue  = posJobs.reduce((s, j) => s + (j.posLostRevenue ?? 0), 0);
+  const avgVariance  = posJobs.reduce((s, j) => s + (j.posVariancePct ?? 0), 0) / posJobs.length;
+  const provider     = posJobs[0].posProvider ?? 'POS';
+
+  const varianceLevel =
+    avgVariance < 5  ? 'green' :
+    avgVariance < 15 ? 'amber' : 'red';
+
+  const colors = {
+    green: {
+      border: 'border-emerald-500/30',
+      bg:     'bg-emerald-500/5',
+      badge:  'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+      value:  'text-emerald-400',
+      alert:  null,
+    },
+    amber: {
+      border: 'border-amber-500/30',
+      bg:     'bg-amber-500/5',
+      badge:  'bg-amber-500/20 text-amber-400 border-amber-500/30',
+      value:  'text-amber-400',
+      alert:  `${avgVariance.toFixed(0)}% variance detected — review recent shifts.`,
+    },
+    red: {
+      border: 'border-red-500/30',
+      bg:     'bg-red-500/5',
+      badge:  'bg-red-500/20 text-red-400 border-red-500/30',
+      value:  'text-red-400',
+      alert:  `Tonight's bar showing > ${avgVariance.toFixed(0)}% variance — review immediately.`,
+    },
+  }[varianceLevel];
+
+  return (
+    <div className={`border rounded-2xl p-4 ${colors.border} ${colors.bg}`}>
+      {/* Header row */}
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+          <CreditCard className="w-4 h-4 text-text-muted" />
+          POS Reconciliation
+        </h2>
+        <span className={`inline-flex items-center gap-1 text-[11px] font-semibold border rounded-full px-2.5 py-0.5 ${colors.badge}`}>
+          {provider} Connected
+        </span>
+      </div>
+
+      {/* Metrics grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+        <div className="bg-whoop-bg rounded-xl p-3 text-center">
+          <div className="text-xl font-bold text-white">{cameraCount}</div>
+          <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Camera Counted</div>
+        </div>
+        <div className="bg-whoop-bg rounded-xl p-3 text-center">
+          <div className="text-xl font-bold text-text-secondary">{posCount}</div>
+          <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">POS Sales</div>
+        </div>
+        <div className="bg-whoop-bg rounded-xl p-3 text-center">
+          <div className={`text-xl font-bold ${colors.value}`}>
+            {varianceDrks > 0 ? `+${varianceDrks}` : varianceDrks} ({avgVariance.toFixed(1)}%)
+          </div>
+          <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Variance</div>
+        </div>
+        <div className="bg-whoop-bg rounded-xl p-3 text-center">
+          <div className={`text-xl font-bold ${varianceLevel !== 'green' ? 'text-red-400' : 'text-emerald-400'}`}>
+            {lostRevenue > 0 ? `$${lostRevenue.toFixed(0)}` : '$0'}
+          </div>
+          <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Est. Lost</div>
+        </div>
+      </div>
+
+      {/* Alert message */}
+      {colors.alert && (
+        <div className={`flex items-start gap-2 px-3 py-2 rounded-xl border text-xs font-medium ${colors.badge}`}>
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          {colors.alert}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Table visits by staff ─────────────────────────────────────────────────────
+
+function TableVisitsSection({ job }: { job: VenueScopeJob }) {
+  if (!job.tableVisitsByStaff) return null;
+  let data: Record<string, Record<string, number>>;
+  try {
+    data = JSON.parse(job.tableVisitsByStaff) as Record<string, Record<string, number>>;
+  } catch {
+    return null;
+  }
+
+  const tables = Object.entries(data).sort(([a], [b]) => a.localeCompare(b));
+  if (tables.length === 0) return null;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-whoop-divider/60">
+      <p className="text-[10px] text-text-muted uppercase tracking-wide mb-2">Table Visits</p>
+      <div className="space-y-1">
+        {tables.map(([tableId, staffMap]) => {
+          const staffList = Object.entries(staffMap)
+            .sort(([, a], [, b]) => b - a)
+            .map(([name, count]) => `${name} (${count})`)
+            .join(', ');
+          return (
+            <div key={tableId} className="flex items-start gap-2 text-[11px]">
+              <span className="text-text-muted flex-shrink-0 w-12">Table {tableId}:</span>
+              <span className="text-warm-300">{staffList}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 function EmptyState({ venueId }: { venueId: string }) {
@@ -937,7 +1067,7 @@ function ShiftScoreboard({ jobs }: { jobs: VenueScopeJob[] }) {
         )}
       </div>
 
-      <div className={`grid ${compareJob ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+      <div className={`grid ${compareJob ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-4`}>
         {/* Current / Tonight */}
         <div className="space-y-2">
           <p className="text-[10px] text-teal uppercase tracking-wider font-semibold">Tonight</p>
@@ -1220,6 +1350,9 @@ export function VenueScope() {
           {tonightJobs.length > 0 && (
             <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} />
           )}
+
+          {/* POS Reconciliation */}
+          <POSReconciliationPanel jobs={tonightJobs} />
 
           {/* Behind the Bar — bartender performance */}
           {bartenders.length > 0 && (

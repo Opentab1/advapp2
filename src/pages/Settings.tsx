@@ -3,7 +3,8 @@ import { motion } from 'framer-motion';
 import {
   Key, MapPin, Check, Building2,
   User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell, DollarSign,
-  Camera, Download, Wifi, WifiOff, RefreshCw, Circle, Clock, Pencil, X
+  Camera, Download, Wifi, WifiOff, RefreshCw, Circle, Clock, Pencil, X,
+  Eye, EyeOff, AlertCircle,
 } from 'lucide-react';
 import connectService, { ConnectStatus, VenueOS, detectOS } from '../services/connect.service';
 import alertsService, { AlertPreferences } from '../services/alerts.service';
@@ -17,6 +18,7 @@ import { CalibrationSettings } from '../components/CalibrationSettings';
 import { POSIntegration } from '../components/settings/POSIntegration';
 import { haptic } from '../utils/haptics';
 import { useDisplayName } from '../hooks/useDisplayName';
+import squarePosService, { SquareCredentials } from '../services/square-pos.service';
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'cameras' | 'about'>('account');
@@ -41,6 +43,15 @@ export function Settings() {
   const [bizOpen, setBizOpen] = useState('17:00');
   const [bizClose, setBizClose] = useState('02:00');
   const [bizHoursSaved, setBizHoursSaved] = useState(false);
+
+  // Square POS
+  const [squareCreds, setSquareCreds]             = useState<SquareCredentials>(() => squarePosService.getCredentials() ?? { accessToken: '', locationId: '', environment: 'sandbox' });
+  const [showSquareToken, setShowSquareToken]     = useState(false);
+  const [squareTesting, setSquareTesting]         = useState(false);
+  const [squareTestResult, setSquareTestResult]   = useState<{ ok: boolean; message: string } | null>(null);
+  const [squareSaved, setSquareSaved]             = useState(false);
+  const squareIsConfigured                        = squarePosService.isConfigured();
+
   const user = authService.getStoredUser();
   
   // Use display name (custom name if set by admin, otherwise venueId/venueName)
@@ -135,6 +146,35 @@ export function Settings() {
     } finally {
       setDrinkPriceSaving(false);
     }
+  };
+
+  const handleSquareSave = () => {
+    if (!squareCreds.accessToken.trim() || !squareCreds.locationId.trim()) return;
+    squarePosService.saveCredentials(squareCreds);
+    haptic('success');
+    setSquareSaved(true);
+    setSquareTestResult(null);
+    setTimeout(() => setSquareSaved(false), 3000);
+  };
+
+  const handleSquareTest = async () => {
+    if (!squareCreds.accessToken.trim() || !squareCreds.locationId.trim()) return;
+    // Save first so the service can read the creds
+    squarePosService.saveCredentials(squareCreds);
+    setSquareTesting(true);
+    setSquareTestResult(null);
+    try {
+      const result = await squarePosService.testConnection();
+      setSquareTestResult(result);
+    } finally {
+      setSquareTesting(false);
+    }
+  };
+
+  const handleSquareClear = () => {
+    squarePosService.clearCredentials();
+    setSquareCreds({ accessToken: '', locationId: '', environment: 'sandbox' });
+    setSquareTestResult(null);
   };
 
   return (
@@ -479,11 +519,144 @@ export function Settings() {
           {/* Integrations Tab */}
           {activeTab === 'integrations' && (
             <motion.div
-              className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6"
+              className="space-y-6"
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
             >
-              <POSIntegration />
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <POSIntegration />
+              </div>
+
+              {/* Square POS — direct credentials for VenueScope POS reconciliation */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <div className="flex items-center gap-3 mb-1">
+                  <CreditCard className="w-5 h-5 text-warm-300" />
+                  <h3 className="text-xl font-semibold text-white">Square POS — VenueScope Reconciliation</h3>
+                  {squareIsConfigured && (
+                    <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full px-2.5 py-0.5">
+                      <Check className="w-3 h-3" /> Configured
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-warm-400 mb-6">
+                  Store Square credentials locally to enable POS reconciliation in VenueScope.
+                  Camera drink counts are compared against Square order data to detect variance.
+                </p>
+
+                <div className="space-y-4">
+                  {/* Access Token */}
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Access Token</label>
+                    <div className="relative">
+                      <input
+                        type={showSquareToken ? 'text' : 'password'}
+                        value={squareCreds.accessToken}
+                        onChange={e => setSquareCreds(c => ({ ...c, accessToken: e.target.value }))}
+                        placeholder="EAAAl..."
+                        className="w-full px-4 py-3 pr-12 bg-warm-900 border border-warm-700 rounded-lg text-white font-mono text-sm focus:border-teal focus:ring-1 focus:ring-teal transition-colors placeholder-warm-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowSquareToken(s => !s)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-warm-500 hover:text-white transition-colors"
+                      >
+                        {showSquareToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-xs text-warm-500 mt-1.5">
+                      Find at developer.squareup.com → your app → Credentials → Production Access Token.
+                    </p>
+                  </div>
+
+                  {/* Location ID */}
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Location ID</label>
+                    <input
+                      type="text"
+                      value={squareCreds.locationId}
+                      onChange={e => setSquareCreds(c => ({ ...c, locationId: e.target.value }))}
+                      placeholder="L1234567890ABCD"
+                      className="w-full px-4 py-3 bg-warm-900 border border-warm-700 rounded-lg text-white font-mono text-sm focus:border-teal focus:ring-1 focus:ring-teal transition-colors placeholder-warm-600"
+                    />
+                    <p className="text-xs text-warm-500 mt-1.5">
+                      Found in your Square Dashboard → Account &amp; Settings → Business locations.
+                    </p>
+                  </div>
+
+                  {/* Environment toggle */}
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Environment</label>
+                    <div className="flex gap-2">
+                      {(['production', 'sandbox'] as const).map(env => (
+                        <button
+                          key={env}
+                          onClick={() => setSquareCreds(c => ({ ...c, environment: env }))}
+                          className={`flex-1 py-2.5 rounded-lg text-sm font-medium border transition-all ${
+                            squareCreds.environment === env
+                              ? 'bg-teal/20 border-teal/50 text-teal'
+                              : 'bg-warm-900 border-warm-700 text-warm-400 hover:text-white hover:border-warm-600'
+                          }`}
+                        >
+                          {env.charAt(0).toUpperCase() + env.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Test result */}
+                  {squareTestResult && (
+                    <div className={`flex items-center gap-2 px-4 py-3 rounded-lg border text-sm ${
+                      squareTestResult.ok
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                        : 'bg-red-500/10 border-red-500/30 text-red-400'
+                    }`}>
+                      {squareTestResult.ok
+                        ? <Check className="w-4 h-4 flex-shrink-0" />
+                        : <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      }
+                      {squareTestResult.message}
+                    </div>
+                  )}
+
+                  {/* Buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSquareTest}
+                      disabled={!squareCreds.accessToken.trim() || !squareCreds.locationId.trim() || squareTesting}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium text-sm bg-warm-700 hover:bg-warm-600 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {squareTesting
+                        ? <><RefreshCw className="w-4 h-4 animate-spin" />Testing…</>
+                        : <><Wifi className="w-4 h-4" />Test Connection</>
+                      }
+                    </button>
+                    <button
+                      onClick={handleSquareSave}
+                      disabled={!squareCreds.accessToken.trim() || !squareCreds.locationId.trim()}
+                      className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                        squareSaved
+                          ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400'
+                          : 'bg-teal/20 border border-teal/50 text-teal hover:bg-teal/30'
+                      }`}
+                    >
+                      {squareSaved ? <><Check className="w-4 h-4" />Saved!</> : <><Save className="w-4 h-4" />Save Credentials</>}
+                    </button>
+                    {squareIsConfigured && (
+                      <button
+                        onClick={handleSquareClear}
+                        className="px-4 py-3 rounded-lg font-medium text-sm bg-warm-800 border border-warm-700 text-warm-400 hover:text-red-400 hover:border-red-500/40 transition-all"
+                        title="Remove credentials"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-warm-500 text-center">
+                    Credentials stored locally in your browser. Never sent to our servers.
+                  </p>
+                </div>
+              </div>
             </motion.div>
           )}
 

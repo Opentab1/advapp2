@@ -62,6 +62,15 @@ export interface VenueScopeJob {
   roomLabel?: string;
   bartenderBreakdown?: string; // JSON: { [name]: { drinks, per_hour } }
   elapsedSec?: number;
+  // POS reconciliation
+  posProvider?: string;
+  posRevenue?: number;
+  posItemCount?: number;
+  posCameraCount?: number;
+  posVariancePct?: number;
+  posVarianceDrinks?: number;
+  posLostRevenue?: number;
+  tableVisitsByStaff?: string; // JSON: {tableId: {staffId: visitCount}}
 }
 
 /** Parsed activeModes helper */
@@ -93,6 +102,7 @@ const LIST_JOBS_QUERY = `
         totalTurns avgResponseSec avgDwellMin
         uniqueStaff peakHeadcount avgIdlePct
         isLive roomLabel bartenderBreakdown elapsedSec
+        posProvider posRevenue posItemCount posCameraCount posVariancePct posVarianceDrinks posLostRevenue tableVisitsByStaff
       }
       nextToken
     }

@@ -16,7 +16,7 @@ Required env vars:
 from __future__ import annotations
 import os, json, time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 DYNAMODB_TABLE = "VenueScopeJobs"
 
@@ -342,6 +342,18 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float) 
         update_expr += ", bartenderSummary = :bs"
         expr_vals[":bs"] = {"S": json.dumps(bt_compact)}
 
+    # Include table visits by staff for live dashboard attribution
+    tables_data = summary.get("tables", {})
+    if tables_data:
+        live_visits: Dict[str, Dict[str, int]] = {}
+        for tid, tdata in tables_data.items():
+            attr = tdata.get("staff_attribution", {})
+            if attr:
+                live_visits[tid] = {str(k): v for k, v in attr.items()}
+        if live_visits:
+            update_expr += ", tableVisitsByStaff = :tvs"
+            expr_vals[":tvs"] = {"S": json.dumps(live_visits)}
+
     try:
         ddb = _get_client("dynamodb")
         _retry(lambda: ddb.update_item(
@@ -465,6 +477,31 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
         item["peakHeadcount"]= {"N": str(int(staff.get("peak_headcount", 0)))}
         item["avgIdlePct"]   = {"N": str(float(staff.get("avg_idle_pct", 0.0)))}
 
+    # ── POS reconciliation ─────────────────────────────────────────────────────
+    pos_data = summary.get("pos_reconciliation")
+    if pos_data and pos_data.get("reconciled"):
+        item["posProvider"]       = {"S": str(pos_data.get("provider", ""))}
+        item["posRevenue"]        = {"N": str(float(pos_data.get("pos_revenue", 0)))}
+        item["posItemCount"]      = {"N": str(int(pos_data.get("pos_drink_count", 0)))}
+        item["posCameraCount"]    = {"N": str(int(pos_data.get("camera_drink_count", 0)))}
+        item["posVariancePct"]    = {"N": str(float(pos_data.get("variance_pct", 0)))}
+        item["posVarianceDrinks"] = {"N": str(int(pos_data.get("variance_drinks", 0)))}
+        item["posLostRevenue"]    = {"N": str(float(pos_data.get("estimated_lost_revenue", 0)))}
+        # Escalate theft flag if variance > 15%
+        if pos_data.get("variance_pct", 0) > 15:
+            item["hasTheftFlag"] = {"BOOL": True}
+
+    # ── Table visits by staff ──────────────────────────────────────────────────
+    tables = summary.get("tables", {})
+    if tables:
+        visits_by_staff: Dict[str, Dict[str, int]] = {}
+        for tid, tdata in tables.items():
+            attr = tdata.get("staff_attribution", {})
+            if attr:
+                visits_by_staff[tid] = {str(k): v for k, v in attr.items()}
+        if visits_by_staff:
+            item["tableVisitsByStaff"] = {"S": json.dumps(visits_by_staff)}
+
     # Circuit breaker check
     if not _cb.allow():
         print(f"[aws_sync] Circuit breaker open — queuing job {job_id} locally", flush=True)
@@ -475,8 +512,17 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
         ddb = _get_client("dynamodb")
         _retry(lambda: ddb.put_item(TableName=DYNAMODB_TABLE, Item=item))
         print(f"[aws_sync] Job {job_id} synced to DynamoDB ({venue_id})", flush=True)
-        return True
     except Exception as e:
         print(f"[aws_sync] DynamoDB write failed: {e} — queuing locally", flush=True)
         _enqueue_offline(job_id, item)
         return False
+
+    # ── Bartender profile sync ─────────────────────────────────────────────────
+    try:
+        from core.profiles.bartender_profile_sync import sync_bartender_profiles
+        if summary.get("bartenders"):
+            sync_bartender_profiles(venue_id, job_id, summary)
+    except Exception as e:
+        print(f"[aws_sync] Bartender profile sync failed (non-fatal): {e}", flush=True)
+
+    return True

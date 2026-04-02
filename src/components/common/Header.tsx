@@ -113,7 +113,7 @@ export function Header({
               aria-label="Logout"
             >
               <LogOut className="w-4 h-4" />
-              <span className="text-xs font-medium uppercase tracking-wide">Logout</span>
+              <span className="hidden sm:inline text-xs font-medium uppercase tracking-wide">Logout</span>
             </motion.button>
           </div>
         </div>

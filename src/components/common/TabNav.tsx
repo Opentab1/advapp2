@@ -9,10 +9,10 @@
  */
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, BarChart2, Settings, Sparkles, Users, Smartphone, Video, LucideIcon } from 'lucide-react';
+import { Zap, BarChart2, Settings, Sparkles, Users, Smartphone, Video, UserCheck, LucideIcon } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 
-export type TabId = 'live' | 'analytics' | 'events' | 'staffing' | 'leads' | 'venuescope' | 'settings';
+export type TabId = 'live' | 'analytics' | 'events' | 'staffing' | 'leads' | 'venuescope' | 'bartenders' | 'settings';
 
 interface Tab {
   id: TabId;
@@ -24,6 +24,7 @@ interface Tab {
 const TABS: Tab[] = [
   { id: 'live',        label: 'Live',        icon: Zap },
   { id: 'venuescope',  label: 'VenueScope',  icon: Video },
+  { id: 'bartenders',  label: 'Bar Staff',   icon: UserCheck },
   { id: 'analytics',   label: 'Results',     icon: BarChart2 },
   { id: 'events',      label: 'Events',      icon: Sparkles },
   { id: 'staffing',    label: 'Staffing',    icon: Users },
@@ -134,7 +135,7 @@ function TabButton({ tab, isActive, onClick, variant = 'mobile' }: TabButtonProp
       onClick={onClick}
       className={`
         relative flex flex-col items-center justify-center gap-0.5 rounded-xl
-        px-2 py-2 min-w-[56px]
+        px-1 py-2 flex-1 min-w-0
         ${isActive 
           ? 'text-teal' 
           : 'text-text-muted hover:text-text-secondary'
