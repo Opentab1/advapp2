@@ -53,14 +53,52 @@ export function Settings() {
   const squareIsConfigured                        = squarePosService.isConfigured();
 
   const user = authService.getStoredUser();
-  
+
   // Use display name (custom name if set by admin, otherwise venueId/venueName)
   const { displayName } = useDisplayName();
+
+  // Registered cameras (RTSP)
+  const [regCameras, setRegCameras]     = useState<any[]>([]);
+  const [regVenues, setRegVenues]       = useState<string[]>([]);
+  const [showAddCam, setShowAddCam]     = useState(false);
+  const [camSaving, setCamSaving]       = useState(false);
+  const [newCam, setNewCam]             = useState({
+    venue: '', name: '', rtsp_url: '', mode: 'drink_count', model_profile: 'balanced', notes: ''
+  });
+
+  const serverUrl = (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
+
+  const loadRegCameras = async () => {
+    try {
+      const r = await fetch(`${serverUrl}/api/cameras`);
+      if (r.ok) { const d = await r.json(); setRegCameras(d.cameras || []); setRegVenues(d.venues || []); }
+    } catch { /* backend not reachable */ }
+  };
+
+  const saveRegCamera = async () => {
+    if (!newCam.venue.trim() || !newCam.name.trim() || !newCam.rtsp_url.trim()) return;
+    setCamSaving(true);
+    try {
+      await fetch(`${serverUrl}/api/cameras`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newCam),
+      });
+      setNewCam({ venue: '', name: '', rtsp_url: '', mode: 'drink_count', model_profile: 'balanced', notes: '' });
+      setShowAddCam(false);
+      await loadRegCameras();
+    } finally { setCamSaving(false); }
+  };
+
+  const deleteRegCamera = async (id: string) => {
+    await fetch(`${serverUrl}/api/cameras/${id}`, { method: 'DELETE' });
+    await loadRegCameras();
+  };
 
   // Poll camera connection status when on cameras tab
   useEffect(() => {
     if (activeTab !== 'cameras') return;
     const stop = connectService.watchStatus(setConnectStatus);
+    loadRegCameras();
     return stop;
   }, [activeTab]);
 
@@ -961,6 +999,128 @@ export function Settings() {
                   </div>
                 </div>
               )}
+
+              {/* ── Camera Registry ──────────────────────────────────────── */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <Camera className="w-5 h-5 text-primary" />
+                    <h3 className="text-xl font-semibold text-white">Camera Registry</h3>
+                    <span className="text-xs text-warm-500 bg-warm-700 px-2 py-0.5 rounded-full">{regCameras.length} camera{regCameras.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  <button onClick={() => setShowAddCam(v => !v)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/20 border border-primary/50 text-primary hover:bg-primary/30 rounded-lg text-sm font-medium transition-all">
+                    <span>{showAddCam ? '✕ Cancel' : '+ Add Camera'}</span>
+                  </button>
+                </div>
+                <p className="text-sm text-warm-400 mb-4">Register RTSP cameras per venue. The worker daemon connects and runs analysis automatically.</p>
+
+                {/* Add camera form */}
+                {showAddCam && (
+                  <div className="mb-5 p-4 bg-warm-900/60 border border-warm-600 rounded-xl space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-warm-400 mb-1 block">Venue *</label>
+                        {regVenues.length > 0 ? (
+                          <select value={newCam.venue} onChange={e => setNewCam(p => ({ ...p, venue: e.target.value }))}
+                            className="w-full bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                            <option value="">➕ New venue…</option>
+                            {regVenues.map(v => <option key={v} value={v}>{v}</option>)}
+                          </select>
+                        ) : null}
+                        {(regVenues.length === 0 || newCam.venue === '') && (
+                          <input placeholder="Ferg's Bar" value={newCam.venue}
+                            onChange={e => setNewCam(p => ({ ...p, venue: e.target.value }))}
+                            className="w-full mt-1 bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-white text-sm placeholder-warm-500 focus:outline-none focus:border-primary" />
+                        )}
+                      </div>
+                      <div>
+                        <label className="text-xs text-warm-400 mb-1 block">Camera Name *</label>
+                        <input placeholder="Bar — CH9" value={newCam.name}
+                          onChange={e => setNewCam(p => ({ ...p, name: e.target.value }))}
+                          className="w-full bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-white text-sm placeholder-warm-500 focus:outline-none focus:border-primary" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-warm-400 mb-1 block">RTSP URL *</label>
+                      <input placeholder="rtsp://admin:pass@192.168.1.x:554/stream1" value={newCam.rtsp_url}
+                        onChange={e => setNewCam(p => ({ ...p, rtsp_url: e.target.value }))}
+                        className="w-full bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-white text-sm placeholder-warm-500 font-mono focus:outline-none focus:border-primary" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-warm-400 mb-1 block">Analysis Mode</label>
+                        <select value={newCam.mode} onChange={e => setNewCam(p => ({ ...p, mode: e.target.value }))}
+                          className="w-full bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                          <option value="drink_count">🍺 Drink Count</option>
+                          <option value="bottle_count">🍾 Bottle Count</option>
+                          <option value="people_count">🚶 People Count</option>
+                          <option value="staff_activity">👷 Staff Activity</option>
+                          <option value="after_hours">🔒 After Hours</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-warm-400 mb-1 block">Model Profile</label>
+                        <select value={newCam.model_profile} onChange={e => setNewCam(p => ({ ...p, model_profile: e.target.value }))}
+                          className="w-full bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                          <option value="fast">Fast</option>
+                          <option value="balanced">Balanced</option>
+                          <option value="accurate">Accurate</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-warm-400 mb-1 block">Notes (optional)</label>
+                      <input placeholder="Overhead fisheye, covers full bar. CH9." value={newCam.notes}
+                        onChange={e => setNewCam(p => ({ ...p, notes: e.target.value }))}
+                        className="w-full bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-white text-sm placeholder-warm-500 focus:outline-none focus:border-primary" />
+                    </div>
+                    <div className="pt-1 text-xs text-warm-500">
+                      <strong className="text-warm-400">RTSP formats:</strong> Hikvision: <code className="text-teal">rtsp://admin:PASS@IP:554/Streaming/Channels/101</code> &nbsp;·&nbsp;
+                      Dahua: <code className="text-teal">rtsp://admin:PASS@IP:554/cam/realmonitor?channel=1&subtype=0</code> &nbsp;·&nbsp;
+                      Reolink: <code className="text-teal">rtsp://admin:PASS@IP:554/h264Preview_01_main</code>
+                    </div>
+                    <button onClick={saveRegCamera} disabled={camSaving || !newCam.venue.trim() || !newCam.name.trim() || !newCam.rtsp_url.trim()}
+                      className="w-full py-2 bg-primary text-white rounded-lg font-medium hover:bg-primary/80 disabled:opacity-40 transition-all text-sm">
+                      {camSaving ? 'Saving…' : '💾 Save Camera'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Camera list grouped by venue */}
+                {regCameras.length === 0 ? (
+                  <p className="text-sm text-warm-500 text-center py-4">No cameras registered yet.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {regVenues.map(venue => {
+                      const cams = regCameras.filter(c => c.venue === venue);
+                      if (!cams.length) return null;
+                      return (
+                        <div key={venue}>
+                          <p className="text-xs font-semibold text-warm-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                            <span>🏠</span>{venue}
+                          </p>
+                          <div className="space-y-2">
+                            {cams.map(cam => (
+                              <div key={cam.camera_id} className="flex items-center justify-between p-3 bg-warm-900/50 border border-warm-700 rounded-xl gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-medium text-white truncate">{cam.name}</p>
+                                  <p className="text-xs text-warm-500 font-mono truncate">{cam.rtsp_url}</p>
+                                  <p className="text-xs text-warm-600">{cam.mode} · {cam.model_profile}</p>
+                                </div>
+                                <button onClick={() => deleteRegCamera(cam.camera_id)}
+                                  className="p-1.5 text-warm-500 hover:text-red-400 transition-colors flex-shrink-0">
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               {/* Requirements */}
               <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">

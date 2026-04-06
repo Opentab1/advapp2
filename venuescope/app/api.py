@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.config   import CONFIG_DIR
-from core.database import list_jobs, get_job
+from core.database import list_jobs, get_job, list_cameras, list_venues, save_camera, delete_camera
 
 API_VERSION = "1.0"
 API_PORT    = 8502
@@ -253,9 +253,51 @@ class _APIHandler(BaseHTTPRequestHandler):
         # Pre-flight CORS
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path   = parsed.path.rstrip("/")
+        try:
+            if path.startswith("/api/cameras/"):
+                cam_id = path[len("/api/cameras/"):]
+                if not cam_id:
+                    _json_response(self, {"error": "camera_id required"}, 400)
+                    return
+                delete_camera(cam_id)
+                _json_response(self, {"ok": True}, 200)
+            else:
+                _json_response(self, {"error": "Not found"}, 404)
+        except Exception as exc:
+            _json_response(self, {"error": str(exc)}, 500)
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path   = parsed.path.rstrip("/")
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body   = json.loads(self.rfile.read(length)) if length else {}
+
+            if path == "/api/cameras":
+                import uuid as _uuid
+                cam_id = body.get("camera_id") or str(_uuid.uuid4())[:8]
+                save_camera(
+                    camera_id       = cam_id,
+                    venue           = body.get("venue", "Default Venue"),
+                    name            = body.get("name", "Camera"),
+                    rtsp_url        = body.get("rtsp_url", ""),
+                    mode            = body.get("mode", "drink_count"),
+                    model_profile   = body.get("model_profile", "balanced"),
+                    segment_seconds = float(body.get("segment_seconds", 300)),
+                    notes           = body.get("notes", ""),
+                )
+                _json_response(self, {"ok": True, "camera_id": cam_id}, 201)
+            else:
+                _json_response(self, {"error": "Not found"}, 404)
+        except Exception as exc:
+            _json_response(self, {"error": str(exc)}, 500)
 
     def do_GET(self):
         client_ip = self.client_address[0]
@@ -297,6 +339,11 @@ class _APIHandler(BaseHTTPRequestHandler):
                     return
                 data, status = _handle_job_detail(job_id)
                 _json_response(self, data, status)
+
+            elif path == "/api/cameras":
+                cams   = list_cameras()
+                venues = list_venues()
+                _json_response(self, {"cameras": cams, "venues": venues}, 200)
 
             else:
                 _json_response(self, {"error": "Not found", "path": path}, 404)
