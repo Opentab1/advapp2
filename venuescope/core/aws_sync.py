@@ -20,6 +20,24 @@ from typing import Dict, Any, Optional, List
 
 DYNAMODB_TABLE = "VenueScopeJobs"
 
+# ── Sortable DynamoDB key ──────────────────────────────────────────────────────
+# DynamoDB sorts by jobId (sort key) ascending. To ensure the 500-item query
+# always returns the MOST RECENT jobs, we prefix job IDs with a reverse
+# timestamp: '!{9999999999 - int(createdAt):010d}_{job_id}'.
+# '!' (ASCII 33) sorts before all hex chars so new items float to the top.
+# Older jobs (random UUIDs) sink to the bottom and fall outside limit=500.
+_job_ddb_key_cache: Dict[str, str] = {}
+
+def _ddb_sort_key(job_id: str, created_at: Optional[float] = None) -> str:
+    """Return the stable DynamoDB sort key for this job within the current process."""
+    if job_id in _job_ddb_key_cache:
+        return _job_ddb_key_cache[job_id]
+    ts = created_at if created_at is not None else time.time()
+    reverse_ts = 9999999999 - int(ts)
+    key = f"!{reverse_ts:010d}_{job_id}"
+    _job_ddb_key_cache[job_id] = key
+    return key
+
 # Offline queue — persisted locally when AWS is unreachable
 _DATA_DIR      = Path(os.environ.get("VENUESCOPE_DATA_DIR",
                                       str(Path.home() / ".venuescope")))
@@ -267,17 +285,21 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
         ":u": {"N": now},
     }
 
+    created_at_val: Optional[float] = None
     if job_data:
-        update_expr += ", clipLabel = :cl, analysisMode = :am, createdAt = :ca"
+        created_at_val = job_data.get("created_at")
+        update_expr += ", clipLabel = :cl, analysisMode = :am, createdAt = :ca, internalJobId = :ij"
         expr_vals[":cl"] = {"S": str(job_data.get("clip_label", "") or "")}
         expr_vals[":am"] = {"S": str(job_data.get("analysis_mode", "drink_count"))}
-        expr_vals[":ca"] = {"N": str(job_data.get("created_at", time.time()))}
+        expr_vals[":ca"] = {"N": str(created_at_val or time.time())}
+        expr_vals[":ij"] = {"S": job_id}
 
+    ddb_key = _ddb_sort_key(job_id, created_at_val)
     try:
         ddb = _get_client("dynamodb")
         _retry(lambda: ddb.update_item(
             TableName=DYNAMODB_TABLE,
-            Key={"venueId": {"S": venue_id}, "jobId": {"S": job_id}},
+            Key={"venueId": {"S": venue_id}, "jobId": {"S": ddb_key}},
             UpdateExpression=update_expr,
             ExpressionAttributeNames=expr_names,
             ExpressionAttributeValues=expr_vals,
@@ -308,8 +330,9 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float) 
     unrung       = int(sum(d.get("unrung_drinks", 0) or 0 for d in bts.values()))
 
     people       = summary.get("people", {})
-    people_in    = int(sum(l.get("in_count", 0) for l in people.values()))
-    people_out   = int(sum(l.get("out_count", 0) for l in people.values()))
+    # people summary is flat: {total_entries: N, total_exits: N, ...}
+    people_in    = int(people.get("total_entries", 0))
+    people_out   = int(people.get("total_exits", 0))
     headcount    = max(0, people_in - people_out)
 
     mode         = summary.get("analysis_mode", summary.get("mode", "drink_count"))
@@ -318,7 +341,8 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float) 
         "SET #st = :s, updatedAt = :u, isLive = :il, "
         "elapsedSec = :es, analysisMode = :am, "
         "totalDrinks = :td, unrungDrinks = :ud, "
-        "peopleIn = :pi, peopleOut = :po, currentHeadcount = :hc"
+        "peopleIn = :pi, peopleOut = :po, currentHeadcount = :hc, "
+        "peakOccupancy = :hc"   # frontend reads peakOccupancy for live headcount
     )
     expr_names = {"#st": "status"}
     expr_vals: Dict[str, Any] = {
@@ -354,11 +378,12 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float) 
             update_expr += ", tableVisitsByStaff = :tvs"
             expr_vals[":tvs"] = {"S": json.dumps(live_visits)}
 
+    ddb_key = _ddb_sort_key(job_id)
     try:
         ddb = _get_client("dynamodb")
         _retry(lambda: ddb.update_item(
             TableName=DYNAMODB_TABLE,
-            Key={"venueId": {"S": venue_id}, "jobId": {"S": job_id}},
+            Key={"venueId": {"S": venue_id}, "jobId": {"S": ddb_key}},
             UpdateExpression=update_expr,
             ExpressionAttributeNames=expr_names,
             ExpressionAttributeValues=expr_vals,
@@ -395,11 +420,15 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
     # Active modes (primary + any extras run in same pass)
     active_modes = summary.get("modes", [summary.get("analysis_mode", "drink_count")])
 
+    created_at = summary.get("created_at", time.time())
+    ddb_key    = _ddb_sort_key(job_id, created_at)
+
     item: Dict[str, Any] = {
         "venueId":         {"S": venue_id},
-        "jobId":           {"S": job_id},
+        "jobId":           {"S": ddb_key},
+        "internalJobId":   {"S": job_id},   # original UUID for reference
         "status":          {"S": "done"},
-        "createdAt":       {"N": str(summary.get("created_at", time.time()))},
+        "createdAt":       {"N": str(created_at)},
         "finishedAt":      {"N": str(time.time())},
         "analysisMode":    {"S": summary.get("analysis_mode", "drink_count")},
         "activeModes":     {"S": json.dumps(active_modes)},
@@ -420,6 +449,19 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
 
     if summary_s3_key:
         item["summaryS3Key"] = {"S": summary_s3_key}
+
+    # ── Per-station bartender breakdown ────────────────────────────────────────
+    # React reads bartenderBreakdown as JSON: {name: {drinks, per_hour}}
+    bts = summary.get("bartenders", {})
+    if bts:
+        bt_breakdown = {
+            name: {
+                "drinks":   int(d.get("total_drinks", 0)),
+                "per_hour": round(float(d.get("drinks_per_hour", 0.0)), 1),
+            }
+            for name, d in bts.items()
+        }
+        item["bartenderBreakdown"] = {"S": json.dumps(bt_breakdown)}
 
     camera = summary.get("camera_label") or summary.get("venue_id", "")
     if camera:

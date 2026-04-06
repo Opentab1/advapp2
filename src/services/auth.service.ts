@@ -131,8 +131,8 @@ class AuthService {
 
       // Extract user data from token or attributes
       const payload = session.tokens?.idToken?.payload;
-      const venueId = (payload?.['custom:venueId'] as string) || undefined;
-      const venueName = (payload?.['custom:venueName'] as string) || undefined;
+      const venueId = (payload?.['custom:venueId'] as string) || import.meta.env.VITE_DEFAULT_VENUE_ID || undefined;
+      const venueName = (payload?.['custom:venueName'] as string) || import.meta.env.VITE_DEFAULT_VENUE_NAME || undefined;
       const role = (payload?.['custom:role'] as string) || 'owner'; // Default to owner for backward compatibility
       
       // Fetch user's locations from DynamoDB (only for client users with venueId)

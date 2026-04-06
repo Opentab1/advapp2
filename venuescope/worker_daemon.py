@@ -15,6 +15,16 @@ os.environ.setdefault("ULTRALYTICS_AUTOINSTALL", "False")
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 
+# Load .env from parent directory if AWS creds are missing (safety fallback)
+if not os.environ.get("AWS_ACCESS_KEY_ID"):
+    _env_file = BASE.parent / ".env"
+    if _env_file.exists():
+        for _line in _env_file.read_text().splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 # ── Structured logging ───────────────────────────────────────────────────────
 try:
     from core.logging_config import setup_logging
@@ -58,6 +68,15 @@ def _reap_stale_jobs():
 
 def run_job(job_id: str):
     log.info(f"Starting job {job_id}")
+    # Dispose inherited SQLAlchemy engine after fork() so the child gets a
+    # fresh connection pool with no inherited locks.
+    try:
+        import core.database as _db
+        if _db._engine is not None:
+            _db._engine.dispose()
+            _db._engine = None
+    except Exception:
+        pass
     job = None
     try:
         set_running(job_id)
@@ -250,6 +269,26 @@ def run_job(job_id: str):
             pass
 
 
+def _camera_loop_proc_entry():
+    """Camera loop manager runs in a fully isolated child process."""
+    try:
+        from core.logging_config import setup_logging as _sl
+        _clog = _sl("camera_loop")
+    except Exception:
+        import logging as _logging
+        _clog = _logging.getLogger("camera_loop")
+    try:
+        from core.camera_loop import get_manager as _get_cam_mgr
+        _mgr = _get_cam_mgr()
+        _mgr.sync()
+        _clog.info("Camera loop manager running")
+        while True:
+            time.sleep(60)
+            _mgr.sync()
+    except Exception as _e:
+        _clog.error(f"Camera loop manager crashed: {_e}")
+
+
 def main():
     log.info(f"VenueScope v6 worker started — polling every {POLL_INTERVAL}s, "
              f"MAX_PARALLEL={MAX_PARALLEL}")
@@ -269,15 +308,13 @@ def main():
     _poll_count        = 0
     _active: Dict[str, multiprocessing.Process] = {}
 
-    # Start continuous camera loop manager
-    try:
-        from core.camera_loop import get_manager as _get_cam_mgr
-        _cam_mgr = _get_cam_mgr()
-        _cam_mgr.sync()
-        log.info("Camera loop manager started")
-    except Exception as _cle:
-        log.warning(f"Camera loop manager failed to start: {_cle}")
-        _cam_mgr = None
+    # Start camera loop manager in its OWN process (not as threads in this
+    # process). This prevents background threads from holding SQLite mutexes
+    # at fork() time, which causes futex deadlocks in job worker subprocesses.
+    _cam_proc = multiprocessing.Process(target=_camera_loop_proc_entry, daemon=True)
+    _cam_proc.start()
+    _cam_mgr = None   # no in-process manager needed
+    log.info("Camera loop manager started (separate process)")
 
     # Start DVR folder watcher (picks up VENUESCOPE_WATCH_FOLDERS env var)
     _folder_watcher = None
@@ -366,13 +403,7 @@ def main():
                     log.warning(f"Backup error (non-fatal): {_be}")
                 _last_backup = _now
 
-            # Camera loop sync (every 60 seconds — picks up new/disabled cameras)
-            if _now - _last_cam_sync > 60 and _cam_mgr is not None:
-                try:
-                    _cam_mgr.sync()
-                except Exception as _cls:
-                    log.warning(f"Camera loop sync error: {_cls}")
-                _last_cam_sync = _now
+            # Camera loop sync is now handled by its own process — nothing needed here
 
             # Camera health check (every 15 minutes)
             if _now - _last_health_check > 900:

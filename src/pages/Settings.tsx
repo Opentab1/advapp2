@@ -72,6 +72,8 @@ export function Settings() {
   const [scanDone, setScanDone]           = useState(false);
   const [fetchingRtsp, setFetchingRtsp]   = useState<string | null>(null); // ip being fetched
   const [camCreds, setCamCreds]           = useState<Record<string, { u: string; p: string }>>({});
+  // Stream connectivity results (auto-polled)
+  const [streamScanResults, setStreamScanResults] = useState<any[]>([]);
 
   const serverUrl = (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
 
@@ -102,6 +104,7 @@ export function Settings() {
   };
 
   const scanNetwork = async () => {
+    // ONVIF discovery for finding new cameras (manual trigger)
     setScanning(true); setScanDone(false); setDiscovered([]);
     try {
       const r = await fetch(`${serverUrl}/api/cameras/discover`);
@@ -128,13 +131,24 @@ export function Settings() {
     } finally { setFetchingRtsp(null); }
   };
 
-  // Poll camera connection status when on cameras tab
+  // Auto-refresh stream status when on cameras tab
   useEffect(() => {
     if (activeTab !== 'cameras') return;
     const stop = connectService.watchStatus(setConnectStatus);
     loadRegCameras();
-    return stop;
-  }, [activeTab]);
+
+    const pollStreams = async () => {
+      if (!serverUrl) return;
+      try {
+        const r = await fetch(`${serverUrl}/api/cameras/scan-streams`);
+        if (r.ok) { const d = await r.json(); setStreamScanResults(d.cameras || []); }
+      } catch { /* backend not reachable */ }
+    };
+
+    pollStreams(); // immediate on tab open
+    const interval = setInterval(pollStreams, 15000); // every 15s
+    return () => { stop(); clearInterval(interval); };
+  }, [activeTab, serverUrl]);
 
   useEffect(() => {
     // Load saved address, capacity, and drink price
@@ -1053,8 +1067,8 @@ export function Settings() {
                 <div className="mb-5 p-4 bg-warm-900/40 border border-warm-700 rounded-xl">
                   <div className="flex items-center justify-between mb-2">
                     <div>
-                      <p className="text-sm font-semibold text-white">🔍 Scan Network for Cameras</p>
-                      <p className="text-xs text-warm-500 mt-0.5">Broadcasts a discovery signal — finds any ONVIF-compatible camera on the same network automatically. Works even when the camera company doesn't publish the RTSP URL.</p>
+                      <p className="text-sm font-semibold text-white">🔍 Camera Streams</p>
+                      <p className="text-xs text-warm-500 mt-0.5">Stream status refreshes automatically every 15s. Use Scan Now to discover new ONVIF cameras on the network.</p>
                     </div>
                     <button onClick={scanNetwork} disabled={scanning}
                       className="ml-4 flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-teal/20 border border-teal/40 text-teal hover:bg-teal/30 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
@@ -1064,11 +1078,41 @@ export function Settings() {
                   </div>
 
                   {scanning && (
-                    <p className="text-xs text-warm-400 mt-3">Broadcasting discovery signal across the network (4 s)…</p>
+                    <p className="text-xs text-warm-400 mt-3">Broadcasting ONVIF discovery signal (4 s)…</p>
                   )}
 
-                  {scanDone && discovered.length === 0 && (
-                    <p className="text-xs text-warm-500 mt-3">No ONVIF cameras found. Make sure you're on the same network as the cameras, or add the RTSP URL manually below.</p>
+                  {/* Stream connectivity results */}
+                  {streamScanResults.length > 0 && (
+                    <div className="mt-3 mb-4">
+                      <p className="text-xs text-warm-400 font-medium mb-2 uppercase tracking-wide">Registered Stream Status</p>
+                      <div className="space-y-1.5">
+                        {streamScanResults.map(cam => {
+                          const isLive = cam.status === 'live' || cam.status === 'reachable';
+                          const isOff  = cam.status === 'offline' || cam.status === 'error';
+                          return (
+                            <div key={cam.camera_id} className="flex items-center justify-between gap-3 px-3 py-2 bg-warm-800/60 border border-warm-700 rounded-lg">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isLive ? 'bg-green-400' : isOff ? 'bg-red-400' : 'bg-warm-500'}`} />
+                                <span className="text-xs font-medium text-white truncate">{cam.name}</span>
+                                {cam.mode && <span className="text-xs text-warm-500 flex-shrink-0">{cam.mode.split(',')[0]}</span>}
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {cam.latency_ms != null && (
+                                  <span className="text-xs text-warm-500">{cam.latency_ms}ms</span>
+                                )}
+                                <span className={`text-xs font-semibold ${isLive ? 'text-green-400' : isOff ? 'text-red-400' : 'text-warm-400'}`}>
+                                  {isLive ? 'LIVE' : isOff ? (cam.error || 'OFFLINE') : cam.status.toUpperCase()}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {scanDone && discovered.length === 0 && streamScanResults.length === 0 && (
+                    <p className="text-xs text-warm-500 mt-3">No cameras found. Make sure you're on the same network as the cameras, or add the RTSP URL manually below.</p>
                   )}
 
                   {discovered.length > 0 && (

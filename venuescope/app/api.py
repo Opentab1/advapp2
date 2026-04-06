@@ -563,6 +563,63 @@ class _APIHandler(BaseHTTPRequestHandler):
                 found = discover_cameras(timeout=4.0)
                 _json_response(self, {"cameras": found}, 200)
 
+            elif path == "/api/cameras/scan-streams":
+                # Test connectivity for every registered camera's RTSP/HLS URL.
+                # For HLS URLs (http://…m3u8) — HTTP GET, check status.
+                # For RTSP URLs (rtsp://…) — TCP connect to host:port.
+                import socket, urllib.request, urllib.error
+                from urllib.parse import urlparse
+                cams = list_cameras()
+                results = []
+                for cam in cams:
+                    url = cam.get("rtsp_url", "")
+                    label = cam.get("name", cam.get("camera_id", ""))
+                    status = "unknown"
+                    latency_ms = None
+                    error = None
+                    if not url:
+                        status = "no_url"
+                    else:
+                        parsed = urlparse(url)
+                        try:
+                            import time as _time
+                            t0 = _time.time()
+                            if parsed.scheme in ("http", "https"):
+                                req = urllib.request.Request(url, method="GET")
+                                try:
+                                    resp = urllib.request.urlopen(req, timeout=4)
+                                    latency_ms = int((_time.time() - t0) * 1000)
+                                    status = "live" if resp.status == 200 else "offline"
+                                    resp.close()
+                                except urllib.error.HTTPError as e:
+                                    latency_ms = int((_time.time() - t0) * 1000)
+                                    status = "offline"
+                                    error = f"HTTP {e.code}"
+                            else:
+                                # RTSP/other — TCP connect test
+                                host = parsed.hostname or ""
+                                port = parsed.port or 554
+                                with socket.create_connection((host, port), timeout=4):
+                                    latency_ms = int((_time.time() - t0) * 1000)
+                                    status = "reachable"
+                        except OSError as e:
+                            status = "offline"
+                            error = str(e).split("]")[-1].strip()
+                        except Exception as e:
+                            status = "error"
+                            error = str(e)[:80]
+                    results.append({
+                        "camera_id": cam.get("camera_id"),
+                        "name": label,
+                        "url": url,
+                        "status": status,
+                        "latency_ms": latency_ms,
+                        "error": error,
+                        "enabled": cam.get("enabled", True),
+                        "mode": cam.get("mode", ""),
+                    })
+                _json_response(self, {"cameras": results}, 200)
+
             else:
                 _json_response(self, {"error": "Not found", "path": path}, 404)
 

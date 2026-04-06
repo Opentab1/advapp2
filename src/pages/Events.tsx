@@ -944,60 +944,60 @@ function ConceptValidator() {
   return (
     <div className="space-y-4">
       {/* Config panel */}
-      <div className="bg-warm-800/60 rounded-xl border border-warm-700 p-4 space-y-3">
+      <div className="bg-warm-800 rounded-xl border border-warm-600 p-5 space-y-4">
         <div className="flex items-center gap-2">
           <Search className="w-4 h-4 text-teal" />
-          <h3 className="text-sm font-semibold text-white">Event Concept Validator</h3>
-          <span className="ml-auto text-[10px] text-warm-500">Pulls live data automatically</span>
+          <h3 className="text-base font-semibold text-white">Event Concept Validator</h3>
+          <span className="ml-auto text-xs text-warm-400">Pulls live data automatically</span>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
-            <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Concept A</label>
+            <label className="text-xs text-warm-300 mb-1.5 block font-medium uppercase tracking-wide">Concept A</label>
             <select value={concept} onChange={e => setConcept(e.target.value)}
-              className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-teal/50">
+              className="w-full bg-warm-700 border border-warm-500 rounded-lg px-3 py-3 text-sm text-white focus:outline-none focus:border-teal/70">
               {CONCEPT_TYPES.map(ct => <option key={ct} value={ct}>{CONCEPT_EMOJIS[ct]} {ct}</option>)}
             </select>
           </div>
 
           {compareMode && (
             <div className="col-span-2">
-              <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Concept B (A/B Compare)</label>
+              <label className="text-xs text-warm-300 mb-1.5 block font-medium uppercase tracking-wide">Concept B (A/B Compare)</label>
               <select value={conceptB} onChange={e => setConceptB(e.target.value)}
-                className="w-full bg-warm-900 border border-teal/40 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-teal/50">
+                className="w-full bg-warm-700 border border-teal/50 rounded-lg px-3 py-3 text-sm text-white focus:outline-none focus:border-teal/70">
                 {CONCEPT_TYPES.filter(ct => ct !== concept).map(ct => <option key={ct} value={ct}>{CONCEPT_EMOJIS[ct]} {ct}</option>)}
               </select>
             </div>
           )}
 
           <div>
-            <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Your City</label>
+            <label className="text-xs text-warm-300 mb-1.5 block font-medium uppercase tracking-wide">Your City</label>
             <input value={city} onChange={e => setCity(e.target.value)} placeholder="Tampa"
-              className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-warm-600 focus:outline-none focus:border-teal/50" />
+              className="w-full bg-warm-700 border border-warm-500 rounded-lg px-3 py-3 text-sm text-white placeholder-warm-400 focus:outline-none focus:border-teal/70" />
           </div>
 
           <div>
-            <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Event Date</label>
+            <label className="text-xs text-warm-300 mb-1.5 block font-medium uppercase tracking-wide">Event Date</label>
             <input type="date" value={date} onChange={e => setDate(e.target.value)}
-              className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-teal/50" />
+              className="w-full bg-warm-700 border border-warm-500 rounded-lg px-3 py-3 text-sm text-white focus:outline-none focus:border-teal/70" />
           </div>
 
           <div>
-            <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Venue Capacity</label>
+            <label className="text-xs text-warm-300 mb-1.5 block font-medium uppercase tracking-wide">Venue Capacity</label>
             <input type="number" value={capacity} onChange={e => setCapacity(e.target.value)} placeholder="150"
-              className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-warm-600 focus:outline-none focus:border-teal/50" />
+              className="w-full bg-warm-700 border border-warm-500 rounded-lg px-3 py-3 text-sm text-white placeholder-warm-400 focus:outline-none focus:border-teal/70" />
           </div>
 
           <div>
-            <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Cover Charge ($)</label>
+            <label className="text-xs text-warm-300 mb-1.5 block font-medium uppercase tracking-wide">Cover Charge ($)</label>
             <input type="number" value={cover} onChange={e => setCover(e.target.value)} placeholder="No cover"
-              className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-warm-600 focus:outline-none focus:border-teal/50" />
+              className="w-full bg-warm-700 border border-warm-500 rounded-lg px-3 py-3 text-sm text-white placeholder-warm-400 focus:outline-none focus:border-teal/70" />
           </div>
         </div>
 
         <div className="flex items-center justify-between pt-1">
           <button onClick={() => setCompareMode(!compareMode)}
-            className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border transition-all ${compareMode ? 'border-teal/50 text-teal bg-teal/10' : 'border-warm-600 text-warm-400'}`}>
+            className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border transition-all ${compareMode ? 'border-teal/50 text-teal bg-teal/10' : 'border-warm-500 text-warm-300 hover:text-white hover:border-warm-400'}`}>
             <BarChart3 className="w-3.5 h-3.5" />
             {compareMode ? 'A/B Mode On' : 'A/B Compare'}
           </button>

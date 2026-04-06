@@ -23,17 +23,20 @@ OCCUPANCY_INTERVAL = 1200  # seconds (20 minutes = 3x per hour)
 
 
 def _recent_job_for_camera(camera_id: str, camera_name: str) -> Optional[dict]:
-    """Return the most recent job for this camera if it's still active."""
+    """Return the most recent job for this camera (active or most recent of any status)."""
     from core.database import list_jobs
     all_jobs = list_jobs(200)
     label_prefix = f"📡 {camera_name}"
+    most_recent = None
     for job in all_jobs:
         lbl = job.get("clip_label", "") or ""
         cid = job.get("camera_id", "") or ""
-        if (lbl.startswith(label_prefix) or cid == camera_id) \
-                and job["status"] in ("pending", "running"):
-            return job
-    return None
+        if lbl.startswith(label_prefix) or cid == camera_id:
+            if job["status"] in ("pending", "running"):
+                return job   # active job — return immediately
+            if most_recent is None:
+                most_recent = job  # track most recent completed/failed
+    return most_recent
 
 
 def _parse_modes(mode_str: str) -> tuple[str, list[str]]:
@@ -124,13 +127,19 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                 log.info(f"[camera_loop] '{camera_name}' disabled — stopping loop")
                 break
 
-            # Don't launch if one is already running/pending
-            active = _recent_job_for_camera(camera_id, camera_name)
-            if active:
-                log.debug(f"[camera_loop] '{camera_name}' has active job "
-                          f"{active['job_id']} ({active['status']}) — waiting")
-                stop_event.wait(10)
-                continue
+            # Don't launch if one is already running/pending; back off if last job failed
+            recent = _recent_job_for_camera(camera_id, camera_name)
+            if recent:
+                if recent["status"] in ("pending", "running"):
+                    log.debug(f"[camera_loop] '{camera_name}' has active job "
+                              f"{recent['job_id']} ({recent['status']}) — waiting")
+                    stop_event.wait(10)
+                    continue
+                if recent["status"] == "failed":
+                    log.warning(f"[camera_loop] '{camera_name}' last job failed "
+                                f"— waiting 60s before retry")
+                    stop_event.wait(60)
+                    continue
 
             # Apply occupancy throttle — people_counter only every 20 minutes
             effective = _effective_cam(current, last_occupancy_t)
