@@ -69,6 +69,23 @@ interface ValidationReport {
   pull_duration_sec: number;
 }
 
+interface AttendanceForecast {
+  low: number;
+  mid: number;
+  high: number;
+  fill_rate_pct: number;
+  model: string;
+  model_short: string;
+  confidence: 'model' | 'trained';
+  revenue_low: number;
+  revenue_mid: number;
+  revenue_high: number;
+  avg_spend_assumption: number;
+  historical_sessions: number;
+  note: string;
+  factors?: Record<string, number>;
+}
+
 interface ConceptStat {
   concept_type: string;
   run_count: number;
@@ -863,6 +880,8 @@ function ConceptValidator() {
   const [compareMode, setCompareMode] = useState(false);
   const [conceptB, setConceptB] = useState(CONCEPT_TYPES[1]);
   const [reportB, setReportB] = useState<ValidationReport | null>(null);
+  const [forecast, setForecast] = useState<AttendanceForecast | null>(null);
+  const [forecastB, setForecastB] = useState<AttendanceForecast | null>(null);
 
   // Try to auto-detect city from venue settings
   useEffect(() => {
@@ -887,9 +906,18 @@ function ConceptValidator() {
     return r.json();
   };
 
+  const runForecast = async (conceptType: string, weatherRisk: string = 'none'): Promise<AttendanceForecast | null> => {
+    const url = `${getServerUrl()}/api/events/forecast?concept=${encodeURIComponent(conceptType)}&city=${encodeURIComponent(city)}&date=${date}&capacity=${capacity}&cover=${cover || '0'}&weather_risk=${weatherRisk}`;
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return null;
+      return r.json();
+    } catch { return null; }
+  };
+
   const handleValidate = async () => {
     if (!city || !date) { setError('Enter your city and event date'); return; }
-    setLoading(true); setError(''); setReport(null); setReportB(null);
+    setLoading(true); setError(''); setReport(null); setReportB(null); setForecast(null); setForecastB(null);
     try {
       const [ra, rb] = await Promise.all([
         runValidation(concept),
@@ -897,6 +925,16 @@ function ConceptValidator() {
       ]);
       setReport(ra);
       setReportB(rb);
+
+      // Fetch forecasts in parallel using weather risk from validation results
+      const weatherA = ra?.weather?.risk || 'none';
+      const weatherB = rb?.weather?.risk || 'none';
+      const [fa, fb] = await Promise.all([
+        runForecast(concept, weatherA),
+        compareMode && rb ? runForecast(conceptB, weatherB) : Promise.resolve(null),
+      ]);
+      setForecast(fa);
+      setForecastB(fb);
     } catch (e) {
       setError('Could not connect to VenueScope server — make sure it\'s running');
     }
@@ -1003,8 +1041,8 @@ function ConceptValidator() {
               </div>
             )}
 
-            <ValidationReportCard report={report} title={compareMode ? `Concept A: ${concept}` : undefined} />
-            {compareMode && reportB && <ValidationReportCard report={reportB} title={`Concept B: ${conceptB}`} />}
+            <ValidationReportCard report={report} forecast={forecast ?? undefined} title={compareMode ? `Concept A: ${concept}` : undefined} />
+            {compareMode && reportB && <ValidationReportCard report={reportB} forecast={forecastB ?? undefined} title={`Concept B: ${conceptB}`} />}
           </motion.div>
         )}
       </AnimatePresence>
@@ -1012,7 +1050,7 @@ function ConceptValidator() {
   );
 }
 
-function ValidationReportCard({ report, title }: { report: ValidationReport; title?: string }) {
+function ValidationReportCard({ report, forecast, title }: { report: ValidationReport; forecast?: AttendanceForecast; title?: string }) {
   const [showReddit, setShowReddit] = useState(false);
   const verdictColor = report.verdict === 'green' ? 'text-green-400' : report.verdict === 'yellow' ? 'text-amber-400' : 'text-red-400';
   const verdictBorder = report.verdict === 'green' ? 'border-green-500/30' : report.verdict === 'yellow' ? 'border-amber-500/30' : 'border-red-500/30';
@@ -1088,6 +1126,72 @@ function ValidationReportCard({ report, title }: { report: ValidationReport; tit
               <p className="text-xs text-warm-300">{note}</p>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Attendance Forecast */}
+      {forecast && (
+        <div className="bg-whoop-panel border border-teal/30 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+            <Users className="w-4 h-4 text-teal" />
+            <span className="text-sm font-semibold text-white">Attendance Forecast</span>
+            <span className="ml-auto text-[10px] text-warm-500 bg-warm-800 px-2 py-0.5 rounded-full">
+              {forecast.model_short}
+            </span>
+          </div>
+          <div className="p-4 space-y-3">
+            {/* Attendance bar */}
+            <div className="flex items-end gap-3">
+              <div className="flex-1">
+                <div className="flex justify-between text-[10px] text-warm-500 mb-1">
+                  <span>Low</span><span>Most Likely</span><span>High</span>
+                </div>
+                <div className="relative h-8 bg-warm-800 rounded-lg overflow-hidden">
+                  <div className="absolute inset-y-0 left-0 bg-teal/15 rounded-lg"
+                    style={{ width: `${forecast.high / (parseInt('' + forecast.high) + 20) * 100}%` }} />
+                  <div className="absolute inset-y-0 left-0 bg-teal/30 rounded-lg"
+                    style={{ width: `${forecast.mid / (parseInt('' + forecast.high) + 20) * 100}%` }} />
+                  <div className="absolute inset-y-0 left-0 bg-teal/60 rounded-lg"
+                    style={{ width: `${forecast.low / (parseInt('' + forecast.high) + 20) * 100}%` }} />
+                </div>
+                <div className="flex justify-between text-[11px] font-semibold text-white mt-1">
+                  <span>{forecast.low}</span>
+                  <span className="text-teal text-base">{forecast.mid} people</span>
+                  <span>{forecast.high}</span>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-warm-500">Fill Rate</p>
+                <p className="text-xl font-bold text-teal">{forecast.fill_rate_pct}%</p>
+              </div>
+            </div>
+
+            {/* Revenue grid */}
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: 'Conservative', value: `$${forecast.revenue_low.toLocaleString()}` },
+                { label: 'Expected', value: `$${forecast.revenue_mid.toLocaleString()}` },
+                { label: 'Best Case', value: `$${forecast.revenue_high.toLocaleString()}` },
+              ].map(m => (
+                <div key={m.label} className="bg-warm-800/60 rounded-lg p-2.5 text-center">
+                  <p className="text-[10px] text-warm-500">{m.label}</p>
+                  <p className="text-sm font-bold text-green-400">{m.value}</p>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[10px] text-warm-500">
+              Avg spend assumption: ${forecast.avg_spend_assumption}/head (drinks) + cover charge.
+              {forecast.historical_sessions > 0
+                ? ` Trained on ${forecast.historical_sessions} real sessions from camera data.`
+                : ' Upgrade to ML model after 30 camera-tracked sessions.'}
+            </p>
+            {forecast.confidence === 'model' && (
+              <p className="text-[10px] text-amber-400/80">
+                ⚠ Baseline model — run VenueScope People Counter on live events to unlock venue-specific ML forecast
+              </p>
+            )}
+          </div>
         </div>
       )}
 

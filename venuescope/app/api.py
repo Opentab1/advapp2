@@ -497,6 +497,28 @@ class _APIHandler(BaseHTTPRequestHandler):
                 venues = list_venues()
                 _json_response(self, {"cameras": cams, "venues": venues}, 200)
 
+            elif path == "/api/events/forecast":
+                # Attendance forecast for a given concept / date / capacity
+                from urllib.parse import parse_qs
+                qs           = parse_qs(urlparse(self.path).query)
+                concept_type = qs.get("concept",  ["DJ Night"])[0]
+                city         = qs.get("city",     [""])[0]
+                event_date   = qs.get("date",     [""])[0]
+                capacity     = int(qs.get("capacity", ["150"])[0])
+                cover        = float(qs.get("cover", ["0"])[0])
+                weather_risk = qs.get("weather_risk", ["none"])[0]
+                try:
+                    from core.forecasting import forecast_attendance
+                    result = forecast_attendance(
+                        concept_type=concept_type, city=city,
+                        event_date_str=event_date or _next_friday(),
+                        capacity=capacity, cover_charge=cover,
+                        weather_risk=weather_risk,
+                    )
+                    _json_response(self, result, 200)
+                except Exception as exc:
+                    _json_response(self, {"error": str(exc)}, 500)
+
             elif path == "/api/events/validate":
                 # Auto-validate an event concept — pulls Google Trends + weather + Reddit
                 from urllib.parse import parse_qs
