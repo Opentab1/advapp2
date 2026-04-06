@@ -15,6 +15,10 @@ from typing import Optional
 
 log = logging.getLogger("camera_loop")
 
+# Occupancy (people_counter) runs every 20 minutes — frees camera bandwidth
+# for the high-priority modes: drink_count, bottle_counter, staff_activity, table_turns.
+OCCUPANCY_INTERVAL = 1200  # seconds (20 minutes = 3x per hour)
+
 
 def _recent_job_for_camera(camera_id: str, camera_name: str) -> Optional[dict]:
     """Return the most recent job for this camera if it's still active."""
@@ -76,11 +80,36 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     return jid
 
 
+def _effective_cam(cam: dict, last_occupancy_t: float) -> dict:
+    """
+    Return a copy of cam with people_counter throttled to OCCUPANCY_INTERVAL.
+    If it's not yet time for an occupancy run, strip people_counter from modes
+    so the segment runs only the high-priority modes (drink_count, bottle_counter,
+    staff_activity, table_turns).
+    """
+    mode_str = cam.get("mode", "drink_count")
+    all_modes = [m.strip() for m in mode_str.split(",") if m.strip()]
+
+    if "people_counter" not in all_modes:
+        return cam  # nothing to throttle
+
+    elapsed = time.time() - last_occupancy_t
+    if elapsed < OCCUPANCY_INTERVAL:
+        # Not yet — strip people_counter for this segment
+        filtered = [m for m in all_modes if m != "people_counter"]
+        if not filtered:
+            filtered = ["drink_count"]
+        cam = dict(cam)
+        cam["mode"] = ",".join(filtered)
+    return cam
+
+
 def _run_camera_loop(cam: dict, stop_event: threading.Event):
     """Continuously process segments for one camera until stop_event is set."""
     camera_id   = cam["camera_id"]
     camera_name = cam["name"]
     seg_num     = 0
+    last_occupancy_t = 0.0  # epoch of last people_counter segment launch
     log.info(f"[camera_loop] Starting loop for '{camera_name}' ({camera_id})")
 
     while not stop_event.is_set():
@@ -100,9 +129,22 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                 stop_event.wait(10)
                 continue
 
+            # Apply occupancy throttle — people_counter only every 20 minutes
+            effective = _effective_cam(current, last_occupancy_t)
+            all_effective_modes = [m.strip() for m in effective.get("mode","").split(",") if m.strip()]
+            if "people_counter" in all_effective_modes:
+                last_occupancy_t = time.time()
+                mins_next = OCCUPANCY_INTERVAL / 60
+                log.info(f"[camera_loop] '{camera_name}' — occupancy run included "
+                         f"(next in {mins_next:.0f} min)")
+            elif "people_counter" in (current.get("mode","") or ""):
+                remaining = int((OCCUPANCY_INTERVAL - (time.time() - last_occupancy_t)) / 60)
+                log.debug(f"[camera_loop] '{camera_name}' — occupancy skipped "
+                          f"({remaining}m until next run)")
+
             # Launch next segment (or continuous job)
             seg_num += 1
-            _launch_segment(current, seg_num)
+            _launch_segment(effective, seg_num)
 
             seg_secs = float(current.get("segment_seconds", 60))
             if seg_secs == 0:
