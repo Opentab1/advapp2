@@ -401,6 +401,13 @@ class VenueProcessor:
             self.profile["imgsz"]  = max(self.profile["imgsz"], 1280)
             self.profile["stride"] = 1          # every frame — overhead cameras miss fast movements
 
+        # Bottle count: bottles in overhead/fisheye cameras need high-res inference.
+        # YOLO misses them at 640px but detects reliably at 1280px.
+        if analysis_mode == "bottle_count":
+            self.profile = dict(self.profile)
+            self.profile["imgsz"] = max(self.profile.get("imgsz", 640), 1280)
+            self.profile["conf"]  = min(self.profile["conf"], 0.15)
+
         # Gap 3: Swap in mode-specific ByteTrack YAML
         self.profile = dict(self.profile)
         self.profile["tracker"] = _get_tracker_yaml(analysis_mode)
@@ -666,8 +673,9 @@ class VenueProcessor:
             if not self._night_mode_checked and self._processed <= 3:
                 if detect_night_mode(frame):
                     self._night_mode = True
-                    self.cb(0, "Night/IR camera detected — switching to night enhancement mode")
-                if self._processed == 3:
+                    if self._processed == 1:
+                        self.cb(0, "Night/IR camera detected — switching to night enhancement mode")
+                if self._processed >= 3:
                     self._night_mode_checked = True
             if self._night_mode:
                 frame = night_mode_enhance(frame)

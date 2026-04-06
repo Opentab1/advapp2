@@ -11,6 +11,7 @@ from sqlalchemy import (
     String, Float, Text, Boolean, Integer,
     select, insert, text, event as sa_event
 )
+from sqlalchemy.pool import NullPool
 from core.config import DB_PATH, CONFIG_DIR
 
 _engine = None
@@ -70,6 +71,7 @@ def _migrate_schema(engine):
     migrations = [
         "ALTER TABLE jobs ADD COLUMN is_deleted BOOLEAN DEFAULT 0",
         "ALTER TABLE jobs ADD COLUMN deleted_at FLOAT",
+        "ALTER TABLE cameras ADD COLUMN venue TEXT NOT NULL DEFAULT 'Default Venue'",
         (
             "CREATE TABLE IF NOT EXISTS audit_log ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -91,7 +93,8 @@ def get_engine():
     if _engine is None:
         _engine = create_engine(
             f"sqlite:///{DB_PATH}", echo=False,
-            connect_args={"check_same_thread": False}
+            connect_args={"check_same_thread": False},
+            poolclass=NullPool,   # no connection pool — fork-safe, no mutex deadlocks
         )
         sa_event.listen(_engine, "connect", _configure_sqlite)
         _meta.create_all(_engine)
@@ -433,6 +436,7 @@ def import_configs(data: dict) -> tuple:
 # ── Camera registry ──────────────────────────────────────────────────────────
 cameras_table = Table("cameras", _meta,
     Column("camera_id",   String, primary_key=True),
+    Column("venue",       String, nullable=False, default="Default Venue"),
     Column("name",        String, nullable=False),
     Column("rtsp_url",    String, nullable=False),
     Column("mode",        String, nullable=False, default="drink_count"),
@@ -447,6 +451,7 @@ cameras_table = Table("cameras", _meta,
 
 
 def save_camera(camera_id: str, name: str, rtsp_url: str, mode: str,
+                venue: str = "Default Venue",
                 config_path: str = None, shift_id: str = None,
                 model_profile: str = "balanced", segment_seconds: float = 300.0,
                 enabled: bool = True, notes: str = "") -> None:
@@ -457,28 +462,40 @@ def save_camera(camera_id: str, name: str, rtsp_url: str, mode: str,
         ).mappings().first()
         if existing:
             c.execute(text(
-                "UPDATE cameras SET name=:name, rtsp_url=:url, mode=:mode, "
+                "UPDATE cameras SET venue=:venue, name=:name, rtsp_url=:url, mode=:mode, "
                 "config_path=:cp, shift_id=:sid, model_profile=:mp, "
                 "segment_seconds=:seg, enabled=:en, notes=:no "
                 "WHERE camera_id=:id"
-            ), {"name": name, "url": rtsp_url, "mode": mode, "cp": config_path,
+            ), {"venue": venue, "name": name, "url": rtsp_url, "mode": mode, "cp": config_path,
                 "sid": shift_id, "mp": model_profile, "seg": segment_seconds,
                 "en": enabled, "no": notes, "id": camera_id})
         else:
             c.execute(insert(cameras_table).values(
-                camera_id=camera_id, name=name, rtsp_url=rtsp_url, mode=mode,
+                camera_id=camera_id, venue=venue, name=name, rtsp_url=rtsp_url, mode=mode,
                 config_path=config_path, shift_id=shift_id,
                 model_profile=model_profile, segment_seconds=segment_seconds,
                 enabled=enabled, notes=notes, created_at=time.time(),
             ))
 
 
-def list_cameras() -> list:
+def list_cameras(venue: str = None) -> list:
+    with get_engine().connect() as c:
+        q = select(cameras_table).order_by(
+            cameras_table.c.venue.asc(), cameras_table.c.created_at.asc()
+        )
+        if venue:
+            q = q.where(cameras_table.c.venue == venue)
+        rows = c.execute(q).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def list_venues() -> list:
+    """Return sorted list of unique venue names that have cameras registered."""
     with get_engine().connect() as c:
         rows = c.execute(
-            select(cameras_table).order_by(cameras_table.c.created_at.asc())
-        ).mappings().all()
-    return [dict(r) for r in rows]
+            text("SELECT DISTINCT venue FROM cameras ORDER BY venue ASC")
+        ).fetchall()
+    return [r[0] for r in rows if r[0]]
 
 
 def get_camera(camera_id: str) -> Optional[Dict]:
