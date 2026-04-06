@@ -99,7 +99,7 @@ export function Settings() {
   const [registering, setRegistering]             = useState<string | null>(null);
   const [expandedIp, setExpandedIp]               = useState<string | null>(null);
   const [discoveryRunning, setDiscoveryRunning]   = useState(false);
-  const [allDiscovered, setAllDiscovered]         = useState<Array<{ip:string;ports:Record<string,number>;is_camera:boolean;onvif:boolean;arp_hostname:string|null}>>([]);
+  const [allDiscovered, setAllDiscovered]         = useState<Array<{ip:string;ports:Record<string,number>;is_camera:boolean;onvif:boolean;arp_hostname:string|null;vendor:string|null;mac:string|null}>>([]);
   const [discoveryDone, setDiscoveryDone]         = useState(false);
 
   const serverUrl = (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
@@ -164,11 +164,11 @@ export function Settings() {
       fetch(`${serverUrl}/api/cameras/discover`).then(r => r.ok ? r.json() : {cameras:[]}),
     ]);
 
-    const arpMap: Record<string, string | null> = {};
+    const arpMap: Record<string, { hostname: string | null; vendor: string | null; mac: string | null }> = {};
     if (arpRes.status === 'fulfilled') {
       const entries = arpRes.value.entries || [];
       setArpEntries(entries);
-      for (const e of entries) arpMap[e.ip] = e.hostname;
+      for (const e of entries) arpMap[e.ip] = { hostname: e.hostname, vendor: e.vendor || null, mac: e.mac || null };
     }
 
     const onvifIps = new Set<string>();
@@ -182,10 +182,11 @@ export function Settings() {
       }
     }
 
-    const merged: Array<{ip:string;ports:Record<string,number>;is_camera:boolean;onvif:boolean;arp_hostname:string|null}> = [];
+    const merged: Array<{ip:string;ports:Record<string,number>;is_camera:boolean;onvif:boolean;arp_hostname:string|null;vendor:string|null;mac:string|null}> = [];
     if (scanRes.status === 'fulfilled') {
       for (const h of (scanRes.value.found || [])) {
-        merged.push({ ...h, onvif: onvifIps.has(h.ip), arp_hostname: arpMap[h.ip] || null });
+        const arp = arpMap[h.ip] || { hostname: null, vendor: null, mac: null };
+        merged.push({ ...h, onvif: onvifIps.has(h.ip), arp_hostname: arp.hostname, vendor: arp.vendor, mac: arp.mac });
       }
       setSubnetHosts(scanRes.value.found || []);
       setSubnetScanned(scanRes.value.scanned || 0);
@@ -194,7 +195,8 @@ export function Settings() {
     // Also add ONVIF-only (not in scan)
     for (const ip of onvifIps) {
       if (!merged.find(m => m.ip === ip)) {
-        merged.push({ ip, ports: {'554': 0, '80': 0}, is_camera: true, onvif: true, arp_hostname: arpMap[ip] || null });
+        const arp = arpMap[ip] || { hostname: null, vendor: null, mac: null };
+        merged.push({ ip, ports: {'554': 0, '80': 0}, is_camera: true, onvif: true, arp_hostname: arp.hostname, vendor: arp.vendor, mac: arp.mac });
       }
     }
 
@@ -1379,6 +1381,9 @@ export function Settings() {
                                   <div className="flex items-center gap-2 min-w-0 flex-1">
                                     <span className={`w-2 h-2 rounded-full flex-shrink-0 ${host.is_camera ? 'bg-green-400' : 'bg-warm-500'}`} />
                                     <span className="text-sm font-mono text-white">{host.ip}</span>
+                                    {host.vendor && (
+                                      <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 text-blue-300 border border-blue-500/20 rounded font-medium flex-shrink-0">{host.vendor}</span>
+                                    )}
                                     {host.arp_hostname && (
                                       <span className="text-xs text-warm-500 truncate">{host.arp_hostname}</span>
                                     )}
@@ -1414,6 +1419,14 @@ export function Settings() {
                                 {/* Expanded panel */}
                                 {isExpanded && (
                                   <div className="border-t border-warm-700 p-3 space-y-3 bg-warm-900/30">
+
+                                    {/* ARP info */}
+                                    {(host.mac || host.vendor) && (
+                                      <div className="flex items-center gap-3 text-xs text-warm-500 font-mono">
+                                        {host.mac && <span>MAC: {host.mac}</span>}
+                                        {host.vendor && <span className="text-warm-400">({host.vendor})</span>}
+                                      </div>
+                                    )}
 
                                     {/* Credentials */}
                                     <div className="flex gap-2 items-end">

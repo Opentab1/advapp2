@@ -928,10 +928,39 @@ class _APIHandler(BaseHTTPRequestHandler):
             elif path == "/api/cameras/arp-table":
                 # Parse ARP table — instantly shows what devices the OS has already seen
                 import subprocess as _sp2, re as _re2
+                # OUI → vendor map for common camera/network hardware
+                _OUI = {
+                    "fc:b5:77": "Ubiquiti",    "00:15:6d": "Ubiquiti",
+                    "24:a4:3c": "Ubiquiti",    "70:a7:41": "Ubiquiti",
+                    "ac:8b:a9": "Ubiquiti",    "e0:63:da": "Ubiquiti",
+                    "68:d7:9a": "Ubiquiti",    "80:2a:a8": "Ubiquiti",
+                    "a0:60:32": "Dahua",       "9c:8e:cd": "Dahua",
+                    "ec:71:db": "Dahua",       "bc:32:5f": "Dahua",
+                    "4c:11:bf": "Dahua",       "30:e3:7a": "Dahua",
+                    "bc:ad:28": "Hikvision",   "44:19:b6": "Hikvision",
+                    "8c:e7:48": "Hikvision",   "c0:56:e3": "Hikvision",
+                    "28:57:be": "Hikvision",   "c4:2f:90": "Hikvision",
+                    "ac:cc:8e": "Axis",        "00:40:8c": "Axis",
+                    "b8:27:eb": "Raspberry Pi","dc:a6:32": "Raspberry Pi",
+                    "e4:5f:01": "Raspberry Pi","88:a2:9e": "Raspberry Pi",
+                    "d8:3a:dd": "Raspberry Pi",
+                    "00:0c:e5": "Reolink",     "ec:71:db": "Reolink",
+                    "00:62:6e": "Amcrest",
+                    "00:0f:48": "Synology",
+                    "d8:b3:70": "Ubiquiti",    "e8:65:d4": "Ubiquiti",
+                }
+                def _oui_vendor(mac):
+                    if not mac: return None
+                    parts = mac.replace('-',':').lower().split(':')
+                    if len(parts) < 3: return None
+                    # normalize single-digit octets
+                    norm = ':'.join(p.zfill(2) for p in parts[:3])
+                    return _OUI.get(norm)
+
                 entries = []
                 try:
-                    # macOS: arp -a
-                    r = _sp2.run(['arp', '-a'], capture_output=True, text=True, timeout=5)
+                    # macOS: arp -an (-n skips DNS reverse lookup, much faster)
+                    r = _sp2.run(['arp', '-an'], capture_output=True, text=True, timeout=5)
                     if r.returncode == 0:
                         for line in r.stdout.splitlines():
                             # Format: hostname (ip) at mac on iface
@@ -949,6 +978,7 @@ class _APIHandler(BaseHTTPRequestHandler):
                                     "mac": mac if mac != '(incomplete)' else None,
                                     "hostname": hostname if hostname != '?' else None,
                                     "interface": iface,
+                                    "vendor": _oui_vendor(mac),
                                 })
                 except Exception:
                     pass
@@ -971,6 +1001,7 @@ class _APIHandler(BaseHTTPRequestHandler):
                                         "mac": mac,
                                         "hostname": None,
                                         "interface": iface,
+                                        "vendor": _oui_vendor(mac),
                                     })
                     except Exception:
                         pass
