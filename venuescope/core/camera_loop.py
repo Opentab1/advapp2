@@ -4,8 +4,10 @@ For each enabled registered camera, automatically queues new segment jobs
 as previous segments complete. Runs as a background thread inside the
 worker process, or standalone via: python -m core.camera_loop
 
-This is what makes the system feel "real-time":
-  - 60-second segments → results appear ~1-2 min after events happen
+Real-time detection design:
+  - 15-second segments → detections write to DB within ~25s of the event
+  - drink_count, bottle_counter, staff_activity, table_turns run every segment
+  - people_counter throttled to every 20 minutes (3x/hour) — frees resources
   - Loops forever until the camera is disabled or the process stops
   - Skips cameras that already have a pending/running job
 """
@@ -44,11 +46,12 @@ def _parse_modes(mode_str: str) -> tuple[str, list[str]]:
 
 def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     """Create one segment job for this camera. Returns job_id.
+    Default segment is 15s for near-real-time detection.
     If segment_seconds == 0, runs continuously (no duration limit)."""
     from core.database import create_job, _raw_update
     jid   = str(uuid.uuid4())[:8]
     label = f"📡 {cam['name']}"
-    seg_secs = float(cam.get("segment_seconds", 60))
+    seg_secs = float(cam.get("segment_seconds", 15))
     continuous = (seg_secs == 0)
     if seg_num > 0 and not continuous:
         label += f" — seg {seg_num}"
@@ -146,14 +149,14 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             seg_num += 1
             _launch_segment(effective, seg_num)
 
-            seg_secs = float(current.get("segment_seconds", 60))
+            seg_secs = float(current.get("segment_seconds", 15))
             if seg_secs == 0:
-                # Continuous mode: just poll every 10s to see if the job ended
+                # Continuous mode: poll every 10s to see if the job ended
                 # (stream disconnect) so we can relaunch immediately
                 stop_event.wait(10)
             else:
-                # Segmented mode: wait roughly the segment duration before queuing
-                # the next one — avoids flooding the job queue.
+                # Segmented mode: wait the segment duration before queuing the next.
+                # 15s default → detections appear within ~25s of the event.
                 waited = 0.0
                 while waited < seg_secs and not stop_event.is_set():
                     stop_event.wait(min(5, seg_secs - waited))
