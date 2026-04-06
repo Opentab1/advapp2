@@ -44,6 +44,7 @@ PAGES = {
     "📋  Unified Report":   "app/pages/07_unified.py",
     "🔑  Shift Setup":      "app/pages/03_shift.py",
     "⚙️  Zone Layout":      "app/pages/04_layout.py",
+    "📡  Live Cameras":      "app/pages/05_live.py",
     "🔧  System Check":     "app/pages/05_system.py",
     "⚙️  Settings":          "app/pages/06_settings.py",
 }
