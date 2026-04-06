@@ -620,6 +620,140 @@ class _APIHandler(BaseHTTPRequestHandler):
                     })
                 _json_response(self, {"cameras": results}, 200)
 
+            elif path == "/api/cameras/network-info":
+                # Return worker's network interfaces and IPs
+                import socket as _sock, subprocess as _sp, platform as _pl, re as _nre2
+                import ipaddress as _ipm
+                interfaces = []
+
+                # Try Linux: ip -4 addr show
+                try:
+                    r = _sp.run(['ip', '-4', 'addr', 'show'],
+                                capture_output=True, text=True, timeout=3)
+                    if r.returncode == 0:
+                        cur = None
+                        for line in r.stdout.splitlines():
+                            m = _nre2.match(r'^\d+:\s+(\S+):', line)
+                            if m:
+                                cur = m.group(1).rstrip(':@')
+                            am = _nre2.search(r'inet\s+([\d.]+)/(\d+)', line)
+                            if am and cur:
+                                ip4 = am.group(1)
+                                plen = int(am.group(2))
+                                if ip4.startswith('127.'):
+                                    continue
+                                net = str(_ipm.IPv4Network(f"{ip4}/{plen}", strict=False))
+                                interfaces.append({"name": cur, "ip": ip4,
+                                                   "subnet": net, "prefix": plen})
+                except Exception:
+                    pass
+
+                # macOS fallback: ifconfig
+                if not interfaces:
+                    try:
+                        r = _sp.run(['ifconfig'], capture_output=True, text=True, timeout=3)
+                        if r.returncode == 0:
+                            cur = None
+                            for line in r.stdout.splitlines():
+                                m = _nre2.match(r'^(\w[\w.]+\d*):', line)
+                                if m:
+                                    cur = m.group(1)
+                                am = _nre2.search(
+                                    r'inet\s+([\d.]+)\s+netmask\s+(0x[\da-fA-F]+|[\d.]+)', line)
+                                if am and cur:
+                                    ip4 = am.group(1)
+                                    if ip4.startswith('127.'):
+                                        continue
+                                    raw_mask = am.group(2)
+                                    try:
+                                        if raw_mask.startswith('0x'):
+                                            mask_int = int(raw_mask, 16)
+                                            mask = str(_ipm.IPv4Address(mask_int))
+                                        else:
+                                            mask = raw_mask
+                                        net_obj = _ipm.IPv4Network(f"{ip4}/{mask}", strict=False)
+                                        interfaces.append({
+                                            "name": cur, "ip": ip4,
+                                            "subnet": str(net_obj),
+                                            "prefix": net_obj.prefixlen,
+                                        })
+                                    except Exception:
+                                        interfaces.append({"name": cur, "ip": ip4,
+                                                           "subnet": None, "prefix": None})
+                    except Exception:
+                        pass
+
+                # Last resort: socket
+                if not interfaces:
+                    try:
+                        _, _, ips = _sock.gethostbyname_ex(_sock.gethostname())
+                        for ip4 in ips:
+                            if not ip4.startswith('127.'):
+                                interfaces.append({"name": "default", "ip": ip4,
+                                                   "subnet": None, "prefix": None})
+                    except Exception:
+                        pass
+
+                _json_response(self, {
+                    "hostname": _sock.gethostname(),
+                    "platform": _pl.system(),
+                    "interfaces": interfaces,
+                }, 200)
+
+            elif path == "/api/cameras/subnet-scan":
+                # Scan a /24 (or smaller) subnet for devices with open camera ports
+                import socket as _sock2, concurrent.futures as _cf
+                import ipaddress as _ipm2
+                from urllib.parse import parse_qs as _pqs2
+                qs2 = _pqs2(urlparse(self.path).query)
+                subnet_str = qs2.get("subnet", ["192.168.1.0/24"])[0]
+                ports_raw  = qs2.get("ports",  ["554,80,8554,443"])[0]
+                scan_ports = [int(p) for p in ports_raw.split(",")
+                              if p.strip().isdigit()][:8]
+
+                try:
+                    network2 = _ipm2.ip_network(subnet_str, strict=False)
+                except ValueError as ve:
+                    _json_response(self, {"error": f"Invalid subnet: {ve}"}, 400)
+                    return
+
+                if network2.num_addresses > 256:
+                    _json_response(self,
+                        {"error": "Subnet too large — use /24 or smaller"}, 400)
+                    return
+
+                hosts_list = [str(h) for h in network2.hosts()]
+
+                def _probe(ip):
+                    open_p = {}
+                    for p in scan_ports:
+                        try:
+                            t0 = time.time()
+                            with _sock2.create_connection((ip, p), timeout=0.5):
+                                open_p[str(p)] = int((time.time() - t0) * 1000)
+                        except Exception:
+                            pass
+                    if not open_p:
+                        return None
+                    return {
+                        "ip": ip,
+                        "ports": open_p,
+                        "is_camera": "554" in open_p or "8554" in open_p,
+                    }
+
+                with _cf.ThreadPoolExecutor(max_workers=64) as _ex:
+                    raw2 = list(_ex.map(_probe, hosts_list))
+
+                found2 = [r for r in raw2 if r is not None]
+                # Sort: cameras first, then by IP
+                found2.sort(key=lambda x: (not x["is_camera"],
+                            tuple(int(o) for o in x["ip"].split("."))))
+                _json_response(self, {
+                    "subnet": subnet_str,
+                    "scanned": len(hosts_list),
+                    "found": found2,
+                }, 200)
+
             else:
                 _json_response(self, {"error": "Not found", "path": path}, 404)
 
