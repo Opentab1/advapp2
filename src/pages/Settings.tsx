@@ -66,6 +66,13 @@ export function Settings() {
     venue: '', name: '', rtsp_url: '', mode: 'drink_count', model_profile: 'balanced', notes: ''
   });
 
+  // ONVIF network scan
+  const [scanning, setScanning]           = useState(false);
+  const [discovered, setDiscovered]       = useState<any[]>([]);
+  const [scanDone, setScanDone]           = useState(false);
+  const [fetchingRtsp, setFetchingRtsp]   = useState<string | null>(null); // ip being fetched
+  const [camCreds, setCamCreds]           = useState<Record<string, { u: string; p: string }>>({});
+
   const serverUrl = (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
 
   const loadRegCameras = async () => {
@@ -92,6 +99,33 @@ export function Settings() {
   const deleteRegCamera = async (id: string) => {
     await fetch(`${serverUrl}/api/cameras/${id}`, { method: 'DELETE' });
     await loadRegCameras();
+  };
+
+  const scanNetwork = async () => {
+    setScanning(true); setScanDone(false); setDiscovered([]);
+    try {
+      const r = await fetch(`${serverUrl}/api/cameras/discover`);
+      if (r.ok) { const d = await r.json(); setDiscovered(d.cameras || []); }
+    } catch { /* not reachable */ }
+    setScanning(false); setScanDone(true);
+  };
+
+  const fetchRtsp = async (cam: any) => {
+    const creds = camCreds[cam.ip] || { u: 'admin', p: '' };
+    setFetchingRtsp(cam.ip);
+    try {
+      const r = await fetch(`${serverUrl}/api/cameras/fetch-rtsp`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip: cam.ip, username: creds.u, password: creds.p, xaddrs: cam.xaddrs }),
+      });
+      const d = await r.json();
+      if (d.ok && d.rtsp_url) {
+        setNewCam(p => ({ ...p, rtsp_url: d.rtsp_url, name: p.name || `Camera ${cam.ip}` }));
+        setShowAddCam(true);
+      } else {
+        setDiscovered(prev => prev.map(c => c.ip === cam.ip ? { ...c, error: d.error || 'Failed' } : c));
+      }
+    } finally { setFetchingRtsp(null); }
   };
 
   // Poll camera connection status when on cameras tab
@@ -1014,6 +1048,67 @@ export function Settings() {
                   </button>
                 </div>
                 <p className="text-sm text-warm-400 mb-4">Register RTSP cameras per venue. The worker daemon connects and runs analysis automatically.</p>
+
+                {/* ── Scan Network ── */}
+                <div className="mb-5 p-4 bg-warm-900/40 border border-warm-700 rounded-xl">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <p className="text-sm font-semibold text-white">🔍 Scan Network for Cameras</p>
+                      <p className="text-xs text-warm-500 mt-0.5">Broadcasts a discovery signal — finds any ONVIF-compatible camera on the same network automatically. Works even when the camera company doesn't publish the RTSP URL.</p>
+                    </div>
+                    <button onClick={scanNetwork} disabled={scanning}
+                      className="ml-4 flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-teal/20 border border-teal/40 text-teal hover:bg-teal/30 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
+                      <RefreshCw className={`w-3.5 h-3.5 ${scanning ? 'animate-spin' : ''}`} />
+                      {scanning ? 'Scanning…' : 'Scan Now'}
+                    </button>
+                  </div>
+
+                  {scanning && (
+                    <p className="text-xs text-warm-400 mt-3">Broadcasting discovery signal across the network (4 s)…</p>
+                  )}
+
+                  {scanDone && discovered.length === 0 && (
+                    <p className="text-xs text-warm-500 mt-3">No ONVIF cameras found. Make sure you're on the same network as the cameras, or add the RTSP URL manually below.</p>
+                  )}
+
+                  {discovered.length > 0 && (
+                    <div className="mt-3 space-y-3">
+                      <p className="text-xs text-green-400 font-medium">{discovered.length} camera{discovered.length !== 1 ? 's' : ''} found on network:</p>
+                      {discovered.map(cam => (
+                        <div key={cam.ip} className="p-3 bg-warm-800 border border-warm-600 rounded-lg">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <div>
+                              <p className="text-sm font-medium text-white font-mono">{cam.ip}</p>
+                              <p className="text-xs text-warm-500 truncate">{cam.xaddrs?.[0] || ''}</p>
+                            </div>
+                            <button
+                              onClick={() => fetchRtsp(cam)}
+                              disabled={fetchingRtsp === cam.ip}
+                              className="flex-shrink-0 px-3 py-1.5 bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 rounded-lg text-xs font-medium transition-all disabled:opacity-50">
+                              {fetchingRtsp === cam.ip ? 'Fetching…' : 'Get RTSP URL →'}
+                            </button>
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              placeholder="Username (admin)"
+                              value={camCreds[cam.ip]?.u ?? 'admin'}
+                              onChange={e => setCamCreds(p => ({ ...p, [cam.ip]: { ...p[cam.ip], u: e.target.value } }))}
+                              className="flex-1 bg-warm-900 border border-warm-600 rounded px-2 py-1 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-primary"
+                            />
+                            <input
+                              type="password"
+                              placeholder="Password"
+                              value={camCreds[cam.ip]?.p ?? ''}
+                              onChange={e => setCamCreds(p => ({ ...p, [cam.ip]: { ...p[cam.ip], p: e.target.value } }))}
+                              className="flex-1 bg-warm-900 border border-warm-600 rounded px-2 py-1 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-primary"
+                            />
+                          </div>
+                          {cam.error && <p className="text-xs text-red-400 mt-1">{cam.error}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* Add camera form */}
                 {showAddCam && (

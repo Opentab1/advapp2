@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.config   import CONFIG_DIR
 from core.database import list_jobs, get_job, list_cameras, list_venues, save_camera, delete_camera
+from core.onvif_discover import discover_cameras, get_rtsp_url
 
 API_VERSION = "1.0"
 API_PORT    = 8502
@@ -294,6 +295,22 @@ class _APIHandler(BaseHTTPRequestHandler):
                     notes           = body.get("notes", ""),
                 )
                 _json_response(self, {"ok": True, "camera_id": cam_id}, 201)
+
+            elif path == "/api/cameras/fetch-rtsp":
+                # Given an IP + credentials, fetch the RTSP URL via ONVIF
+                ip       = body.get("ip", "")
+                username = body.get("username", "admin")
+                password = body.get("password", "")
+                xaddrs   = body.get("xaddrs")
+                if not ip:
+                    _json_response(self, {"error": "ip required"}, 400)
+                    return
+                rtsp = get_rtsp_url(ip, username=username, password=password,
+                                    xaddrs=xaddrs, timeout=6.0)
+                if rtsp:
+                    _json_response(self, {"ok": True, "rtsp_url": rtsp}, 200)
+                else:
+                    _json_response(self, {"ok": False, "error": "Could not retrieve RTSP URL — check credentials"}, 200)
             else:
                 _json_response(self, {"error": "Not found"}, 404)
         except Exception as exc:
@@ -344,6 +361,11 @@ class _APIHandler(BaseHTTPRequestHandler):
                 cams   = list_cameras()
                 venues = list_venues()
                 _json_response(self, {"cameras": cams, "venues": venues}, 200)
+
+            elif path == "/api/cameras/discover":
+                # WS-Discovery scan — finds ONVIF cameras on the local network
+                found = discover_cameras(timeout=4.0)
+                _json_response(self, {"cameras": found}, 200)
 
             else:
                 _json_response(self, {"error": "Not found", "path": path}, 404)
