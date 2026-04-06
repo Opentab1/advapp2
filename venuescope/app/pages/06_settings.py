@@ -8,7 +8,9 @@ import json, time
 import streamlit as st
 from pathlib import Path
 
-from core.database import export_configs, import_configs, create_job, list_jobs_filtered
+from core.database import (export_configs, import_configs, create_job, list_jobs_filtered,
+                           list_cameras, list_venues, get_camera, save_camera, delete_camera,
+                           _raw_update)
 from core.config   import UPLOAD_DIR, RESULT_DIR, CONFIG_DIR, ANALYSIS_MODES, MODEL_PROFILES
 from core.shift    import ShiftManager
 from core.bar_config import BarConfig
@@ -18,12 +20,143 @@ _page_auth()
 
 st.title("⚙️ Settings & Backup")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["💾 Backup & Restore", "🎥 Batch Analysis", "🏠 Venue", "🔐 Security", "📋 Compliance"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📡 Cameras", "💾 Backup & Restore", "🎥 Batch Analysis", "🏠 Venue", "🔐 Security", "📋 Compliance"])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 1: Backup / Restore
 # ─────────────────────────────────────────────────────────────────────────────
-with tab1:
+with tab1:  # ── Cameras ──────────────────────────────────────────────────────
+    import uuid as _uuid, json as _json
+
+    RTSP_TEMPLATES = {
+        "Hikvision":   "rtsp://admin:PASSWORD@IP:554/Streaming/Channels/101",
+        "Dahua":       "rtsp://admin:PASSWORD@IP:554/cam/realmonitor?channel=1&subtype=0",
+        "Reolink":     "rtsp://admin:PASSWORD@IP:554/h264Preview_01_main",
+        "Axis":        "rtsp://root:PASSWORD@IP/axis-media/media.amp",
+        "Uniview":     "rtsp://admin:PASSWORD@IP:554/media/video1",
+        "Amcrest":     "rtsp://admin:PASSWORD@IP:554/cam/realmonitor?channel=1&subtype=0",
+        "Generic NVR": "rtsp://admin:PASSWORD@IP:554/stream1",
+    }
+
+    cameras_list = list_cameras()
+    cam_tab_reg, cam_tab_add = st.tabs(["📷 Registered Cameras", "➕ Add Camera"])
+
+    with cam_tab_reg:
+        if not cameras_list:
+            st.info("No cameras registered yet. Use **Add Camera** to get started.")
+        else:
+            all_venue_names = sorted({c.get("venue","Default Venue") for c in cameras_list})
+            vf = st.selectbox("Filter by venue", ["All venues"] + all_venue_names, key="cam_vf")
+            shown = cameras_list if vf == "All venues" else [
+                c for c in cameras_list if c.get("venue") == vf
+            ]
+            from collections import defaultdict as _dd
+            by_venue = _dd(list)
+            for c in shown:
+                by_venue[c.get("venue","Default Venue")].append(c)
+
+            for vname, vcams in sorted(by_venue.items()):
+                st.markdown(f"**🏠 {vname}** &nbsp; <span style='color:#94a3b8;font-size:0.85em'>({len(vcams)} camera{'s' if len(vcams)!=1 else ''})</span>", unsafe_allow_html=True)
+                for cam in vcams:
+                    c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
+                    with c1:
+                        st.markdown(f"**{cam['name']}**")
+                        st.caption(f"`{cam['rtsp_url']}`")
+                    with c2:
+                        st.caption(ANALYSIS_MODES.get(cam["mode"], cam["mode"]))
+                        st.caption(f"{cam.get('segment_seconds',300):.0f}s · {cam.get('model_profile','balanced')}")
+                    with c3:
+                        if st.button("Edit", key=f"se_{cam['camera_id']}"):
+                            st.session_state["_edit_cam_id"] = cam["camera_id"]
+                            st.rerun()
+                    with c4:
+                        if st.button("🗑", key=f"sd_{cam['camera_id']}"):
+                            delete_camera(cam["camera_id"])
+                            st.rerun()
+                st.divider()
+
+        # Test connection
+        st.subheader("🔗 Test Connection")
+        test_url = st.text_input("RTSP URL", placeholder="rtsp://admin:pass@192.168.1.x:554/stream1", key="cam_test_url")
+        if st.button("Test") and test_url.strip():
+            import cv2 as _cv2
+            with st.spinner("Connecting…"):
+                try:
+                    cap = _cv2.VideoCapture(test_url.strip(), _cv2.CAP_FFMPEG)
+                    cap.set(_cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
+                    if cap.isOpened():
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            st.success(f"✅ Connected — {frame.shape[1]}×{frame.shape[0]}")
+                            st.image(_cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB), use_container_width=True)
+                        else:
+                            st.warning("Connected but no frame — check stream path.")
+                    else:
+                        st.error("❌ Could not connect — check IP, port, and credentials.")
+                    cap.release()
+                except Exception as _e:
+                    st.error(f"Error: {_e}")
+
+    with cam_tab_add:
+        edit_id  = st.session_state.pop("_edit_cam_id", None)
+        edit_cam = get_camera(edit_id) if edit_id else None
+        st.subheader("Edit Camera" if edit_cam else "Register New Camera")
+
+        with st.expander("🔧 RTSP URL templates by brand"):
+            st.markdown("Replace **IP** with the camera/NVR IP and **PASSWORD** with its password.")
+            brand = st.selectbox("Brand", list(RTSP_TEMPLATES.keys()), key="cam_brand")
+            st.code(RTSP_TEMPLATES[brand])
+
+        known_venues = list_venues()
+        with st.form("cam_form"):
+            f1, f2 = st.columns(2)
+            with f1:
+                if known_venues:
+                    vc = st.selectbox("Venue *", ["➕ New venue…"] + known_venues,
+                                      index=(known_venues.index(edit_cam["venue"])+1
+                                             if edit_cam and edit_cam.get("venue") in known_venues else 0),
+                                      key="cam_venue_sel")
+                    cam_venue = st.text_input("New venue name", key="cam_venue_new") if vc == "➕ New venue…" else vc
+                else:
+                    cam_venue = st.text_input("Venue name *", value=edit_cam["venue"] if edit_cam else "", placeholder="Ferg's Bar")
+                cam_name    = st.text_input("Camera name *", value=edit_cam["name"] if edit_cam else "", placeholder="Bar — CH9")
+                cam_url     = st.text_input("RTSP URL *",    value=edit_cam["rtsp_url"] if edit_cam else "", placeholder="rtsp://…")
+                cam_mode    = st.selectbox("Analysis mode", list(ANALYSIS_MODES.keys()),
+                                           index=list(ANALYSIS_MODES.keys()).index(edit_cam["mode"]) if edit_cam and edit_cam["mode"] in ANALYSIS_MODES else 0,
+                                           format_func=lambda k: ANALYSIS_MODES[k])
+            with f2:
+                cam_profile = st.selectbox("Model profile", ["fast","balanced","accurate"],
+                                           index=["fast","balanced","accurate"].index(edit_cam.get("model_profile","balanced")) if edit_cam else 1)
+                cam_seg     = st.number_input("Segment (sec)", 60, 3600, int(edit_cam.get("segment_seconds",300)) if edit_cam else 300, 60)
+                cam_notes   = st.text_area("Notes", value=edit_cam.get("notes","") if edit_cam else "", placeholder="Overhead fisheye, full bar. CH9.")
+
+            configs  = [p.stem for p in CONFIG_DIR.glob("*.json")]
+            cfg_opts = ["(none)"] + configs
+            cur_cfg  = Path(edit_cam["config_path"]).stem if edit_cam and edit_cam.get("config_path") else None
+            cam_cfg_sel = st.selectbox("Bar layout config (optional)", cfg_opts,
+                                       index=cfg_opts.index(cur_cfg) if cur_cfg and cur_cfg in cfg_opts else 0)
+            cam_cfg = str(CONFIG_DIR/f"{cam_cfg_sel}.json") if cam_cfg_sel != "(none)" else None
+
+            if st.form_submit_button("💾 Save Camera", type="primary"):
+                vv = (cam_venue or "").strip()
+                if not vv:
+                    st.error("Venue name required.")
+                elif not cam_name.strip():
+                    st.error("Camera name required.")
+                elif not cam_url.strip():
+                    st.error("RTSP URL required.")
+                else:
+                    save_camera(camera_id=edit_id or str(_uuid.uuid4())[:8],
+                                venue=vv, name=cam_name.strip(), rtsp_url=cam_url.strip(),
+                                mode=cam_mode, config_path=cam_cfg, model_profile=cam_profile,
+                                segment_seconds=float(cam_seg), notes=cam_notes.strip())
+                    st.success(f"✅ Camera '{cam_name.strip()}' saved.")
+                    st.rerun()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 2: Backup / Restore (was tab1)
+# ─────────────────────────────────────────────────────────────────────────────
+with tab2:
     st.subheader("Export Backup")
     st.markdown(
         "Exports all bar layout configs and shift templates as a single JSON file. "
@@ -85,9 +218,9 @@ with tab1:
             st.caption("Delete jobs from the Dashboard to free space.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 2: Batch / Multi-Camera
+# TAB 3: Batch / Multi-Camera
 # ─────────────────────────────────────────────────────────────────────────────
-with tab2:
+with tab3:
     st.subheader("🎥 Multi-Camera Batch Analysis")
     st.markdown(
         "Submit multiple clips at once — one per camera. "
@@ -190,9 +323,9 @@ with tab2:
         st.button("↻ Refresh queue", on_click=st.rerun)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 3: Venue preferences
+# TAB 4: Venue preferences
 # ─────────────────────────────────────────────────────────────────────────────
-with tab3:
+with tab4:
     st.subheader("🏠 Venue Preferences")
 
     # PIN change
@@ -239,9 +372,9 @@ with tab3:
     st.caption("These are session defaults — they pre-fill on the Results page.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 4: Security
+# TAB 5: Security
 # ─────────────────────────────────────────────────────────────────────────────
-with tab4:
+with tab5:
     st.subheader("🔐 Access Security")
 
     # PIN change
@@ -310,9 +443,9 @@ with tab4:
             st.success(f"Deleted {n} old job(s).")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 5: Compliance
+# TAB 6: Compliance
 # ─────────────────────────────────────────────────────────────────────────────
-with tab5:
+with tab6:
     st.subheader("📋 Recording Compliance Checklist")
     st.markdown(
         "VenueScope records video of your staff and premises. "
