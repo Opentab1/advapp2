@@ -26,6 +26,13 @@ from core.onvif_discover import discover_cameras, get_rtsp_url
 API_VERSION = "1.0"
 API_PORT    = 8502
 
+
+def _next_friday() -> str:
+    from datetime import date, timedelta
+    d = date.today()
+    days = (4 - d.weekday()) % 7 or 7
+    return (d + timedelta(days=days)).isoformat()
+
 _JOB_ID_RE = _re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 
 # Simple in-memory rate limiter: {ip: [timestamps]}
@@ -489,6 +496,26 @@ class _APIHandler(BaseHTTPRequestHandler):
                 cams   = list_cameras()
                 venues = list_venues()
                 _json_response(self, {"cameras": cams, "venues": venues}, 200)
+
+            elif path == "/api/events/validate":
+                # Auto-validate an event concept — pulls Google Trends + weather + Reddit
+                from urllib.parse import parse_qs
+                qs           = parse_qs(urlparse(self.path).query)
+                concept_type = qs.get("concept", ["DJ Night"])[0]
+                city         = qs.get("city",    ["Tampa"])[0]
+                event_date   = qs.get("date",    [""])[0]
+                capacity     = int(qs.get("capacity", ["150"])[0])
+                cover        = float(qs.get("cover", ["0"])[0]) or None
+                try:
+                    from core.event_intelligence import validate_event_concept
+                    result = validate_event_concept(
+                        concept_type=concept_type, city=city,
+                        event_date=event_date or _next_friday(),
+                        capacity=capacity, cover_charge=cover,
+                    )
+                    _json_response(self, result, 200)
+                except Exception as exc:
+                    _json_response(self, {"error": str(exc)}, 500)
 
             elif path == "/api/events":
                 from urllib.parse import parse_qs

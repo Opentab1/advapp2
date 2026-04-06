@@ -26,3 +26,8 @@ boto3==1.35.99
 
 # System / monitoring
 psutil==6.1.0
+
+# Event Intelligence
+pytrends>=4.9.0
+praw>=7.7.0
+vaderSentiment>=3.3.2
