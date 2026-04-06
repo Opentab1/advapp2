@@ -1026,9 +1026,9 @@ function ConceptValidator() {
             {compareMode && reportB && (
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { r: report, label: 'Concept A', concept: concept },
-                  { r: reportB, label: 'Concept B', concept: conceptB },
-                ].map(({ r, label, concept: ct }) => (
+                  { r: report, f: forecast, label: 'Concept A', concept: concept },
+                  { r: reportB, f: forecastB, label: 'Concept B', concept: conceptB },
+                ].map(({ r, f, label, concept: ct }) => (
                   <div key={label} className={`rounded-xl border p-3 text-center ${r.verdict === 'green' ? 'border-green-500/40 bg-green-500/5' : r.verdict === 'yellow' ? 'border-amber-500/40 bg-amber-500/5' : 'border-red-500/40 bg-red-500/5'}`}>
                     <p className="text-[10px] text-warm-500 mb-1">{label}</p>
                     <p className="text-base font-bold text-white">{CONCEPT_EMOJIS[ct]} {ct}</p>
@@ -1036,6 +1036,13 @@ function ConceptValidator() {
                     <p className={`text-[10px] font-semibold mt-1 ${r.verdict === 'green' ? 'text-green-400' : r.verdict === 'yellow' ? 'text-amber-400' : 'text-red-400'}`}>
                       {r.verdict === 'green' ? '✅ Run It' : r.verdict === 'yellow' ? '🟡 Test First' : '🔴 Reconsider'}
                     </p>
+                    {f && (
+                      <div className="mt-2 pt-2 border-t border-warm-700/50">
+                        <p className="text-xs font-bold text-white">{f.mid} people</p>
+                        <p className="text-[10px] text-green-400">${f.revenue_mid.toLocaleString()} est.</p>
+                        <p className="text-[10px] text-warm-600">{f.fill_rate_pct}% fill</p>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1140,31 +1147,36 @@ function ValidationReportCard({ report, forecast, title }: { report: ValidationR
             </span>
           </div>
           <div className="p-4 space-y-3">
-            {/* Attendance bar */}
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <div className="flex justify-between text-[10px] text-warm-500 mb-1">
-                  <span>Low</span><span>Most Likely</span><span>High</span>
+            {/* Attendance bar — normalized so high=85% width, low/mid proportional */}
+            {(() => {
+              const scale = forecast.high > 0 ? 85 / forecast.high : 1;
+              return (
+                <div className="flex items-end gap-3">
+                  <div className="flex-1">
+                    <div className="flex justify-between text-[10px] text-warm-500 mb-1">
+                      <span>Low</span><span>Most Likely</span><span>High</span>
+                    </div>
+                    <div className="relative h-8 bg-warm-800 rounded-lg overflow-hidden">
+                      <div className="absolute inset-y-0 left-0 bg-teal/15 rounded-lg"
+                        style={{ width: `${Math.min(100, forecast.high * scale)}%` }} />
+                      <div className="absolute inset-y-0 left-0 bg-teal/35 rounded-lg"
+                        style={{ width: `${Math.min(100, forecast.mid * scale)}%` }} />
+                      <div className="absolute inset-y-0 left-0 bg-teal/70 rounded-lg"
+                        style={{ width: `${Math.min(100, forecast.low * scale)}%` }} />
+                    </div>
+                    <div className="flex justify-between text-[11px] font-semibold text-white mt-1">
+                      <span>{forecast.low}</span>
+                      <span className="text-teal text-base">{forecast.mid} people</span>
+                      <span>{forecast.high}</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] text-warm-500">Fill Rate</p>
+                    <p className="text-xl font-bold text-teal">{forecast.fill_rate_pct}%</p>
+                  </div>
                 </div>
-                <div className="relative h-8 bg-warm-800 rounded-lg overflow-hidden">
-                  <div className="absolute inset-y-0 left-0 bg-teal/15 rounded-lg"
-                    style={{ width: `${forecast.high / (parseInt('' + forecast.high) + 20) * 100}%` }} />
-                  <div className="absolute inset-y-0 left-0 bg-teal/30 rounded-lg"
-                    style={{ width: `${forecast.mid / (parseInt('' + forecast.high) + 20) * 100}%` }} />
-                  <div className="absolute inset-y-0 left-0 bg-teal/60 rounded-lg"
-                    style={{ width: `${forecast.low / (parseInt('' + forecast.high) + 20) * 100}%` }} />
-                </div>
-                <div className="flex justify-between text-[11px] font-semibold text-white mt-1">
-                  <span>{forecast.low}</span>
-                  <span className="text-teal text-base">{forecast.mid} people</span>
-                  <span>{forecast.high}</span>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] text-warm-500">Fill Rate</p>
-                <p className="text-xl font-bold text-teal">{forecast.fill_rate_pct}%</p>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Revenue grid */}
             <div className="grid grid-cols-3 gap-2">
@@ -1195,25 +1207,40 @@ function ValidationReportCard({ report, forecast, title }: { report: ValidationR
         </div>
       )}
 
-      {/* Revenue estimate */}
+      {/* Setup costs — only show revenue rows when no forecast available (forecast has better numbers) */}
       <div className="bg-whoop-panel border border-whoop-divider rounded-xl overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
           <BadgeDollarSign className="w-4 h-4 text-teal" />
-          <span className="text-sm font-semibold text-white">Revenue Estimate</span>
+          <span className="text-sm font-semibold text-white">{forecast ? 'Setup Costs' : 'Revenue Estimate'}</span>
         </div>
-        <div className="p-3 grid grid-cols-2 gap-2">
-          {[
-            { label: 'Expected Attendance', value: `${report.revenue_estimate.attendance_range[0]}–${report.revenue_estimate.attendance_range[1]} people` },
-            { label: 'Gross Revenue', value: `$${report.revenue_estimate.gross_revenue_range[0].toLocaleString()}–$${report.revenue_estimate.gross_revenue_range[1].toLocaleString()}` },
-            { label: 'Est. Net (after costs)', value: `$${report.revenue_estimate.net_revenue_range[0].toLocaleString()}–$${report.revenue_estimate.net_revenue_range[1].toLocaleString()}` },
-            { label: 'Setup Cost Range', value: `$${report.revenue_estimate.setup_cost_range[0]}–$${report.revenue_estimate.setup_cost_range[1]}` },
-          ].map(m => (
-            <div key={m.label} className="bg-warm-800/40 rounded-lg p-2.5">
-              <p className="text-[10px] text-warm-500">{m.label}</p>
-              <p className="text-sm font-semibold text-white mt-0.5">{m.value}</p>
-            </div>
-          ))}
-        </div>
+        {!forecast && (
+          <div className="p-3 grid grid-cols-2 gap-2">
+            {[
+              { label: 'Expected Attendance', value: `${report.revenue_estimate.attendance_range[0]}–${report.revenue_estimate.attendance_range[1]} people` },
+              { label: 'Gross Revenue', value: `$${report.revenue_estimate.gross_revenue_range[0].toLocaleString()}–$${report.revenue_estimate.gross_revenue_range[1].toLocaleString()}` },
+              { label: 'Est. Net (after costs)', value: `$${report.revenue_estimate.net_revenue_range[0].toLocaleString()}–$${report.revenue_estimate.net_revenue_range[1].toLocaleString()}` },
+              { label: 'Setup Cost Range', value: `$${report.revenue_estimate.setup_cost_range[0]}–$${report.revenue_estimate.setup_cost_range[1]}` },
+            ].map(m => (
+              <div key={m.label} className="bg-warm-800/40 rounded-lg p-2.5">
+                <p className="text-[10px] text-warm-500">{m.label}</p>
+                <p className="text-sm font-semibold text-white mt-0.5">{m.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        {forecast && (
+          <div className="p-3 grid grid-cols-2 gap-2">
+            {[
+              { label: 'Setup Cost Range', value: `$${report.revenue_estimate.setup_cost_range[0]}–$${report.revenue_estimate.setup_cost_range[1]}` },
+              { label: 'Est. Net Revenue', value: `$${(report.revenue_estimate.net_revenue_range[0]).toLocaleString()}–$${(report.revenue_estimate.net_revenue_range[1]).toLocaleString()}` },
+            ].map(m => (
+              <div key={m.label} className="bg-warm-800/40 rounded-lg p-2.5">
+                <p className="text-[10px] text-warm-500">{m.label}</p>
+                <p className="text-sm font-semibold text-white mt-0.5">{m.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="px-3 pb-3">
           <p className="text-[10px] text-warm-500 mb-1.5">What you'll need to pay for:</p>
           <div className="flex flex-wrap gap-1.5">
