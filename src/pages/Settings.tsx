@@ -5,6 +5,7 @@ import {
   User, Info, CloudSun, Sliders, Users, Save, CreditCard, Bell, DollarSign,
   Camera, Download, Wifi, WifiOff, RefreshCw, Circle, Clock, Pencil, X,
   Eye, EyeOff, AlertCircle, Search, Globe, Radio,
+  ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Loader2, Plus, Trash2,
 } from 'lucide-react';
 import connectService, { ConnectStatus, VenueOS, detectOS } from '../services/connect.service';
 import alertsService, { AlertPreferences } from '../services/alerts.service';
@@ -86,6 +87,21 @@ export function Settings() {
   const [subnetScanned, setSubnetScanned]       = useState(0);
   const [streamLastScanned, setStreamLastScanned] = useState<Date | null>(null);
 
+  // Camera discovery wizard
+  const [arpEntries, setArpEntries]               = useState<Array<{ip:string;mac:string|null;hostname:string|null;interface:string}>>([]);
+  const [arpLoading, setArpLoading]               = useState(false);
+  const [identifyingIp, setIdentifyingIp]         = useState<string | null>(null);
+  const [identifyResults, setIdentifyResults]     = useState<Record<string, any>>({});
+  const [selectedChannels, setSelectedChannels]   = useState<Record<string, Record<number, boolean>>>({});
+  const [channelNames, setChannelNames]           = useState<Record<string, Record<number, string>>>({});
+  const [batchVenue, setBatchVenue]               = useState('');
+  const [batchMode, setBatchMode]                 = useState('drink_count');
+  const [registering, setRegistering]             = useState<string | null>(null);
+  const [expandedIp, setExpandedIp]               = useState<string | null>(null);
+  const [discoveryRunning, setDiscoveryRunning]   = useState(false);
+  const [allDiscovered, setAllDiscovered]         = useState<Array<{ip:string;ports:Record<string,number>;is_camera:boolean;onvif:boolean;arp_hostname:string|null}>>([]);
+  const [discoveryDone, setDiscoveryDone]         = useState(false);
+
   const serverUrl = (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
 
   const loadRegCameras = async () => {
@@ -122,6 +138,141 @@ export function Settings() {
       if (r.ok) { const d = await r.json(); setDiscovered(d.cameras || []); }
     } catch { /* not reachable */ }
     setScanning(false); setScanDone(true);
+  };
+
+  const loadArpTable = async () => {
+    if (!serverUrl) return;
+    setArpLoading(true);
+    try {
+      const r = await fetch(`${serverUrl}/api/cameras/arp-table`);
+      if (r.ok) { const d = await r.json(); setArpEntries(d.entries || []); }
+    } catch { }
+    setArpLoading(false);
+  };
+
+  const runFullDiscovery = async () => {
+    if (!serverUrl || discoveryRunning) return;
+    setDiscoveryRunning(true);
+    setDiscoveryDone(false);
+    setAllDiscovered([]);
+    await loadNetworkInfo();
+
+    // Run ARP + subnet scan + ONVIF in parallel
+    const [arpRes, scanRes, onvifRes] = await Promise.allSettled([
+      fetch(`${serverUrl}/api/cameras/arp-table`).then(r => r.ok ? r.json() : {entries:[]}),
+      fetch(`${serverUrl}/api/cameras/subnet-scan?subnet=${encodeURIComponent(subnetInput)}&ports=554,80,8554,443`).then(r => r.ok ? r.json() : {found:[]}),
+      fetch(`${serverUrl}/api/cameras/discover`).then(r => r.ok ? r.json() : {cameras:[]}),
+    ]);
+
+    const arpMap: Record<string, string | null> = {};
+    if (arpRes.status === 'fulfilled') {
+      const entries = arpRes.value.entries || [];
+      setArpEntries(entries);
+      for (const e of entries) arpMap[e.ip] = e.hostname;
+    }
+
+    const onvifIps = new Set<string>();
+    if (onvifRes.status === 'fulfilled') {
+      for (const c of (onvifRes.value.cameras || [])) {
+        onvifIps.add(c.ip);
+        setDiscovered(prev => {
+          if (prev.find((x: any) => x.ip === c.ip)) return prev;
+          return [...prev, c];
+        });
+      }
+    }
+
+    const merged: Array<{ip:string;ports:Record<string,number>;is_camera:boolean;onvif:boolean;arp_hostname:string|null}> = [];
+    if (scanRes.status === 'fulfilled') {
+      for (const h of (scanRes.value.found || [])) {
+        merged.push({ ...h, onvif: onvifIps.has(h.ip), arp_hostname: arpMap[h.ip] || null });
+      }
+      setSubnetHosts(scanRes.value.found || []);
+      setSubnetScanned(scanRes.value.scanned || 0);
+    }
+
+    // Also add ONVIF-only (not in scan)
+    for (const ip of onvifIps) {
+      if (!merged.find(m => m.ip === ip)) {
+        merged.push({ ip, ports: {'554': 0, '80': 0}, is_camera: true, onvif: true, arp_hostname: arpMap[ip] || null });
+      }
+    }
+
+    merged.sort((a, b) => {
+      if (a.is_camera !== b.is_camera) return a.is_camera ? -1 : 1;
+      return a.ip.localeCompare(b.ip, undefined, {numeric: true});
+    });
+
+    setAllDiscovered(merged);
+    setDiscoveryDone(true);
+    setDiscoveryRunning(false);
+  };
+
+  const identifyCamera = async (ip: string) => {
+    if (!serverUrl) return;
+    setIdentifyingIp(ip);
+    setExpandedIp(ip);
+    const creds = camCreds[ip] || { u: 'admin', p: '' };
+    try {
+      const r = await fetch(`${serverUrl}/api/cameras/identify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip, username: creds.u, password: creds.p }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        setIdentifyResults(prev => ({ ...prev, [ip]: d }));
+        // Auto-select all reachable channels
+        if (d.channels?.length > 0) {
+          const sel: Record<number, boolean> = {};
+          const names: Record<number, string> = {};
+          for (const ch of d.channels) {
+            sel[ch.num] = true;
+            names[ch.num] = ch.label || `Channel ${ch.num}`;
+          }
+          setSelectedChannels(prev => ({ ...prev, [ip]: sel }));
+          setChannelNames(prev => ({ ...prev, [ip]: names }));
+        } else if (d.single_stream) {
+          setNewCam(p => ({ ...p, rtsp_url: d.single_stream, name: p.name || `Camera ${ip}` }));
+          setShowAddCam(true);
+        }
+        if (d.creds_used) {
+          setCamCreds(prev => ({ ...prev, [ip]: { u: d.creds_used.username, p: d.creds_used.password } }));
+        }
+      }
+    } catch { }
+    setIdentifyingIp(null);
+  };
+
+  const batchRegister = async (ip: string) => {
+    if (!serverUrl) return;
+    const result = identifyResults[ip];
+    if (!result) return;
+    const sel = selectedChannels[ip] || {};
+    const names = channelNames[ip] || {};
+    const venue = batchVenue || newCam.venue || 'Default Venue';
+    const channels = (result.channels || [])
+      .filter((ch: any) => sel[ch.num])
+      .map((ch: any) => ({
+        ...ch,
+        name: names[ch.num] || ch.label || `CH${ch.num} — ${ip}`,
+        mode: batchMode,
+      }));
+    if (channels.length === 0) return;
+    setRegistering(ip);
+    try {
+      const r = await fetch(`${serverUrl}/api/cameras/batch-register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channels, venue, mode: batchMode }),
+      });
+      if (r.ok) {
+        await loadRegCameras();
+        setIdentifyResults(prev => { const n = {...prev}; delete n[ip]; return n; });
+        setSelectedChannels(prev => { const n = {...prev}; delete n[ip]; return n; });
+        setExpandedIp(null);
+      }
+    } finally { setRegistering(null); }
   };
 
   const loadNetworkInfo = async () => {
@@ -192,6 +343,7 @@ export function Settings() {
 
     pollStreams(); // immediate on tab open
     loadNetworkInfo(); // load worker network info on tab open
+    loadArpTable(); // load ARP table on tab open
     const interval = setInterval(pollStreams, 15000); // every 15s
     return () => { stop(); clearInterval(interval); };
   }, [activeTab, serverUrl]);
@@ -1109,242 +1261,327 @@ export function Settings() {
                 </div>
                 <p className="text-sm text-warm-400 mb-4">Register RTSP cameras per venue. The worker daemon connects and runs analysis automatically.</p>
 
-                {/* ── Network Diagnostics ── */}
+                {/* ── Camera Setup Wizard ── */}
                 <div className="mb-5 border border-warm-700 rounded-xl overflow-hidden">
+
                   {/* Header */}
                   <div className="flex items-center justify-between px-4 py-3 bg-warm-900/60 border-b border-warm-700">
                     <div className="flex items-center gap-2">
                       <Radio className="w-4 h-4 text-teal" />
-                      <p className="text-sm font-semibold text-white">Network Diagnostics</p>
+                      <p className="text-sm font-semibold text-white">Camera Setup &amp; Discovery</p>
+                      {discoveryDone && allDiscovered.length > 0 && (
+                        <span className="text-xs px-2 py-0.5 bg-teal/20 border border-teal/30 text-teal rounded-full">
+                          {allDiscovered.filter(d => d.is_camera).length} camera{allDiscovered.filter(d => d.is_camera).length !== 1 ? 's' : ''} found
+                        </span>
+                      )}
                     </div>
-                    <button onClick={loadNetworkInfo} disabled={netInfoLoading}
-                      className="flex items-center gap-1.5 px-2.5 py-1 bg-warm-800 border border-warm-600 text-warm-400 hover:text-white rounded-lg text-xs transition-all disabled:opacity-50">
-                      <RefreshCw className={`w-3 h-3 ${netInfoLoading ? 'animate-spin' : ''}`} />
-                      Refresh
+                    <button
+                      onClick={runFullDiscovery}
+                      disabled={discoveryRunning || !serverUrl}
+                      className="flex items-center gap-2 px-4 py-2 bg-teal/20 border border-teal/40 text-teal hover:bg-teal/30 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+                    >
+                      {discoveryRunning
+                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Discovering…</>
+                        : <><Search className="w-3.5 h-3.5" /> Run Discovery</>
+                      }
                     </button>
                   </div>
 
                   <div className="p-4 space-y-5">
 
-                    {/* 1. Worker Network Interfaces */}
+                    {/* 1 — Worker Network */}
                     <div>
                       <p className="text-xs text-warm-500 uppercase tracking-wide font-medium mb-2">
                         Worker Network
-                        {networkInfo && (
-                          <span className="ml-2 normal-case text-warm-600">
-                            {networkInfo.hostname} · {networkInfo.platform}
-                          </span>
-                        )}
+                        {networkInfo && <span className="ml-2 normal-case text-warm-600 font-normal">{networkInfo.hostname} · {networkInfo.platform}</span>}
                       </p>
                       {!serverUrl && (
-                        <p className="text-xs text-warm-500 italic">Set a VenueScope server URL to see network info.</p>
-                      )}
-                      {serverUrl && !networkInfo && !netInfoLoading && (
-                        <p className="text-xs text-warm-500 italic">Could not reach worker — is it running?</p>
-                      )}
-                      {netInfoLoading && (
-                        <div className="flex items-center gap-2 text-xs text-warm-400">
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                          Loading network interfaces…
+                        <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                          <p className="text-xs text-amber-300">No VenueScope server URL configured. The worker must be running on a machine with access to the camera network.</p>
                         </div>
-                      )}
-                      {networkInfo && networkInfo.interfaces.length === 0 && (
-                        <p className="text-xs text-warm-500">No non-loopback interfaces found on the worker machine.</p>
                       )}
                       {networkInfo && networkInfo.interfaces.length > 0 && (
                         <div className="space-y-1.5">
-                          {networkInfo.interfaces.map((iface, i) => (
+                          {networkInfo.interfaces.map((iface: any, i: number) => (
                             <div key={i} className="flex items-center justify-between px-3 py-2 bg-warm-800/60 border border-warm-700 rounded-lg">
                               <div className="flex items-center gap-2">
                                 <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
                                 <span className="text-xs font-mono text-white">{iface.ip}</span>
-                                {iface.prefix != null && (
-                                  <span className="text-xs text-warm-500 font-mono">/{iface.prefix}</span>
-                                )}
+                                {iface.prefix != null && <span className="text-xs text-warm-500 font-mono">/{iface.prefix}</span>}
                                 <span className="text-xs text-warm-600">{iface.name}</span>
                               </div>
-                              {iface.subnet && (
-                                <button
-                                  onClick={() => setSubnetInput(iface.subnet!)}
-                                  className="text-xs text-teal hover:text-teal/80 transition-colors"
-                                >
-                                  scan this subnet →
-                                </button>
-                              )}
+                              <div className="flex items-center gap-2">
+                                {iface.subnet && (
+                                  <button onClick={() => setSubnetInput(iface.subnet)} className="text-xs text-teal hover:text-teal/80 transition-colors">
+                                    scan →
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
                       )}
-                    </div>
 
-                    {/* 2. Subnet Scanner */}
-                    <div>
-                      <p className="text-xs text-warm-500 uppercase tracking-wide font-medium mb-2">Scan Subnet for Cameras (port 554)</p>
-                      <div className="flex gap-2">
+                      {/* Subnet input */}
+                      <div className="flex gap-2 mt-2">
                         <input
                           value={subnetInput}
                           onChange={e => setSubnetInput(e.target.value)}
                           placeholder="192.168.1.0/24"
-                          className="flex-1 bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-warm-600 focus:outline-none focus:border-teal"
+                          className="flex-1 bg-warm-800 border border-warm-600 rounded-lg px-3 py-1.5 text-sm text-white font-mono placeholder-warm-600 focus:outline-none focus:border-teal"
                         />
                         <button
-                          onClick={scanSubnet}
-                          disabled={subnetScanning || !serverUrl}
-                          className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-teal/20 border border-teal/40 text-teal hover:bg-teal/30 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+                          onClick={runFullDiscovery}
+                          disabled={discoveryRunning || !serverUrl}
+                          className="flex-shrink-0 px-3 py-1.5 bg-warm-800 border border-warm-600 text-warm-300 hover:text-white rounded-lg text-xs font-medium transition-all disabled:opacity-50"
                         >
-                          <Search className={`w-3.5 h-3.5 ${subnetScanning ? 'animate-spin' : ''}`} />
-                          {subnetScanning ? 'Scanning…' : 'Scan'}
+                          {discoveryRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Scan'}
                         </button>
                       </div>
-                      {subnetScanning && (
-                        <p className="text-xs text-warm-400 mt-2">
-                          Scanning {subnetInput} — probing ports 554, 80, 8554 on all hosts simultaneously…
+                    </div>
+
+                    {/* 2 — Discovery Results */}
+                    {(discoveryRunning || allDiscovered.length > 0) && (
+                      <div>
+                        <p className="text-xs text-warm-500 uppercase tracking-wide font-medium mb-2">
+                          Discovered Devices
+                          {subnetScanned > 0 && <span className="ml-2 normal-case font-normal text-warm-600">{subnetScanned} hosts scanned</span>}
                         </p>
-                      )}
-                      {!subnetScanning && subnetScanned > 0 && subnetHosts.length === 0 && (
-                        <p className="text-xs text-warm-500 mt-2">
-                          No devices found on {subnetInput}. Worker may not be on the camera VLAN — check network interfaces above.
-                        </p>
-                      )}
-                      {!subnetScanning && subnetHosts.length > 0 && (
-                        <div className="mt-3 space-y-2">
-                          <p className="text-xs text-warm-400">
-                            Found{' '}
-                            <span className="text-white font-medium">{subnetHosts.filter(h => h.is_camera).length} camera{subnetHosts.filter(h => h.is_camera).length !== 1 ? 's' : ''}</span>
-                            {' '}and{' '}
-                            <span className="text-warm-300">{subnetHosts.filter(h => !h.is_camera).length} other device{subnetHosts.filter(h => !h.is_camera).length !== 1 ? 's' : ''}</span>
-                            {' '}of {subnetScanned} hosts scanned:
-                          </p>
-                          {subnetHosts.map(host => (
-                            <div key={host.ip} className={`p-3 rounded-lg border ${
-                              host.is_camera
-                                ? 'bg-green-500/5 border-green-500/30'
-                                : 'bg-warm-800/60 border-warm-700'
-                            }`}>
-                              <div className="flex items-center justify-between gap-3 mb-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${host.is_camera ? 'bg-green-400' : 'bg-warm-500'}`} />
-                                  <span className="text-sm font-mono text-white">{host.ip}</span>
-                                  {host.is_camera && (
-                                    <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 text-green-400 border border-green-500/30 rounded font-medium">CAMERA</span>
-                                  )}
-                                  {Object.keys(host.ports).map(p => (
-                                    <span key={p} className={`text-[10px] px-1.5 py-0.5 rounded font-mono border ${
-                                      p === '554' || p === '8554'
-                                        ? 'bg-green-500/10 text-green-400 border-green-500/20'
-                                        : 'bg-warm-700 text-warm-400 border-warm-600'
-                                    }`}>:{p} {host.ports[p]}ms</span>
-                                  ))}
+
+                        {discoveryRunning && allDiscovered.length === 0 && (
+                          <div className="flex items-center gap-2 text-xs text-warm-400 py-2">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Running ARP, subnet scan, and ONVIF discovery simultaneously…
+                          </div>
+                        )}
+
+                        <div className="space-y-2">
+                          {allDiscovered.map(host => {
+                            const result = identifyResults[host.ip];
+                            const isExpanded = expandedIp === host.ip;
+                            const isIdentifying = identifyingIp === host.ip;
+                            const selChannels = selectedChannels[host.ip] || {};
+                            const chNames = channelNames[host.ip] || {};
+                            const numSelected = Object.values(selChannels).filter(Boolean).length;
+
+                            return (
+                              <div key={host.ip} className={`rounded-xl border overflow-hidden ${
+                                host.is_camera ? 'border-green-500/30' : 'border-warm-700'
+                              }`}>
+                                {/* Device row */}
+                                <div
+                                  className={`flex items-center justify-between gap-3 px-3 py-2.5 cursor-pointer ${
+                                    host.is_camera ? 'bg-green-500/5' : 'bg-warm-800/40'
+                                  }`}
+                                  onClick={() => setExpandedIp(isExpanded ? null : host.ip)}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${host.is_camera ? 'bg-green-400' : 'bg-warm-500'}`} />
+                                    <span className="text-sm font-mono text-white">{host.ip}</span>
+                                    {host.arp_hostname && (
+                                      <span className="text-xs text-warm-500 truncate">{host.arp_hostname}</span>
+                                    )}
+                                    {host.is_camera && (
+                                      <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 text-green-400 border border-green-500/20 rounded font-medium flex-shrink-0">CAMERA</span>
+                                    )}
+                                    {host.onvif && (
+                                      <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded font-medium flex-shrink-0">ONVIF</span>
+                                    )}
+                                    {result && (
+                                      <span className="text-[10px] px-1.5 py-0.5 bg-warm-700 text-warm-300 border border-warm-600 rounded font-medium flex-shrink-0">
+                                        {result.brand}{result.model ? ` · ${result.model}` : ''}
+                                      </span>
+                                    )}
+                                    <div className="flex gap-1 flex-shrink-0">
+                                      {Object.keys(host.ports || {}).map(p => (
+                                        <span key={p} className={`text-[10px] px-1 py-0.5 rounded font-mono border ${
+                                          p === '554' || p === '8554'
+                                            ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                                            : 'bg-warm-700/60 text-warm-500 border-warm-600'
+                                        }`}>:{p}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    {result?.channels?.length > 0 && (
+                                      <span className="text-xs text-green-400 font-medium">{result.channels.length} stream{result.channels.length !== 1 ? 's' : ''}</span>
+                                    )}
+                                    {isExpanded ? <ChevronDown className="w-4 h-4 text-warm-500" /> : <ChevronRight className="w-4 h-4 text-warm-500" />}
+                                  </div>
                                 </div>
-                                {host.is_camera && (
-                                  <button
-                                    onClick={() => {
-                                      fetchRtsp({ ip: host.ip, xaddrs: null });
-                                    }}
-                                    disabled={fetchingRtsp === host.ip}
-                                    className="flex-shrink-0 px-3 py-1.5 bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
-                                  >
-                                    {fetchingRtsp === host.ip ? 'Getting URL…' : 'Get RTSP URL →'}
-                                  </button>
+
+                                {/* Expanded panel */}
+                                {isExpanded && (
+                                  <div className="border-t border-warm-700 p-3 space-y-3 bg-warm-900/30">
+
+                                    {/* Credentials */}
+                                    <div className="flex gap-2 items-end">
+                                      <div className="flex-1">
+                                        <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Username</label>
+                                        <input
+                                          value={camCreds[host.ip]?.u ?? 'admin'}
+                                          onChange={e => setCamCreds(p => ({ ...p, [host.ip]: { ...p[host.ip], u: e.target.value } }))}
+                                          className="w-full bg-warm-800 border border-warm-600 rounded px-2 py-1.5 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal"
+                                        />
+                                      </div>
+                                      <div className="flex-1">
+                                        <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Password</label>
+                                        <input
+                                          type="password"
+                                          value={camCreds[host.ip]?.p ?? ''}
+                                          onChange={e => setCamCreds(p => ({ ...p, [host.ip]: { ...p[host.ip], p: e.target.value } }))}
+                                          className="w-full bg-warm-800 border border-warm-600 rounded px-2 py-1.5 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal"
+                                        />
+                                      </div>
+                                      <button
+                                        onClick={() => identifyCamera(host.ip)}
+                                        disabled={isIdentifying}
+                                        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+                                      >
+                                        {isIdentifying
+                                          ? <><Loader2 className="w-3 h-3 animate-spin" /> Identifying…</>
+                                          : <><Search className="w-3 h-3" /> Identify</>
+                                        }
+                                      </button>
+                                    </div>
+
+                                    {/* Identity result */}
+                                    {result && (
+                                      <div className="space-y-2">
+                                        <div className="flex items-center gap-2">
+                                          {result.auth_ok
+                                            ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                                            : <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                                          }
+                                          <span className="text-xs text-warm-300">
+                                            {result.brand}{result.model ? ` ${result.model}` : ''}
+                                            {result.auth_ok && result.creds_used && (
+                                              <span className="text-warm-500 ml-1">
+                                                · auth: {result.creds_used.username}/{result.creds_used.password || '(blank)'}
+                                              </span>
+                                            )}
+                                            {!result.auth_ok && <span className="text-amber-400 ml-1">· auth failed — check credentials</span>}
+                                          </span>
+                                        </div>
+
+                                        {result.channels?.length > 0 && (
+                                          <div>
+                                            <div className="flex items-center justify-between mb-1.5">
+                                              <p className="text-[10px] text-warm-500 uppercase tracking-wide font-medium">
+                                                {result.channels.length} stream{result.channels.length !== 1 ? 's' : ''} found — select to register:
+                                              </p>
+                                              <button
+                                                onClick={() => {
+                                                  const all: Record<number,boolean> = {};
+                                                  result.channels.forEach((c: any) => { all[c.num] = true; });
+                                                  setSelectedChannels(p => ({...p, [host.ip]: all}));
+                                                }}
+                                                className="text-[10px] text-teal hover:text-teal/80 transition-colors"
+                                              >
+                                                select all
+                                              </button>
+                                            </div>
+                                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                              {result.channels.map((ch: any) => (
+                                                <div key={ch.num} className="flex items-center gap-2 px-2 py-1.5 bg-warm-800/60 border border-warm-700 rounded-lg">
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={selChannels[ch.num] ?? false}
+                                                    onChange={e => setSelectedChannels(p => ({
+                                                      ...p, [host.ip]: { ...(p[host.ip]||{}), [ch.num]: e.target.checked }
+                                                    }))}
+                                                    className="w-3.5 h-3.5 accent-teal flex-shrink-0"
+                                                  />
+                                                  <span className="text-[10px] text-warm-500 font-mono flex-shrink-0">CH{ch.num}</span>
+                                                  <input
+                                                    value={chNames[ch.num] ?? ch.label ?? `Channel ${ch.num}`}
+                                                    onChange={e => setChannelNames(p => ({
+                                                      ...p, [host.ip]: { ...(p[host.ip]||{}), [ch.num]: e.target.value }
+                                                    }))}
+                                                    className="flex-1 bg-warm-900 border border-warm-700 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-teal"
+                                                  />
+                                                  <span className="text-[10px] text-warm-600 font-mono truncate max-w-[160px]">{ch.rtsp_url.replace(/:[^@]*@/, ':●●●@')}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+
+                                            {/* Venue + mode + register */}
+                                            <div className="mt-3 space-y-2">
+                                              <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                  <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Venue</label>
+                                                  <input
+                                                    value={batchVenue || newCam.venue}
+                                                    onChange={e => setBatchVenue(e.target.value)}
+                                                    placeholder="Ferg's Bar"
+                                                    className="w-full bg-warm-800 border border-warm-600 rounded px-2 py-1.5 text-xs text-white placeholder-warm-500 focus:outline-none focus:border-teal"
+                                                  />
+                                                </div>
+                                                <div>
+                                                  <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Mode</label>
+                                                  <select
+                                                    value={batchMode}
+                                                    onChange={e => setBatchMode(e.target.value)}
+                                                    className="w-full bg-warm-800 border border-warm-600 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-teal"
+                                                  >
+                                                    <option value="drink_count">🍺 Drink Count</option>
+                                                    <option value="people_count">🚶 People Count</option>
+                                                    <option value="staff_activity">👷 Staff Activity</option>
+                                                    <option value="table_turns">🪑 Table Turns</option>
+                                                    <option value="after_hours">🔒 After Hours</option>
+                                                  </select>
+                                                </div>
+                                              </div>
+                                              <button
+                                                onClick={() => batchRegister(host.ip)}
+                                                disabled={registering === host.ip || numSelected === 0}
+                                                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-500/20 border border-green-500/40 text-green-400 hover:bg-green-500/30 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+                                              >
+                                                {registering === host.ip
+                                                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Registering…</>
+                                                  : <><Plus className="w-3.5 h-3.5" /> Register {numSelected} Camera{numSelected !== 1 ? 's' : ''}</>
+                                                }
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {result.channels?.length === 0 && !result.single_stream && (
+                                          <p className="text-xs text-warm-500">No streams found. Try different credentials or add the RTSP URL manually below.</p>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
                               </div>
-                              {host.is_camera && (
-                                <div className="flex gap-2 mt-2">
-                                  <input
-                                    placeholder="Username (admin)"
-                                    value={camCreds[host.ip]?.u ?? 'admin'}
-                                    onChange={e => setCamCreds(p => ({ ...p, [host.ip]: { ...p[host.ip], u: e.target.value } }))}
-                                    className="flex-1 bg-warm-900 border border-warm-600 rounded px-2 py-1.5 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal"
-                                  />
-                                  <input
-                                    type="password"
-                                    placeholder="Password"
-                                    value={camCreds[host.ip]?.p ?? ''}
-                                    onChange={e => setCamCreds(p => ({ ...p, [host.ip]: { ...p[host.ip], p: e.target.value } }))}
-                                    className="flex-1 bg-warm-900 border border-warm-600 rounded px-2 py-1.5 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
-                      )}
-                    </div>
 
-                    {/* 3. ONVIF / WS-Discovery */}
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs text-warm-500 uppercase tracking-wide font-medium">ONVIF / WS-Discovery</p>
-                        <button onClick={scanNetwork} disabled={scanning}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-warm-800 border border-warm-600 text-warm-400 hover:text-white rounded-lg text-xs transition-all disabled:opacity-50">
-                          <Globe className={`w-3 h-3 ${scanning ? 'animate-spin' : ''}`} />
-                          {scanning ? 'Broadcasting…' : 'Discover Cameras'}
-                        </button>
+                        {discoveryDone && allDiscovered.length === 0 && (
+                          <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
+                            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                            No devices found on {subnetInput}. Check that the worker machine is on the same network as the cameras.
+                          </div>
+                        )}
                       </div>
-                      {scanning && (
-                        <p className="text-xs text-warm-400">Broadcasting ONVIF multicast signal (4s) — any camera on this network will respond…</p>
-                      )}
-                      {scanDone && !scanning && discovered.length === 0 && (
-                        <p className="text-xs text-warm-500">No ONVIF cameras responded. Try the subnet scan above, or add the RTSP URL manually.</p>
-                      )}
-                      {discovered.length > 0 && (
-                        <div className="space-y-2 mt-2">
-                          <p className="text-xs text-green-400 font-medium">
-                            {discovered.length} ONVIF camera{discovered.length !== 1 ? 's' : ''} found:
-                          </p>
-                          {discovered.map(cam => (
-                            <div key={cam.ip} className="p-3 bg-green-500/5 border border-green-500/30 rounded-lg">
-                              <div className="flex items-center justify-between gap-3 mb-2">
-                                <div>
-                                  <p className="text-sm font-medium text-white font-mono">{cam.ip}</p>
-                                  <p className="text-xs text-warm-500 truncate">{cam.xaddrs?.[0] || 'ONVIF device'}</p>
-                                </div>
-                                <button
-                                  onClick={() => fetchRtsp(cam)}
-                                  disabled={fetchingRtsp === cam.ip}
-                                  className="flex-shrink-0 px-3 py-1.5 bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
-                                >
-                                  {fetchingRtsp === cam.ip ? 'Fetching…' : 'Get RTSP URL →'}
-                                </button>
-                              </div>
-                              <div className="flex gap-2">
-                                <input
-                                  placeholder="Username (admin)"
-                                  value={camCreds[cam.ip]?.u ?? 'admin'}
-                                  onChange={e => setCamCreds(p => ({ ...p, [cam.ip]: { ...p[cam.ip], u: e.target.value } }))}
-                                  className="flex-1 bg-warm-900 border border-warm-600 rounded px-2 py-1 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-primary"
-                                />
-                                <input
-                                  type="password"
-                                  placeholder="Password"
-                                  value={camCreds[cam.ip]?.p ?? ''}
-                                  onChange={e => setCamCreds(p => ({ ...p, [cam.ip]: { ...p[cam.ip], p: e.target.value } }))}
-                                  className="flex-1 bg-warm-900 border border-warm-600 rounded px-2 py-1 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-primary"
-                                />
-                              </div>
-                              {cam.error && <p className="text-xs text-red-400 mt-1">{cam.error}</p>}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    )}
 
-                    {/* 4. Registered Stream Status */}
+                    {/* 3 — Registered Stream Status */}
                     <div>
                       <p className="text-xs text-warm-500 uppercase tracking-wide font-medium mb-2">
                         Registered Stream Status
                         <span className="ml-2 text-warm-600 normal-case font-normal">· auto-refreshes every 15s</span>
                         {streamLastScanned && (
-                          <span className="ml-1 text-warm-600 normal-case font-normal">
-                            · last: {streamLastScanned.toLocaleTimeString()}
-                          </span>
+                          <span className="ml-1 text-warm-600 normal-case font-normal">· {streamLastScanned.toLocaleTimeString()}</span>
                         )}
                       </p>
                       {streamScanResults.length === 0 && (
-                        <p className="text-xs text-warm-500 italic">No cameras registered yet — add one below.</p>
+                        <p className="text-xs text-warm-500 italic">No cameras registered yet — discover and add cameras above.</p>
                       )}
                       <div className="space-y-1.5">
-                        {streamScanResults.map(cam => {
+                        {streamScanResults.map((cam: any) => {
                           const isLive = cam.status === 'live' || cam.status === 'reachable';
                           const isOff  = cam.status === 'offline' || cam.status === 'error';
                           return (
@@ -1356,7 +1593,7 @@ export function Settings() {
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
                                 {cam.latency_ms != null && <span className="text-xs text-warm-500">{cam.latency_ms}ms</span>}
-                                {isOff && cam.error && <span className="text-xs text-red-400 truncate max-w-[120px]">{cam.error}</span>}
+                                {isOff && cam.error && <span className="text-xs text-red-400 truncate max-w-[100px]">{cam.error}</span>}
                                 <span className={`text-xs font-semibold ${isLive ? 'text-green-400' : isOff ? 'text-red-400' : 'text-warm-400'}`}>
                                   {isLive ? 'LIVE' : isOff ? 'OFFLINE' : cam.status.toUpperCase()}
                                 </span>

@@ -312,6 +312,232 @@ class _APIHandler(BaseHTTPRequestHandler):
                 )
                 _json_response(self, {"ok": True, "camera_id": cam_id}, 201)
 
+            elif path == "/api/cameras/identify":
+                # Probe a camera IP: auto-try credentials, detect brand/model,
+                # enumerate channels, return RTSP URLs.
+                import socket as _sid_sock, urllib.request as _sid_req
+                import urllib.error as _sid_err, base64 as _b64
+                import concurrent.futures as _sid_cf, re as _sid_re
+
+                ip4     = body.get("ip", "")
+                u_hint  = body.get("username")
+                p_hint  = body.get("password")
+                if not ip4:
+                    _json_response(self, {"error": "ip required"}, 400)
+                    return
+
+                COMMON_CREDS = [
+                    ("admin", ""),
+                    ("admin", "admin"),
+                    ("admin", "12345"),
+                    ("admin", "123456"),
+                    ("admin", "1234"),
+                    ("admin", "password"),
+                    ("admin", "Admin1234!"),
+                    ("root", ""),
+                    ("root", "root"),
+                    ("ubnt", "ubnt"),
+                ]
+                creds_list = []
+                if u_hint is not None and p_hint is not None:
+                    creds_list.append((u_hint, p_hint))
+                for c in COMMON_CREDS:
+                    if c not in creds_list:
+                        creds_list.append(c)
+
+                # ── helpers ───────────────────────────────────────
+                def _http_get(url, user=None, pwd=None, timeout=3):
+                    try:
+                        req = _sid_req.Request(url)
+                        if user is not None:
+                            token = _b64.b64encode(f"{user}:{pwd}".encode()).decode()
+                            req.add_header("Authorization", f"Basic {token}")
+                        with _sid_req.urlopen(req, timeout=timeout) as r:
+                            return r.status, r.read(4096).decode('utf-8', errors='ignore'), dict(r.headers)
+                    except _sid_err.HTTPError as e:
+                        try:
+                            return e.code, e.read(512).decode('utf-8', errors='ignore'), {}
+                        except Exception:
+                            return e.code, "", {}
+                    except Exception:
+                        return None, "", {}
+
+                def _brand_from_html(html, headers):
+                    server = headers.get('Server', '')
+                    h = (html + server).lower()
+                    if 'hikvision' in h: return 'Hikvision'
+                    if 'dahua' in h: return 'Dahua'
+                    if 'amcrest' in h: return 'Amcrest'
+                    if 'reolink' in h: return 'Reolink'
+                    if 'axis' in h: return 'Axis'
+                    if 'uniview' in h or 'unv' in h: return 'Uniview'
+                    if 'hanwha' in h or 'samsung' in h: return 'Hanwha'
+                    if 'ubnt' in h or 'ubiquiti' in h or 'unifi' in h: return 'Ubiquiti'
+                    if 'synology' in h: return 'Synology'
+                    if server: return server.split('/')[0].strip()
+                    return None
+
+                def _rtsp_reachable(rtsp_url, timeout=2):
+                    try:
+                        parsed = urlparse(rtsp_url)
+                        h = parsed.hostname or ip4
+                        p = parsed.port or 554
+                        with _sid_sock.create_connection((h, p), timeout=timeout) as s:
+                            req = (f"OPTIONS {rtsp_url} RTSP/1.0\r\n"
+                                   f"CSeq: 1\r\nUser-Agent: VenueScope\r\n\r\n")
+                            s.sendall(req.encode())
+                            s.settimeout(timeout)
+                            resp = s.recv(512).decode('utf-8', errors='ignore')
+                            return ('RTSP/1.0 200' in resp or
+                                    'RTSP/1.0 401' in resp or
+                                    'RTSP/1.0 4' in resp)
+                    except Exception:
+                        return False
+
+                def _try_onvif_identify(ip, u, p):
+                    """Try ONVIF GetDeviceInformation + GetProfiles → RTSP URLs."""
+                    try:
+                        from core.onvif_discover import get_rtsp_url as _onvif_rtsp
+                        rtsp = _onvif_rtsp(ip, username=u, password=p, timeout=4)
+                        if rtsp:
+                            return {"brand": "ONVIF", "model": "", "rtsp_urls": [rtsp],
+                                    "channels": [{"num": 1, "rtsp_url": rtsp, "reachable": True}]}
+                    except Exception:
+                        pass
+                    return None
+
+                def _build_channel_urls(ip, u, p, brand):
+                    """Generate RTSP URL candidates for channels 1-16 based on brand."""
+                    auth = f"{u}:{p}@" if u else ""
+                    templates = []
+                    b = (brand or "").lower()
+                    if 'dahua' in b or 'amcrest' in b:
+                        templates = [
+                            f"rtsp://{auth}{ip}:554/cam/realmonitor?channel={{n}}&subtype=0",
+                        ]
+                    elif 'hikvision' in b:
+                        templates = [
+                            f"rtsp://{auth}{ip}:554/Streaming/Channels/{{n}}01",
+                        ]
+                    elif 'axis' in b:
+                        templates = [
+                            f"rtsp://{auth}{ip}:554/axis-media/media.amp?camera={{n}}",
+                        ]
+                    elif 'reolink' in b:
+                        templates = [
+                            f"rtsp://{auth}{ip}:554/h264Preview_{{n:02d}}_main",
+                        ]
+                    else:
+                        # Generic: try both patterns
+                        templates = [
+                            f"rtsp://{auth}{ip}:554/cam/realmonitor?channel={{n}}&subtype=0",
+                            f"rtsp://{auth}{ip}:554/Streaming/Channels/{{n}}01",
+                        ]
+                    return templates
+
+                def _enumerate_channels(ip, u, p, brand, max_ch=16):
+                    """Try channels 1..max_ch and return reachable ones."""
+                    templates = _build_channel_urls(ip, u, p, brand)
+                    channels = []
+                    def _probe_ch(n):
+                        for tmpl in templates:
+                            url = tmpl.format(n=n)
+                            if _rtsp_reachable(url, timeout=1.5):
+                                return {"num": n, "rtsp_url": url, "reachable": True,
+                                        "label": f"Channel {n}"}
+                        return None
+                    with _sid_cf.ThreadPoolExecutor(max_workers=16) as ex:
+                        results = list(ex.map(_probe_ch, range(1, max_ch + 1)))
+                    return [r for r in results if r is not None]
+
+                # ── main identify logic ────────────────────────────
+                result = {
+                    "ip": ip4, "brand": "Unknown", "model": "",
+                    "auth_ok": False, "creds_used": None,
+                    "channels": [], "single_stream": None,
+                    "error": None,
+                }
+
+                # 1. HTTP banner
+                status, html, headers = _http_get(f"http://{ip4}/")
+                if html or headers:
+                    b = _brand_from_html(html, headers)
+                    if b:
+                        result["brand"] = b
+
+                # 2. Try ONVIF with each credential set
+                for u, p in creds_list[:10]:
+                    info = _try_onvif_identify(ip4, u, p)
+                    if info:
+                        result.update(info)
+                        result["auth_ok"] = True
+                        result["creds_used"] = {"username": u, "password": p}
+                        break
+
+                # 3. Try Hikvision ISAPI if not found yet
+                if not result["auth_ok"]:
+                    for u, p in creds_list[:10]:
+                        code, body_txt, hdrs = _http_get(
+                            f"http://{ip4}/ISAPI/System/deviceInfo", u, p)
+                        if code == 200 and '<deviceName>' in body_txt:
+                            result["brand"] = "Hikvision"
+                            m = _sid_re.search(r'<model>(.*?)</model>', body_txt)
+                            if m: result["model"] = m.group(1)
+                            result["auth_ok"] = True
+                            result["creds_used"] = {"username": u, "password": p}
+                            break
+
+                # 4. Try Dahua if not found yet
+                if not result["auth_ok"]:
+                    for u, p in creds_list[:10]:
+                        code, body_txt, hdrs = _http_get(
+                            f"http://{ip4}/cgi-bin/magicBox.cgi?action=getDeviceType",
+                            u, p)
+                        if code == 200 and 'type=' in body_txt:
+                            result["brand"] = "Dahua"
+                            m = _sid_re.search(r'type=(.*)', body_txt)
+                            if m: result["model"] = m.group(1).strip()
+                            result["auth_ok"] = True
+                            result["creds_used"] = {"username": u, "password": p}
+                            break
+
+                # 5. Enumerate channels
+                u_use = result["creds_used"]["username"] if result["creds_used"] else (u_hint or "admin")
+                p_use = result["creds_used"]["password"] if result["creds_used"] else (p_hint or "")
+                result["channels"] = _enumerate_channels(
+                    ip4, u_use, p_use, result["brand"], max_ch=16)
+
+                # If only 1 channel found and it's channel 1, also set single_stream
+                if len(result["channels"]) == 1:
+                    result["single_stream"] = result["channels"][0]["rtsp_url"]
+
+                _json_response(self, result, 200)
+
+            elif path == "/api/cameras/batch-register":
+                # Register multiple cameras at once (e.g., all channels from an NVR)
+                import uuid as _uuid2
+                channels = body.get("channels", [])
+                venue    = body.get("venue", "Default Venue")
+                mode     = body.get("mode", "drink_count")
+                profile  = body.get("model_profile", "balanced")
+                registered = []
+                for ch in channels:
+                    if not ch.get("rtsp_url"):
+                        continue
+                    cam_id = str(_uuid2.uuid4())[:8]
+                    save_camera(
+                        camera_id       = cam_id,
+                        venue           = venue,
+                        name            = ch.get("name", ch.get("label", f"Camera {ch.get('num','')}") ),
+                        rtsp_url        = ch["rtsp_url"],
+                        mode            = ch.get("mode", mode),
+                        model_profile   = profile,
+                        segment_seconds = float(ch.get("segment_seconds", 300)),
+                        notes           = ch.get("notes", ""),
+                    )
+                    registered.append(cam_id)
+                _json_response(self, {"ok": True, "registered": registered, "count": len(registered)}, 201)
+
             elif path == "/api/cameras/fetch-rtsp":
                 # Given an IP + credentials, fetch the RTSP URL via ONVIF
                 ip       = body.get("ip", "")
@@ -568,7 +794,6 @@ class _APIHandler(BaseHTTPRequestHandler):
                 # For HLS URLs (http://…m3u8) — HTTP GET, check status.
                 # For RTSP URLs (rtsp://…) — TCP connect to host:port.
                 import socket, urllib.request, urllib.error
-                from urllib.parse import urlparse
                 cams = list_cameras()
                 results = []
                 for cam in cams:
@@ -698,6 +923,97 @@ class _APIHandler(BaseHTTPRequestHandler):
                     "hostname": _sock.gethostname(),
                     "platform": _pl.system(),
                     "interfaces": interfaces,
+                }, 200)
+
+            elif path == "/api/cameras/arp-table":
+                # Parse ARP table — instantly shows what devices the OS has already seen
+                import subprocess as _sp2, re as _re2
+                entries = []
+                try:
+                    # macOS: arp -a
+                    r = _sp2.run(['arp', '-a'], capture_output=True, text=True, timeout=5)
+                    if r.returncode == 0:
+                        for line in r.stdout.splitlines():
+                            # Format: hostname (ip) at mac on iface
+                            m = _re2.match(
+                                r'^(\S+)\s+\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+(\S+)\s+on\s+(\S+)',
+                                line)
+                            if m:
+                                hostname, ip, mac, iface = m.groups()
+                                if mac == '(incomplete)' or ip.startswith('127.') or ip.endswith('.255'):
+                                    continue
+                                if ip.startswith('224.') or ip.startswith('239.'):
+                                    continue
+                                entries.append({
+                                    "ip": ip,
+                                    "mac": mac if mac != '(incomplete)' else None,
+                                    "hostname": hostname if hostname != '?' else None,
+                                    "interface": iface,
+                                })
+                except Exception:
+                    pass
+                if not entries:
+                    try:
+                        # Linux: ip neigh
+                        r = _sp2.run(['ip', 'neigh'], capture_output=True, text=True, timeout=5)
+                        if r.returncode == 0:
+                            for line in r.stdout.splitlines():
+                                parts = line.split()
+                                if len(parts) >= 5 and parts[2] == 'dev':
+                                    ip = parts[0]
+                                    iface = parts[3] if len(parts) > 3 else ''
+                                    mac = parts[4] if len(parts) > 4 else None
+                                    state = parts[-1] if parts else ''
+                                    if ip.startswith('127.') or state in ('FAILED', 'INCOMPLETE'):
+                                        continue
+                                    entries.append({
+                                        "ip": ip,
+                                        "mac": mac,
+                                        "hostname": None,
+                                        "interface": iface,
+                                    })
+                    except Exception:
+                        pass
+                _json_response(self, {"entries": entries, "count": len(entries)}, 200)
+
+            elif path == "/api/cameras/test-stream":
+                from urllib.parse import parse_qs as _pqs3
+                import socket as _sock3
+                qs3 = _pqs3(urlparse(self.path).query)
+                url3 = qs3.get("url", [""])[0]
+                if not url3:
+                    _json_response(self, {"error": "url required"}, 400)
+                    return
+                parsed3 = urlparse(url3)
+                host3 = parsed3.hostname or ""
+                port3 = parsed3.port or 554
+                ok3 = False
+                latency3 = None
+                detail3 = ""
+                try:
+                    t0 = time.time()
+                    with _sock3.create_connection((host3, port3), timeout=5) as s:
+                        latency3 = int((time.time() - t0) * 1000)
+                        # Send RTSP OPTIONS
+                        req = (f"OPTIONS {url3} RTSP/1.0\r\n"
+                               f"CSeq: 1\r\nUser-Agent: VenueScope/1.0\r\n\r\n")
+                        s.sendall(req.encode())
+                        s.settimeout(4)
+                        resp = s.recv(2048).decode('utf-8', errors='ignore')
+                        if 'RTSP/1.0 200' in resp:
+                            ok3 = True
+                            detail3 = "Stream OK"
+                        elif 'RTSP/1.0 401' in resp:
+                            ok3 = True   # auth required but stream exists
+                            detail3 = "Auth required (stream exists)"
+                        elif 'RTSP/1.0' in resp:
+                            detail3 = resp.split('\r\n')[0]
+                        else:
+                            detail3 = "No RTSP response"
+                except Exception as e3:
+                    detail3 = str(e3).split("]")[-1].strip()
+                _json_response(self, {
+                    "url": url3, "ok": ok3, "latency_ms": latency3, "detail": detail3
                 }, 200)
 
             elif path == "/api/cameras/subnet-scan":
