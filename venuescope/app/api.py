@@ -18,7 +18,9 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.config   import CONFIG_DIR
-from core.database import list_jobs, get_job, list_cameras, list_venues, save_camera, delete_camera
+from core.database import (list_jobs, get_job, list_cameras, list_venues, save_camera, delete_camera,
+                            list_events, get_event, save_event, delete_event, get_concept_stats,
+                            _compute_demand_score)
 from core.onvif_discover import discover_cameras, get_rtsp_url
 
 API_VERSION = "1.0"
@@ -254,7 +256,7 @@ class _APIHandler(BaseHTTPRequestHandler):
         # Pre-flight CORS
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
@@ -268,6 +270,13 @@ class _APIHandler(BaseHTTPRequestHandler):
                     _json_response(self, {"error": "camera_id required"}, 400)
                     return
                 delete_camera(cam_id)
+                _json_response(self, {"ok": True}, 200)
+            elif path.startswith("/api/events/"):
+                event_id = path[len("/api/events/"):]
+                if not event_id:
+                    _json_response(self, {"error": "event_id required"}, 400)
+                    return
+                delete_event(event_id)
                 _json_response(self, {"ok": True}, 200)
             else:
                 _json_response(self, {"error": "Not found"}, 404)
@@ -311,6 +320,125 @@ class _APIHandler(BaseHTTPRequestHandler):
                     _json_response(self, {"ok": True, "rtsp_url": rtsp}, 200)
                 else:
                     _json_response(self, {"ok": False, "error": "Could not retrieve RTSP URL — check credentials"}, 200)
+
+            elif path == "/api/events":
+                import uuid as _uuid
+                event_id = body.get("event_id") or str(_uuid.uuid4())[:12]
+                if not body.get("name") or not body.get("concept_type") or not body.get("event_date"):
+                    _json_response(self, {"error": "name, concept_type, event_date required"}, 400)
+                    return
+                signals = {k: body.get(k) for k in [
+                    "meta_cpc_a", "meta_cpc_b", "tiktok_save_rate",
+                    "ig_dm_count", "ig_poll_pct", "google_trends_score", "eventbrite_pct"
+                ] if body.get(k) is not None}
+                demand_score, demand_verdict = _compute_demand_score(signals) if signals else (None, None)
+                save_event(
+                    event_id       = event_id,
+                    name           = body["name"],
+                    concept_type   = body["concept_type"],
+                    event_date     = body["event_date"],
+                    venue          = body.get("venue", ""),
+                    expected_headcount = body.get("expected_headcount"),
+                    cover_charge   = body.get("cover_charge"),
+                    status         = body.get("status", "upcoming"),
+                    notes          = body.get("notes", ""),
+                    demand_score   = demand_score,
+                    demand_verdict = demand_verdict,
+                    threshold_headcount     = body.get("threshold_headcount"),
+                    threshold_revenue_pct   = body.get("threshold_revenue_pct"),
+                    **{k: body.get(k) for k in [
+                        "meta_cpc_a", "meta_cpc_b", "meta_concept_a", "meta_concept_b",
+                        "tiktok_save_rate", "ig_dm_count", "ig_poll_pct",
+                        "google_trends_score", "eventbrite_pct", "job_ids", "camera_ids",
+                        "peak_occupancy", "avg_drink_velocity", "event_health_score", "scorecard_json"
+                    ] if body.get(k) is not None}
+                )
+                _json_response(self, {"ok": True, "event_id": event_id}, 201)
+
+            elif path.startswith("/api/events/") and path != "/api/events/concepts":
+                event_id = path[len("/api/events/"):]
+                ev = get_event(event_id)
+                if not ev:
+                    _json_response(self, {"error": "Event not found"}, 404)
+                    return
+                # Merge new signals and recompute demand score
+                signal_keys = ["meta_cpc_a", "meta_cpc_b", "meta_concept_a", "meta_concept_b",
+                               "tiktok_save_rate", "ig_dm_count", "ig_poll_pct",
+                               "google_trends_score", "eventbrite_pct"]
+                signals = {k: body.get(k) if body.get(k) is not None else ev.get(k)
+                           for k in signal_keys}
+                demand_score, demand_verdict = _compute_demand_score(signals)
+                update_vals = {k: v for k, v in body.items() if k not in ("event_id",)}
+                update_vals["demand_score"]  = demand_score
+                update_vals["demand_verdict"] = demand_verdict
+                # Merge with existing, update
+                save_event(
+                    event_id     = event_id,
+                    name         = update_vals.get("name", ev["name"]),
+                    concept_type = update_vals.get("concept_type", ev["concept_type"]),
+                    event_date   = update_vals.get("event_date", ev["event_date"]),
+                    venue        = update_vals.get("venue", ev.get("venue", "")),
+                    expected_headcount = update_vals.get("expected_headcount", ev.get("expected_headcount")),
+                    cover_charge = update_vals.get("cover_charge", ev.get("cover_charge")),
+                    status       = update_vals.get("status", ev.get("status", "upcoming")),
+                    notes        = update_vals.get("notes", ev.get("notes", "")),
+                    **{k: update_vals.get(k) if update_vals.get(k) is not None else ev.get(k)
+                       for k in ["meta_cpc_a", "meta_cpc_b", "meta_concept_a", "meta_concept_b",
+                                 "tiktok_save_rate", "ig_dm_count", "ig_poll_pct",
+                                 "google_trends_score", "eventbrite_pct", "demand_score",
+                                 "demand_verdict", "threshold_headcount", "threshold_revenue_pct",
+                                 "job_ids", "camera_ids", "peak_occupancy", "avg_drink_velocity",
+                                 "event_health_score", "scorecard_json"]
+                       if (update_vals.get(k) is not None or ev.get(k) is not None)}
+                )
+                _json_response(self, {"ok": True, "event_id": event_id}, 200)
+            else:
+                _json_response(self, {"error": "Not found"}, 404)
+        except Exception as exc:
+            _json_response(self, {"error": str(exc)}, 500)
+
+    def do_PATCH(self):
+        """PATCH /api/events/{id} — update event signals/scorecard."""
+        parsed = urlparse(self.path)
+        path   = parsed.path.rstrip("/")
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body   = json.loads(self.rfile.read(length)) if length else {}
+            if path.startswith("/api/events/"):
+                event_id = path[len("/api/events/"):]
+                ev = get_event(event_id)
+                if not ev:
+                    _json_response(self, {"error": "Event not found"}, 404)
+                    return
+                signal_keys = ["meta_cpc_a", "meta_cpc_b", "meta_concept_a", "meta_concept_b",
+                               "tiktok_save_rate", "ig_dm_count", "ig_poll_pct",
+                               "google_trends_score", "eventbrite_pct"]
+                signals = {k: body.get(k) if body.get(k) is not None else ev.get(k)
+                           for k in signal_keys}
+                demand_score, demand_verdict = _compute_demand_score(signals)
+                save_event(
+                    event_id     = event_id,
+                    name         = body.get("name", ev["name"]),
+                    concept_type = body.get("concept_type", ev["concept_type"]),
+                    event_date   = body.get("event_date", ev["event_date"]),
+                    venue        = body.get("venue", ev.get("venue", "")),
+                    expected_headcount = body.get("expected_headcount", ev.get("expected_headcount")),
+                    cover_charge = body.get("cover_charge", ev.get("cover_charge")),
+                    status       = body.get("status", ev.get("status", "upcoming")),
+                    notes        = body.get("notes", ev.get("notes", "")),
+                    demand_score   = demand_score,
+                    demand_verdict = demand_verdict,
+                    **{k: body.get(k) if body.get(k) is not None else ev.get(k)
+                       for k in ["meta_cpc_a", "meta_cpc_b", "meta_concept_a", "meta_concept_b",
+                                 "tiktok_save_rate", "ig_dm_count", "ig_poll_pct",
+                                 "google_trends_score", "eventbrite_pct",
+                                 "threshold_headcount", "threshold_revenue_pct",
+                                 "job_ids", "camera_ids", "peak_occupancy", "avg_drink_velocity",
+                                 "event_health_score", "scorecard_json"]
+                       if (body.get(k) is not None or ev.get(k) is not None)}
+                )
+                _json_response(self, {"ok": True, "demand_score": demand_score,
+                                      "demand_verdict": demand_verdict}, 200)
             else:
                 _json_response(self, {"error": "Not found"}, 404)
         except Exception as exc:
@@ -361,6 +489,25 @@ class _APIHandler(BaseHTTPRequestHandler):
                 cams   = list_cameras()
                 venues = list_venues()
                 _json_response(self, {"cameras": cams, "venues": venues}, 200)
+
+            elif path == "/api/events":
+                from urllib.parse import parse_qs
+                qs    = parse_qs(urlparse(self.path).query)
+                venue = qs.get("venue", [None])[0]
+                limit = int(qs.get("limit", ["100"])[0])
+                evs   = list_events(limit=limit, venue=venue)
+                _json_response(self, {"events": evs}, 200)
+
+            elif path == "/api/events/concepts":
+                _json_response(self, {"concepts": get_concept_stats()}, 200)
+
+            elif path.startswith("/api/events/"):
+                event_id = path[len("/api/events/"):]
+                ev = get_event(event_id)
+                if not ev:
+                    _json_response(self, {"error": "Event not found"}, 404)
+                    return
+                _json_response(self, ev, 200)
 
             elif path == "/api/cameras/discover":
                 # WS-Discovery scan — finds ONVIF cameras on the local network

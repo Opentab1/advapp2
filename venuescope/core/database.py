@@ -79,6 +79,19 @@ def _migrate_schema(engine):
             "job_id TEXT, user TEXT NOT NULL DEFAULT 'system', "
             "detail TEXT, old_value TEXT, new_value TEXT)"
         ),
+        (
+            "CREATE TABLE IF NOT EXISTS events ("
+            "event_id TEXT PRIMARY KEY, name TEXT NOT NULL, concept_type TEXT NOT NULL, "
+            "event_date TEXT NOT NULL, venue TEXT, expected_headcount INTEGER, "
+            "cover_charge REAL, status TEXT DEFAULT 'upcoming', job_ids TEXT, camera_ids TEXT, "
+            "meta_cpc_a REAL, meta_cpc_b REAL, meta_concept_a TEXT, meta_concept_b TEXT, "
+            "tiktok_save_rate REAL, ig_dm_count INTEGER, ig_poll_pct REAL, "
+            "google_trends_score INTEGER, eventbrite_pct REAL, "
+            "demand_score INTEGER, demand_verdict TEXT, "
+            "threshold_headcount INTEGER, threshold_revenue_pct REAL, "
+            "peak_occupancy INTEGER, avg_drink_velocity REAL, event_health_score INTEGER, "
+            "scorecard_json TEXT, created_at REAL NOT NULL, notes TEXT)"
+        ),
     ]
     with engine.begin() as conn:
         for sql in migrations:
@@ -510,6 +523,167 @@ def delete_camera(camera_id: str) -> bool:
     with get_engine().begin() as c:
         c.execute(text("DELETE FROM cameras WHERE camera_id = :id"), {"id": camera_id})
     return True
+
+
+# ── Event Intelligence ───────────────────────────────────────────────────────
+
+events_table = Table("events", _meta,
+    Column("event_id",          String, primary_key=True),
+    Column("name",              String, nullable=False),
+    Column("concept_type",      String, nullable=False),
+    Column("event_date",        String, nullable=False),   # YYYY-MM-DD
+    Column("venue",             String, nullable=True),
+    Column("expected_headcount", Integer, nullable=True),
+    Column("cover_charge",      Float,  nullable=True),
+    Column("status",            String, nullable=False, default="upcoming"),  # upcoming|live|completed|cancelled
+    Column("job_ids",           Text,   nullable=True),    # JSON array
+    Column("camera_ids",        Text,   nullable=True),    # JSON array
+    # Pre-launch signals
+    Column("meta_cpc_a",        Float,  nullable=True),
+    Column("meta_cpc_b",        Float,  nullable=True),
+    Column("meta_concept_a",    String, nullable=True),
+    Column("meta_concept_b",    String, nullable=True),
+    Column("tiktok_save_rate",  Float,  nullable=True),
+    Column("ig_dm_count",       Integer, nullable=True),
+    Column("ig_poll_pct",       Float,  nullable=True),    # % for this concept
+    Column("google_trends_score", Integer, nullable=True),
+    Column("eventbrite_pct",    Float,  nullable=True),    # % of capacity sold in 48h
+    Column("demand_score",      Integer, nullable=True),
+    Column("demand_verdict",    String, nullable=True),    # green|yellow|red
+    # Success threshold (locked in pre-event)
+    Column("threshold_headcount", Integer, nullable=True),
+    Column("threshold_revenue_pct", Float, nullable=True),
+    # Post-event scorecard
+    Column("peak_occupancy",    Integer, nullable=True),
+    Column("avg_drink_velocity", Float, nullable=True),
+    Column("event_health_score", Integer, nullable=True),
+    Column("scorecard_json",    Text,   nullable=True),
+    # Meta
+    Column("created_at",        Float,  nullable=False),
+    Column("notes",             Text,   nullable=True),
+)
+
+
+def _compute_demand_score(signals: dict) -> tuple[int, str]:
+    """Compute demand score (0-100) and verdict from pre-launch signals."""
+    score = 0
+    # Meta A/B: 20 pts if run and there's a winner
+    if signals.get("meta_cpc_a") and signals.get("meta_cpc_b"):
+        score += 20
+    # TikTok save rate: 20 pts
+    tsr = signals.get("tiktok_save_rate") or 0
+    if tsr >= 1.0:   score += 20
+    elif tsr >= 0.5: score += 10
+    # IG DMs: 20 pts
+    dms = signals.get("ig_dm_count") or 0
+    if dms >= 10:  score += 20
+    elif dms >= 5: score += 10
+    # IG poll: 15 pts
+    poll = signals.get("ig_poll_pct") or 0
+    if poll >= 60:   score += 15
+    elif poll >= 50: score += 7
+    # Google Trends: 15 pts
+    gt = signals.get("google_trends_score") or 0
+    score += round(gt / 100 * 15)
+    # Eventbrite velocity: 10 pts
+    eb = signals.get("eventbrite_pct") or 0
+    if eb >= 15:  score += 10
+    elif eb >= 5: score += 5
+
+    score = min(score, 100)
+    if score >= 70:   verdict = "green"
+    elif score >= 40: verdict = "yellow"
+    else:             verdict = "red"
+    return score, verdict
+
+
+def save_event(event_id: str, name: str, concept_type: str, event_date: str,
+               venue: str = "", expected_headcount: int = None,
+               cover_charge: float = None, status: str = "upcoming",
+               notes: str = "", **extra) -> None:
+    engine = get_engine()
+    with engine.begin() as c:
+        existing = c.execute(
+            select(events_table).where(events_table.c.event_id == event_id)
+        ).mappings().first()
+        allowed = {col.key for col in events_table.columns}
+        vals = {k: v for k, v in extra.items() if k in allowed}
+        if existing:
+            vals.update({"name": name, "concept_type": concept_type,
+                         "event_date": event_date, "venue": venue,
+                         "expected_headcount": expected_headcount,
+                         "cover_charge": cover_charge, "status": status, "notes": notes})
+            sets = ", ".join(f"{k}=:{k}" for k in vals)
+            vals["_id"] = event_id
+            c.execute(text(f"UPDATE events SET {sets} WHERE event_id=:_id"), vals)
+        else:
+            vals.update({"event_id": event_id, "name": name, "concept_type": concept_type,
+                         "event_date": event_date, "venue": venue,
+                         "expected_headcount": expected_headcount,
+                         "cover_charge": cover_charge, "status": status,
+                         "notes": notes, "created_at": time.time()})
+            c.execute(insert(events_table).values(**vals))
+
+
+def get_event(event_id: str) -> Optional[Dict]:
+    with get_engine().connect() as c:
+        row = c.execute(
+            select(events_table).where(events_table.c.event_id == event_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def list_events(limit: int = 100, venue: str = None) -> list:
+    with get_engine().connect() as c:
+        q = select(events_table).order_by(events_table.c.event_date.desc()).limit(limit)
+        if venue:
+            q = q.where(events_table.c.venue == venue)
+        rows = c.execute(q).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def delete_event(event_id: str) -> bool:
+    with get_engine().begin() as c:
+        c.execute(text("DELETE FROM events WHERE event_id=:id"), {"id": event_id})
+    return True
+
+
+def get_concept_stats() -> list:
+    """Return aggregated stats per concept_type across all completed events."""
+    events = list_events(500)
+    stats: dict = {}
+    for ev in events:
+        if ev.get("status") != "completed":
+            continue
+        ct = ev.get("concept_type", "Other")
+        if ct not in stats:
+            stats[ct] = {"concept_type": ct, "run_count": 0, "health_scores": [],
+                         "avg_occupancy": [], "avg_drink_velocity": []}
+        s = stats[ct]
+        s["run_count"] += 1
+        if ev.get("event_health_score") is not None:
+            s["health_scores"].append(ev["event_health_score"])
+        if ev.get("peak_occupancy") is not None:
+            s["avg_occupancy"].append(ev["peak_occupancy"])
+        if ev.get("avg_drink_velocity") is not None:
+            s["avg_drink_velocity"].append(ev["avg_drink_velocity"])
+    result = []
+    for s in stats.values():
+        hs = s["health_scores"]
+        avg_hs = round(sum(hs) / len(hs)) if hs else None
+        verdict = ("keep" if avg_hs and avg_hs >= 70
+                   else "optimize" if avg_hs and avg_hs >= 45
+                   else "kill" if avg_hs else "pending")
+        result.append({
+            "concept_type":       s["concept_type"],
+            "run_count":          s["run_count"],
+            "avg_health_score":   avg_hs,
+            "verdict":            verdict,
+            "avg_peak_occupancy": round(sum(s["avg_occupancy"]) / len(s["avg_occupancy"])) if s["avg_occupancy"] else None,
+            "avg_drink_velocity": round(sum(s["avg_drink_velocity"]) / len(s["avg_drink_velocity"]), 1) if s["avg_drink_velocity"] else None,
+        })
+    result.sort(key=lambda x: (x["avg_health_score"] or 0), reverse=True)
+    return result
 
 
 # ── Retention / cleanup ──────────────────────────────────────────────────────
