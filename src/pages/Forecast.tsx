@@ -1,34 +1,149 @@
 /**
- * Forecast — standalone attendance forecast tab
- * Uses the exact same UI as the embedded forecast card in Events.tsx
+ * Forecast — client-side attendance forecaster
+ * Python model (core/forecasting.py) ported to TypeScript.
+ * Runs entirely in the browser — no server required.
  */
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Users, TrendingUp, CloudRain, MapPin, RefreshCw, ChevronDown,
-  AlertTriangle, BadgeDollarSign, Zap,
+  BadgeDollarSign, Zap,
 } from 'lucide-react';
 import venueSettingsService from '../services/venue-settings.service';
 import authService from '../services/auth.service';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Model: ported from core/forecasting.py ──────────────────────────────────
+// Lucas & Kilby (2008) hospitality demand model, R²=0.74
+// Coefficients calibrated on bar/restaurant nightlife attendance data.
 
-interface AttendanceForecast {
-  low: number;
-  mid: number;
-  high: number;
+// Monday=0 … Sunday=6
+const DOW_MULTIPLIER: Record<number, number> = {
+  0: 0.31, 1: 0.34, 2: 0.42, 3: 0.55, 4: 0.78, 5: 1.00, 6: 0.65,
+};
+
+const MONTH_MULTIPLIER: Record<number, number> = {
+  1: 0.72, 2: 0.75, 3: 0.88, 4: 0.91, 5: 0.96, 6: 1.05,
+  7: 1.02, 8: 0.98, 9: 0.93, 10: 0.97, 11: 1.08, 12: 1.12,
+};
+
+const EVENT_LIFT: Record<string, number> = {
+  'DJ Night': 1.25, 'Live Music': 1.20, 'Trivia Night': 1.18,
+  'Karaoke': 1.12, 'Drag Show': 1.30, 'Sports Watch Party': 1.22,
+  'Comedy Night': 1.15, 'Happy Hour Special': 1.05, 'Themed Party': 1.28,
+  'Open Mic': 1.08, 'Brunch': 0.95, 'Ladies Night': 1.20,
+  'Networking Event': 0.88, 'Wine Tasting': 0.90, 'Dance Class': 1.05,
+  'Game Night': 1.10, 'Paint & Sip': 1.05, 'Speed Dating': 1.08, 'Other': 1.10,
+};
+
+const WEATHER_PENALTY: Record<string, number> = {
+  none: 1.00, low: 0.97, moderate: 0.88, high: 0.72, extreme: 0.55,
+};
+
+/** nth occurrence of weekday (0=Mon…6=Sun) in a given month */
+function nthWeekday(year: number, month: number, weekday: number, n: number): Date {
+  const first = new Date(year, month - 1, 1);
+  const diff = (weekday - ((first.getDay() + 6) % 7) + 7) % 7;
+  return new Date(year, month - 1, 1 + diff + (n - 1) * 7);
+}
+
+function usHolidaysForYear(year: number): Set<string> {
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  const holidays = new Set<string>();
+  // Fixed
+  holidays.add(`${year}-01-01`); // New Year's Day
+  holidays.add(`${year}-07-04`); // Independence Day
+  holidays.add(`${year}-11-11`); // Veterans Day
+  holidays.add(`${year}-12-25`); // Christmas
+  holidays.add(`${year}-03-17`); // St. Patrick's Day
+  holidays.add(`${year}-10-31`); // Halloween
+  holidays.add(`${year}-12-31`); // NYE
+  // Floating
+  holidays.add(fmt(nthWeekday(year, 1, 0, 3)));  // MLK Day — 3rd Mon Jan
+  holidays.add(fmt(nthWeekday(year, 2, 0, 3)));  // Presidents Day — 3rd Mon Feb
+  holidays.add(fmt(nthWeekday(year, 5, 0, 4)));  // Memorial Day — last Mon May (approx 4th)
+  holidays.add(fmt(nthWeekday(year, 9, 0, 1)));  // Labor Day — 1st Mon Sep
+  holidays.add(fmt(nthWeekday(year, 10, 0, 2))); // Columbus Day — 2nd Mon Oct
+  holidays.add(fmt(nthWeekday(year, 11, 3, 4))); // Thanksgiving — 4th Thu Nov
+  return holidays;
+}
+
+function barHolidayMultiplier(d: Date): number {
+  const m = d.getMonth() + 1, day = d.getDate(), dow = (d.getDay() + 6) % 7;
+  if (m === 3  && day === 17) return 1.45; // St. Patrick's Day
+  if (m === 10 && day === 31) return 1.35; // Halloween
+  if (m === 12 && day === 31) return 1.50; // NYE
+  if (m === 1  && day === 1)  return 0.60; // New Year's Day (hangover)
+  if (m === 11 && day >= 22 && day <= 28) return 0.55; // Thanksgiving week
+  if (m === 12 && day === 25) return 0.40; // Christmas
+  // Super Bowl — approx 2nd Sun Feb
+  if (m === 2 && dow === 6 && day >= 7 && day <= 14) return 1.30;
+  return 1.0;
+}
+
+interface ForecastResult {
+  low: number; mid: number; high: number;
   fill_rate_pct: number;
-  model: string;
-  model_short: string;
-  confidence: 'model' | 'trained';
-  revenue_low: number;
-  revenue_mid: number;
-  revenue_high: number;
+  model: string; model_short: string;
+  confidence: 'model';
+  revenue_low: number; revenue_mid: number; revenue_high: number;
   avg_spend_assumption: number;
   historical_sessions: number;
   note: string;
-  factors?: Record<string, number>;
+  factors: {
+    base_fill_55pct: number;
+    day_of_week_multiplier: number;
+    month_seasonality: number;
+    event_type_lift: number;
+    holiday_factor: number;
+    weather_penalty: number;
+  };
+}
+
+function runModel(
+  conceptType: string,
+  eventDate: Date,
+  capacity: number,
+  coverCharge: number,
+  weatherRisk: string,
+): ForecastResult {
+  const base = capacity * 0.55;
+  const dow     = DOW_MULTIPLIER[(eventDate.getDay() + 6) % 7] ?? 0.65;
+  const month   = MONTH_MULTIPLIER[eventDate.getMonth() + 1] ?? 1.0;
+  const lift    = EVENT_LIFT[conceptType] ?? 1.10;
+  const holiday = barHolidayMultiplier(eventDate);
+  const weather = WEATHER_PENALTY[weatherRisk] ?? 1.0;
+
+  const midRaw = base * dow * month * lift * holiday * weather;
+  const mid  = Math.max(5, Math.min(capacity, Math.round(midRaw)));
+  const low  = Math.max(1, Math.round(mid * 0.82));
+  const high = Math.min(capacity, Math.round(mid * 1.18));
+
+  const fillPct = Math.round((mid / capacity) * 100 * 10) / 10;
+  const avgDrinkSpend = 18;
+  const spend = coverCharge + avgDrinkSpend;
+
+  return {
+    low, mid, high,
+    fill_rate_pct: fillPct,
+    model: 'Simple Multiplier (Lucas & Kilby 2008, R²=0.74)',
+    model_short: 'Baseline Model',
+    confidence: 'model',
+    revenue_low:  Math.round(low  * spend),
+    revenue_mid:  Math.round(mid  * spend),
+    revenue_high: Math.round(high * spend),
+    avg_spend_assumption: avgDrinkSpend,
+    historical_sessions: 0,
+    note: 'Baseline model active. Connect VenueScope cameras and run People Counter to unlock venue-specific ML forecast after 30 sessions.',
+    factors: {
+      base_fill_55pct:        Math.round(base),
+      day_of_week_multiplier: dow,
+      month_seasonality:      month,
+      event_type_lift:        lift,
+      holiday_factor:         holiday,
+      weather_penalty:        weather,
+    },
+  };
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -36,68 +151,52 @@ interface AttendanceForecast {
 const CONCEPT_TYPES = [
   'DJ Night', 'Live Music', 'Trivia Night', 'Karaoke', 'Drag Show',
   'Sports Watch Party', 'Comedy Night', 'Happy Hour Special', 'Themed Party',
-  'Open Mic', 'Paint & Sip', 'Speed Dating', 'Networking Event', 'Other',
+  'Open Mic', 'Paint & Sip', 'Speed Dating', 'Networking Event',
+  'Game Night', 'Ladies Night', 'Other',
 ];
 
 const CONCEPT_EMOJIS: Record<string, string> = {
   'DJ Night': '🎧', 'Live Music': '🎸', 'Trivia Night': '🧠', 'Karaoke': '🎤',
   'Drag Show': '💅', 'Sports Watch Party': '📺', 'Comedy Night': '😂',
   'Happy Hour Special': '🍹', 'Themed Party': '🎭', 'Open Mic': '🎙️',
-  'Paint & Sip': '🎨', 'Speed Dating': '💘', 'Networking Event': '🤝', 'Other': '✨',
+  'Paint & Sip': '🎨', 'Speed Dating': '💘', 'Networking Event': '🤝',
+  'Game Night': '🎲', 'Ladies Night': '👑', 'Other': '✨',
 };
 
 const WEATHER_OPTIONS = [
-  { value: 'none',     label: 'Clear / No impact',        penalty: '' },
-  { value: 'low',      label: 'Overcast (−3%)',            penalty: '' },
-  { value: 'moderate', label: 'Rain / Wind (−12%)',        penalty: '' },
-  { value: 'high',     label: 'Storm (−28%)',              penalty: '' },
-  { value: 'extreme',  label: 'Severe weather (−45%)',     penalty: '' },
+  { value: 'none',     label: 'Clear / No impact'     },
+  { value: 'low',      label: 'Overcast (−3%)'         },
+  { value: 'moderate', label: 'Rain / Wind (−12%)'     },
+  { value: 'high',     label: 'Storm (−28%)'           },
+  { value: 'extreme',  label: 'Severe weather (−45%)'  },
 ];
 
 const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const LS_KEY = 'venuescope_server_url';
-
-function getServerUrl() {
-  const fromEnv = (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
-  if (fromEnv) return fromEnv;
-  return (localStorage.getItem(LS_KEY) || '').replace(':8501', ':8502').replace(/\/$/, '');
-}
-
 function nextFriday(): string {
   const d = new Date();
-  const daysToFriday = (5 - d.getDay() + 7) % 7 || 7;
-  d.setDate(d.getDate() + daysToFriday);
-  return d.toISOString().slice(0, 10);
+  const diff = (5 - d.getDay() + 7) % 7 || 7;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().split('T')[0];
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function Forecast() {
-  const user = authService.getStoredUser();
+  const user    = authService.getStoredUser();
   const venueId = user?.venueId || '';
 
-  const [concept, setConcept]           = useState('DJ Night');
-  const [city, setCity]                 = useState('');
-  const [date, setDate]                 = useState(nextFriday());
-  const [capacity, setCapacity]         = useState('150');
-  const [cover, setCover]               = useState('');
-  const [weatherRisk, setWeatherRisk]   = useState('none');
+  const [concept,     setConcept]     = useState('DJ Night');
+  const [city,        setCity]        = useState('');
+  const [date,        setDate]        = useState(nextFriday());
+  const [capacity,    setCapacity]    = useState('150');
+  const [cover,       setCover]       = useState('');
+  const [weatherRisk, setWeatherRisk] = useState('none');
 
-  const [serverUrlInput, setServerUrlInput] = useState(() => localStorage.getItem(LS_KEY) || '');
-  const [loading, setLoading]           = useState(false);
-  const [forecast, setForecast]         = useState<AttendanceForecast | null>(null);
-  const [error, setError]               = useState('');
-  const [showFactors, setShowFactors]   = useState(false);
-  const [weekResults, setWeekResults]   = useState<Record<string, AttendanceForecast>>({});
-  const [weekLoading, setWeekLoading]   = useState(false);
-
-  const saveServerUrl = () => {
-    const url = serverUrlInput.trim().replace(/\/$/, '');
-    localStorage.setItem(LS_KEY, url);
-  };
+  const [forecast,    setForecast]    = useState<ForecastResult | null>(null);
+  const [showFactors, setShowFactors] = useState(false);
+  const [weekResults, setWeekResults] = useState<Record<string, ForecastResult>>({});
+  const [weekLoading, setWeekLoading] = useState(false);
 
   // Auto-detect city from venue settings
   useEffect(() => {
@@ -106,50 +205,29 @@ export function Forecast() {
     else venueSettingsService.getAddressFromCloud(venueId).then(a => { if (a?.city) setCity(a.city); }).catch(() => {});
   }, [venueId]);
 
-  const runForecast = async () => {
-    const serverUrl = getServerUrl();
-    if (!serverUrl) { setError('Enter your VenueScope server URL below'); return; }
-    setLoading(true); setError(''); setForecast(null); setWeekResults({});
-    try {
-      const params = new URLSearchParams({
-        concept, city, date, capacity, cover: cover || '0', weather_risk: weatherRisk,
-      });
-      const r = await fetch(`${serverUrl}/api/events/forecast?${params}`);
-      if (!r.ok) throw new Error(`Server error ${r.status}`);
-      const d = await r.json();
-      if (d.error) throw new Error(d.error);
-      setForecast(d);
-    } catch (e: any) {
-      setError(e.message || 'Failed to fetch forecast');
-    }
-    setLoading(false);
+  const runForecast = () => {
+    const cap = parseInt(capacity) || 150;
+    const cov = parseFloat(cover) || 0;
+    const d   = new Date(date + 'T12:00:00');
+    setForecast(runModel(concept, d, cap, cov, weatherRisk));
+    setWeekResults({});
+    setShowFactors(false);
   };
 
-  const runWeekComparison = async () => {
-    const serverUrl = getServerUrl();
-    if (!serverUrl || weekLoading) return;
+  const runWeekComparison = () => {
     setWeekLoading(true);
-    // Get the week containing the selected date
+    const cap = parseInt(capacity) || 150;
+    const cov = parseFloat(cover) || 0;
     const base = new Date(date + 'T12:00:00');
     const monday = new Date(base);
     monday.setDate(base.getDate() - ((base.getDay() + 6) % 7));
 
-    const fetches = DOW_LABELS.map((_, i) => {
+    const map: Record<string, ForecastResult> = {};
+    DOW_LABELS.forEach((day, i) => {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
-      const ds = d.toISOString().split('T')[0];
-      const params = new URLSearchParams({ concept, city, date: ds, capacity, cover: cover || '0', weather_risk: weatherRisk });
-      return fetch(`${serverUrl}/api/events/forecast?${params}`)
-        .then(r => r.ok ? r.json() : null)
-        .then(data => [DOW_LABELS[i], data] as [string, AttendanceForecast | null])
-        .catch(() => [DOW_LABELS[i], null] as [string, null]);
+      map[day] = runModel(concept, d, cap, cov, weatherRisk);
     });
-
-    const all = await Promise.all(fetches);
-    const map: Record<string, AttendanceForecast> = {};
-    for (const [day, res] of all) {
-      if (res && !(res as any).error) map[day] = res;
-    }
     setWeekResults(map);
     setWeekLoading(false);
   };
@@ -171,6 +249,7 @@ export function Forecast() {
         <div className="flex items-center gap-2">
           <TrendingUp className="w-4 h-4 text-teal" />
           <h3 className="text-base font-semibold text-white">Forecast Settings</h3>
+          <span className="ml-auto text-[10px] text-warm-500">Runs in browser — no server needed</span>
         </div>
 
         {/* Concept */}
@@ -183,7 +262,7 @@ export function Forecast() {
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          {/* City */}
+          {/* City (informational only for now) */}
           <div>
             <label className="text-xs text-warm-300 mb-1.5 block font-medium uppercase tracking-wide flex items-center gap-1">
               <MapPin className="w-3 h-3" /> City
@@ -233,50 +312,15 @@ export function Forecast() {
           </select>
         </div>
 
-        {/* Run button */}
         <button
           onClick={runForecast}
-          disabled={loading}
-          className="w-full flex items-center justify-center gap-2 py-3 bg-teal/20 border border-teal/50 text-teal hover:bg-teal/30 rounded-lg font-semibold text-sm transition-all disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-2 py-3 bg-teal/20 border border-teal/50 text-teal hover:bg-teal/30 rounded-lg font-semibold text-sm transition-all"
         >
-          {loading
-            ? <><RefreshCw className="w-4 h-4 animate-spin" /> Forecasting…</>
-            : <><Zap className="w-4 h-4" /> Run Forecast</>
-          }
+          <Zap className="w-4 h-4" /> Run Forecast
         </button>
-
-        {/* Server URL config — shown when env var not set */}
-        {!import.meta.env.VITE_VENUESCOPE_URL && (
-          <div className="p-3 bg-warm-900/60 border border-warm-600 rounded-lg space-y-2">
-            <p className="text-xs text-warm-400 font-medium">VenueScope Server URL</p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="http://your-server-ip:8502"
-                value={serverUrlInput}
-                onChange={e => setServerUrlInput(e.target.value)}
-                className="flex-1 bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal font-mono"
-              />
-              <button
-                onClick={saveServerUrl}
-                className="px-3 py-2 bg-teal/20 border border-teal/40 text-teal text-xs rounded-lg hover:bg-teal/30 transition-colors font-medium"
-              >
-                Save
-              </button>
-            </div>
-            <p className="text-[10px] text-warm-600">The IP address of the machine running VenueScope (port 8502)</p>
-          </div>
-        )}
-
-        {error && (
-          <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-            <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
-            <p className="text-xs text-red-300">{error}</p>
-          </div>
-        )}
       </div>
 
-      {/* Results — exact same UI as in Events.tsx ValidationReportCard */}
+      {/* Results */}
       <AnimatePresence>
         {forecast && (
           <motion.div
@@ -286,7 +330,7 @@ export function Forecast() {
             className="space-y-3"
           >
 
-            {/* Attendance Forecast card — copied exactly from ValidationReportCard */}
+            {/* Attendance card */}
             <div className="bg-whoop-panel border border-teal/30 rounded-xl overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
                 <Users className="w-4 h-4 text-teal" />
@@ -296,7 +340,6 @@ export function Forecast() {
                 </span>
               </div>
               <div className="p-4 space-y-3">
-                {/* Attendance bar */}
                 {(() => {
                   const scale = forecast.high > 0 ? 85 / forecast.high : 1;
                   return (
@@ -327,11 +370,10 @@ export function Forecast() {
                   );
                 })()}
 
-                {/* Revenue grid */}
                 <div className="grid grid-cols-3 gap-2">
                   {[
-                    { label: 'Conservative', value: `$${forecast.revenue_low.toLocaleString()}` },
-                    { label: 'Expected',     value: `$${forecast.revenue_mid.toLocaleString()}` },
+                    { label: 'Conservative', value: `$${forecast.revenue_low.toLocaleString()}`  },
+                    { label: 'Expected',     value: `$${forecast.revenue_mid.toLocaleString()}`  },
                     { label: 'Best Case',    value: `$${forecast.revenue_high.toLocaleString()}` },
                   ].map(m => (
                     <div key={m.label} className="bg-warm-800/60 rounded-lg p-2.5 text-center">
@@ -343,88 +385,80 @@ export function Forecast() {
 
                 <p className="text-[10px] text-warm-500">
                   Avg spend assumption: ${forecast.avg_spend_assumption}/head (drinks) + cover charge.
-                  {forecast.historical_sessions > 0
-                    ? ` Trained on ${forecast.historical_sessions} real sessions from camera data.`
-                    : ' Upgrade to ML model after 30 camera-tracked sessions.'}
+                  Connect VenueScope cameras to unlock venue-specific ML forecast after 30 sessions.
                 </p>
-                {forecast.confidence === 'model' && (
-                  <p className="text-[10px] text-amber-400/80">
-                    ⚠ Baseline model — run VenueScope People Counter on live events to unlock venue-specific ML forecast
-                  </p>
-                )}
+                <p className="text-[10px] text-amber-400/80">
+                  ⚠ Baseline model — run VenueScope People Counter on live events to unlock venue-specific ML forecast
+                </p>
               </div>
             </div>
 
             {/* Factor breakdown */}
-            {forecast.factors && (
-              <div className="bg-whoop-panel border border-whoop-divider rounded-xl overflow-hidden">
-                <button
-                  onClick={() => setShowFactors(v => !v)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-warm-800/50 transition-colors"
-                >
-                  <span className="text-sm font-semibold text-white">Factor Breakdown</span>
-                  <ChevronDown className={`w-4 h-4 text-warm-500 transition-transform ${showFactors ? 'rotate-180' : ''}`} />
-                </button>
-                <AnimatePresence>
-                  {showFactors && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}
-                      className="overflow-hidden border-t border-whoop-divider"
-                    >
-                      <div className="px-4 pb-4 pt-2 space-y-2">
-                        {Object.entries(forecast.factors).map(([key, val]) => {
-                          const labels: Record<string, string> = {
-                            base_fill_55pct: 'Base (55% fill)',
-                            day_of_week_multiplier: 'Day of week',
-                            month_seasonality: 'Month seasonality',
-                            event_type_lift: 'Event type lift',
-                            holiday_factor: 'Holiday factor',
-                            weather_penalty: 'Weather penalty',
-                          };
-                          const isBase = key === 'base_fill_55pct';
-                          const color = isBase ? 'text-warm-300' : val > 1.0 ? 'text-green-400' : val < 0.9 ? 'text-amber-400' : 'text-warm-400';
-                          return (
-                            <div key={key} className="flex justify-between py-1 border-b border-warm-700/40 last:border-0">
-                              <span className="text-xs text-warm-400">{labels[key] || key}</span>
-                              <span className={`text-xs font-mono font-semibold ${color}`}>
-                                {isBase ? `${val} guests` : `×${val.toFixed(2)}`}
-                              </span>
-                            </div>
-                          );
-                        })}
-                        <p className="text-[10px] text-warm-600 pt-1">mid = base × DOW × month × event lift × holiday × weather</p>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            )}
+            <div className="bg-whoop-panel border border-whoop-divider rounded-xl overflow-hidden">
+              <button
+                onClick={() => setShowFactors(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-warm-800/50 transition-colors"
+              >
+                <span className="text-sm font-semibold text-white">Factor Breakdown</span>
+                <ChevronDown className={`w-4 h-4 text-warm-500 transition-transform ${showFactors ? 'rotate-180' : ''}`} />
+              </button>
+              <AnimatePresence>
+                {showFactors && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}
+                    className="overflow-hidden border-t border-whoop-divider"
+                  >
+                    <div className="px-4 pb-4 pt-2 space-y-2">
+                      {(Object.entries(forecast.factors) as [string, number][]).map(([key, val]) => {
+                        const labels: Record<string, string> = {
+                          base_fill_55pct:        'Base (55% fill)',
+                          day_of_week_multiplier: 'Day of week',
+                          month_seasonality:      'Month seasonality',
+                          event_type_lift:        'Event type lift',
+                          holiday_factor:         'Holiday factor',
+                          weather_penalty:        'Weather penalty',
+                        };
+                        const isBase = key === 'base_fill_55pct';
+                        const color = isBase ? 'text-warm-300' : val > 1.0 ? 'text-green-400' : val < 0.9 ? 'text-amber-400' : 'text-warm-400';
+                        return (
+                          <div key={key} className="flex justify-between py-1 border-b border-warm-700/40 last:border-0">
+                            <span className="text-xs text-warm-400">{labels[key] || key}</span>
+                            <span className={`text-xs font-mono font-semibold ${color}`}>
+                              {isBase ? `${val} guests` : `×${val.toFixed(2)}`}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      <p className="text-[10px] text-warm-600 pt-1">mid = base × DOW × month × event lift × holiday × weather</p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
-            {/* Day comparison */}
+            {/* Best night this week */}
             <div className="bg-whoop-panel border border-whoop-divider rounded-xl overflow-hidden">
               <div className="flex items-center justify-between px-4 py-3 border-b border-whoop-divider">
                 <span className="text-sm font-semibold text-white">Best Night This Week</span>
-                {Object.keys(weekResults).length === 0 && (
-                  <button
-                    onClick={runWeekComparison} disabled={weekLoading}
-                    className="text-xs text-teal hover:text-teal/80 transition-colors disabled:opacity-50"
-                  >
+                {Object.keys(weekResults).length === 0 ? (
+                  <button onClick={runWeekComparison} disabled={weekLoading}
+                    className="text-xs text-teal hover:text-teal/80 transition-colors disabled:opacity-50">
                     {weekLoading ? 'Loading…' : 'Compare all 7 days →'}
                   </button>
-                )}
-                {Object.keys(weekResults).length > 0 && (
-                  <button onClick={runWeekComparison} disabled={weekLoading} className="text-[10px] text-warm-500 hover:text-warm-300">
-                    {weekLoading ? '…' : '↺'}
-                  </button>
+                ) : (
+                  <button onClick={runWeekComparison} className="text-[10px] text-warm-500 hover:text-warm-300">↺</button>
                 )}
               </div>
+
               {Object.keys(weekResults).length === 0 && !weekLoading && (
-                <p className="text-xs text-warm-500 px-4 py-3">See which night gives you the highest forecast for {CONCEPT_EMOJIS[concept]} {concept}.</p>
+                <p className="text-xs text-warm-500 px-4 py-3">
+                  See which night gives you the highest forecast for {CONCEPT_EMOJIS[concept]} {concept}.
+                </p>
               )}
               {weekLoading && (
                 <div className="flex items-center gap-2 px-4 py-3 text-xs text-warm-400">
-                  <RefreshCw className="w-3 h-3 animate-spin" /> Forecasting all 7 days…
+                  <RefreshCw className="w-3 h-3 animate-spin" /> Calculating all 7 days…
                 </div>
               )}
               {Object.keys(weekResults).length > 0 && (
@@ -434,12 +468,13 @@ export function Forecast() {
                     if (!r) return null;
                     const pct = r.mid / maxMid * 100;
                     const isSelected = day === selectedDow;
+                    const isBest = r.mid === maxMid;
                     return (
-                      <div key={day} className={`flex items-center gap-3 ${isSelected ? '' : 'opacity-60'}`}>
-                        <span className={`text-xs w-7 font-medium ${isSelected ? 'text-white' : 'text-warm-500'}`}>{day}</span>
+                      <div key={day} className={`flex items-center gap-3 ${isSelected || isBest ? '' : 'opacity-60'}`}>
+                        <span className={`text-xs w-7 font-medium ${isSelected ? 'text-white' : isBest ? 'text-teal' : 'text-warm-500'}`}>{day}</span>
                         <div className="flex-1 h-5 bg-warm-800 rounded overflow-hidden">
                           <motion.div
-                            className={`h-full rounded ${isSelected ? 'bg-teal/70' : 'bg-warm-600/60'}`}
+                            className={`h-full rounded ${isSelected ? 'bg-teal/70' : isBest ? 'bg-teal/40' : 'bg-warm-600/60'}`}
                             initial={{ width: 0 }}
                             animate={{ width: `${pct}%` }}
                             transition={{ duration: 0.5, ease: 'easeOut' }}
@@ -447,6 +482,7 @@ export function Forecast() {
                         </div>
                         <span className={`text-xs font-mono w-8 text-right ${isSelected ? 'text-white font-semibold' : 'text-warm-500'}`}>{r.mid}</span>
                         <span className="text-[10px] w-10 text-right text-warm-500">{r.fill_rate_pct}%</span>
+                        {isBest && !isSelected && <span className="text-[10px] text-teal font-medium">best</span>}
                       </div>
                     );
                   })}
@@ -459,7 +495,7 @@ export function Forecast() {
               <BadgeDollarSign className="w-4 h-4 text-warm-500 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-xs text-warm-400">{forecast.model}</p>
-                {forecast.note && <p className="text-[10px] text-warm-500 mt-0.5">{forecast.note}</p>}
+                <p className="text-[10px] text-warm-500 mt-0.5">{forecast.note}</p>
               </div>
             </div>
 
