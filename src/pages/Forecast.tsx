@@ -2,7 +2,7 @@
  * Forecast — Full Event Intelligence + Attendance Forecaster
  *
  * Port of Python:
- *   core/forecasting.py         → Lucas & Kilby attendance model (R²=0.74)
+ *   core/forecasting.py         → industry multiplier attendance model
  *   core/event_intelligence.py  → weather, Reddit, composite scoring, concept data
  *
  * Live API calls from browser:
@@ -22,7 +22,7 @@ import venueSettingsService from '../services/venue-settings.service';
 import authService from '../services/auth.service';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MODEL — Lucas & Kilby (2008) R²=0.74
+// MODEL — Industry multiplier model (day-of-week × seasonality × event lift)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const DOW_MULTIPLIER: Record<number, number> = {
@@ -388,6 +388,12 @@ async function fetchReddit(concept: string, city: string): Promise<RedditResult>
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface ManualSignals {
+  // RSVP signals (Glue Up / Eventbrite / OMG Hitched / Patchboard research)
+  rsvp_type: 'paid' | 'free' | 'facebook';
+  rsvp_count: string;
+  // Lead time: days between announcement and event date (Eugene Loj / Brewer Magazine / Eventbrite NIVA '24)
+  lead_time_days: string;
+  // Social / ad signals
   meta_cpc_a: string; meta_cpc_b: string;
   tiktok_save_rate: string; ig_dm_count: string;
   ig_poll_pct: string; eventbrite_pct: string;
@@ -409,6 +415,7 @@ function computeComposite(
   weather: WeatherResult,
   reddit: RedditResult,
   manual: ManualSignals,
+  venueCapacity: number,
 ): CompositeResult {
   let score = 0;
   const notes: string[] = [];
@@ -442,8 +449,64 @@ function computeComposite(
   else if (mentions > 3) notes.push(`💬 Some Reddit activity: ${mentions} posts found`);
   else notes.push(`💬 Low Reddit signal: ${mentions} posts (normal for local events)`);
 
-  // Manual signals (50 pts)
+  // Manual signals (capped at 65 pts — raised to accommodate RSVP + lead time)
   let manualScore = 0;
+
+  // ── RSVP signal (up to 15 pts) ──────────────────────────────────────────────
+  // Source: Glue Up, OMG Hitched, Eventbrite UK, Patchboard practitioner data
+  // Paid: 90-95% show rate. Free guestlist: 40-60% show rate (4× cap rule).
+  // Facebook: as low as 5% conversion for nightlife.
+  const rsvpCount = parseInt(manual.rsvp_count);
+  const cap = venueCapacity;
+  if (!isNaN(rsvpCount) && rsvpCount > 0) {
+    const ratio = rsvpCount / cap;
+    let rsvpPts = 0;
+    if (manual.rsvp_type === 'paid') {
+      // Paid RSVPs: 90-95% show rate → 1× cap = nearly sold out
+      rsvpPts = ratio >= 1.0 ? 15 : ratio >= 0.75 ? 12 : ratio >= 0.50 ? 8 : ratio >= 0.25 ? 4 : 1;
+      const showEst = Math.round(rsvpCount * 0.92);
+      notes.push(`🎟️ ${rsvpCount} paid RSVPs (~${showEst} expected through door at 92% show rate)`);
+    } else if (manual.rsvp_type === 'free') {
+      // Free guestlist: 4× capacity = sweet spot per promoter rule (25% conversion)
+      rsvpPts = ratio >= 4.0 ? 15 : ratio >= 3.0 ? 10 : ratio >= 2.0 ? 6 : ratio >= 1.0 ? 3 : 1;
+      const showEst = Math.round(rsvpCount * 0.40);
+      notes.push(`📋 ${rsvpCount} free RSVPs (~${showEst} expected at door, 40% free-event show rate)`);
+    } else {
+      // Facebook "Going": as low as 5% for nightlife (Quora promoters)
+      rsvpPts = ratio >= 20 ? 10 : ratio >= 10 ? 6 : ratio >= 5 ? 3 : 1;
+      const showEst = Math.round(rsvpCount * 0.08);
+      notes.push(`👍 ${rsvpCount} Facebook RSVPs (~${showEst} expected at door, ~8% nightlife conversion)`);
+    }
+    manualScore += rsvpPts;
+  }
+
+  // ── Lead time signal (up to 8 pts) ──────────────────────────────────────────
+  // Source: Eugene Loj case study (10-day promo → 50% sales drop),
+  //         Brewer Magazine (2-3 week sweet spot for bar events),
+  //         Eventbrite NIVA '24 (57% of tickets sell within 1 week of show)
+  const leadDays = parseInt(manual.lead_time_days);
+  if (!isNaN(leadDays) && leadDays >= 0) {
+    let leadPts = 0;
+    if (leadDays >= 21 && leadDays <= 42) {
+      leadPts = 8; // Sweet spot: 3-6 weeks (Brewer Magazine, Eugene Loj)
+      notes.push(`📅 ${leadDays}-day lead time — ideal promotion window (21-42 days is the sweet spot)`);
+    } else if (leadDays > 42) {
+      leadPts = 4; // Good awareness, risk of audience forgetting
+      notes.push(`📅 ${leadDays}-day lead time — good awareness, send reminders closer to the date`);
+    } else if (leadDays >= 14) {
+      leadPts = 5; // 2 weeks — still workable per Brewer Magazine
+      notes.push(`📅 ${leadDays}-day lead time — workable, but 21+ days gives ~40% more ticket velocity`);
+    } else if (leadDays >= 7) {
+      leadPts = 2; // Last week — heavy concentration here but late start
+      notes.push(`📅 ${leadDays}-day lead time — 57% of tickets sell in final week anyway, but late start limits ceiling`);
+    } else {
+      leadPts = 0; // Under 7 days — Eugene Loj: 50%+ drop in online sales
+      notes.push(`⚠️ ${leadDays}-day lead time — very late. Promotions starting under 7 days out see ~50% fewer online sales`);
+    }
+    manualScore += leadPts;
+  }
+
+  // ── Social / ad signals ──────────────────────────────────────────────────────
   const cpcA = parseFloat(manual.meta_cpc_a), cpcB = parseFloat(manual.meta_cpc_b);
   if (!isNaN(cpcA) && !isNaN(cpcB) && cpcA > 0 && cpcB > 0) {
     manualScore += 15;
@@ -466,7 +529,7 @@ function computeComposite(
   if (!isNaN(eb) && eb >= 15) { manualScore += 5; notes.push(`🎟️ Eventbrite: ${eb}% capacity sold in 48h — hit`); }
   else if (!isNaN(eb) && eb >= 5) { manualScore += 2; notes.push(`🎟️ Eventbrite: ${eb}% sold in 48h — watch closely`); }
 
-  const manualPts = Math.min(50, manualScore);
+  const manualPts = Math.min(65, manualScore);
   score += manualPts;
   score = Math.max(0, Math.min(100, score));
 
@@ -577,6 +640,7 @@ export function Forecast() {
   const [weatherRisk, setWeatherRisk] = useState('none');
   const [autoWeather, setAutoWeather] = useState(true);
   const [manualSignals, setManualSignals] = useState<ManualSignals>({
+    rsvp_type: 'paid', rsvp_count: '', lead_time_days: '',
     meta_cpc_a: '', meta_cpc_b: '', tiktok_save_rate: '',
     ig_dm_count: '', ig_poll_pct: '', eventbrite_pct: '',
   });
@@ -648,7 +712,7 @@ export function Forecast() {
 
     // Composite score
     setLoadPhase('Computing validation score…');
-    const comp = computeComposite(concept, wx, rd, manualSignals);
+    const comp = computeComposite(concept, wx, rd, manualSignals, cap);
 
     // Day-of-week check
     const dow = DOW_FULL[(new Date(date + 'T12:00:00').getDay() + 6) % 7];
@@ -786,7 +850,7 @@ export function Forecast() {
             <div className="flex items-center gap-2">
               <BarChart2 className="w-4 h-4 text-warm-500" />
               <span className="text-sm font-medium text-warm-300">Signal Boosters</span>
-              <span className="text-[10px] text-warm-600 bg-warm-700/80 px-1.5 py-0.5 rounded-full">optional · up to +50 pts</span>
+              <span className="text-[10px] text-warm-600 bg-warm-700/80 px-1.5 py-0.5 rounded-full">optional · up to +65 pts</span>
             </div>
             <ChevronDown className={`w-4 h-4 text-warm-500 transition-transform ${showManual ? 'rotate-180' : ''}`} />
           </button>
@@ -794,26 +858,101 @@ export function Forecast() {
             {showManual && (
               <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }}
                 transition={{ duration: 0.2 }} className="overflow-hidden border-t border-warm-600">
-                <div className="p-4 space-y-3">
+                <div className="p-4 space-y-4">
                   <p className="text-[10px] text-warm-500">
-                    Enter any real-audience test data. Each adds to your validation score.
+                    Enter any real-audience data you have. Each verified signal adds to your score.
                   </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[
-                      { field: 'meta_cpc_a' as keyof ManualSignals, label: 'Meta Ad CPC — Concept A ($)', placeholder: 'e.g. 0.45' },
-                      { field: 'meta_cpc_b' as keyof ManualSignals, label: 'Meta Ad CPC — Concept B ($)', placeholder: 'e.g. 0.72' },
-                      { field: 'tiktok_save_rate' as keyof ManualSignals, label: 'TikTok Save Rate (%)', placeholder: 'e.g. 1.2' },
-                      { field: 'ig_dm_count' as keyof ManualSignals, label: 'Instagram DM count', placeholder: 'e.g. 12' },
-                      { field: 'ig_poll_pct' as keyof ManualSignals, label: 'IG Poll — "Yes" % (0-100)', placeholder: 'e.g. 72' },
-                      { field: 'eventbrite_pct' as keyof ManualSignals, label: 'Eventbrite sold in 48h (%)', placeholder: 'e.g. 18' },
-                    ].map(({ field, label, placeholder }) => (
-                      <div key={field}>
-                        <label className="text-[10px] text-warm-400 mb-1 block">{label}</label>
-                        <input type="number" step="0.01" min="0" placeholder={placeholder}
-                          value={manualSignals[field]} onChange={msSet(field)}
-                          className="w-full bg-warm-700 border border-warm-600 rounded-lg px-2.5 py-2 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal/70" />
+
+                  {/* RSVP signals */}
+                  <div>
+                    <p className="text-[10px] text-warm-400 uppercase tracking-wide font-medium mb-2">
+                      RSVPs <span className="text-teal">· up to +15 pts</span>
+                      <span className="text-warm-600 ml-1 font-normal normal-case">
+                        paid: 92% show · free guestlist: 40% show · Facebook: ~8% (Glue Up / Eventbrite research)
+                      </span>
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-warm-400 mb-1 block">RSVP Type</label>
+                        <select
+                          value={manualSignals.rsvp_type}
+                          onChange={e => setManualSignals(s => ({ ...s, rsvp_type: e.target.value as ManualSignals['rsvp_type'] }))}
+                          className="w-full bg-warm-700 border border-warm-600 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-teal/70">
+                          <option value="paid">Paid ticket / cover ($20+)</option>
+                          <option value="free">Free guestlist RSVP</option>
+                          <option value="facebook">Facebook "Going" click</option>
+                        </select>
                       </div>
-                    ))}
+                      <div>
+                        <label className="text-[10px] text-warm-400 mb-1 block">RSVP Count</label>
+                        <input type="number" min="0" placeholder="e.g. 85"
+                          value={manualSignals.rsvp_count} onChange={msSet('rsvp_count')}
+                          className="w-full bg-warm-700 border border-warm-600 rounded-lg px-2.5 py-2 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal/70" />
+                        {manualSignals.rsvp_count && (() => {
+                          const r = parseInt(manualSignals.rsvp_count);
+                          const c = parseInt(capacity) || 150;
+                          if (isNaN(r) || r <= 0) return null;
+                          const ratio = r / c;
+                          const showRate = manualSignals.rsvp_type === 'paid' ? 0.92 : manualSignals.rsvp_type === 'free' ? 0.40 : 0.08;
+                          const est = Math.round(r * showRate);
+                          return <p className="text-[10px] mt-1 text-warm-500">~{est} expected through door ({(ratio * 100).toFixed(0)}% of capacity)</p>;
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Lead time */}
+                  <div>
+                    <p className="text-[10px] text-warm-400 uppercase tracking-wide font-medium mb-2">
+                      Announcement Lead Time <span className="text-teal">· up to +8 pts</span>
+                      <span className="text-warm-600 ml-1 font-normal normal-case">
+                        sweet spot: 21-42 days · under 7 days = ~50% fewer online sales (Eugene Loj / Eventbrite NIVA '24)
+                      </span>
+                    </p>
+                    <div>
+                      <label className="text-[10px] text-warm-400 mb-1 block">Days between first public announcement and event date</label>
+                      <input type="number" min="0" placeholder="e.g. 21"
+                        value={manualSignals.lead_time_days} onChange={msSet('lead_time_days')}
+                        className="w-full bg-warm-700 border border-warm-600 rounded-lg px-2.5 py-2 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal/70" />
+                      {manualSignals.lead_time_days && (() => {
+                        const d = parseInt(manualSignals.lead_time_days);
+                        if (isNaN(d)) return null;
+                        const hint = d >= 21 && d <= 42
+                          ? { text: '✓ Ideal window · +8 pts', color: 'text-green-400' }
+                          : d > 42
+                          ? { text: 'Good awareness — send reminders at 2 weeks and 48 hours · +4 pts', color: 'text-teal' }
+                          : d >= 14
+                          ? { text: '2 weeks — workable, 21+ days gives more ticket velocity · +5 pts', color: 'text-yellow-400' }
+                          : d >= 7
+                          ? { text: '57% of tickets sell in the final week anyway, but late start limits ceiling · +2 pts', color: 'text-amber-400' }
+                          : { text: '⚠ Under 7 days — promotions this late see ~50% fewer online sales · +0 pts', color: 'text-red-400' };
+                        return <p className={`text-[10px] mt-1 ${hint.color}`}>{hint.text}</p>;
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Social / ad signals */}
+                  <div>
+                    <p className="text-[10px] text-warm-400 uppercase tracking-wide font-medium mb-2">
+                      Social &amp; Ad Signals <span className="text-teal">· up to +50 pts</span>
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { field: 'meta_cpc_a' as keyof ManualSignals, label: 'Meta Ad CPC — Concept A ($)', placeholder: 'e.g. 0.45' },
+                        { field: 'meta_cpc_b' as keyof ManualSignals, label: 'Meta Ad CPC — Concept B ($)', placeholder: 'e.g. 0.72' },
+                        { field: 'tiktok_save_rate' as keyof ManualSignals, label: 'TikTok Save Rate (%)', placeholder: 'e.g. 1.2' },
+                        { field: 'ig_dm_count' as keyof ManualSignals, label: 'Instagram DM count', placeholder: 'e.g. 12' },
+                        { field: 'ig_poll_pct' as keyof ManualSignals, label: 'IG Poll — "Yes" % (0-100)', placeholder: 'e.g. 72' },
+                        { field: 'eventbrite_pct' as keyof ManualSignals, label: 'Eventbrite sold in 48h (%)', placeholder: 'e.g. 18' },
+                      ].map(({ field, label, placeholder }) => (
+                        <div key={field}>
+                          <label className="text-[10px] text-warm-400 mb-1 block">{label}</label>
+                          <input type="number" step="0.01" min="0" placeholder={placeholder}
+                            value={manualSignals[field] as string} onChange={msSet(field)}
+                            className="w-full bg-warm-700 border border-warm-600 rounded-lg px-2.5 py-2 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal/70" />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -937,7 +1076,7 @@ export function Forecast() {
                 <Users className="w-4 h-4 text-teal" />
                 <span className="text-sm font-semibold text-white">Attendance Forecast</span>
                 <span className="ml-auto text-[10px] text-warm-500 bg-warm-800 px-2 py-0.5 rounded-full">
-                  Lucas & Kilby 2008 · R²=0.74
+                  Multiplier Model · DOW × Seasonality × Event Lift
                 </span>
               </div>
               <div className="p-4 space-y-3">
@@ -1177,7 +1316,7 @@ export function Forecast() {
             <div className="flex items-start gap-2 px-3 py-2.5 bg-warm-800/40 border border-warm-700 rounded-lg">
               <BadgeDollarSign className="w-4 h-4 text-warm-500 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-xs text-warm-400">Lucas & Kilby (2008) R²=0.74 hospitality demand model</p>
+                <p className="text-xs text-warm-400">Industry multiplier model — day-of-week × seasonality × event lift × weather</p>
                 <p className="text-[10px] text-warm-500 mt-0.5">
                   Run VenueScope People Counter on 30+ live events to unlock venue-specific ML forecast.
                 </p>
