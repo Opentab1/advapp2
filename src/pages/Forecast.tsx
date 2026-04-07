@@ -58,8 +58,12 @@ const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+const LS_KEY = 'venuescope_server_url';
+
 function getServerUrl() {
-  return (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
+  const fromEnv = (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
+  if (fromEnv) return fromEnv;
+  return (localStorage.getItem(LS_KEY) || '').replace(':8501', ':8502').replace(/\/$/, '');
 }
 
 function nextFriday(): string {
@@ -82,12 +86,18 @@ export function Forecast() {
   const [cover, setCover]               = useState('');
   const [weatherRisk, setWeatherRisk]   = useState('none');
 
+  const [serverUrlInput, setServerUrlInput] = useState(() => localStorage.getItem(LS_KEY) || '');
   const [loading, setLoading]           = useState(false);
   const [forecast, setForecast]         = useState<AttendanceForecast | null>(null);
   const [error, setError]               = useState('');
   const [showFactors, setShowFactors]   = useState(false);
   const [weekResults, setWeekResults]   = useState<Record<string, AttendanceForecast>>({});
   const [weekLoading, setWeekLoading]   = useState(false);
+
+  const saveServerUrl = () => {
+    const url = serverUrlInput.trim().replace(/\/$/, '');
+    localStorage.setItem(LS_KEY, url);
+  };
 
   // Auto-detect city from venue settings
   useEffect(() => {
@@ -98,7 +108,7 @@ export function Forecast() {
 
   const runForecast = async () => {
     const serverUrl = getServerUrl();
-    if (!serverUrl) { setError('No VenueScope server connected — set VITE_VENUESCOPE_URL'); return; }
+    if (!serverUrl) { setError('Enter your VenueScope server URL below'); return; }
     setLoading(true); setError(''); setForecast(null); setWeekResults({});
     try {
       const params = new URLSearchParams({
@@ -234,6 +244,29 @@ export function Forecast() {
             : <><Zap className="w-4 h-4" /> Run Forecast</>
           }
         </button>
+
+        {/* Server URL config — shown when env var not set */}
+        {!import.meta.env.VITE_VENUESCOPE_URL && (
+          <div className="p-3 bg-warm-900/60 border border-warm-600 rounded-lg space-y-2">
+            <p className="text-xs text-warm-400 font-medium">VenueScope Server URL</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="http://your-server-ip:8502"
+                value={serverUrlInput}
+                onChange={e => setServerUrlInput(e.target.value)}
+                className="flex-1 bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-xs text-white placeholder-warm-600 focus:outline-none focus:border-teal font-mono"
+              />
+              <button
+                onClick={saveServerUrl}
+                className="px-3 py-2 bg-teal/20 border border-teal/40 text-teal text-xs rounded-lg hover:bg-teal/30 transition-colors font-medium"
+              >
+                Save
+              </button>
+            </div>
+            <p className="text-[10px] text-warm-600">The IP address of the machine running VenueScope (port 8502)</p>
+          </div>
+        )}
 
         {error && (
           <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
