@@ -211,26 +211,47 @@ const venueScopeService = {
    * always sufficient to capture all live cameras + recent history.
    */
   async listJobs(venueId: string, limit = 50): Promise<VenueScopeJob[]> {
-    // Always use direct DynamoDB — AppSync schema is missing isLive/updatedAt/cameraLabel
-    // fields so it returns null for them, breaking all live-camera detection logic.
-    const items = await _listJobsDirect(venueId);
-    const fiveMinAgo = Date.now() / 1000 - 300;
-    const isLive = (j: VenueScopeJob) => j.isLive === true || (j.isLive !== false && j.status === 'running' && (j.updatedAt ?? 0) > fiveMinAgo);
-    const liveDeduped = Array.from(
-      items
-        .filter(j => isLive(j))
+    // Helper: ghost records use legacy '~' prefix jobIds (static IDs from old live-camera format).
+    // Filter them out — they're stale DynamoDB entries with status=running that never get cleaned up.
+    const isGhost = (j: VenueScopeJob) => j.jobId.startsWith('~');
+
+    // Live detection: isLive=true (set by push_live_metrics every 30s) OR status=running
+    // for non-ghost jobs. AppSync schema omits isLive/updatedAt so we rely on status
+    // for non-ghost records; direct DDB path gets the real isLive field.
+    const isLive = (j: VenueScopeJob) => !isGhost(j) && (j.isLive === true || j.status === 'running');
+
+    const dedupeAndSort = (items: VenueScopeJob[]) => {
+      const live = items.filter(j => isLive(j));
+      const liveDeduped = Array.from(
+        live
+          .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+          .reduce((map, j) => {
+            const key = j.cameraLabel || j.jobId;
+            if (!map.has(key)) map.set(key, j);
+            return map;
+          }, new Map<string, VenueScopeJob>())
+          .values()
+      );
+      const nonLive = items.filter(j => !isLive(j) && !isGhost(j))
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-        .reduce((map, j) => {
-          const key = j.cameraLabel || j.jobId;
-          if (!map.has(key)) map.set(key, j);
-          return map;
-        }, new Map<string, VenueScopeJob>())
-        .values()
-    );
-    const nonLive = items.filter(j => !isLive(j))
-      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-      .slice(0, Math.max(limit, 50));
-    return [...liveDeduped, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+        .slice(0, Math.max(limit, 50));
+      return [...liveDeduped, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    };
+
+    try {
+      const result = await client.graphql({
+        query: LIST_JOBS_QUERY,
+        variables: { venueId, limit: 500 },
+        authMode: 'userPool',
+      }) as { data: { listVenueScopeJobs: JobConnection } };
+      const connection = result?.data?.listVenueScopeJobs;
+      if (!connection) throw new Error('AppSync resolver returned null — resolver not attached');
+      return dedupeAndSort(connection.items ?? []);
+    } catch (err) {
+      console.warn('[venuescope] AppSync listJobs failed, trying direct DynamoDB:', err);
+      const items = await _listJobsDirect(venueId);
+      return dedupeAndSort(items);
+    }
   },
 
   async getLatestJob(venueId: string): Promise<VenueScopeJob | null> {
