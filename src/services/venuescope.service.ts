@@ -226,7 +226,7 @@ const venueScopeService = {
         live
           .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
           .reduce((map, j) => {
-            const key = j.cameraLabel || j.jobId;
+            const key = j.cameraLabel || j.clipLabel || j.jobId;
             if (!map.has(key)) map.set(key, j);
             return map;
           }, new Map<string, VenueScopeJob>())
