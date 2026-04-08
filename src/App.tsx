@@ -76,6 +76,9 @@ function ProtectedDashboard() {
       case 'analytics':
         content = <Analytics />;
         break;
+      case 'forecast':
+        content = <Forecast />;
+        break;
       case 'events':
         content = <Events />;
         break;
