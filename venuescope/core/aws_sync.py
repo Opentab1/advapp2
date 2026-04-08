@@ -312,7 +312,7 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
 
 
 def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
-                      venue_id: str = "") -> bool:
+                      venue_id: str = "", created_at: Optional[float] = None) -> bool:
     """
     Push real-time running totals to DynamoDB every ~30 s during live stream processing.
     Updates the existing job record with current drink counts, headcount, etc.
@@ -359,6 +359,11 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         ":po": {"N": str(people_out)},
         ":hc": {"N": str(headcount)},
     }
+
+    # Always write createdAt so the React dashboard can filter "tonight's" jobs
+    _ca = created_at or time.time()
+    update_expr += ", createdAt = if_not_exists(createdAt, :ca)"
+    expr_vals[":ca"] = {"N": str(_ca)}
 
     # Include per-bartender breakdown if available
     if bts:

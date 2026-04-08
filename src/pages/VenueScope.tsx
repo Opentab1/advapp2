@@ -188,7 +188,8 @@ function buildRooms(jobs: VenueScopeJob[]): RoomSummary[] {
 
     return {
       label,
-      isLive: best.isLive === true || (best.isLive !== false && best.status === 'running' && (best.updatedAt ?? 0) > Date.now() / 1000 - 300),
+      isLive: best.isLive === true || (best.isLive !== false && best.status === 'running' &&
+        ((best.updatedAt ?? 0) === 0 || (best.updatedAt ?? 0) > Date.now() / 1000 - 300)),
       mode: isDrink ? 'drink_count' : isPeople ? 'people_count' : (best.analysisMode ?? 'unknown'),
       totalDrinks,
       drinksPerHour: best.drinksPerHour ?? 0,
@@ -1248,7 +1249,10 @@ export function VenueScope() {
   const fiveMinAgo = Date.now() / 1000 - 300;
   const isJobLive = (j: VenueScopeJob) =>
     j.isLive === true ||
-    (j.isLive !== false && j.status === 'running' && (j.updatedAt ?? 0) > fiveMinAgo);
+    // updatedAt not set (AppSync may omit it) → trust status=running
+    // updatedAt set → must be within last 5 min to avoid stale records
+    (j.isLive !== false && j.status === 'running' &&
+      ((j.updatedAt ?? 0) === 0 || (j.updatedAt ?? 0) > fiveMinAgo));
   const tonightJobs = useMemo(() => safeJobs.filter(j =>
     (j.createdAt ?? 0) >= todayStart || isJobLive(j)
   ), [safeJobs, todayStart]);

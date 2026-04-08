@@ -163,7 +163,8 @@ def run_job(job_id: str):
             try:
                 from core.aws_sync import push_live_metrics
                 push_live_metrics(job_id, partial_summary, elapsed_sec,
-                                  venue_id=job_venue_id)
+                                  venue_id=job_venue_id,
+                                  created_at=job.get("created_at"))
             except Exception as _le:
                 log.debug(f"Live metrics push error (non-fatal): {_le}")
 
