@@ -64,6 +64,19 @@ function CameraModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // URL Builder state
+  const [urlMode, setUrlMode] = useState<'builder' | 'manual'>(camera?.rtspUrl ? 'manual' : 'builder');
+  const [nvrIp, setNvrIp] = useState('');
+  const [nvrPort, setNvrPort] = useState('');
+  const [nvrChannel, setNvrChannel] = useState('');
+  const [streamQuality, setStreamQuality] = useState<'0' | '1'>('0');
+
+  const builtUrl = nvrIp && nvrPort && nvrChannel
+    ? `http://${nvrIp}:${nvrPort}/hls/live/CH${nvrChannel}/${streamQuality}/livetop.mp4`
+    : '';
+
+  const effectiveUrl = urlMode === 'builder' ? builtUrl : rtspUrl;
+
   const toggleMode = (mode: CameraMode) => {
     setModes(prev =>
       prev.includes(mode) ? prev.filter(m => m !== mode) : [...prev, mode]
@@ -72,7 +85,7 @@ function CameraModal({
 
   const handleSave = async () => {
     if (!name.trim()) { setError('Camera name is required'); return; }
-    if (!rtspUrl.trim()) { setError('RTSP URL is required'); return; }
+    if (!effectiveUrl.trim()) { setError(urlMode === 'builder' ? 'Enter IP, port and channel' : 'Stream URL is required'); return; }
     if (modes.length === 0) { setError('Select at least one mode'); return; }
 
     setSaving(true);
@@ -81,7 +94,7 @@ function CameraModal({
       if (isEdit && camera) {
         await cameraService.updateCamera(venueId, camera.cameraId, {
           name: name.trim(),
-          rtspUrl: rtspUrl.trim(),
+          rtspUrl: effectiveUrl.trim(),
           modes,
           modelProfile,
           segmentSeconds,
@@ -90,7 +103,7 @@ function CameraModal({
       } else {
         await cameraService.addCamera(venueId, {
           name: name.trim(),
-          rtspUrl: rtspUrl.trim(),
+          rtspUrl: effectiveUrl.trim(),
           modes,
           enabled: true,
           modelProfile,
@@ -145,28 +158,104 @@ function CameraModal({
             />
           </div>
 
-          {/* RTSP URL */}
+          {/* Stream URL */}
           <div>
-            <label className="block text-sm text-gray-400 mb-1">RTSP URL *</label>
-            <div className="relative">
-              <input
-                type={showRtsp ? 'text' : 'password'}
-                value={rtspUrl}
-                onChange={e => setRtspUrl(e.target.value)}
-                placeholder="rtsp://user:pass@ip:port/stream"
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 pr-12 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 font-mono text-sm"
-              />
-              <button
-                type="button"
-                onClick={() => setShowRtsp(v => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
-              >
-                {showRtsp ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm text-gray-400">Stream URL *</label>
+              <div className="flex rounded-lg overflow-hidden border border-white/10 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setUrlMode('builder')}
+                  className={`px-3 py-1.5 transition-colors ${urlMode === 'builder' ? 'bg-purple-500/30 text-purple-300' : 'bg-white/5 text-gray-400 hover:text-white'}`}
+                >
+                  🏗 Cortex IQ Builder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUrlMode('manual')}
+                  className={`px-3 py-1.5 transition-colors ${urlMode === 'manual' ? 'bg-purple-500/30 text-purple-300' : 'bg-white/5 text-gray-400 hover:text-white'}`}
+                >
+                  Manual
+                </button>
+              </div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Format: rtsp://username:password@ip-address:554/stream-path
-            </p>
+
+            {urlMode === 'builder' ? (
+              <div className="space-y-3 p-4 bg-purple-500/5 border border-purple-500/20 rounded-lg">
+                <p className="text-xs text-purple-300">
+                  Find these in Cortex IQ app → NVR Settings → Network → UPnP/Port Mapping
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Public IP</label>
+                    <input
+                      type="text"
+                      value={nvrIp}
+                      onChange={e => setNvrIp(e.target.value.trim())}
+                      placeholder="e.g. 108.191.193.107"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">HTTP Port (UPnP)</label>
+                    <input
+                      type="text"
+                      value={nvrPort}
+                      onChange={e => setNvrPort(e.target.value.trim())}
+                      placeholder="e.g. 37834"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Channel Number</label>
+                    <input
+                      type="number"
+                      value={nvrChannel}
+                      onChange={e => setNvrChannel(e.target.value.trim())}
+                      placeholder="e.g. 7"
+                      min="1"
+                      max="32"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Quality</label>
+                    <select
+                      value={streamQuality}
+                      onChange={e => setStreamQuality(e.target.value as '0' | '1')}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm"
+                    >
+                      <option value="0">Main (1080p HD)</option>
+                      <option value="1">Sub (lower res)</option>
+                    </select>
+                  </div>
+                </div>
+                {builtUrl && (
+                  <div className="mt-2 p-2 bg-green-500/10 border border-green-500/20 rounded text-xs font-mono text-green-300 break-all">
+                    ✓ {builtUrl}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="relative">
+                <input
+                  type={showRtsp ? 'text' : 'password'}
+                  value={rtspUrl}
+                  onChange={e => setRtspUrl(e.target.value)}
+                  placeholder="rtsp://user:pass@ip:port/stream  or  http://ip:port/hls/..."
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 pr-12 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 font-mono text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRtsp(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                >
+                  {showRtsp ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Analysis Modes */}
