@@ -93,6 +93,65 @@ def list_cameras_ddb(venue_id: Optional[str] = None) -> list[dict]:
         return []
 
 
+def sync_sqlite_to_ddb(venue_id: str) -> int:
+    """
+    One-way sync: push cameras from local SQLite into DynamoDB using put_item
+    with condition_not_exists so we never overwrite cameras that were edited
+    in the admin portal. Returns the number of cameras upserted.
+    Runs on worker startup so the admin portal always reflects reality.
+    """
+    ddb = _get_ddb()
+    if ddb is None:
+        return 0
+    try:
+        from core.database import list_cameras as list_cameras_sqlite
+        import datetime
+        sqlite_cams = list_cameras_sqlite()
+        if not sqlite_cams:
+            return 0
+        table = ddb.Table(TABLE)
+        synced = 0
+        for cam in sqlite_cams:
+            cid = cam.get("camera_id", "")
+            if not cid:
+                continue
+            modes_parts = [cam.get("mode", "drink_count")]
+            extra = cam.get("extra_modes") or []
+            if isinstance(extra, list):
+                modes_parts += extra
+            modes_str = ",".join(m for m in modes_parts if m)
+            try:
+                table.put_item(
+                    Item={
+                        "venueId":        venue_id,
+                        "cameraId":       cid,
+                        "name":           cam.get("name", cid),
+                        "rtspUrl":        cam.get("rtsp_url", ""),
+                        "modes":          modes_str,
+                        "enabled":        bool(cam.get("enabled", True)),
+                        "segmentSeconds": str(float(cam.get("segment_seconds", 0))),
+                        "modelProfile":   cam.get("model_profile", "balanced"),
+                        "notes":          cam.get("notes", ""),
+                        "createdAt":      datetime.datetime.utcnow().isoformat(),
+                        "_syncedFromSqlite": True,
+                    },
+                    ConditionExpression="attribute_not_exists(cameraId)",
+                )
+                synced += 1
+                log.info(f"[ddb_cameras] Synced '{cam.get('name', cid)}' → DynamoDB")
+            except Exception as e:
+                if "ConditionalCheckFailedException" in str(e):
+                    pass  # already in DDB — skip
+                else:
+                    log.warning(f"[ddb_cameras] Failed to sync '{cid}': {e}")
+        if synced:
+            log.info(f"[ddb_cameras] sync_sqlite_to_ddb: pushed {synced} new cameras for venue '{venue_id}'")
+        return synced
+    except Exception as e:
+        log.warning(f"[ddb_cameras] sync_sqlite_to_ddb failed: {e}")
+        return 0
+
+
 def get_camera_ddb(camera_id: str) -> Optional[dict]:
     """Get a single camera from DynamoDB by camera_id (scans by SK — use sparingly)."""
     ddb = _get_ddb()

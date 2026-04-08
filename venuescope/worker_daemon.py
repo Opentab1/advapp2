@@ -283,6 +283,15 @@ def _camera_loop_proc_entry():
         import logging as _logging
         _clog = _logging.getLogger("camera_loop")
     try:
+        # On startup: push any SQLite-only cameras to DynamoDB so the admin
+        # portal always reflects reality. Skips cameras already in DDB.
+        venue_id = os.environ.get("VENUESCOPE_VENUE_ID", "")
+        if venue_id:
+            from core.ddb_cameras import sync_sqlite_to_ddb
+            n = sync_sqlite_to_ddb(venue_id)
+            if n:
+                _clog.info(f"[startup] Synced {n} cameras from SQLite → DynamoDB")
+
         from core.camera_loop import get_manager as _get_cam_mgr
         _mgr = _get_cam_mgr()
         _mgr.sync()
