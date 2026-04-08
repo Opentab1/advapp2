@@ -188,7 +188,7 @@ function buildRooms(jobs: VenueScopeJob[]): RoomSummary[] {
 
     return {
       label,
-      isLive: best.isLive === true || best.status === 'running',
+      isLive: best.isLive === true || (best.isLive !== false && best.status === 'running'),
       mode: isDrink ? 'drink_count' : isPeople ? 'people_count' : (best.analysisMode ?? 'unknown'),
       totalDrinks,
       drinksPerHour: best.drinksPerHour ?? 0,
@@ -1243,8 +1243,9 @@ export function VenueScope() {
   }, []);
   // Guard against null/undefined entries that AppSync occasionally returns
   const safeJobs    = useMemo(() => jobs.filter((j): j is VenueScopeJob => j != null && typeof j === 'object'), [jobs]);
-  // A job is "live" if isLive=true OR status=running (fallback for when AppSync omits the isLive field)
-  const isJobLive = (j: VenueScopeJob) => j.isLive === true || j.status === 'running';
+  // isLive=true → live. isLive=false → not live (stale records).
+  // isLive=undefined + status=running → live (AppSync omits isLive field from schema).
+  const isJobLive = (j: VenueScopeJob) => j.isLive === true || (j.isLive !== false && j.status === 'running');
   const tonightJobs = useMemo(() => safeJobs.filter(j =>
     (j.createdAt ?? 0) >= todayStart || isJobLive(j)
   ), [safeJobs, todayStart]);
