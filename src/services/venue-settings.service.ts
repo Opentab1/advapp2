@@ -33,6 +33,7 @@ export interface VenueSettings {
   address?: VenueAddress;
   capacity?: number;  // Max capacity of the venue
   avgDrinkPrice?: number;  // Average drink price in dollars (for theft loss estimates)
+  businessHours?: { open: string; close: string };
   lastUpdated?: string;
 }
 
@@ -378,6 +379,35 @@ class VenueSettingsService {
   async saveAvgDrinkPrice(venueId: string, price: number): Promise<boolean> {
     const existing = this.getSettings(venueId) || {};
     return this.saveSettingsToCloud(venueId, { ...existing, avgDrinkPrice: price });
+  }
+
+  // ============ BUSINESS HOURS METHODS ============
+
+  /**
+   * Get business hours (sync - uses cache, then localStorage fallback)
+   */
+  getBusinessHours(venueId: string): { open: string; close: string } | null {
+    const settings = this.getSettings(venueId);
+    if (settings?.businessHours) return settings.businessHours;
+    // Legacy localStorage fallback
+    try {
+      const saved = localStorage.getItem('pulse_biz_hours');
+      if (saved) return JSON.parse(saved);
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  /**
+   * Save business hours to AWS (and mirror to localStorage for Live page compatibility)
+   */
+  async saveBusinessHours(venueId: string, hours: { open: string; close: string }): Promise<boolean> {
+    // Mirror to localStorage so Live page pulse calculations work offline
+    try {
+      localStorage.setItem('pulse_biz_hours', JSON.stringify(hours));
+    } catch { /* ignore */ }
+    if (isDemoAccount(venueId)) return true;
+    const existing = this.getSettings(venueId) || {};
+    return this.saveSettingsToCloud(venueId, { ...existing, businessHours: hours });
   }
 
   // ============ INITIALIZATION ============

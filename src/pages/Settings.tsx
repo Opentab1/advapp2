@@ -365,15 +365,16 @@ export function Settings() {
         if (s?.avgDrinkPrice) setAvgDrinkPrice(s.avgDrinkPrice);
         else setAvgDrinkPrice(12);
       });
-      // Load business hours from localStorage
-      try {
-        const saved = localStorage.getItem('pulse_biz_hours');
-        if (saved) {
-          const { open, close } = JSON.parse(saved);
-          if (open) setBizOpen(open);
-          if (close) setBizClose(close);
-        }
-      } catch { /* ignore */ }
+      // Load business hours from cloud (falls back to localStorage)
+      venueSettingsService.loadSettingsFromCloud(user.venueId).then(s => {
+        const hours = s?.businessHours ?? venueSettingsService.getBusinessHours(user.venueId);
+        if (hours?.open) setBizOpen(hours.open);
+        if (hours?.close) setBizClose(hours.close);
+      }).catch(() => {
+        const hours = venueSettingsService.getBusinessHours(user.venueId);
+        if (hours?.open) setBizOpen(hours.open);
+        if (hours?.close) setBizClose(hours.close);
+      });
     }
   }, [user?.venueId]);
 
@@ -754,7 +755,11 @@ export function Settings() {
                 </div>
                 <button
                   onClick={() => {
-                    localStorage.setItem('pulse_biz_hours', JSON.stringify({ open: bizOpen, close: bizClose }));
+                    if (user?.venueId) {
+                      venueSettingsService.saveBusinessHours(user.venueId, { open: bizOpen, close: bizClose });
+                    } else {
+                      localStorage.setItem('pulse_biz_hours', JSON.stringify({ open: bizOpen, close: bizClose }));
+                    }
                     haptic('success');
                     setBizHoursSaved(true);
                     setTimeout(() => setBizHoursSaved(false), 3000);
