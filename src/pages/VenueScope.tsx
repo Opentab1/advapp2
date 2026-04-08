@@ -158,11 +158,21 @@ interface RoomSummary {
   job: VenueScopeJob;
 }
 
+/** Strip camera emoji prefix and LIVE/seg suffixes from clipLabel for display */
+function friendlyClipLabel(clip: string | undefined): string {
+  if (!clip) return '';
+  return clip
+    .replace(/^📡\s*/, '')           // strip leading 📡
+    .replace(/\s*—\s*🔴\s*LIVE\s*$/i, '')  // strip " — 🔴 LIVE"
+    .replace(/\s*—\s*seg\s*\d+\s*$/i, '')  // strip " — seg N"
+    .trim();
+}
+
 function buildRooms(jobs: VenueScopeJob[]): RoomSummary[] {
-  // Group by roomLabel (fall back to cameraLabel → jobId prefix)
+  // Group by roomLabel (fall back to cameraLabel → friendly clipLabel → jobId prefix)
   const map = new Map<string, VenueScopeJob[]>();
   for (const job of jobs) {
-    const key = job.roomLabel || job.cameraLabel || job.jobId.slice(0, 12);
+    const key = job.roomLabel || job.cameraLabel || friendlyClipLabel(job.clipLabel) || job.jobId.slice(0, 12);
     const arr = map.get(key) ?? [];
     arr.push(job);
     map.set(key, arr);
