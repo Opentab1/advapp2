@@ -390,7 +390,46 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
 
 // ── Live room card ────────────────────────────────────────────────────────────
 
-function RoomCard({ room, onInvestigate }: { room: RoomSummary; onInvestigate: (job: VenueScopeJob) => void }) {
+// ── Camera snapshot ───────────────────────────────────────────────────────────
+
+const SNAPSHOT_BUCKET = 'https://advapp-snapshots.s3.us-east-2.amazonaws.com';
+
+function cameraSlug(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function snapshotUrl(venueId: string, label: string): string {
+  // Cache-bust once per day — keeps browser from showing a stale image
+  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  return `${SNAPSHOT_BUCKET}/${venueId}/${cameraSlug(label)}/snapshot.jpg?d=${day}`;
+}
+
+function CameraSnapshot({ url, label }: { url: string; label: string }) {
+  const [status, setStatus] = React.useState<'loading' | 'ok' | 'missing'>('loading');
+  return status === 'missing' ? null : (
+    <div className="relative w-full overflow-hidden rounded-xl bg-whoop-bg aspect-video">
+      {status === 'loading' && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <Loader2 className="w-4 h-4 text-text-muted animate-spin" />
+        </div>
+      )}
+      <img
+        src={url}
+        alt={`${label} snapshot`}
+        className={`w-full h-full object-cover transition-opacity duration-300 ${status === 'ok' ? 'opacity-100' : 'opacity-0'}`}
+        onLoad={() => setStatus('ok')}
+        onError={() => setStatus('missing')}
+      />
+      {status === 'ok' && (
+        <div className="absolute bottom-1.5 right-2 text-[9px] text-white/50 font-medium">
+          Daily snapshot
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RoomCard({ room, venueId, onInvestigate }: { room: RoomSummary; venueId: string; onInvestigate: (job: VenueScopeJob) => void }) {
   const isDrink  = room.mode === 'drink_count';
   const isPeople = room.mode === 'people_count';
 
@@ -439,6 +478,11 @@ function RoomCard({ room, onInvestigate }: { room: RoomSummary; onInvestigate: (
           <span className="text-[10px] text-text-muted flex-shrink-0">{fmtTime(room.updatedAt)}</span>
         )}
       </div>
+
+      {/* Camera snapshot thumbnail */}
+      {venueId && (
+        <CameraSnapshot url={snapshotUrl(venueId, room.label)} label={room.label} />
+      )}
 
       {/* Primary metrics */}
       {isDrink && (
@@ -1397,7 +1441,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {barCams.map(room => (
-                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} venueId={venueId} onInvestigate={setInvestigating} />
                       ))}
                     </div>
                   </div>
@@ -1413,7 +1457,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {peopleCams.map(room => (
-                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} venueId={venueId} onInvestigate={setInvestigating} />
                       ))}
                     </div>
                   </div>
@@ -1426,7 +1470,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {otherCams.map(room => (
-                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} venueId={venueId} onInvestigate={setInvestigating} />
                       ))}
                     </div>
                   </div>
