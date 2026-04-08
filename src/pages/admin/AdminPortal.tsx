@@ -17,6 +17,7 @@ import { AdminSettings } from './AdminSettings';
 import { EmailReporting } from './EmailReporting';
 import { FeatureControls } from './FeatureControls';
 import { SalesCRM } from './SalesCRM';
+import { CamerasManagement } from './CamerasManagement';
 import authService from '../../services/auth.service';
 
 export function AdminPortal() {
@@ -76,6 +77,7 @@ export function AdminPortal() {
           {activeTab === 'email-reporting' && <ErrorBoundary key="email-reporting"><EmailReporting /></ErrorBoundary>}
           {activeTab === 'settings' && <ErrorBoundary key="settings"><AdminSettings /></ErrorBoundary>}
           {activeTab === 'crm' && <ErrorBoundary key="crm"><SalesCRM /></ErrorBoundary>}
+          {activeTab === 'cameras' && <ErrorBoundary key="cameras"><CamerasManagement /></ErrorBoundary>}
         </div>
       </div>
     </div>

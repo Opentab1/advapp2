@@ -1,0 +1,551 @@
+/**
+ * CamerasManagement — Admin page for managing VenueScope cameras
+ *
+ * Cameras are stored in DynamoDB (VenueScopeCameras table, PK=venueId SK=cameraId).
+ * The worker on the droplet reads this table every 60s to pick up changes.
+ */
+
+import { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Camera,
+  Plus,
+  Trash2,
+  Edit2,
+  CheckCircle,
+  XCircle,
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
+  Save,
+  X,
+  Eye,
+  EyeOff,
+  Wifi,
+} from 'lucide-react';
+import adminService from '../../services/admin.service';
+import cameraService, { Camera as Cam, CameraMode } from '../../services/camera.service';
+
+const MODE_LABELS: Record<CameraMode, string> = {
+  drink_count:    'Drink Count',
+  bottle_count:   'Bottle Count',
+  people_count:   'People Count',
+  table_turns:    'Table Turns',
+  staff_activity: 'Staff Activity',
+  after_hours:    'After Hours',
+};
+
+const ALL_MODES: CameraMode[] = [
+  'drink_count', 'bottle_count', 'people_count', 'table_turns', 'staff_activity', 'after_hours',
+];
+
+// ─── Add/Edit Camera Modal ────────────────────────────────────────────────────
+
+function CameraModal({
+  venueId,
+  camera,
+  onClose,
+  onSaved,
+}: {
+  venueId: string;
+  camera?: Cam;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isEdit = !!camera;
+  const [name, setName] = useState(camera?.name ?? '');
+  const [rtspUrl, setRtspUrl] = useState(camera?.rtspUrl ?? '');
+  const [modes, setModes] = useState<CameraMode[]>(camera?.modes ?? ['drink_count']);
+  const [modelProfile, setModelProfile] = useState<Cam['modelProfile']>(camera?.modelProfile ?? 'balanced');
+  const [segmentSeconds, setSegmentSeconds] = useState(camera?.segmentSeconds ?? 0);
+  const [notes, setNotes] = useState(camera?.notes ?? '');
+  const [showRtsp, setShowRtsp] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const toggleMode = (mode: CameraMode) => {
+    setModes(prev =>
+      prev.includes(mode) ? prev.filter(m => m !== mode) : [...prev, mode]
+    );
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) { setError('Camera name is required'); return; }
+    if (!rtspUrl.trim()) { setError('RTSP URL is required'); return; }
+    if (modes.length === 0) { setError('Select at least one mode'); return; }
+
+    setSaving(true);
+    setError('');
+    try {
+      if (isEdit && camera) {
+        await cameraService.updateCamera(venueId, camera.cameraId, {
+          name: name.trim(),
+          rtspUrl: rtspUrl.trim(),
+          modes,
+          modelProfile,
+          segmentSeconds,
+          notes: notes.trim() || undefined,
+        });
+      } else {
+        await cameraService.addCamera(venueId, {
+          name: name.trim(),
+          rtspUrl: rtspUrl.trim(),
+          modes,
+          enabled: true,
+          modelProfile,
+          segmentSeconds,
+          notes: notes.trim() || undefined,
+        });
+      }
+      onSaved();
+      onClose();
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to save camera');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="glass-card p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+            <Camera className="w-5 h-5 text-purple-400" />
+            {isEdit ? 'Edit Camera' : 'Add Camera'}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {/* Name */}
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Camera Name *</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g., Bar Camera CH7"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            />
+          </div>
+
+          {/* RTSP URL */}
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">RTSP URL *</label>
+            <div className="relative">
+              <input
+                type={showRtsp ? 'text' : 'password'}
+                value={rtspUrl}
+                onChange={e => setRtspUrl(e.target.value)}
+                placeholder="rtsp://user:pass@ip:port/stream"
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 pr-12 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 font-mono text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setShowRtsp(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+              >
+                {showRtsp ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Format: rtsp://username:password@ip-address:554/stream-path
+            </p>
+          </div>
+
+          {/* Analysis Modes */}
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Analysis Modes *</label>
+            <div className="grid grid-cols-2 gap-2">
+              {ALL_MODES.map(mode => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => toggleMode(mode)}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium text-left transition-all ${
+                    modes.includes(mode)
+                      ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40'
+                      : 'bg-white/5 text-gray-400 border border-white/10 hover:text-white'
+                  }`}
+                >
+                  {MODE_LABELS[mode]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Model Profile */}
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Model Profile</label>
+            <select
+              value={modelProfile}
+              onChange={e => setModelProfile(e.target.value as Cam['modelProfile'])}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            >
+              <option value="fast">Fast (lower accuracy, less CPU)</option>
+              <option value="balanced">Balanced (recommended)</option>
+              <option value="accurate">Accurate (more CPU)</option>
+            </select>
+          </div>
+
+          {/* Segment / Continuous */}
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Mode</label>
+            <select
+              value={segmentSeconds}
+              onChange={e => setSegmentSeconds(Number(e.target.value))}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            >
+              <option value={0}>Continuous (Live — always running)</option>
+              <option value={900}>Segments — 15 min clips</option>
+              <option value={1800}>Segments — 30 min clips</option>
+              <option value={3600}>Segments — 1 hour clips</option>
+            </select>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Notes (optional)</label>
+            <input
+              type="text"
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="e.g., Overhead fisheye, main bar"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 text-red-400 text-sm">
+              <AlertTriangle className="w-4 h-4" />
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-3 mt-6 pt-4 border-t border-white/10">
+          <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex-1 btn-primary flex items-center justify-center gap-2"
+          >
+            {saving
+              ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</>
+              : <><Save className="w-4 h-4" /> {isEdit ? 'Save Changes' : 'Add Camera'}</>
+            }
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ─── Venue Camera Row ─────────────────────────────────────────────────────────
+
+function VenueCameraSection({
+  venueId,
+  venueName,
+}: {
+  venueId: string;
+  venueName: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [cameras, setCameras] = useState<Cam[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editCamera, setEditCamera] = useState<Cam | null>(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const cams = await cameraService.listCameras(venueId);
+      setCameras(cams);
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to load cameras');
+    } finally {
+      setLoading(false);
+    }
+  }, [venueId]);
+
+  useEffect(() => {
+    if (expanded) load();
+  }, [expanded, load]);
+
+  const handleToggle = async (cam: Cam) => {
+    try {
+      await cameraService.toggleCamera(venueId, cam.cameraId, !cam.enabled);
+      setCameras(prev => prev.map(c =>
+        c.cameraId === cam.cameraId ? { ...c, enabled: !c.enabled } : c
+      ));
+    } catch (e: any) {
+      alert(`Failed to toggle camera: ${e.message}`);
+    }
+  };
+
+  const handleDelete = async (cam: Cam) => {
+    if (!confirm(`Delete "${cam.name}"? The worker will stop processing this camera within 60 seconds.`)) return;
+    try {
+      await cameraService.deleteCamera(venueId, cam.cameraId);
+      setCameras(prev => prev.filter(c => c.cameraId !== cam.cameraId));
+    } catch (e: any) {
+      alert(`Failed to delete camera: ${e.message}`);
+    }
+  };
+
+  return (
+    <div className="glass-card overflow-hidden">
+      {/* Header row — click to expand */}
+      <button
+        className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <div className="flex items-center gap-3">
+          {expanded ? <ChevronDown className="w-5 h-5 text-gray-400" /> : <ChevronRight className="w-5 h-5 text-gray-400" />}
+          <div className="text-left">
+            <div className="text-white font-semibold">{venueName}</div>
+            <div className="text-xs text-gray-400 font-mono">{venueId}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {cameras.length > 0 && (
+            <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+              {cameras.length} camera{cameras.length !== 1 ? 's' : ''}
+            </span>
+          )}
+          <span className={`text-xs px-2 py-1 rounded ${
+            cameras.filter(c => c.enabled).length > 0
+              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+              : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+          }`}>
+            {cameras.filter(c => c.enabled).length} active
+          </span>
+        </div>
+      </button>
+
+      {/* Camera list */}
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="border-t border-white/10"
+          >
+            <div className="p-4 space-y-3">
+              {loading && (
+                <div className="flex items-center gap-2 text-gray-400 py-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Loading cameras...
+                </div>
+              )}
+
+              {error && (
+                <div className="flex items-center gap-2 text-red-400 text-sm py-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  {error}
+                  {error.includes('credentials') && (
+                    <span className="text-gray-500"> — set VITE_AWS_ACCESS_KEY_ID in Amplify env vars</span>
+                  )}
+                </div>
+              )}
+
+              {!loading && !error && cameras.length === 0 && (
+                <p className="text-gray-400 text-sm py-2">No cameras configured. Add one below.</p>
+              )}
+
+              {cameras.map(cam => (
+                <div
+                  key={cam.cameraId}
+                  className={`flex items-center justify-between p-4 rounded-lg border transition-all ${
+                    cam.enabled
+                      ? 'bg-white/5 border-white/10'
+                      : 'bg-white/2 border-white/5 opacity-60'
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Wifi className={`w-4 h-4 flex-shrink-0 ${cam.enabled ? 'text-green-400' : 'text-gray-600'}`} />
+                      <span className="text-white font-medium truncate">{cam.name}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${cam.enabled ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-500'}`}>
+                        {cam.enabled ? 'enabled' : 'disabled'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mb-1">
+                      {cam.modes.map(m => (
+                        <span key={m} className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                          {MODE_LABELS[m]}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="text-xs text-gray-500 font-mono truncate">
+                      {cam.rtspUrl.replace(/:[^:@]*@/, ':***@')}
+                    </div>
+                    {cam.notes && (
+                      <div className="text-xs text-gray-500 mt-0.5">{cam.notes}</div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                    <button
+                      onClick={() => handleToggle(cam)}
+                      title={cam.enabled ? 'Disable camera' : 'Enable camera'}
+                      className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                    >
+                      {cam.enabled
+                        ? <CheckCircle className="w-4 h-4 text-green-400" />
+                        : <XCircle className="w-4 h-4 text-gray-500" />
+                      }
+                    </button>
+                    <button
+                      onClick={() => setEditCamera(cam)}
+                      className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(cam)}
+                      className="p-2 rounded-lg hover:bg-red-500/10 text-gray-400 hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <button
+                onClick={() => setShowAdd(true)}
+                className="w-full mt-2 flex items-center justify-center gap-2 py-3 rounded-lg border border-dashed border-purple-500/30 text-purple-400 hover:bg-purple-500/10 transition-colors text-sm font-medium"
+              >
+                <Plus className="w-4 h-4" />
+                Add Camera to {venueName}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modals */}
+      <AnimatePresence>
+        {showAdd && (
+          <CameraModal
+            venueId={venueId}
+            onClose={() => setShowAdd(false)}
+            onSaved={load}
+          />
+        )}
+        {editCamera && (
+          <CameraModal
+            venueId={venueId}
+            camera={editCamera}
+            onClose={() => setEditCamera(null)}
+            onSaved={load}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
+export function CamerasManagement() {
+  const [venues, setVenues] = useState<{ venueId: string; venueName: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadVenues = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const list = await adminService.listVenues();
+      setVenues(list.map(v => ({ venueId: v.venueId, venueName: v.venueName })));
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to load venues');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadVenues(); }, [loadVenues]);
+
+  return (
+    <div className="min-h-screen p-4 md:p-6 lg:p-8">
+      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-3xl font-bold gradient-text mb-2">📷 Camera Management</h1>
+            <p className="text-gray-400">
+              Add and manage RTSP cameras for each venue. Changes take effect on the worker within 60 seconds.
+            </p>
+          </div>
+          <button
+            onClick={loadVenues}
+            disabled={loading}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+
+        {/* Info box */}
+        <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg mb-6 text-sm text-blue-300">
+          <strong>How it works:</strong> Cameras are stored in DynamoDB. The worker on the droplet polls this table every 60 seconds and automatically starts or stops processing cameras. Enable/disable without deleting to pause a camera.
+        </div>
+
+        {error && (
+          <div className="glass-card p-5 mb-6 border-red-500/30 flex items-center gap-3 text-red-400">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+            <div>
+              <div>{error}</div>
+              {error.includes('VITE_ADMIN_API_URL') && (
+                <div className="text-xs text-gray-400 mt-1">
+                  Set VITE_ADMIN_API_URL in Amplify environment variables to your admin Lambda URL.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-gray-400 gap-2">
+            <RefreshCw className="w-6 h-6 animate-spin" />
+            Loading venues...
+          </div>
+        ) : venues.length === 0 ? (
+          <div className="glass-card p-12 text-center">
+            <Camera className="w-16 h-16 mx-auto mb-4 text-gray-600" />
+            <h3 className="text-xl font-bold text-white mb-2">No Venues Found</h3>
+            <p className="text-gray-400">Create a venue first in the Venues tab, then come back to add cameras.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {venues.map(v => (
+              <VenueCameraSection key={v.venueId} venueId={v.venueId} venueName={v.venueName} />
+            ))}
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+}

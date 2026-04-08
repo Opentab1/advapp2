@@ -13,6 +13,21 @@
 
 import { generateClient } from 'aws-amplify/api';
 
+// Admin API Lambda — set VITE_ADMIN_API_URL in Amplify environment variables
+// e.g. https://xxxxxxxxxx.execute-api.us-east-2.amazonaws.com
+const ADMIN_API = (import.meta.env.VITE_ADMIN_API_URL ?? '').replace(/\/$/, '');
+
+async function adminFetch(path: string, options?: RequestInit) {
+  if (!ADMIN_API) throw new Error('VITE_ADMIN_API_URL is not configured');
+  const res = await fetch(`${ADMIN_API}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+  return json;
+}
+
 // ============ TYPES ============
 
 export interface AdminVenue {
@@ -98,48 +113,8 @@ class AdminService {
    */
   async listVenues(): Promise<AdminVenue[]> {
     console.log('📋 Fetching all venues...');
-    
-    try {
-      // Try the GraphQL query first (if it exists)
-      const query = `
-        query ListAllVenues($limit: Int, $nextToken: String) {
-          listAllVenues(limit: $limit, nextToken: $nextToken) {
-            items {
-              venueId
-              venueName
-              displayName
-              locationId
-              locationName
-              status
-              createdAt
-              lastDataTimestamp
-              userCount
-              deviceCount
-              plan
-              mqttTopic
-            }
-            nextToken
-          }
-        }
-      `;
-
-      const result = await this.client.graphql({
-        query,
-        variables: { limit: 100 }
-      }) as any;
-
-      if (result.data?.listAllVenues?.items) {
-        console.log('✅ Fetched venues from GraphQL:', result.data.listAllVenues.items.length);
-        return result.data.listAllVenues.items;
-      }
-    } catch (error: any) {
-      console.warn('⚠️ listAllVenues query not available, using fallback');
-      // GraphQL query doesn't exist yet - this is expected until schema is updated
-    }
-
-    // Fallback: Return empty array with instruction
-    console.log('ℹ️ Venue listing requires listAllVenues Lambda/resolver to be deployed');
-    return [];
+    const data = await adminFetch('/admin/venues');
+    return data.items ?? [];
   }
 
   /**
@@ -148,73 +123,28 @@ class AdminService {
    */
   async createVenue(input: CreateVenueInput): Promise<{ success: boolean; message: string; venueId?: string; tempPassword?: string }> {
     console.log('🏢 Creating venue:', input.venueName);
-    
-    // Generate temp password
     const randomStr = Math.random().toString(36).slice(2, 10);
     const randomNum = Math.floor(Math.random() * 900) + 100;
     const tempPassword = `Temp${randomNum}${randomStr}!`;
-    
+
     try {
-      const mutation = `
-        mutation CreateVenue(
-          $venueName: String!
-          $venueId: String!
-          $locationName: String!
-          $locationId: String!
-          $ownerEmail: String!
-          $ownerName: String!
-          $tempPassword: String!
-        ) {
-          createVenue(
-            venueName: $venueName
-            venueId: $venueId
-            locationName: $locationName
-            locationId: $locationId
-            ownerEmail: $ownerEmail
-            ownerName: $ownerName
-            tempPassword: $tempPassword
-          ) {
-            success
-            message
-            venueId
-            ownerEmail
-          }
-        }
-      `;
+      await adminFetch('/admin/venues', {
+        method: 'POST',
+        body: JSON.stringify({ ...input, tempPassword }),
+      });
 
-      const result = await this.client.graphql({
-        query: mutation,
-        variables: { ...input, tempPassword }
-      }) as any;
+      this.logAuditEntry({
+        action: 'Venue Created',
+        actionType: 'create',
+        targetType: 'venue',
+        targetName: input.venueName,
+        details: `Created venue ${input.venueName} (ID: ${input.venueId}) with owner ${input.ownerEmail}`,
+      });
 
-      if (result.data?.createVenue?.success) {
-        // Log audit entry
-        this.logAuditEntry({
-          action: 'Venue Created',
-          actionType: 'create',
-          targetType: 'venue',
-          targetName: input.venueName,
-          details: `Created venue ${input.venueName} (ID: ${input.venueId}) with owner ${input.ownerEmail}`
-        });
-        
-        return {
-          success: true,
-          message: 'Venue created successfully',
-          venueId: result.data.createVenue.venueId,
-          tempPassword
-        };
-      }
-
-      return {
-        success: false,
-        message: result.data?.createVenue?.message || 'Failed to create venue'
-      };
+      return { success: true, message: 'Venue created successfully', venueId: input.venueId, tempPassword };
     } catch (error: any) {
       console.error('❌ Create venue failed:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to create venue'
-      };
+      return { success: false, message: error.message || 'Failed to create venue' };
     }
   }
 
@@ -266,43 +196,8 @@ class AdminService {
    */
   async listUsers(): Promise<AdminUser[]> {
     console.log('👥 Fetching all users...');
-    
-    try {
-      const query = `
-        query ListAllUsers($limit: Int, $nextToken: String) {
-          listAllUsers(limit: $limit, nextToken: $nextToken) {
-            items {
-              userId
-              email
-              name
-              venueId
-              venueName
-              role
-              status
-              createdAt
-              lastLoginAt
-              emailVerified
-            }
-            nextToken
-          }
-        }
-      `;
-
-      const result = await this.client.graphql({
-        query,
-        variables: { limit: 100 }
-      }) as any;
-
-      if (result.data?.listAllUsers?.items) {
-        console.log('✅ Fetched users from GraphQL:', result.data.listAllUsers.items.length);
-        return result.data.listAllUsers.items;
-      }
-    } catch (error: any) {
-      console.warn('⚠️ listAllUsers query not available');
-    }
-
-    console.log('ℹ️ User listing requires listAllUsers Lambda/resolver to be deployed');
-    return [];
+    const data = await adminFetch('/admin/users');
+    return data.items ?? [];
   }
 
   /**
@@ -311,54 +206,24 @@ class AdminService {
    */
   async createUser(input: CreateUserInput): Promise<{ success: boolean; message: string; tempPassword?: string }> {
     console.log('👤 Creating user:', input.email);
-    
     const randomStr = Math.random().toString(36).slice(2, 10);
     const randomNum = Math.floor(Math.random() * 900) + 100;
     const tempPassword = input.tempPassword || `Temp${randomNum}${randomStr}!`;
-    
+
     try {
-      const mutation = `
-        mutation CreateUser(
-          $email: String!
-          $name: String!
-          $venueId: String!
-          $venueName: String!
-          $role: String!
-          $tempPassword: String!
-        ) {
-          createUser(
-            email: $email
-            name: $name
-            venueId: $venueId
-            venueName: $venueName
-            role: $role
-            tempPassword: $tempPassword
-          ) {
-            success
-            message
-          }
-        }
-      `;
+      await adminFetch('/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({ ...input, tempPassword }),
+      });
 
-      const result = await this.client.graphql({
-        query: mutation,
-        variables: { ...input, tempPassword }
-      }) as any;
-
-      if (result.data?.createUser?.success) {
-        // Log audit entry
-        this.logAuditEntry({
-          action: 'User Created',
-          actionType: 'create',
-          targetType: 'user',
-          targetName: input.name || input.email,
-          details: `Created user ${input.email} with role ${input.role} for venue ${input.venueName}`
-        });
-        
-        return { success: true, message: 'User created', tempPassword };
-      }
-
-      return { success: false, message: result.data?.createUser?.message || 'Failed to create user' };
+      this.logAuditEntry({
+        action: 'User Created',
+        actionType: 'create',
+        targetType: 'user',
+        targetName: input.name || input.email,
+        details: `Created user ${input.email} with role ${input.role} for venue ${input.venueName}`,
+      });
+      return { success: true, message: 'User created', tempPassword };
     } catch (error: any) {
       console.error('❌ Create user failed:', error);
       return { success: false, message: error.message || 'Failed to create user' };

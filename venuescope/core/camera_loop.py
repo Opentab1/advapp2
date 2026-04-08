@@ -120,9 +120,10 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
 
     while not stop_event.is_set():
         try:
-            from core.database import get_camera
-            # Reload camera config each iteration so changes take effect
-            current = get_camera(camera_id)
+            from core.ddb_cameras import get_camera_ddb
+            from core.database import get_camera as get_camera_sqlite
+            # Reload camera config each iteration — prefer DDB so app changes take effect
+            current = get_camera_ddb(camera_id) or get_camera_sqlite(camera_id)
             if not current or not current.get("enabled", True):
                 log.info(f"[camera_loop] '{camera_name}' disabled — stopping loop")
                 break
@@ -191,10 +192,15 @@ class CameraLoopManager:
         self._lock     = threading.Lock()
 
     def sync(self):
-        """Start loops for enabled cameras; stop loops for disabled/removed ones."""
-        from core.database import list_cameras
+        """Start loops for enabled cameras; stop loops for disabled/removed ones.
+        Prefers DynamoDB (managed from the React admin app); falls back to SQLite."""
+        from core.ddb_cameras import list_cameras_ddb
+        from core.database import list_cameras as list_cameras_sqlite
         try:
-            cameras = list_cameras()
+            cameras = list_cameras_ddb()
+            if not cameras:
+                # DDB table not yet created or no cameras there — use SQLite registry
+                cameras = list_cameras_sqlite()
         except Exception as e:
             log.warning(f"[camera_loop] sync: could not list cameras: {e}")
             return

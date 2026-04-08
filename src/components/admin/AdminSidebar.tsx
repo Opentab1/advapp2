@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { 
+import {
   LayoutDashboard,
   Building2,
   Users,
@@ -16,7 +16,8 @@ import {
   Mail,
   Crown,
   Smartphone,
-  Target
+  Target,
+  Camera,
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -35,6 +36,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'venues', label: 'Venues', icon: Building2 },
+  { id: 'cameras', label: 'Cameras', icon: Camera },
   { id: 'crm', label: 'Sales CRM', icon: Target },
   { id: 'nfc-leads', label: '📱 NFC Leads', icon: Smartphone },
   { id: 'users', label: 'Users', icon: Users },
