@@ -66,6 +66,8 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     extra = {
         "max_seconds": 0 if continuous else seg_secs,
         "extra_modes": extra_modes,   # passed to VenueProcessor
+        # Store per-camera venue so multi-venue worker posts results to the right place
+        "venue_id": cam.get("venue", ""),
     }
     create_job(
         job_id        = jid,

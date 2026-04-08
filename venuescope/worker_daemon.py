@@ -87,7 +87,8 @@ def run_job(job_id: str):
         # Immediately write a "running" record to DynamoDB
         try:
             from core.aws_sync import sync_partial_to_aws
-            sync_partial_to_aws(job_id, 0, "Processing started", job_data=job)
+            sync_partial_to_aws(job_id, 0, "Processing started", job_data=job,
+                                venue_id=job_venue_id)
         except Exception as _ie:
             log.warning(f"Initial AWS sync error (non-fatal): {_ie}")
 
@@ -128,6 +129,9 @@ def run_job(job_id: str):
             except Exception:
                 pass
 
+        # Per-camera venue ID — supports multiple venues on one worker
+        job_venue_id = extra_config.get("venue_id", "")
+
         is_continuous = (job["source_type"] == "rtsp"
                          and float(extra_config.get("max_seconds", 0)) == 0)
 
@@ -139,7 +143,7 @@ def run_job(job_id: str):
             if time.time() - _last_partial_sync[0] >= 60.0:
                 try:
                     from core.aws_sync import sync_partial_to_aws
-                    sync_partial_to_aws(job_id, pct, msg)
+                    sync_partial_to_aws(job_id, pct, msg, venue_id=job_venue_id)
                 except Exception as _pe:
                     log.warning(f"Partial AWS sync error (non-fatal): {_pe}")
                 _last_partial_sync[0] = time.time()
@@ -158,7 +162,8 @@ def run_job(job_id: str):
             # Push to AWS DynamoDB for React dashboard
             try:
                 from core.aws_sync import push_live_metrics
-                push_live_metrics(job_id, partial_summary, elapsed_sec)
+                push_live_metrics(job_id, partial_summary, elapsed_sec,
+                                  venue_id=job_venue_id)
             except Exception as _le:
                 log.debug(f"Live metrics push error (non-fatal): {_le}")
 
@@ -219,10 +224,10 @@ def run_job(job_id: str):
         except Exception as _pos_err:
             log.warning(f"POS reconciliation skipped (non-fatal): {_pos_err}")
 
-        # Sync final results to AWS
+        # Sync final results to AWS — use per-camera venue_id for multi-venue support
         try:
             from core.aws_sync import sync_job_to_aws
-            sync_job_to_aws(job_id, summary, result_dir)
+            sync_job_to_aws(job_id, summary, result_dir, venue_id=job_venue_id)
         except Exception as _sync_err:
             log.warning(f"AWS sync error (non-fatal): {_sync_err}")
 

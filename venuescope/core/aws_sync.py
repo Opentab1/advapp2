@@ -261,7 +261,8 @@ def _upload_summary_to_s3(summary: Dict[str, Any], job_id: str, venue_id: str) -
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def sync_partial_to_aws(job_id: str, progress_pct: float,
-                        status_msg: str = "", job_data: Optional[Dict] = None) -> bool:
+                        status_msg: str = "", job_data: Optional[Dict] = None,
+                        venue_id: str = "") -> bool:
     """
     Push in-progress status to DynamoDB so the React dashboard shows the job as running.
     Called periodically during processing (every ~60 s).
@@ -272,7 +273,7 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
     if not _cb.allow():
         return False
 
-    venue_id = _get_venue_id()
+    venue_id = venue_id or _get_venue_id()
     now      = str(time.time())
     pct      = str(int(max(0, min(100, progress_pct))))
 
@@ -310,7 +311,8 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
         return False
 
 
-def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float) -> bool:
+def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
+                      venue_id: str = "") -> bool:
     """
     Push real-time running totals to DynamoDB every ~30 s during live stream processing.
     Updates the existing job record with current drink counts, headcount, etc.
@@ -321,7 +323,7 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float) 
     if not _cb.allow():
         return False
 
-    venue_id = _get_venue_id()
+    venue_id = venue_id or _get_venue_id()
     now      = str(time.time())
 
     # ── Extract current totals from partial summary ────────────────────────
@@ -394,7 +396,8 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float) 
         return False
 
 
-def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> bool:
+def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
+                    venue_id: str = "") -> bool:
     """
     Push job summary to DynamoDB VenueScopeJobs table.
     If theft is flagged, also upload the clip to S3.
@@ -406,7 +409,7 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path) -> b
               "AWS_SECRET_ACCESS_KEY, VENUESCOPE_VENUE_ID", flush=True)
         return False
 
-    venue_id  = _get_venue_id()
+    venue_id  = venue_id or _get_venue_id()
     has_theft = bool(summary.get("has_theft_flag"))
 
     # Always upload full summary JSON to S3 for web app detail view
