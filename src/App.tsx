@@ -82,9 +82,6 @@ function ProtectedDashboard() {
       case 'events':
         content = <Events />;
         break;
-      case 'forecast':
-        content = <Forecast />;
-        break;
       case 'staffing':
         content = <Staffing />;
         break;
