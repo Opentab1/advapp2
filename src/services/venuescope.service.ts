@@ -225,7 +225,8 @@ const venueScopeService = {
 
       // Deduplicate live jobs by cameraLabel — keep only the most recent per camera
       // isLive=true OR status=running (fallback when AppSync schema omits isLive field)
-      const isLive = (j: VenueScopeJob) => j.isLive === true || (j.isLive !== false && j.status === 'running');
+      const fiveMinAgo = Date.now() / 1000 - 300;
+      const isLive = (j: VenueScopeJob) => j.isLive === true || (j.isLive !== false && j.status === 'running' && (j.updatedAt ?? 0) > fiveMinAgo);
       const liveDeduped = Array.from(
         items
           .filter(j => isLive(j))
@@ -246,7 +247,8 @@ const venueScopeService = {
       console.warn('[venuescope] AppSync listJobs failed, trying direct DynamoDB:', err);
       return _listJobsDirect(venueId).then(items => {
         // Same dedup/sort logic as AppSync path
-        const isLiveDDB = (j: VenueScopeJob) => j.isLive === true || (j.isLive !== false && j.status === 'running');
+        const fiveMinAgoDDB = Date.now() / 1000 - 300;
+        const isLiveDDB = (j: VenueScopeJob) => j.isLive === true || (j.isLive !== false && j.status === 'running' && (j.updatedAt ?? 0) > fiveMinAgoDDB);
         const liveDeduped = Array.from(
           items
             .filter(j => isLiveDDB(j))
