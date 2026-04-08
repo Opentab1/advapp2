@@ -84,14 +84,6 @@ def run_job(job_id: str):
         if not job:
             raise RuntimeError(f"Job {job_id} not found")
 
-        # Immediately write a "running" record to DynamoDB
-        try:
-            from core.aws_sync import sync_partial_to_aws
-            sync_partial_to_aws(job_id, 0, "Processing started", job_data=job,
-                                venue_id=job_venue_id)
-        except Exception as _ie:
-            log.warning(f"Initial AWS sync error (non-fatal): {_ie}")
-
         result_dir = Path(RESULT_DIR) / job_id
         result_dir.mkdir(parents=True, exist_ok=True)
 
@@ -131,6 +123,14 @@ def run_job(job_id: str):
 
         # Per-camera venue ID — supports multiple venues on one worker
         job_venue_id = extra_config.get("venue_id", "")
+
+        # Write a "running" record to DynamoDB (after venue_id is resolved)
+        try:
+            from core.aws_sync import sync_partial_to_aws
+            sync_partial_to_aws(job_id, 0, "Processing started", job_data=job,
+                                venue_id=job_venue_id)
+        except Exception as _ie:
+            log.warning(f"Initial AWS sync error (non-fatal): {_ie}")
 
         is_continuous = (job["source_type"] == "rtsp"
                          and float(extra_config.get("max_seconds", 0)) == 0)

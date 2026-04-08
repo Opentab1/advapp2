@@ -142,7 +142,7 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                     log.warning(f"[camera_loop] '{camera_name}' last job failed "
                                 f"— waiting 60s before retry")
                     stop_event.wait(60)
-                    continue
+                    # fall through to launch new segment after wait
 
             # Apply occupancy throttle — people_counter only every 20 minutes
             effective = _effective_cam(current, last_occupancy_t)
