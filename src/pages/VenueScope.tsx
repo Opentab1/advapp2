@@ -188,7 +188,7 @@ function buildRooms(jobs: VenueScopeJob[]): RoomSummary[] {
 
     return {
       label,
-      isLive: best.isLive ?? false,
+      isLive: best.isLive === true || best.status === 'running',
       mode: isDrink ? 'drink_count' : isPeople ? 'people_count' : (best.analysisMode ?? 'unknown'),
       totalDrinks,
       drinksPerHour: best.drinksPerHour ?? 0,
@@ -1243,14 +1243,16 @@ export function VenueScope() {
   }, []);
   // Guard against null/undefined entries that AppSync occasionally returns
   const safeJobs    = useMemo(() => jobs.filter((j): j is VenueScopeJob => j != null && typeof j === 'object'), [jobs]);
+  // A job is "live" if isLive=true OR status=running (fallback for when AppSync omits the isLive field)
+  const isJobLive = (j: VenueScopeJob) => j.isLive === true || j.status === 'running';
   const tonightJobs = useMemo(() => safeJobs.filter(j =>
-    (j.createdAt ?? 0) >= todayStart || j.isLive
+    (j.createdAt ?? 0) >= todayStart || isJobLive(j)
   ), [safeJobs, todayStart]);
-  const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !j.isLive), [safeJobs, todayStart]);
+  const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !isJobLive(j)), [safeJobs, todayStart]);
 
   const allRooms    = useMemo(() => { try { return buildRooms(tonightJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [tonightJobs]);
-  const liveRooms   = useMemo(() => allRooms.filter(r => r.isLive), [allRooms]);
-  const doneRooms   = useMemo(() => allRooms.filter(r => !r.isLive), [allRooms]);
+  const liveRooms   = useMemo(() => allRooms.filter(r => r.isLive || r.job?.status === 'running'), [allRooms]);
+  const doneRooms   = useMemo(() => allRooms.filter(r => !r.isLive && r.job?.status !== 'running'), [allRooms]);
   const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
   // History = today's completed rooms + all older jobs
   const historyJobs = useMemo(() => [

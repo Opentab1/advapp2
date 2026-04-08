@@ -224,9 +224,11 @@ const venueScopeService = {
       const items = connection.items ?? [];
 
       // Deduplicate live jobs by cameraLabel — keep only the most recent per camera
+      // isLive=true OR status=running (fallback when AppSync schema omits isLive field)
+      const isLive = (j: VenueScopeJob) => j.isLive === true || j.status === 'running';
       const liveDeduped = Array.from(
         items
-          .filter(j => j.isLive)
+          .filter(j => isLive(j))
           .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
           .reduce((map, j) => {
             const key = j.cameraLabel || j.jobId;
@@ -235,7 +237,7 @@ const venueScopeService = {
           }, new Map<string, VenueScopeJob>())
           .values()
       );
-      const nonLive = items.filter(j => !j.isLive)
+      const nonLive = items.filter(j => !isLive(j))
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
         .slice(0, Math.max(limit, 50));
 
@@ -244,9 +246,10 @@ const venueScopeService = {
       console.warn('[venuescope] AppSync listJobs failed, trying direct DynamoDB:', err);
       return _listJobsDirect(venueId).then(items => {
         // Same dedup/sort logic as AppSync path
+        const isLiveDDB = (j: VenueScopeJob) => j.isLive === true || j.status === 'running';
         const liveDeduped = Array.from(
           items
-            .filter(j => j.isLive)
+            .filter(j => isLiveDDB(j))
             .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
             .reduce((map, j) => {
               const key = j.cameraLabel || j.jobId;
@@ -255,7 +258,7 @@ const venueScopeService = {
             }, new Map<string, VenueScopeJob>())
             .values()
         );
-        const nonLive = items.filter(j => !j.isLive)
+        const nonLive = items.filter(j => !isLiveDDB(j))
           .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
           .slice(0, 50);
         return [...liveDeduped, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
