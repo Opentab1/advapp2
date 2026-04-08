@@ -392,25 +392,23 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
 
 // ── Camera live view ──────────────────────────────────────────────────────────
 
-// HTTPS proxy on the DO droplet — strips NVR's HTTP so browser allows it
-const CAM_PROXY = 'https://137-184-61-178.sslip.io/cam';
-
 /** Extract channel number from label like "CH7 — Bar (Main)" → "CH7" */
 function channelFromLabel(label: string): string | null {
   const m = label.match(/CH(\d+)/i);
   return m ? `CH${m[1]}` : null;
 }
 
-function liveStreamUrl(label: string): string | null {
+function liveStreamUrl(label: string, proxyBase: string): string | null {
   const ch = channelFromLabel(label);
-  if (!ch) return null;
-  return `${CAM_PROXY}/hls/live/${ch}/0/livetop.mp4`;
+  if (!ch || !proxyBase) return null;
+  const base = proxyBase.replace(/\/$/, '');
+  return `${base}/hls/live/${ch}/0/livetop.mp4`;
 }
 
-function CameraLiveView({ label }: { label: string }) {
+function CameraLiveView({ label, proxyBase }: { label: string; proxyBase: string }) {
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const [state, setState] = React.useState<'loading' | 'playing' | 'error'>('loading');
-  const url = liveStreamUrl(label);
+  const url = liveStreamUrl(label, proxyBase);
 
   React.useEffect(() => {
     if (!url || !videoRef.current) return;
@@ -442,7 +440,7 @@ function CameraLiveView({ label }: { label: string }) {
         muted
         playsInline
         onCanPlay={() => setState('playing')}
-        onError={() => setState('error')}
+        onError={() => { setState('error'); }}
         onStalled={() => setState('loading')}
       />
       {state === 'playing' && (
@@ -458,7 +456,7 @@ function CameraLiveView({ label }: { label: string }) {
   );
 }
 
-function RoomCard({ room, onInvestigate }: { room: RoomSummary; onInvestigate: (job: VenueScopeJob) => void }) {
+function RoomCard({ room, camProxyUrl, onInvestigate }: { room: RoomSummary; camProxyUrl: string; onInvestigate: (job: VenueScopeJob) => void }) {
   const isDrink  = room.mode === 'drink_count';
   const isPeople = room.mode === 'people_count';
 
@@ -509,7 +507,7 @@ function RoomCard({ room, onInvestigate }: { room: RoomSummary; onInvestigate: (
       </div>
 
       {/* Live camera feed */}
-      <CameraLiveView label={room.label} />
+      {camProxyUrl && <CameraLiveView label={room.label} proxyBase={camProxyUrl} />}
 
       {/* Primary metrics */}
       {isDrink && (
@@ -1235,6 +1233,7 @@ export function VenueScope() {
   const [jobs, setJobs]               = useState<VenueScopeJob[]>([]);
   const [loading, setLoading]         = useState(true);
   const [avgDrinkPrice, setAvgDrinkPrice] = useState(() => venueSettingsService.getAvgDrinkPrice(venueId));
+  const [camProxyUrl, setCamProxyUrl] = useState(() => venueSettingsService.getCamProxyUrl(venueId) ?? '');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [newToast, setNewToast]       = useState<string | null>(null);
   const [investigating, setInvestigating] = useState<VenueScopeJob | null>(null);
@@ -1272,6 +1271,7 @@ export function VenueScope() {
     if (!venueId) return;
     venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
       if (s?.avgDrinkPrice) setAvgDrinkPrice(s.avgDrinkPrice);
+      if (s?.camProxyUrl) setCamProxyUrl(s.camProxyUrl);
     });
   }, [venueId]);
 
@@ -1468,7 +1468,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {barCams.map(room => (
-                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} onInvestigate={setInvestigating} />
                       ))}
                     </div>
                   </div>
@@ -1484,7 +1484,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {peopleCams.map(room => (
-                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} onInvestigate={setInvestigating} />
                       ))}
                     </div>
                   </div>
@@ -1497,7 +1497,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {otherCams.map(room => (
-                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} onInvestigate={setInvestigating} />
                       ))}
                     </div>
                   </div>

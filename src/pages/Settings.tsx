@@ -44,6 +44,10 @@ export function Settings() {
   const [bizOpen, setBizOpen] = useState('17:00');
   const [bizClose, setBizClose] = useState('02:00');
   const [bizHoursSaved, setBizHoursSaved] = useState(false);
+  // Camera proxy
+  const [camProxy, setCamProxy] = useState('');
+  const [camProxySaving, setCamProxySaving] = useState(false);
+  const [camProxySaved, setCamProxySaved] = useState(false);
 
   // Square POS
   const [squareCreds, setSquareCreds]             = useState<SquareCredentials>(() => squarePosService.getCredentials() ?? { accessToken: '', locationId: '', environment: 'sandbox' });
@@ -364,9 +368,7 @@ export function Settings() {
       venueSettingsService.loadSettingsFromCloud(user.venueId).then(s => {
         if (s?.avgDrinkPrice) setAvgDrinkPrice(s.avgDrinkPrice);
         else setAvgDrinkPrice(12);
-      });
-      // Load business hours from cloud (falls back to localStorage)
-      venueSettingsService.loadSettingsFromCloud(user.venueId).then(s => {
+        if (s?.camProxyUrl) setCamProxy(s.camProxyUrl);
         const hours = s?.businessHours ?? venueSettingsService.getBusinessHours(user.venueId);
         if (hours?.open) setBizOpen(hours.open);
         if (hours?.close) setBizClose(hours.close);
@@ -772,6 +774,50 @@ export function Settings() {
                 >
                   {bizHoursSaved ? <><Check className="w-4 h-4" />Saved!</> : <><Save className="w-4 h-4" />Save Hours</>}
                 </button>
+              </div>
+
+              {/* Camera Proxy URL */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <Camera className="w-5 h-5 text-teal" />
+                  <h3 className="text-xl font-semibold text-white">Camera Live Feed</h3>
+                </div>
+                <p className="text-sm text-warm-400 mb-6">
+                  Set the HTTPS proxy URL for your camera NVR so live feeds appear on the VenueScope tab.
+                  This is the URL of your server with <code className="text-teal/80 text-xs bg-black/30 px-1 rounded">/cam</code> appended
+                  (e.g. <code className="text-teal/80 text-xs bg-black/30 px-1 rounded">https://your-server.sslip.io/cam</code>).
+                  Each venue has its own URL. Leave blank to hide live feeds.
+                </p>
+                <div className="space-y-3">
+                  <input
+                    type="url"
+                    value={camProxy}
+                    onChange={e => setCamProxy(e.target.value)}
+                    placeholder="https://137-184-61-178.sslip.io/cam"
+                    className="w-full px-4 py-3 bg-warm-900 border border-warm-700 rounded-lg text-white text-sm focus:border-teal focus:ring-1 focus:ring-teal transition-colors font-mono"
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!user?.venueId) return;
+                      setCamProxySaving(true);
+                      await venueSettingsService.saveCamProxyUrl(user.venueId, camProxy.trim());
+                      haptic('success');
+                      setCamProxySaved(true);
+                      setTimeout(() => setCamProxySaved(false), 3000);
+                      setCamProxySaving(false);
+                    }}
+                    disabled={camProxySaving}
+                    className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-all ${
+                      camProxySaved
+                        ? 'bg-green-500/20 border border-green-500/50 text-green-400'
+                        : 'bg-teal/20 border border-teal/50 text-teal hover:bg-teal/30'
+                    }`}
+                  >
+                    {camProxySaving ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                     camProxySaved ? <><Check className="w-4 h-4" />Saved!</> :
+                     <><Save className="w-4 h-4" />Save Camera URL</>}
+                  </button>
+                </div>
               </div>
 
               {/* Venue Info (read-only) */}

@@ -34,6 +34,7 @@ export interface VenueSettings {
   capacity?: number;  // Max capacity of the venue
   avgDrinkPrice?: number;  // Average drink price in dollars (for theft loss estimates)
   businessHours?: { open: string; close: string };
+  camProxyUrl?: string;  // HTTPS proxy base URL for live camera streams, e.g. https://droplet.sslip.io/cam
   lastUpdated?: string;
 }
 
@@ -408,6 +409,18 @@ class VenueSettingsService {
     if (isDemoAccount(venueId)) return true;
     const existing = this.getSettings(venueId) || {};
     return this.saveSettingsToCloud(venueId, { ...existing, businessHours: hours });
+  }
+
+  // ============ CAMERA PROXY METHODS ============
+
+  getCamProxyUrl(venueId: string): string | null {
+    return this.getSettings(venueId)?.camProxyUrl ?? null;
+  }
+
+  async saveCamProxyUrl(venueId: string, url: string): Promise<boolean> {
+    if (isDemoAccount(venueId)) return true;
+    const existing = this.getSettings(venueId) || {};
+    return this.saveSettingsToCloud(venueId, { ...existing, camProxyUrl: url || undefined });
   }
 
   // ============ INITIALIZATION ============
