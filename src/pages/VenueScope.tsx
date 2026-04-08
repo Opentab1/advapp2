@@ -390,46 +390,75 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
 
 // ── Live room card ────────────────────────────────────────────────────────────
 
-// ── Camera snapshot ───────────────────────────────────────────────────────────
+// ── Camera live view ──────────────────────────────────────────────────────────
 
-const SNAPSHOT_BUCKET = 'https://advapp-snapshots.s3.us-east-2.amazonaws.com';
+// HTTPS proxy on the DO droplet — strips NVR's HTTP so browser allows it
+const CAM_PROXY = 'https://137-184-61-178.sslip.io/cam';
 
-function cameraSlug(label: string): string {
-  return label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+/** Extract channel number from label like "CH7 — Bar (Main)" → "CH7" */
+function channelFromLabel(label: string): string | null {
+  const m = label.match(/CH(\d+)/i);
+  return m ? `CH${m[1]}` : null;
 }
 
-function snapshotUrl(venueId: string, label: string): string {
-  // Cache-bust once per day — keeps browser from showing a stale image
-  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  return `${SNAPSHOT_BUCKET}/${venueId}/${cameraSlug(label)}/snapshot.jpg?d=${day}`;
+function liveStreamUrl(label: string): string | null {
+  const ch = channelFromLabel(label);
+  if (!ch) return null;
+  return `${CAM_PROXY}/hls/live/${ch}/0/livetop.mp4`;
 }
 
-function CameraSnapshot({ url, label }: { url: string; label: string }) {
-  const [status, setStatus] = React.useState<'loading' | 'ok' | 'missing'>('loading');
-  return status === 'missing' ? null : (
-    <div className="relative w-full overflow-hidden rounded-xl bg-whoop-bg aspect-video">
-      {status === 'loading' && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Loader2 className="w-4 h-4 text-text-muted animate-spin" />
+function CameraLiveView({ label }: { label: string }) {
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const [state, setState] = React.useState<'loading' | 'playing' | 'error'>('loading');
+  const url = liveStreamUrl(label);
+
+  React.useEffect(() => {
+    if (!url || !videoRef.current) return;
+    const v = videoRef.current;
+    v.src = url;
+    v.load();
+  }, [url]);
+
+  if (!url) return null;
+
+  return (
+    <div className="relative w-full overflow-hidden rounded-xl bg-black aspect-video">
+      {state === 'loading' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
+          <Loader2 className="w-5 h-5 text-teal animate-spin" />
+          <span className="text-[10px] text-text-muted">Connecting to camera…</span>
         </div>
       )}
-      <img
-        src={url}
-        alt={`${label} snapshot`}
-        className={`w-full h-full object-cover transition-opacity duration-300 ${status === 'ok' ? 'opacity-100' : 'opacity-0'}`}
-        onLoad={() => setStatus('ok')}
-        onError={() => setStatus('missing')}
+      {state === 'error' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+          <Camera className="w-5 h-5 text-text-muted" />
+          <span className="text-[10px] text-text-muted">Stream unavailable</span>
+        </div>
+      )}
+      <video
+        ref={videoRef}
+        className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
+        autoPlay
+        muted
+        playsInline
+        onCanPlay={() => setState('playing')}
+        onError={() => setState('error')}
+        onStalled={() => setState('loading')}
       />
-      {status === 'ok' && (
-        <div className="absolute bottom-1.5 right-2 text-[9px] text-white/50 font-medium">
-          Daily snapshot
+      {state === 'playing' && (
+        <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-400" />
+          </span>
+          <span className="text-[9px] font-semibold text-white/90 uppercase tracking-wide">Live</span>
         </div>
       )}
     </div>
   );
 }
 
-function RoomCard({ room, venueId, onInvestigate }: { room: RoomSummary; venueId: string; onInvestigate: (job: VenueScopeJob) => void }) {
+function RoomCard({ room, onInvestigate }: { room: RoomSummary; onInvestigate: (job: VenueScopeJob) => void }) {
   const isDrink  = room.mode === 'drink_count';
   const isPeople = room.mode === 'people_count';
 
@@ -479,10 +508,8 @@ function RoomCard({ room, venueId, onInvestigate }: { room: RoomSummary; venueId
         )}
       </div>
 
-      {/* Camera snapshot thumbnail */}
-      {venueId && (
-        <CameraSnapshot url={snapshotUrl(venueId, room.label)} label={room.label} />
-      )}
+      {/* Live camera feed */}
+      <CameraLiveView label={room.label} />
 
       {/* Primary metrics */}
       {isDrink && (
@@ -1441,7 +1468,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {barCams.map(room => (
-                        <RoomCard key={room.label} room={room} venueId={venueId} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
                       ))}
                     </div>
                   </div>
@@ -1457,7 +1484,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {peopleCams.map(room => (
-                        <RoomCard key={room.label} room={room} venueId={venueId} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
                       ))}
                     </div>
                   </div>
@@ -1470,7 +1497,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {otherCams.map(room => (
-                        <RoomCard key={room.label} room={room} venueId={venueId} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} onInvestigate={setInvestigating} />
                       ))}
                     </div>
                   </div>
