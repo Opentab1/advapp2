@@ -23,9 +23,12 @@ import {
   Eye,
   EyeOff,
   Wifi,
+  Search,
+  Radio,
 } from 'lucide-react';
 import adminService from '../../services/admin.service';
 import cameraService, { Camera as Cam, CameraMode } from '../../services/camera.service';
+import { adminFetch } from '../../services/admin.service';
 
 const MODE_LABELS: Record<CameraMode, string> = {
   drink_count:    'Drink Count',
@@ -39,6 +42,222 @@ const MODE_LABELS: Record<CameraMode, string> = {
 const ALL_MODES: CameraMode[] = [
   'drink_count', 'bottle_count', 'people_count', 'table_turns', 'staff_activity', 'after_hours',
 ];
+
+// ─── Cortex IQ Discovery Modal ────────────────────────────────────────────────
+
+function DiscoverModal({
+  venueId,
+  venueName,
+  onClose,
+  onSaved,
+}: {
+  venueId: string;
+  venueName: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [ip, setIp] = useState('');
+  const [port, setPort] = useState('');
+  const [totalChannels, setTotalChannels] = useState('16');
+  const [discovering, setDiscovering] = useState(false);
+  const [discovered, setDiscovered] = useState<{ channel: number; url: string; online: boolean }[]>([]);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [namePrefix, setNamePrefix] = useState(venueName);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+
+  const discover = async () => {
+    if (!ip.trim() || !port.trim()) { setError('Enter IP and port'); return; }
+    setDiscovering(true);
+    setError('');
+    setDiscovered([]);
+    setSelected(new Set());
+    try {
+      const data = await adminFetch('/admin/probe-cameras', {
+        method: 'POST',
+        body: JSON.stringify({ ip: ip.trim(), port: port.trim(), totalChannels: parseInt(totalChannels) }),
+      });
+      setDiscovered(data.channels ?? []);
+      // Auto-select online channels
+      const onlineNums = new Set<number>((data.channels ?? []).filter((c: any) => c.online).map((c: any) => c.channel));
+      setSelected(onlineNums);
+    } catch (e: any) {
+      setError(e.message ?? 'Discovery failed');
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const toggleChannel = (ch: number) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(ch) ? next.delete(ch) : next.add(ch);
+      return next;
+    });
+  };
+
+  const addSelected = async () => {
+    if (selected.size === 0) { setError('Select at least one channel'); return; }
+    setSaving(true);
+    setError('');
+    let added = 0;
+    for (const ch of Array.from(selected).sort((a, b) => a - b)) {
+      const chData = discovered.find(d => d.channel === ch);
+      if (!chData) continue;
+      try {
+        await cameraService.addCamera(venueId, {
+          name: `${namePrefix} — CH${ch}`,
+          rtspUrl: chData.url,
+          modes: ['drink_count'],
+          enabled: true,
+          modelProfile: 'balanced',
+          segmentSeconds: 0,
+        });
+        added++;
+      } catch (e: any) {
+        // Skip duplicates silently
+        if (!e.message?.includes('already exists')) console.error(e);
+      }
+    }
+    setSaving(false);
+    setDone(true);
+    setTimeout(() => { onSaved(); onClose(); }, 1200);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+        className="glass-card p-6 w-full max-w-xl max-h-[90vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+            <Radio className="w-5 h-5 text-purple-400" />
+            Discover Cortex IQ Cameras
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+
+        {done ? (
+          <div className="text-center py-8">
+            <CheckCircle className="w-12 h-12 text-green-400 mx-auto mb-3" />
+            <p className="text-white font-semibold">Cameras added successfully!</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-xs text-gray-400">
+              Find the IP and port in <strong className="text-gray-300">Cortex IQ app → NVR Settings → Network → UPnP Port Mapping</strong>
+            </p>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-1">
+                <label className="block text-xs text-gray-400 mb-1">Public IP</label>
+                <input type="text" value={ip} onChange={e => setIp(e.target.value.trim())}
+                  placeholder="108.191.x.x"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">HTTP Port</label>
+                <input type="text" value={port} onChange={e => setPort(e.target.value.trim())}
+                  placeholder="37834"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Channels</label>
+                <select value={totalChannels} onChange={e => setTotalChannels(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm">
+                  <option value="8">8 ch</option>
+                  <option value="16">16 ch</option>
+                  <option value="32">32 ch</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={discover}
+              disabled={discovering}
+              className="w-full btn-primary flex items-center justify-center gap-2"
+            >
+              {discovering
+                ? <><RefreshCw className="w-4 h-4 animate-spin" /> Scanning {totalChannels} channels...</>
+                : <><Search className="w-4 h-4" /> Discover Cameras</>
+              }
+            </button>
+
+            {discovered.length > 0 && (
+              <>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Camera Name Prefix</label>
+                  <input type="text" value={namePrefix} onChange={e => setNamePrefix(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm" />
+                  <p className="text-xs text-gray-500 mt-1">Cameras will be named "{namePrefix} — CH1", "{namePrefix} — CH2", etc.</p>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-gray-400">
+                      {discovered.filter(d => d.online).length} channels online — {selected.size} selected
+                    </span>
+                    <div className="flex gap-2 text-xs">
+                      <button onClick={() => setSelected(new Set(discovered.filter(d => d.online).map(d => d.channel)))}
+                        className="text-purple-400 hover:text-purple-300">Select online</button>
+                      <span className="text-gray-600">|</span>
+                      <button onClick={() => setSelected(new Set())} className="text-gray-400 hover:text-white">Clear</button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {discovered.map(ch => (
+                      <button
+                        key={ch.channel}
+                        onClick={() => toggleChannel(ch.channel)}
+                        className={`p-3 rounded-lg border text-sm font-medium transition-all ${
+                          selected.has(ch.channel)
+                            ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                            : ch.online
+                            ? 'bg-green-500/10 border-green-500/20 text-green-400 hover:bg-green-500/20'
+                            : 'bg-white/3 border-white/5 text-gray-600'
+                        }`}
+                      >
+                        <div>CH{ch.channel}</div>
+                        <div className={`text-xs mt-0.5 ${ch.online ? 'text-green-500' : 'text-gray-600'}`}>
+                          {ch.online ? '● live' : '○ off'}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={addSelected}
+                  disabled={saving || selected.size === 0}
+                  className="w-full btn-primary flex items-center justify-center gap-2"
+                >
+                  {saving
+                    ? <><RefreshCw className="w-4 h-4 animate-spin" /> Adding cameras...</>
+                    : <><Plus className="w-4 h-4" /> Add {selected.size} Camera{selected.size !== 1 ? 's' : ''} to {venueName}</>
+                  }
+                </button>
+              </>
+            )}
+
+            {error && (
+              <div className="flex items-center gap-2 text-red-400 text-sm">
+                <AlertTriangle className="w-4 h-4" />{error}
+              </div>
+            )}
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
+  );
+}
+
 
 // ─── Add/Edit Camera Modal ────────────────────────────────────────────────────
 
@@ -359,6 +578,7 @@ function VenueCameraSection({
   const [cameras, setCameras] = useState<Cam[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [showDiscover, setShowDiscover] = useState(false);
   const [editCamera, setEditCamera] = useState<Cam | null>(null);
   const [error, setError] = useState('');
 
@@ -521,13 +741,22 @@ function VenueCameraSection({
                 </div>
               ))}
 
-              <button
-                onClick={() => setShowAdd(true)}
-                className="w-full mt-2 flex items-center justify-center gap-2 py-3 rounded-lg border border-dashed border-purple-500/30 text-purple-400 hover:bg-purple-500/10 transition-colors text-sm font-medium"
-              >
-                <Plus className="w-4 h-4" />
-                Add Camera to {venueName}
-              </button>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setShowDiscover(true)}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border border-dashed border-green-500/30 text-green-400 hover:bg-green-500/10 transition-colors text-sm font-medium"
+                >
+                  <Radio className="w-4 h-4" />
+                  Discover Cameras (Cortex IQ)
+                </button>
+                <button
+                  onClick={() => setShowAdd(true)}
+                  className="flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed border-purple-500/30 text-purple-400 hover:bg-purple-500/10 transition-colors text-sm font-medium"
+                >
+                  <Plus className="w-4 h-4" />
+                  Manual
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
@@ -535,6 +764,14 @@ function VenueCameraSection({
 
       {/* Modals */}
       <AnimatePresence>
+        {showDiscover && (
+          <DiscoverModal
+            venueId={venueId}
+            venueName={venueName}
+            onClose={() => setShowDiscover(false)}
+            onSaved={load}
+          />
+        )}
         {showAdd && (
           <CameraModal
             venueId={venueId}

@@ -17,7 +17,7 @@ import { generateClient } from 'aws-amplify/api';
 // e.g. https://xxxxxxxxxx.execute-api.us-east-2.amazonaws.com
 const ADMIN_API = (import.meta.env.VITE_ADMIN_API_URL ?? '').replace(/\/$/, '');
 
-async function adminFetch(path: string, options?: RequestInit) {
+export async function adminFetch(path: string, options?: RequestInit) {
   if (!ADMIN_API) throw new Error('VITE_ADMIN_API_URL is not configured');
   const res = await fetch(`${ADMIN_API}${path}`, {
     ...options,

@@ -206,6 +206,35 @@ async function updateVenueStatus(venueId, status) {
   return ok({ success: true });
 }
 
+// ─── Camera Discovery ─────────────────────────────────────────────────────────
+
+async function probeCameras({ ip, port, totalChannels = 16 }) {
+  if (!ip || !port) return err(400, 'ip and port are required');
+
+  const channels = Math.min(Math.max(parseInt(totalChannels) || 16, 1), 32);
+  const results = [];
+
+  // Probe each channel in parallel — HEAD request to HLS URL, 4s timeout
+  await Promise.all(
+    Array.from({ length: channels }, (_, i) => i + 1).map(async (ch) => {
+      const url = `http://${ip}:${port}/hls/live/CH${ch}/0/livetop.mp4`;
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 4000);
+        const res = await fetch(url, { method: 'HEAD', signal: ctrl.signal });
+        clearTimeout(timer);
+        results.push({ channel: ch, url, online: res.ok || res.status === 206 || res.status === 302 });
+      } catch {
+        results.push({ channel: ch, url, online: false });
+      }
+    })
+  );
+
+  results.sort((a, b) => a.channel - b.channel);
+  return ok({ channels: results });
+}
+
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const handler = async (event) => {
@@ -240,6 +269,11 @@ export const handler = async (event) => {
     // POST /admin/users
     if (method === 'POST' && rawPath === '/admin/users') {
       return await createUser(JSON.parse(event.body ?? '{}'));
+    }
+
+    // POST /admin/probe-cameras
+    if (method === 'POST' && rawPath === '/admin/probe-cameras') {
+      return await probeCameras(JSON.parse(event.body ?? '{}'));
     }
 
     return err(404, `No route: ${method} ${rawPath}`);
