@@ -18,11 +18,14 @@ class AuthService {
 
   async login(email: string, password: string): Promise<User> {
     try {
+      // Sign out any existing session before signing in
+      try { await signOut(); } catch (_) {}
+
       const signInInput: SignInInput = {
         username: email,
         password
       };
-      
+
       const signInOutput: SignInOutput = await signIn(signInInput);
       
       // Handle NEW_PASSWORD_REQUIRED challenge for temp passwords
