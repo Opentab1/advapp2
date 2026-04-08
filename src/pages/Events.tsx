@@ -1,18 +1,14 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Calendar, Sparkles, Rocket, BarChart3, Zap, ChevronRight, ChevronDown,
-  Plus, X, Check, TrendingUp, TrendingDown, Minus, Target, Clock,
-  Users, DollarSign, Tv, AlertTriangle, ExternalLink, RefreshCw,
-  Trophy, Flame, ThumbsDown, Activity, Search, MapPin,
+  Sparkles, BarChart3, TrendingUp, Minus,
+  Users, AlertTriangle, RefreshCw, Trophy, ThumbsDown,
 } from 'lucide-react';
 import { generateCalendarEvents, type CalendarEventIdea } from '../services/events.service';
 import { EventROITracker } from '../components/events/EventROITracker';
 import { Forecast as ForecastPage } from './Forecast';
 import authService from '../services/auth.service';
-import sportsService from '../services/sports.service';
 import venueSettingsService from '../services/venue-settings.service';
-import type { SportsGame } from '../types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -58,11 +54,6 @@ interface ConceptStat {
   avg_drink_velocity?: number;
 }
 
-const CONCEPT_TYPES = [
-  'DJ Night', 'Live Music', 'Trivia Night', 'Karaoke', 'Drag Show',
-  'Sports Watch Party', 'Comedy Night', 'Happy Hour Special', 'Themed Party',
-  'Open Mic', 'Paint & Sip', 'Speed Dating', 'Networking Event', 'Other',
-];
 
 const CONCEPT_EMOJIS: Record<string, string> = {
   'DJ Night': '🎧', 'Live Music': '🎸', 'Trivia Night': '🧠', 'Karaoke': '🎤',
@@ -71,26 +62,12 @@ const CONCEPT_EMOJIS: Record<string, string> = {
   'Paint & Sip': '🎨', 'Speed Dating': '💘', 'Networking Event': '🤝', 'Other': '✨',
 };
 
-type EventsTab = 'validate' | 'launch' | 'live' | 'history' | 'optimizer';
+type EventsTab = 'ideas' | 'attendance' | 'history';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getServerUrl() {
   return (import.meta.env.VITE_VENUESCOPE_URL || '').replace(':8501', ':8502').replace(/\/$/, '');
-}
-
-function demandColor(verdict?: string) {
-  if (verdict === 'green')  return 'text-green-400';
-  if (verdict === 'yellow') return 'text-amber-400';
-  if (verdict === 'red')    return 'text-red-400';
-  return 'text-warm-500';
-}
-
-function demandBg(verdict?: string) {
-  if (verdict === 'green')  return 'bg-green-500/10 border-green-500/30';
-  if (verdict === 'yellow') return 'bg-amber-500/10 border-amber-500/30';
-  if (verdict === 'red')    return 'bg-red-500/10 border-red-500/30';
-  return 'bg-warm-700 border-warm-600';
 }
 
 function verdictLabel(v: string) {
@@ -107,475 +84,14 @@ function healthColor(score?: number) {
   return 'text-red-400';
 }
 
-// ─── Demand Score Widget ──────────────────────────────────────────────────────
-
-function DemandScoreRing({ score, verdict }: { score: number; verdict?: string }) {
-  const r = 28; const circ = 2 * Math.PI * r;
-  const fill = (score / 100) * circ;
-  const color = verdict === 'green' ? '#22c55e' : verdict === 'yellow' ? '#f59e0b' : '#ef4444';
-  return (
-    <div className="relative w-20 h-20 flex items-center justify-center flex-shrink-0">
-      <svg className="w-20 h-20 -rotate-90" viewBox="0 0 72 72">
-        <circle cx="36" cy="36" r={r} fill="none" stroke="#1e293b" strokeWidth="6" />
-        <circle cx="36" cy="36" r={r} fill="none" stroke={color} strokeWidth="6"
-          strokeDasharray={`${fill} ${circ}`} strokeLinecap="round"
-          style={{ transition: 'stroke-dasharray 0.6s ease' }} />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-lg font-bold text-white leading-none">{score}</span>
-        <span className="text-[9px] text-warm-500">/ 100</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Pre-Launch Signals Panel ─────────────────────────────────────────────────
-
-function PreLaunchPanel({ event, onUpdate }: { event: VenueEvent; onUpdate: (updated: VenueEvent) => void }) {
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [signals, setSignals] = useState({
-    meta_concept_a: event.meta_concept_a || '',
-    meta_concept_b: event.meta_concept_b || '',
-    meta_cpc_a: event.meta_cpc_a?.toString() || '',
-    meta_cpc_b: event.meta_cpc_b?.toString() || '',
-    tiktok_save_rate: event.tiktok_save_rate?.toString() || '',
-    ig_dm_count: event.ig_dm_count?.toString() || '',
-    ig_poll_pct: event.ig_poll_pct?.toString() || '',
-    google_trends_score: event.google_trends_score?.toString() || '',
-    eventbrite_pct: event.eventbrite_pct?.toString() || '',
-  });
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const body: Record<string, unknown> = {};
-      if (signals.meta_cpc_a)       body.meta_cpc_a = parseFloat(signals.meta_cpc_a);
-      if (signals.meta_cpc_b)       body.meta_cpc_b = parseFloat(signals.meta_cpc_b);
-      if (signals.meta_concept_a)   body.meta_concept_a = signals.meta_concept_a;
-      if (signals.meta_concept_b)   body.meta_concept_b = signals.meta_concept_b;
-      if (signals.tiktok_save_rate) body.tiktok_save_rate = parseFloat(signals.tiktok_save_rate);
-      if (signals.ig_dm_count)      body.ig_dm_count = parseInt(signals.ig_dm_count);
-      if (signals.ig_poll_pct)      body.ig_poll_pct = parseFloat(signals.ig_poll_pct);
-      if (signals.google_trends_score) body.google_trends_score = parseInt(signals.google_trends_score);
-      if (signals.eventbrite_pct)   body.eventbrite_pct = parseFloat(signals.eventbrite_pct);
-
-      const r = await fetch(`${getServerUrl()}/api/events/${event.event_id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await r.json();
-      onUpdate({ ...event, ...body, demand_score: data.demand_score, demand_verdict: data.demand_verdict });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e) { console.error(e); }
-    setSaving(false);
-  };
-
-  const steps = [
-    {
-      icon: '📱',
-      title: 'Meta A/B Test',
-      desc: 'Run two $50 ad sets — same audience, two different concepts. Which gets cheaper clicks?',
-      action: 'Open Meta Ads Manager →',
-      actionUrl: 'https://adsmanager.facebook.com',
-      inputs: [
-        { label: 'Concept A name', key: 'meta_concept_a', placeholder: 'e.g. DJ Night' },
-        { label: 'Concept B name', key: 'meta_concept_b', placeholder: 'e.g. Trivia Night' },
-        { label: 'Concept A cost/click ($)', key: 'meta_cpc_a', placeholder: '0.85', type: 'number' },
-        { label: 'Concept B cost/click ($)', key: 'meta_cpc_b', placeholder: '1.20', type: 'number' },
-      ],
-      scoring: 'Lower CPC = stronger demand. If A < B, go with A.',
-      complete: !!(signals.meta_cpc_a && signals.meta_cpc_b),
-    },
-    {
-      icon: '🎵',
-      title: 'TikTok Save Rate',
-      desc: 'Post a 15s teaser for your concept. Saves/views % is the strongest organic demand signal.',
-      action: 'Open TikTok Studio →',
-      actionUrl: 'https://www.tiktok.com/creator-center',
-      inputs: [
-        { label: 'Saves ÷ Views (%)', key: 'tiktok_save_rate', placeholder: '1.2', type: 'number' },
-      ],
-      scoring: '>1% = strong · 0.5–1% = moderate · <0.5% = weak',
-      complete: !!signals.tiktok_save_rate,
-    },
-    {
-      icon: '📸',
-      title: 'Instagram Signals',
-      desc: 'Post a story poll "Would you show up to [concept]?" and count DMs you get unprompted.',
-      inputs: [
-        { label: 'Unprompted DMs received', key: 'ig_dm_count', placeholder: '7', type: 'number' },
-        { label: '% voted Yes on story poll', key: 'ig_poll_pct', placeholder: '72', type: 'number' },
-      ],
-      scoring: '>10 DMs = green light · >60% poll = strong interest',
-      complete: !!(signals.ig_dm_count || signals.ig_poll_pct),
-    },
-    {
-      icon: '📈',
-      title: 'Google Trends',
-      desc: `Search "${event.concept_type}" in Google Trends filtered to your city. Enter the interest score (0–100).`,
-      action: 'Open Google Trends →',
-      actionUrl: `https://trends.google.com/trends/explore?q=${encodeURIComponent(event.concept_type)}`,
-      inputs: [
-        { label: 'Trends interest score (0–100)', key: 'google_trends_score', placeholder: '65', type: 'number' },
-      ],
-      scoring: '>60 = growing demand in your market',
-      complete: !!signals.google_trends_score,
-    },
-    {
-      icon: '🎟️',
-      title: 'Eventbrite Velocity',
-      desc: 'If ticketed: what % of capacity sold in the first 48 hours after publishing?',
-      inputs: [
-        { label: '% of capacity sold in 48h', key: 'eventbrite_pct', placeholder: '12', type: 'number' },
-      ],
-      scoring: '>15% = hit · 5–15% = test night · <5% = reconsider',
-      complete: !!signals.eventbrite_pct,
-    },
-  ];
-
-  const completedSteps = steps.filter(s => s.complete).length;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold">
-          Pre-Launch Validator — {completedSteps}/{steps.length} signals
-        </p>
-        <div className="flex gap-1.5">
-          {steps.map((s, i) => (
-            <div key={i} className={`w-2 h-2 rounded-full ${s.complete ? 'bg-teal' : 'bg-warm-700'}`} />
-          ))}
-        </div>
-      </div>
-
-      {steps.map((step, i) => (
-        <StepCard key={i} step={step} signals={signals}
-          onChange={(k, v) => setSignals(prev => ({ ...prev, [k]: v }))} />
-      ))}
-
-      <motion.button
-        onClick={handleSave}
-        disabled={saving}
-        className="w-full py-3 bg-teal text-warm-900 font-bold rounded-xl flex items-center justify-center gap-2"
-        whileTap={{ scale: 0.97 }}
-      >
-        {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> :
-         saved  ? <Check className="w-4 h-4" /> :
-                  <Zap className="w-4 h-4" />}
-        {saved ? 'Saved!' : 'Calculate Demand Score'}
-      </motion.button>
-    </div>
-  );
-}
-
-function StepCard({ step, signals, onChange }: {
-  step: { icon: string; title: string; desc: string; action?: string; actionUrl?: string; inputs: { label: string; key: string; placeholder: string; type?: string }[]; scoring: string; complete: boolean };
-  signals: Record<string, string>;
-  onChange: (key: string, value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className={`bg-warm-800/60 rounded-xl border transition-all ${step.complete ? 'border-teal/30' : 'border-warm-700'}`}>
-      <button onClick={() => setOpen(!open)} className="w-full p-3 text-left flex items-center gap-3">
-        <span className="text-xl">{step.icon}</span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-white">{step.title}</span>
-            {step.complete && <Check className="w-3.5 h-3.5 text-teal" />}
-          </div>
-          <p className="text-[10px] text-warm-500 mt-0.5 line-clamp-1">{step.desc}</p>
-        </div>
-        <ChevronDown className={`w-4 h-4 text-warm-600 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }} className="overflow-hidden border-t border-warm-700">
-            <div className="p-3 space-y-3">
-              <p className="text-xs text-warm-300">{step.desc}</p>
-              {step.actionUrl && (
-                <a href={step.actionUrl} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs text-teal hover:underline">
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  {step.action}
-                </a>
-              )}
-              <div className="grid grid-cols-2 gap-2">
-                {step.inputs.map(inp => (
-                  <div key={inp.key}>
-                    <label className="text-[10px] text-warm-500 mb-1 block">{inp.label}</label>
-                    <input
-                      type={inp.type || 'text'}
-                      value={signals[inp.key] || ''}
-                      onChange={e => onChange(inp.key, e.target.value)}
-                      placeholder={inp.placeholder}
-                      className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2 text-sm text-white placeholder-warm-600 focus:outline-none focus:border-teal/50"
-                    />
-                  </div>
-                ))}
-              </div>
-              <p className="text-[10px] text-warm-500 bg-warm-900/60 rounded-lg px-3 py-2">
-                💡 {step.scoring}
-              </p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-// ─── Create Event Form ────────────────────────────────────────────────────────
-
-function CreateEventForm({ onCreated }: { onCreated: (ev: VenueEvent) => void }) {
-  const user = authService.getStoredUser();
-  const [form, setForm] = useState({
-    name: '', concept_type: CONCEPT_TYPES[0], event_date: '',
-    expected_headcount: '', cover_charge: '',
-    threshold_headcount: '', threshold_revenue_pct: '',
-    notes: '',
-  });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSubmit = async () => {
-    if (!form.name || !form.event_date) { setError('Name and date required'); return; }
-    setSaving(true); setError('');
-    try {
-      const body: Record<string, unknown> = {
-        name: form.name,
-        concept_type: form.concept_type,
-        event_date: form.event_date,
-        venue: user?.venueName || user?.venueId || '',
-        status: 'upcoming',
-        notes: form.notes,
-      };
-      if (form.expected_headcount) body.expected_headcount = parseInt(form.expected_headcount);
-      if (form.cover_charge) body.cover_charge = parseFloat(form.cover_charge);
-      if (form.threshold_headcount) body.threshold_headcount = parseInt(form.threshold_headcount);
-      if (form.threshold_revenue_pct) body.threshold_revenue_pct = parseFloat(form.threshold_revenue_pct);
-
-      const r = await fetch(`${getServerUrl()}/api/events`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      const data = await r.json();
-      if (!data.ok) { setError(data.error || 'Failed to create event'); return; }
-      onCreated({ ...body, event_id: data.event_id, status: 'upcoming', created_at: Date.now() / 1000 } as VenueEvent);
-    } catch (e) { setError('Could not connect to VenueScope server'); }
-    setSaving(false);
-  };
-
-  return (
-    <div className="bg-warm-800/60 rounded-xl border border-warm-700 p-4 space-y-4">
-      <div className="flex items-center gap-2">
-        <Rocket className="w-4 h-4 text-teal" />
-        <h3 className="text-sm font-semibold text-white">Launch a New Event</h3>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2">
-          <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Event Name</label>
-          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            placeholder="e.g. Saturday Night DJ" className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-warm-600 focus:outline-none focus:border-teal/50" />
-        </div>
-
-        <div>
-          <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Concept Type</label>
-          <select value={form.concept_type} onChange={e => setForm(f => ({ ...f, concept_type: e.target.value }))}
-            className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-teal/50">
-            {CONCEPT_TYPES.map(ct => <option key={ct} value={ct}>{CONCEPT_EMOJIS[ct]} {ct}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Date</label>
-          <input type="date" value={form.event_date} onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))}
-            className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-teal/50" />
-        </div>
-
-        <div>
-          <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Expected Headcount</label>
-          <input type="number" value={form.expected_headcount} onChange={e => setForm(f => ({ ...f, expected_headcount: e.target.value }))}
-            placeholder="150" className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-warm-600 focus:outline-none focus:border-teal/50" />
-        </div>
-
-        <div>
-          <label className="text-[10px] text-warm-500 mb-1 block uppercase tracking-wide">Cover Charge ($)</label>
-          <input type="number" value={form.cover_charge} onChange={e => setForm(f => ({ ...f, cover_charge: e.target.value }))}
-            placeholder="10" className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-warm-600 focus:outline-none focus:border-teal/50" />
-        </div>
-      </div>
-
-      <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 space-y-2">
-        <p className="text-[10px] text-amber-400 font-semibold uppercase tracking-wide flex items-center gap-1.5">
-          <Target className="w-3.5 h-3.5" /> Set Success Threshold (lock in before the event)
-        </p>
-        <p className="text-[10px] text-warm-400">Lock these in now. After the event, VenueScope checks if you hit them — no post-hoc rationalization.</p>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-[10px] text-warm-500 mb-1 block">Min headcount by 10pm</label>
-            <input type="number" value={form.threshold_headcount} onChange={e => setForm(f => ({ ...f, threshold_headcount: e.target.value }))}
-              placeholder="80" className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2 text-sm text-white placeholder-warm-600 focus:outline-none focus:border-teal/50" />
-          </div>
-          <div>
-            <label className="text-[10px] text-warm-500 mb-1 block">% above baseline revenue</label>
-            <input type="number" value={form.threshold_revenue_pct} onChange={e => setForm(f => ({ ...f, threshold_revenue_pct: e.target.value }))}
-              placeholder="25" className="w-full bg-warm-900 border border-warm-700 rounded-lg px-3 py-2 text-sm text-white placeholder-warm-600 focus:outline-none focus:border-teal/50" />
-          </div>
-        </div>
-      </div>
-
-      {error && <p className="text-xs text-red-400 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />{error}</p>}
-
-      <motion.button onClick={handleSubmit} disabled={saving}
-        className="w-full py-3 bg-teal text-warm-900 font-bold rounded-xl flex items-center justify-center gap-2"
-        whileTap={{ scale: 0.97 }}>
-        {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
-        {saving ? 'Creating...' : 'Create Event & Validate'}
-      </motion.button>
-    </div>
-  );
-}
-
-// ─── Event Card (History) ─────────────────────────────────────────────────────
-
-function EventCard({ event, onUpdate }: { event: VenueEvent; onUpdate: (ev: VenueEvent) => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const emoji = CONCEPT_EMOJIS[event.concept_type] || '✨';
-  const dateLabel = new Date(event.event_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  const isCompleted = event.status === 'completed';
-  const isUpcoming = event.status === 'upcoming';
-
-  return (
-    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-      className="bg-warm-800/60 rounded-xl border border-warm-700 hover:border-teal/30 transition-all overflow-hidden">
-      <button onClick={() => setExpanded(!expanded)} className="w-full p-4 text-left">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-warm-700/60 flex items-center justify-center text-xl flex-shrink-0">
-            {emoji}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-white truncate">{event.name}</h3>
-              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
-                isCompleted ? 'text-warm-400 bg-warm-700 border-warm-600' :
-                isUpcoming  ? 'text-teal bg-teal/10 border-teal/30' :
-                              'text-amber-400 bg-amber-500/10 border-amber-500/30'
-              }`}>{event.status.toUpperCase()}</span>
-            </div>
-            <p className="text-[10px] text-warm-500 mt-0.5">{event.concept_type} · {dateLabel}</p>
-            <div className="flex items-center gap-3 mt-1.5">
-              {event.demand_score != null && !isCompleted && (
-                <span className={`text-[10px] font-semibold flex items-center gap-1 ${demandColor(event.demand_verdict)}`}>
-                  <Zap className="w-3 h-3" />Demand {event.demand_score}
-                </span>
-              )}
-              {event.event_health_score != null && isCompleted && (
-                <span className={`text-[10px] font-semibold flex items-center gap-1 ${healthColor(event.event_health_score)}`}>
-                  <Activity className="w-3 h-3" />Health {event.event_health_score}
-                </span>
-              )}
-              {event.expected_headcount && (
-                <span className="text-[10px] text-warm-500 flex items-center gap-1">
-                  <Users className="w-3 h-3" />{event.expected_headcount} expected
-                </span>
-              )}
-            </div>
-          </div>
-          <ChevronRight className={`w-4 h-4 text-warm-600 flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
-        </div>
-      </button>
-
-      <AnimatePresence>
-        {expanded && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }} className="border-t border-warm-700">
-            <div className="p-4 space-y-4">
-              {/* Demand Score */}
-              {!isCompleted && (
-                <div className="flex items-center gap-4">
-                  <DemandScoreRing score={event.demand_score || 0} verdict={event.demand_verdict} />
-                  <div>
-                    <p className="text-xs font-semibold text-white">Demand Score</p>
-                    <p className={`text-sm font-bold mt-0.5 ${demandColor(event.demand_verdict)}`}>
-                      {event.demand_verdict === 'green' ? '🟢 Green light — book it' :
-                       event.demand_verdict === 'yellow' ? '🟡 Test night first' :
-                       event.demand_verdict === 'red'    ? '🔴 Concept needs work' :
-                       'No signals entered yet'}
-                    </p>
-                    <p className="text-[10px] text-warm-500 mt-1">
-                      Based on {[
-                        event.meta_cpc_a && 'Meta A/B',
-                        event.tiktok_save_rate && 'TikTok',
-                        event.ig_dm_count && 'Instagram',
-                        event.google_trends_score && 'Trends',
-                        event.eventbrite_pct && 'Eventbrite',
-                      ].filter(Boolean).join(' · ') || 'no signals yet'}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Pre-launch Signals (upcoming events) */}
-              {isUpcoming && (
-                <PreLaunchPanel event={event} onUpdate={onUpdate} />
-              )}
-
-              {/* Scorecard (completed events) */}
-              {isCompleted && (
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { label: 'Health Score', value: event.event_health_score != null ? `${event.event_health_score}/100` : '—', color: healthColor(event.event_health_score) },
-                    { label: 'Peak Occupancy', value: event.peak_occupancy != null ? `${event.peak_occupancy} people` : '—', color: 'text-white' },
-                    { label: 'Avg Drinks/Hr', value: event.avg_drink_velocity != null ? `${event.avg_drink_velocity}/hr` : '—', color: 'text-white' },
-                  ].map(m => (
-                    <div key={m.label} className="bg-warm-900/60 rounded-lg p-3">
-                      <p className="text-[10px] text-warm-500">{m.label}</p>
-                      <p className={`text-sm font-bold mt-0.5 ${m.color}`}>{m.value}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Success threshold check */}
-              {isCompleted && event.threshold_headcount && (
-                <div className={`rounded-xl border p-3 ${
-                  (event.peak_occupancy || 0) >= event.threshold_headcount
-                    ? 'bg-green-500/10 border-green-500/30'
-                    : 'bg-red-500/10 border-red-500/30'
-                }`}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-warm-400 mb-1">Threshold Check</p>
-                  <p className={`text-sm font-semibold ${(event.peak_occupancy || 0) >= event.threshold_headcount ? 'text-green-400' : 'text-red-400'}`}>
-                    {(event.peak_occupancy || 0) >= event.threshold_headcount ? '✅' : '❌'} Headcount goal: {event.threshold_headcount}
-                    {event.peak_occupancy != null ? ` (got ${event.peak_occupancy})` : ' (no camera data yet)'}
-                  </p>
-                </div>
-              )}
-
-              {event.notes && (
-                <p className="text-xs text-warm-400 bg-warm-900/40 rounded-lg p-3">{event.notes}</p>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
-  );
-}
 
 // ─── Concept Optimizer ────────────────────────────────────────────────────────
 
-function ConceptOptimizer({ concepts, events }: { concepts: ConceptStat[]; events: VenueEvent[] }) {
+function ConceptOptimizer({ concepts }: { concepts: ConceptStat[]; events?: VenueEvent[] }) {
   const [compareA, setCompareA] = useState<string>('');
   const [compareB, setCompareB] = useState<string>('');
 
   const completedConcepts = concepts.filter(c => c.run_count > 0);
-
-  const eventsForConcept = (ct: string) =>
-    events.filter(e => e.concept_type === ct && e.status === 'completed');
 
   const conceptA = completedConcepts.find(c => c.concept_type === compareA);
   const conceptB = completedConcepts.find(c => c.concept_type === compareB);
@@ -708,100 +224,252 @@ function ConceptOptimizer({ concepts, events }: { concepts: ConceptStat[]; event
   );
 }
 
-// ─── Live Health Panel ────────────────────────────────────────────────────────
 
-function LiveEventPanel({ events }: { events: VenueEvent[] }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const todayEvent = events.find(e => e.event_date === today && e.status !== 'cancelled');
+// ─── Attendance Model ─────────────────────────────────────────────────────────
 
-  if (!todayEvent) {
-    return (
-      <div className="bg-warm-800/40 rounded-xl border border-warm-700 p-6 text-center space-y-2">
-        <Flame className="w-8 h-8 text-warm-600 mx-auto" />
-        <p className="text-sm font-semibold text-warm-400">No event scheduled for today</p>
-        <p className="text-xs text-warm-600">Create an event in the Launch tab to enable live tracking.</p>
-      </div>
-    );
-  }
+const DOW_MULT: Record<number, number> = {
+  0: 0.31, 1: 0.34, 2: 0.42, 3: 0.55, 4: 0.78, 5: 1.00, 6: 0.65,
+};
+const MONTH_MULT: Record<number, number> = {
+  1: 0.72, 2: 0.75, 3: 0.88, 4: 0.91, 5: 0.96, 6: 1.05,
+  7: 1.02, 8: 0.98, 9: 0.93, 10: 0.97, 11: 1.08, 12: 1.12,
+};
+const IDEA_EVENT_LIFT: Record<string, number> = {
+  'Sports Watch Party': 1.22, 'Themed Party': 1.28, 'Happy Hour Special': 1.05,
+};
+const IDEA_SPEND: Record<string, [number, number]> = {
+  'Sports Watch Party': [14, 25], 'Themed Party': [18, 35], 'Happy Hour Special': [10, 18],
+};
+
+function ideaHolidayMult(d: Date): { mult: number; label: string } {
+  const m = d.getMonth() + 1, day = d.getDate();
+  if (m === 3  && day === 17) return { mult: 1.45, label: "St. Pat's boost +45%" };
+  if (m === 10 && day === 31) return { mult: 1.35, label: 'Halloween boost +35%' };
+  if (m === 12 && day === 31) return { mult: 1.50, label: 'NYE boost +50%' };
+  if (m === 11 && day >= 22 && day <= 28) return { mult: 0.55, label: 'Thanksgiving week penalty -45%' };
+  if (m === 2 && day >= 7 && day <= 14) return { mult: 1.30, label: "Valentine's boost +30%" };
+  if (m === 2 && day >= 7 && day <= 13) return { mult: 1.30, label: "Super Bowl boost +30%" };
+  return { mult: 1.0, label: 'No holiday' };
+}
+
+function getIdeaConcept(idea: CalendarEventIdea): string {
+  const id = idea.id.replace(/-\d{4}$/, '');
+  const sports = ['superbowl','marchmadness','finalfour','masters','nbafinals','nflkickoff','nflwildcard','worldseries','stanleycup','kentuckyderby','daytona500'];
+  if (sports.includes(id)) return 'Sports Watch Party';
+  if (['nyd','solstice'].includes(id)) return 'Happy Hour Special';
+  return 'Themed Party';
+}
+
+interface IdeaForecast {
+  low: number; mid: number; high: number; fillPct: number;
+  revLow: number; revMid: number; revHigh: number;
+  factors: { dow: number; dowLabel: string; month: number; monthLabel: string; lift: number; liftLabel: string; holiday: number; holidayLabel: string; };
+}
+
+function runIdeaModel(idea: CalendarEventIdea, capacity: number): IdeaForecast {
+  const d = idea.date;
+  const concept = getIdeaConcept(idea);
+  const base = capacity * 0.55;
+  const dow = DOW_MULT[(d.getDay() + 6) % 7] ?? 0.65;
+  const month = MONTH_MULT[d.getMonth() + 1] ?? 1.0;
+  const lift = IDEA_EVENT_LIFT[concept] ?? 1.10;
+  const { mult: holiday, label: holidayLabel } = ideaHolidayMult(d);
+  const mid = Math.max(5, Math.min(capacity, Math.round(base * dow * month * lift * holiday)));
+  const low = Math.max(1, Math.round(mid * 0.82));
+  const high = Math.min(capacity, Math.round(mid * 1.18));
+  const [spLow, spHigh] = IDEA_SPEND[concept] ?? [14, 28];
+  const avgSp = (spLow + spHigh) / 2;
+  const DOW_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const MONTH_NAMES = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return {
+    low, mid, high,
+    fillPct: Math.round((mid / capacity) * 100),
+    revLow: Math.round(low * spLow),
+    revMid: Math.round(mid * avgSp),
+    revHigh: Math.round(high * spHigh),
+    factors: {
+      dow, dowLabel: DOW_NAMES[d.getDay()],
+      month, monthLabel: MONTH_NAMES[d.getMonth() + 1],
+      lift, liftLabel: concept,
+      holiday, holidayLabel,
+    },
+  };
+}
+
+// ─── Idea Card ────────────────────────────────────────────────────────────────
+
+function IdeaCard({ idea, capacity }: { idea: CalendarEventIdea; capacity: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const fc = runIdeaModel(idea, capacity);
+  const diffColor = idea.difficulty === 'Easy'
+    ? 'text-green-400 bg-green-500/10 border-green-500/30'
+    : idea.difficulty === 'Medium'
+    ? 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+    : 'text-red-400 bg-red-500/10 border-red-500/30';
+  const cardBorder = idea.daysUntil <= 7 ? 'border-teal/40 bg-teal/5' : 'border-warm-700 bg-whoop-panel';
+
+  return (
+    <motion.div className={`rounded-2xl border ${cardBorder} overflow-hidden`} layout>
+      <button className="w-full text-left p-4" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-start gap-3">
+          <span className="text-2xl flex-shrink-0">{idea.emoji}</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-bold text-white">{idea.name}</span>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${diffColor}`}>
+                {idea.difficulty}
+              </span>
+              {idea.daysUntil <= 7 && (
+                <span className="text-[10px] font-bold text-teal bg-teal/10 border border-teal/30 rounded-full px-2 py-0.5">THIS WEEK</span>
+              )}
+            </div>
+            <p className="text-xs text-warm-400 mt-0.5">{idea.dateLabel} · {idea.daysUntil} days away</p>
+            <p className="text-xs text-warm-300 mt-1 leading-snug">{idea.description}</p>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <p className="text-xl font-bold text-white">{fc.mid}</p>
+            <p className="text-[10px] text-warm-500">est. guests</p>
+          </div>
+        </div>
+      </button>
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 space-y-4 border-t border-warm-700/50">
+              {/* Vision */}
+              <div className="pt-3">
+                <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-1.5">The Vision</p>
+                <p className="text-xs text-warm-300 leading-relaxed">{idea.howTo}</p>
+              </div>
+
+              {/* Attendance Forecast */}
+              <div className="bg-warm-800/60 rounded-xl p-3">
+                <div className="flex items-center gap-2 mb-3">
+                  <Users className="w-3.5 h-3.5 text-teal" />
+                  <span className="text-xs font-semibold text-white">Predicted Attendance</span>
+                  <span className="ml-auto text-[10px] text-warm-500">{fc.fillPct}% fill rate</span>
+                </div>
+                <div className="relative h-6 bg-warm-700 rounded-lg overflow-hidden mb-2">
+                  <div className="absolute inset-y-0 left-0 bg-teal/20 rounded-lg"
+                    style={{ width: `${Math.min(100, (fc.high / capacity) * 100)}%` }} />
+                  <div className="absolute inset-y-0 left-0 bg-teal/45 rounded-lg"
+                    style={{ width: `${Math.min(100, (fc.mid / capacity) * 100)}%` }} />
+                  <div className="absolute inset-y-0 left-0 bg-teal rounded-lg"
+                    style={{ width: `${Math.min(100, (fc.low / capacity) * 100)}%` }} />
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-warm-400">{fc.low} low</span>
+                  <span className="font-bold text-white">{fc.mid} expected</span>
+                  <span className="text-warm-400">{fc.high} high</span>
+                </div>
+                <div className="flex justify-between text-[10px] text-green-400 mt-1">
+                  <span>${fc.revLow.toLocaleString()}</span>
+                  <span className="font-semibold">${fc.revMid.toLocaleString()} est. revenue</span>
+                  <span>${fc.revHigh.toLocaleString()}</span>
+                </div>
+              </div>
+
+              {/* Variable breakdown */}
+              <div>
+                <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-2">Why That Number</p>
+                <div className="space-y-2">
+                  {[
+                    { label: `Day of week (${fc.factors.dowLabel})`, value: fc.factors.dow },
+                    { label: `${fc.factors.monthLabel} seasonality`, value: fc.factors.month },
+                    { label: `${fc.factors.liftLabel} lift`, value: fc.factors.lift },
+                    ...(fc.factors.holiday !== 1.0 ? [{ label: fc.factors.holidayLabel, value: fc.factors.holiday }] : []),
+                  ].map(({ label, value }) => {
+                    const pct = Math.round((value - 1) * 100);
+                    const barColor = value >= 1.0 ? 'bg-teal' : 'bg-red-500';
+                    const textColor = value >= 1.15 ? 'text-green-400' : value >= 0.95 ? 'text-amber-400' : 'text-red-400';
+                    return (
+                      <div key={label}>
+                        <div className="flex justify-between mb-0.5">
+                          <span className="text-[10px] text-warm-400">{label}</span>
+                          <span className={`text-[10px] font-semibold ${textColor}`}>
+                            {pct >= 0 ? '+' : ''}{pct}%
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-warm-700 rounded-full">
+                          <div className={`h-1.5 rounded-full ${barColor}`}
+                            style={{ width: `${Math.min(100, Math.max(5, value * 60))}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-warm-600 mt-2.5">
+                  Baseline: {Math.round(capacity * 0.55)} guests (55% capacity) × multipliers above = {fc.mid} expected
+                </p>
+              </div>
+
+              {/* Lead time warning */}
+              {idea.leadTimeDays > idea.daysUntil && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 flex items-start gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-amber-300 leading-relaxed">
+                    Recommended {idea.leadTimeDays}+ days of promotion — you only have {idea.daysUntil} days left. Start promoting today.
+                  </p>
+                </div>
+              )}
+
+              {/* Expected impact */}
+              <div className="bg-teal/5 border border-teal/20 rounded-lg p-2.5">
+                <p className="text-[10px] text-teal font-semibold">{idea.expectedImpact}</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+// ─── Ideas Tab ────────────────────────────────────────────────────────────────
+
+function IdeasTab({ capacity }: { capacity: number }) {
+  const [filter, setFilter] = useState<'All' | 'Easy' | 'Medium' | 'Hard'>('All');
+  const ideas = generateCalendarEvents(new Date(), 3);
+  const filtered = filter === 'All' ? ideas : ideas.filter(i => i.difficulty === filter);
 
   return (
     <div className="space-y-4">
-      <div className="bg-teal/5 border border-teal/30 rounded-2xl p-4">
-        <div className="flex items-center gap-3 mb-3">
-          <span className="text-2xl">{CONCEPT_EMOJIS[todayEvent.concept_type] || '✨'}</span>
-          <div>
-            <p className="text-base font-bold text-white">{todayEvent.name}</p>
-            <p className="text-xs text-warm-400">{todayEvent.concept_type} · Live tonight</p>
-          </div>
-          <span className="ml-auto flex items-center gap-1.5 text-xs font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded-full px-2.5 py-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-            LIVE
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { label: 'Expected', value: todayEvent.expected_headcount ? `${todayEvent.expected_headcount} people` : '—', icon: Users },
-            { label: 'Cover Charge', value: todayEvent.cover_charge ? `$${todayEvent.cover_charge}` : '—', icon: DollarSign },
-          ].map(m => (
-            <div key={m.label} className="bg-warm-800/60 rounded-xl p-3 flex items-center gap-2">
-              <m.icon className="w-4 h-4 text-warm-500 flex-shrink-0" />
-              <div>
-                <p className="text-[10px] text-warm-500">{m.label}</p>
-                <p className="text-sm font-semibold text-white">{m.value}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+      <div className="flex gap-2">
+        {(['All', 'Easy', 'Medium', 'Hard'] as const).map(f => (
+          <motion.button key={f} onClick={() => setFilter(f)} whileTap={{ scale: 0.95 }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+              filter === f
+                ? f === 'Easy'   ? 'bg-green-500/10 border-green-500/40 text-green-400'
+                : f === 'Medium' ? 'bg-amber-500/10 border-amber-500/40 text-amber-400'
+                : f === 'Hard'   ? 'bg-red-500/10 border-red-500/40 text-red-400'
+                : 'bg-teal/10 border-teal/40 text-teal'
+                : 'bg-warm-800 border-warm-700 text-warm-400 hover:text-white'
+            }`}>
+            {f}
+          </motion.button>
+        ))}
+        <span className="ml-auto text-[10px] text-warm-500 flex items-center">{filtered.length} ideas</span>
       </div>
 
-      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4 space-y-3">
-        <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold">Live Health Metrics</p>
-        <p className="text-xs text-warm-400">
-          VenueScope cameras are tracking tonight's event in real time. Check the VenueScope tab for live drink velocity and occupancy data.
-        </p>
-        <div className="grid grid-cols-1 gap-2">
-          {[
-            { tip: '📊 Watch drink velocity in VenueScope → Run Analysis for a live session', cta: 'Open VenueScope' },
-            { tip: '⚠️ If the room drains fast, act within 15 minutes — run a drink promo or get the host on the floor', cta: null },
-            { tip: '📝 After tonight, mark this event Complete and add the health score from the Results page', cta: null },
-          ].map((t, i) => (
-            <div key={i} className="bg-warm-800/40 rounded-lg px-3 py-2.5">
-              <p className="text-xs text-warm-300">{t.tip}</p>
-            </div>
-          ))}
+      {filtered.length === 0 ? (
+        <div className="text-center py-10">
+          <p className="text-sm text-warm-500">No {filter.toLowerCase()} events in the next 3 months</p>
         </div>
-      </div>
-
-      {todayEvent.threshold_headcount && (
-        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
-          <p className="text-[10px] text-amber-400 font-semibold uppercase tracking-wide mb-1">🎯 Tonight's Target</p>
-          <p className="text-sm text-white font-semibold">
-            {todayEvent.threshold_headcount}+ people by 10pm
-            {todayEvent.threshold_revenue_pct && ` · ${todayEvent.threshold_revenue_pct}% above baseline revenue`}
-          </p>
-          <p className="text-[10px] text-warm-500 mt-1">Set pre-event — don't move the goalposts.</p>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(idea => (
+            <IdeaCard key={idea.id} idea={idea} capacity={capacity} />
+          ))}
         </div>
       )}
     </div>
   );
-}
-
-const CITY_TEAM_KEYWORDS: Record<string, string[]> = {
-  'Tampa': ['Tampa Bay', 'Buccaneers', 'Lightning', 'Rays'],
-  'Baltimore': ['Baltimore', 'Ravens', 'Orioles'],
-  'New York': ['New York', 'Yankees', 'Mets', 'Giants', 'Jets', 'Knicks', 'Nets', 'Rangers'],
-  'Miami': ['Miami', 'Dolphins', 'Heat', 'Marlins', 'Inter Miami'],
-  'Chicago': ['Chicago', 'Bears', 'Bulls', 'Cubs', 'White Sox', 'Blackhawks'],
-  'Los Angeles': ['Los Angeles', 'Lakers', 'Clippers', 'Dodgers', 'Rams', 'Chargers'],
-  'Houston': ['Houston', 'Texans', 'Rockets', 'Astros'],
-};
-
-function isLocalTeamGame(game: SportsGame, city: string): boolean {
-  if (!city) return false;
-  const keywords = CITY_TEAM_KEYWORDS[city] || [city];
-  const gameStr = `${game.homeTeam} ${game.awayTeam}`.toLowerCase();
-  return keywords.some(k => gameStr.includes(k.toLowerCase()));
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -810,33 +478,19 @@ export default function Events() {
   const user = authService.getStoredUser();
   const venueId = user?.venueId || '';
 
-  const [activeTab, setActiveTab] = useState<EventsTab>('validate');
+  const [activeTab, setActiveTab] = useState<EventsTab>('ideas');
   const [events, setEvents] = useState<VenueEvent[]>([]);
   const [concepts, setConcepts] = useState<ConceptStat[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
-  const [createdEvent, setCreatedEvent] = useState<VenueEvent | null>(null);
-
-  // Calendar suggestions state
-  const [calEvents, setCalEvents] = useState<CalendarEventIdea[]>([]);
-  const [weekGames, setWeekGames] = useState<SportsGame[]>([]);
-  const [venueCity, setVenueCity] = useState('');
+  const [venueCapacity, setVenueCapacity] = useState(150);
 
   useEffect(() => {
-    setCalEvents(generateCalendarEvents(new Date(), 3));
-  }, []);
-
-  useEffect(() => {
-    const addr = venueSettingsService.getAddress(venueId);
-    if (addr?.city) setVenueCity(addr.city);
-    venueSettingsService.getAddressFromCloud(venueId).then(a => { if (a?.city) setVenueCity(a.city); }).catch(() => {});
-  }, [venueId]);
-
-  useEffect(() => {
-    sportsService.getGames().then(games => {
-      const now = Date.now(); const week = now + 7 * 86400000;
-      setWeekGames(games.filter(g => { const t = new Date(g.startTime).getTime(); return (t > now || g.status === 'live') && t <= week; }));
+    const cap = venueSettingsService.getCapacity(venueId);
+    if (cap) setVenueCapacity(cap);
+    venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
+      if (s?.capacity) setVenueCapacity(s.capacity);
     }).catch(() => {});
-  }, []);
+  }, [venueId]);
 
   const loadEvents = async () => {
     setLoadingEvents(true);
@@ -855,26 +509,11 @@ export default function Events() {
 
   useEffect(() => { loadEvents(); }, []);
 
-  const handleEventCreated = (ev: VenueEvent) => {
-    setCreatedEvent(ev);
-    setEvents(prev => [ev, ...prev]);
-  };
-
-  const handleEventUpdate = (updated: VenueEvent) => {
-    setEvents(prev => prev.map(e => e.event_id === updated.event_id ? updated : e));
-  };
-
-  const upcomingEvents = events.filter(e => e.status === 'upcoming' || e.status === 'live');
-  const completedEvents = events.filter(e => e.status === 'completed');
-  const today = new Date().toISOString().slice(0, 10);
-  const todayHasEvent = events.some(e => e.event_date === today);
 
   const tabs = [
-    { id: 'validate' as const, label: 'Validate', icon: Search },
-    { id: 'launch' as const,   label: 'Launch',   icon: Rocket },
-    { id: 'live' as const,     label: 'Live',     icon: Flame,    dot: todayHasEvent },
-    { id: 'history' as const,  label: 'History',  icon: Clock },
-    { id: 'optimizer' as const, label: 'Optimizer', icon: TrendingUp },
+    { id: 'ideas'      as const, label: 'Ideas',                icon: Sparkles },
+    { id: 'attendance' as const, label: 'Attendance Forecaster', icon: TrendingUp },
+    { id: 'history'    as const, label: 'History',              icon: BarChart3 },
   ];
 
   return (
@@ -884,20 +523,15 @@ export default function Events() {
         <div className="flex items-center gap-2 mb-1">
           <Sparkles className="w-5 h-5 text-teal" />
           <h1 className="text-2xl font-bold text-white">Events</h1>
-          {upcomingEvents.length > 0 && (
-            <span className="px-2 py-0.5 bg-teal/10 border border-teal/30 rounded-full text-[10px] font-semibold text-teal">
-              {upcomingEvents.length} upcoming
-            </span>
-          )}
         </div>
-        <p className="text-sm text-warm-400">Validate · Launch · Measure · Optimize</p>
+        <p className="text-sm text-warm-400">Ideas · Forecast · Optimize</p>
       </div>
 
       {/* Tab Nav */}
       <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
         {tabs.map(tab => (
           <motion.button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap relative flex-shrink-0 ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
               activeTab === tab.id
                 ? 'bg-teal/10 border border-teal/50 text-white'
                 : 'bg-warm-800 border border-warm-700 text-warm-400 hover:text-white'
@@ -905,152 +539,27 @@ export default function Events() {
             whileTap={{ scale: 0.95 }}>
             <tab.icon className="w-4 h-4" />
             {tab.label}
-            {tab.dot && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-400 rounded-full animate-pulse" />}
           </motion.button>
         ))}
       </div>
 
-      {/* Validate Tab */}
-      {activeTab === 'validate' && <ForecastPage />}
+      {/* Ideas Tab */}
+      {activeTab === 'ideas' && <IdeasTab capacity={venueCapacity} />}
 
-      {/* Launch Tab */}
-      {activeTab === 'launch' && (
-        <div className="space-y-4">
-          {createdEvent ? (
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-              className="bg-teal/10 border border-teal/30 rounded-xl p-4 flex items-start gap-3">
-              <Check className="w-5 h-5 text-teal flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-white">"{createdEvent.name}" created!</p>
-                <p className="text-xs text-warm-400 mt-0.5">Now fill in the pre-launch signals below to get your demand score.</p>
-              </div>
-              <button onClick={() => setCreatedEvent(null)} className="text-warm-600 hover:text-white">
-                <X className="w-4 h-4" />
-              </button>
-            </motion.div>
-          ) : (
-            <CreateEventForm onCreated={handleEventCreated} />
-          )}
-
-          {createdEvent && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-              <PreLaunchPanel event={createdEvent} onUpdate={updated => {
-                setCreatedEvent(updated);
-                handleEventUpdate(updated);
-              }} />
-            </motion.div>
-          )}
-
-          {/* Calendar suggestions teaser */}
-          {!createdEvent && (
-            <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
-                <Calendar className="w-4 h-4 text-teal" />
-                <span className="text-sm font-semibold text-white">Upcoming Opportunities</span>
-                <span className="text-[10px] text-warm-500 ml-auto">Next 7 days</span>
-              </div>
-              <div className="p-3 space-y-2">
-                {calEvents.filter(e => e.daysUntil <= 7 && e.daysUntil >= 0).slice(0, 3).map((ev, i) => (
-                  <div key={ev.id} className="flex items-center gap-3 p-2 bg-warm-800/40 rounded-lg">
-                    <span className="text-lg">{ev.emoji}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-white">{ev.name}</p>
-                      <p className="text-[10px] text-warm-500">{ev.dateLabel} · {ev.difficulty}</p>
-                    </div>
-                    <button onClick={() => {
-                      setCreatedEvent(null);
-                      // pre-fill the form concept
-                    }} className="text-[10px] text-teal border border-teal/30 rounded-lg px-2 py-1">
-                      Use idea
-                    </button>
-                  </div>
-                ))}
-                {calEvents.filter(e => e.daysUntil <= 7 && e.daysUntil >= 0).length === 0 && (
-                  <p className="text-xs text-warm-600 text-center py-3">No major events this week</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Sports this week */}
-          {weekGames.length > 0 && (
-            <div className="bg-whoop-panel border border-whoop-divider rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Tv className="w-4 h-4 text-teal" />
-                <span className="text-sm font-semibold text-white">Big Games This Week</span>
-              </div>
-              <div className="space-y-2">
-                {weekGames.slice(0, 4).map(g => {
-                  const isLocal = isLocalTeamGame(g, venueCity);
-                  return (
-                    <div key={g.id} className={`flex items-center gap-2 rounded-lg p-2 ${isLocal ? 'bg-teal/5 border border-teal/15' : 'bg-warm-800/40'}`}>
-                      <div className="flex-1">
-                        <p className="text-xs font-medium text-white">{g.homeTeam} vs {g.awayTeam}</p>
-                        <p className="text-[10px] text-warm-500">{g.sport} · {new Date(g.startTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p>
-                      </div>
-                      {isLocal && <span className="text-[9px] font-bold text-teal bg-teal/10 border border-teal/30 rounded px-1.5 py-0.5">LOCAL</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Live Tab */}
-      {activeTab === 'live' && <LiveEventPanel events={events} />}
+      {/* Attendance Forecaster Tab */}
+      {activeTab === 'attendance' && <ForecastPage />}
 
       {/* History Tab */}
       {activeTab === 'history' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-warm-500">{events.length} total events</p>
-            <motion.button onClick={loadEvents} whileTap={{ scale: 0.95 }}
-              className="flex items-center gap-1.5 text-xs text-warm-400 hover:text-white">
-              <RefreshCw className="w-3.5 h-3.5" />Refresh
-            </motion.button>
-          </div>
-
-          {loadingEvents ? (
-            <div className="text-center py-8"><RefreshCw className="w-5 h-5 text-warm-600 animate-spin mx-auto" /></div>
-          ) : events.length === 0 ? (
-            <div className="bg-warm-800/40 rounded-xl border border-warm-700 p-8 text-center">
-              <Calendar className="w-8 h-8 text-warm-600 mx-auto mb-2" />
-              <p className="text-sm text-warm-400 font-semibold">No events yet</p>
-              <p className="text-xs text-warm-600 mt-1">Create your first event in the Launch tab.</p>
-            </div>
-          ) : (
-            <>
-              {upcomingEvents.length > 0 && (
-                <div>
-                  <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-2">Upcoming</p>
-                  <div className="space-y-2">
-                    {upcomingEvents.map(ev => <EventCard key={ev.event_id} event={ev} onUpdate={handleEventUpdate} />)}
-                  </div>
-                </div>
-              )}
-              {completedEvents.length > 0 && (
-                <div>
-                  <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-2 mt-4">Completed</p>
-                  <div className="space-y-2">
-                    {completedEvents.map(ev => <EventCard key={ev.event_id} event={ev} onUpdate={handleEventUpdate} />)}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Optimizer Tab */}
-      {activeTab === 'optimizer' && (
         <div className="space-y-4">
           <ConceptOptimizer concepts={concepts} events={events} />
           <div className="mt-6">
             <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-3">Past Event Performance</p>
             <EventROITracker />
           </div>
+          {loadingEvents && (
+            <div className="text-center py-4"><RefreshCw className="w-5 h-5 text-warm-600 animate-spin mx-auto" /></div>
+          )}
         </div>
       )}
     </div>
