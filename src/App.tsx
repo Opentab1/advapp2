@@ -24,6 +24,7 @@ import { Settings } from './pages/Settings';
 import { Staffing } from './pages/Staffing';
 import { Leads } from './pages/Leads';
 import Events from './pages/Events';
+import { Forecast } from './pages/Forecast';
 import { VenueScope } from './pages/VenueScope';
 import { BartenderProfiles } from './pages/BartenderProfiles';
 
@@ -77,6 +78,9 @@ function ProtectedDashboard() {
         break;
       case 'events':
         content = <Events />;
+        break;
+      case 'forecast':
+        content = <Forecast />;
         break;
       case 'staffing':
         content = <Staffing />;
