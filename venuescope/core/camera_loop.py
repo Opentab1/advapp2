@@ -161,18 +161,25 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             seg_num += 1
             _launch_segment(effective, seg_num)
 
-            seg_secs = float(current.get("segment_seconds", 15))
+            seg_secs    = float(current.get("segment_seconds", 15))
+            # interval_seconds: how long to wait BETWEEN clips (defaults to seg_secs).
+            # Set interval > seg_secs to run a short clip on a longer schedule,
+            # e.g. seg_secs=30, interval_seconds=1200 → 30s snapshot every 20 min.
+            interval_secs = float(current.get("interval_seconds") or seg_secs)
+
             if seg_secs == 0:
                 # Continuous mode: poll every 10s to see if the job ended
                 # (stream disconnect) so we can relaunch immediately
                 stop_event.wait(10)
             else:
-                # Segmented mode: wait the segment duration before queuing the next.
-                # 15s default → detections appear within ~25s of the event.
+                # Segmented mode: wait interval_seconds before queuing the next clip.
+                if interval_secs != seg_secs:
+                    log.info(f"[camera_loop] '{camera_name}' — next segment in "
+                             f"{interval_secs/60:.1f} min")
                 waited = 0.0
-                while waited < seg_secs and not stop_event.is_set():
-                    stop_event.wait(min(5, seg_secs - waited))
-                    waited += 5
+                while waited < interval_secs and not stop_event.is_set():
+                    stop_event.wait(min(30, interval_secs - waited))
+                    waited += 30
 
         except Exception as e:
             log.error(f"[camera_loop] Error in loop for '{camera_name}': {e}")

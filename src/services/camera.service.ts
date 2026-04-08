@@ -49,6 +49,7 @@ export interface Camera {
   enabled: boolean;
   modelProfile: 'fast' | 'balanced' | 'accurate';
   segmentSeconds: number; // 0 = continuous live
+  segmentInterval?: number; // seconds between clips (defaults to segmentSeconds)
   createdAt: number;
   notes?: string;
 }
@@ -61,17 +62,19 @@ function _itemToCamera(item: Record<string, Record<string, unknown>>): Camera {
     .split(',')
     .map(m => m.trim())
     .filter(Boolean) as CameraMode[];
+  const rawInterval = (item['segmentInterval'] as any)?.N || (item['segmentInterval'] as any)?.S;
   return {
-    venueId:        s('venueId'),
-    cameraId:       s('cameraId'),
-    name:           s('name'),
-    rtspUrl:        s('rtspUrl'),
-    modes:          modes.length ? modes : ['drink_count'],
-    enabled:        b('enabled'),
-    modelProfile:   (s('modelProfile') || 'balanced') as Camera['modelProfile'],
-    segmentSeconds: n('segmentSeconds'),
-    createdAt:      n('createdAt'),
-    notes:          s('notes') || undefined,
+    venueId:         s('venueId'),
+    cameraId:        s('cameraId'),
+    name:            s('name'),
+    rtspUrl:         s('rtspUrl'),
+    modes:           modes.length ? modes : ['drink_count'],
+    enabled:         b('enabled'),
+    modelProfile:    (s('modelProfile') || 'balanced') as Camera['modelProfile'],
+    segmentSeconds:  n('segmentSeconds'),
+    segmentInterval: rawInterval ? Number(rawInterval) : undefined,
+    createdAt:       n('createdAt'),
+    notes:           s('notes') || undefined,
   };
 }
 
@@ -88,6 +91,7 @@ function _cameraToItem(cam: Camera): Record<string, unknown> {
     createdAt:      { N: String(cam.createdAt) },
   };
   if (cam.notes) item.notes = { S: cam.notes };
+  if (cam.segmentInterval) item.segmentInterval = { N: String(cam.segmentInterval) };
   return item;
 }
 
@@ -135,7 +139,7 @@ const cameraService = {
   async updateCamera(
     venueId: string,
     cameraId: string,
-    updates: Partial<Pick<Camera, 'name' | 'rtspUrl' | 'modes' | 'enabled' | 'modelProfile' | 'segmentSeconds' | 'notes'>>
+    updates: Partial<Pick<Camera, 'name' | 'rtspUrl' | 'modes' | 'enabled' | 'modelProfile' | 'segmentSeconds' | 'segmentInterval' | 'notes'>>
   ): Promise<void> {
     const ddb = _requireDDB();
 
@@ -161,18 +165,25 @@ const cameraService = {
     if (updates.segmentSeconds !== undefined) {
       expParts.push('segmentSeconds = :s'); values[':s'] = { N: String(updates.segmentSeconds) };
     }
+    if (updates.segmentInterval !== undefined && updates.segmentInterval > 0) {
+      expParts.push('segmentInterval = :si'); values[':si'] = { N: String(updates.segmentInterval) };
+    }
     if (updates.notes !== undefined) {
       expParts.push('notes = :notes'); values[':notes'] = { S: updates.notes };
     }
 
     if (expParts.length === 0) return;
 
+    let updateExpr = `SET ${expParts.join(', ')}`;
+    // Clear interval when explicitly set to 0 (use default = segmentSeconds)
+    if (updates.segmentInterval === 0) updateExpr += ' REMOVE segmentInterval';
+
     await ddb.send(new UpdateItemCommand({
       TableName: TABLE,
       Key: { venueId: { S: venueId }, cameraId: { S: cameraId } },
-      UpdateExpression: `SET ${expParts.join(', ')}`,
+      UpdateExpression: updateExpr,
       ExpressionAttributeNames: Object.keys(names).length ? names : undefined,
-      ExpressionAttributeValues: values as any,
+      ExpressionAttributeValues: Object.keys(values).length ? values as any : undefined,
     }));
   },
 

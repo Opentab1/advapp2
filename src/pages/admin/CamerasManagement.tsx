@@ -278,6 +278,7 @@ function CameraModal({
   const [modes, setModes] = useState<CameraMode[]>(camera?.modes ?? ['drink_count']);
   const [modelProfile, setModelProfile] = useState<Cam['modelProfile']>(camera?.modelProfile ?? 'balanced');
   const [segmentSeconds, setSegmentSeconds] = useState(camera?.segmentSeconds ?? 0);
+  const [segmentInterval, setSegmentInterval] = useState(camera?.segmentInterval ?? 0);
   const [notes, setNotes] = useState(camera?.notes ?? '');
   const [showRtsp, setShowRtsp] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -317,6 +318,7 @@ function CameraModal({
           modes,
           modelProfile,
           segmentSeconds,
+          segmentInterval: segmentSeconds > 0 ? segmentInterval : 0,
           notes: notes.trim() || undefined,
         });
       } else {
@@ -327,6 +329,7 @@ function CameraModal({
           enabled: true,
           modelProfile,
           segmentSeconds,
+          segmentInterval: segmentSeconds > 0 ? segmentInterval : undefined,
           notes: notes.trim() || undefined,
         });
       }
@@ -514,18 +517,47 @@ function CameraModal({
 
           {/* Segment / Continuous */}
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Mode</label>
+            <label className="block text-sm text-gray-400 mb-1">Recording Mode</label>
             <select
               value={segmentSeconds}
-              onChange={e => setSegmentSeconds(Number(e.target.value))}
+              onChange={e => { setSegmentSeconds(Number(e.target.value)); setSegmentInterval(0); }}
               className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
             >
               <option value={0}>Continuous (Live — always running)</option>
+              <option value={30}>Segments — 30 sec clips</option>
+              <option value={300}>Segments — 5 min clips</option>
               <option value={900}>Segments — 15 min clips</option>
               <option value={1800}>Segments — 30 min clips</option>
               <option value={3600}>Segments — 1 hour clips</option>
             </select>
           </div>
+
+          {/* Interval — only shown for segment mode */}
+          {segmentSeconds > 0 && (
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">
+                Run Every
+                <span className="ml-1 text-xs text-gray-500">(how often to capture a new clip)</span>
+              </label>
+              <select
+                value={segmentInterval}
+                onChange={e => setSegmentInterval(Number(e.target.value))}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+              >
+                <option value={0}>Back-to-back (immediately after each clip)</option>
+                <option value={300}>Every 5 minutes</option>
+                <option value={600}>Every 10 minutes</option>
+                <option value={1200}>Every 20 minutes</option>
+                <option value={1800}>Every 30 minutes</option>
+                <option value={3600}>Every 1 hour</option>
+              </select>
+              {segmentInterval > 0 && segmentInterval > segmentSeconds && (
+                <p className="text-xs text-purple-300 mt-1">
+                  {segmentSeconds}s clip · {segmentInterval / 60} min between runs
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Notes */}
           <div>
