@@ -238,6 +238,14 @@ const venueScopeService = {
       return [...liveDeduped, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
     };
 
+    // Direct DynamoDB is primary — AppSync resolver omits live fields (isLive, updatedAt,
+    // createdAt) from its DDB mapping, causing live cameras to not appear.
+    // Direct DDB reads all attributes correctly via _itemToJob.
+    if (_directDDB) {
+      const items = await _listJobsDirect(venueId);
+      if (items.length > 0) return dedupeAndSort(items);
+    }
+    // AppSync fallback (when direct DDB credentials not configured)
     try {
       const result = await client.graphql({
         query: LIST_JOBS_QUERY,
@@ -248,9 +256,8 @@ const venueScopeService = {
       if (!connection) throw new Error('AppSync resolver returned null — resolver not attached');
       return dedupeAndSort(connection.items ?? []);
     } catch (err) {
-      console.warn('[venuescope] AppSync listJobs failed, trying direct DynamoDB:', err);
-      const items = await _listJobsDirect(venueId);
-      return dedupeAndSort(items);
+      console.warn('[venuescope] AppSync listJobs failed:', err);
+      return [];
     }
   },
 
