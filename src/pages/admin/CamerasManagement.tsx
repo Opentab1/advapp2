@@ -717,13 +717,13 @@ function VenueCameraSection({
                   <div className="flex items-center gap-2 ml-4 flex-shrink-0">
                     <button
                       onClick={() => handleToggle(cam)}
-                      title={cam.enabled ? 'Disable camera' : 'Enable camera'}
-                      className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                        cam.enabled
+                          ? 'bg-green-500/20 text-green-400 border-green-500/30 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30'
+                          : 'bg-gray-500/20 text-gray-400 border-gray-500/30 hover:bg-green-500/20 hover:text-green-400 hover:border-green-500/30'
+                      }`}
                     >
-                      {cam.enabled
-                        ? <CheckCircle className="w-4 h-4 text-green-400" />
-                        : <XCircle className="w-4 h-4 text-gray-500" />
-                      }
+                      {cam.enabled ? <><CheckCircle className="w-3.5 h-3.5" /> ON</> : <><XCircle className="w-3.5 h-3.5" /> OFF</>}
                     </button>
                     <button
                       onClick={() => setEditCamera(cam)}
