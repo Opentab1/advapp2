@@ -1243,17 +1243,14 @@ export function VenueScope() {
   }, []);
   // Guard against null/undefined entries that AppSync occasionally returns
   const safeJobs    = useMemo(() => jobs.filter((j): j is VenueScopeJob => j != null && typeof j === 'object'), [jobs]);
-  // Always include stable live-camera records (jobId starts with '~') regardless of
-  // createdAt — these are permanent per-camera DynamoDB records and must never be filtered out
   const tonightJobs = useMemo(() => safeJobs.filter(j =>
-    (j.createdAt ?? 0) >= todayStart || j.isLive || (j.jobId ?? '').startsWith('~')
+    (j.createdAt ?? 0) >= todayStart || j.isLive
   ), [safeJobs, todayStart]);
   const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !j.isLive), [safeJobs, todayStart]);
 
   const allRooms    = useMemo(() => { try { return buildRooms(tonightJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [tonightJobs]);
-  // Keep reconnecting cameras (stable '!' IDs) in the live section so they never disappear
-  const liveRooms   = useMemo(() => allRooms.filter(r => r.isLive || (r.job?.jobId ?? '').startsWith('~')), [allRooms]);
-  const doneRooms   = useMemo(() => allRooms.filter(r => !r.isLive && !(r.job?.jobId ?? '').startsWith('~')), [allRooms]);
+  const liveRooms   = useMemo(() => allRooms.filter(r => r.isLive), [allRooms]);
+  const doneRooms   = useMemo(() => allRooms.filter(r => !r.isLive), [allRooms]);
   const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
   // History = today's completed rooms + all older jobs
   const historyJobs = useMemo(() => [
