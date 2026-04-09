@@ -115,6 +115,15 @@ def run_job(job_id: str):
         set_progress(job_id, 2)
         log.info(f"Mode: {mode}  Source: {Path(job['source_path']).name}")
 
+        extra_config = {}
+        if job.get("summary_json"):
+            try:
+                stored = json.loads(job["summary_json"])
+                if "extra_config" in stored:
+                    extra_config = stored["extra_config"]
+            except Exception:
+                pass
+
         bar_config = None
         if job.get("config_path"):
             try:
@@ -146,15 +155,6 @@ def run_job(job_id: str):
                     log.info(f"Shift: {list(shift.records.keys())}")
             except Exception as e:
                 log.warning(f"Shift failed: {e}")
-
-        extra_config = {}
-        if job.get("summary_json"):
-            try:
-                stored = json.loads(job["summary_json"])
-                if "extra_config" in stored:
-                    extra_config = stored["extra_config"]
-            except Exception:
-                pass
 
         # Per-camera venue ID — supports multiple venues on one worker
         job_venue_id = extra_config.get("venue_id", "")
