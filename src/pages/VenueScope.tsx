@@ -766,17 +766,11 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
     )
   );
 
-  // Entrance cameras: sum entries - exits across all people_count cameras
-  const totalEntries   = peopleRecent.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
-  const totalExits     = peopleRecent.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
-  const netLineCount   = totalEntries > 0 ? Math.max(0, totalEntries - totalExits) : 0;
-
-  // Fallback: use highest single-camera peakOccupancy (not sum — cameras overlap)
-  const liveCamOccupancy = peopleRecent.length > 0
+  // Use highest single-camera peakOccupancy (not sum — cameras overlap)
+  const currentOccupancy = peopleRecent.length > 0
     ? Math.max(...peopleRecent.map(j => j.peakOccupancy ?? 0))
     : 0;
-  const currentOccupancy = netLineCount > 0 ? netLineCount : liveCamOccupancy;
-  const occupancyIsEntrance = netLineCount > 0;
+  const occupancyIsEntrance = false;
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
 
