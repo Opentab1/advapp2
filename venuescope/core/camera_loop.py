@@ -64,10 +64,16 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     primary_mode, extra_modes = _parse_modes(cam.get("mode", "drink_count"))
 
     extra = {
-        "max_seconds": 0 if continuous else seg_secs,
-        "extra_modes": extra_modes,   # passed to VenueProcessor
-        # Store per-camera venue so multi-venue worker posts results to the right place
-        "venue_id": cam.get("venue", ""),
+        "max_seconds":     0 if continuous else seg_secs,
+        "extra_modes":     extra_modes,
+        # Per-camera venue — multi-venue worker posts to the right DDB partition
+        "venue_id":        cam.get("venue", ""),
+        # Camera identity — used by worker to load/save cross-segment state
+        "camera_id":       cam.get("camera_id", ""),
+        # Per-camera people-count tuning (overrides global BLOBS_PER_PERSON constant)
+        "blobs_per_person": cam.get("blobs_per_person", 0),  # 0 = use default
+        # Bar config from DDB zone editor (JSON string); used if no file-based config_path
+        "bar_config_json": cam.get("bar_config_json", ""),
     }
     create_job(
         job_id        = jid,
@@ -184,6 +190,25 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                 remaining = int((OCCUPANCY_INTERVAL - (time.time() - last_occupancy_t)) / 60)
                 log.debug(f"[camera_loop] '{camera_name}' — occupancy skipped "
                           f"({remaining}m until next run)")
+
+            # Queue depth throttle — don't pile up more than 3 pending segments
+            # per camera (happens when processing is slower than real-time)
+            try:
+                from core.database import list_jobs_by_status
+                pending_all = list_jobs_by_status("pending", limit=200)
+                label_prefix = f"📡 {camera_name}"
+                pending_this_cam = [
+                    j for j in pending_all
+                    if (j.get("clip_label") or "").startswith(label_prefix)
+                    or j.get("camera_id") == camera_id
+                ]
+                if len(pending_this_cam) >= 3:
+                    log.info(f"[camera_loop] '{camera_name}' — {len(pending_this_cam)} segments "
+                             f"already pending, skipping new segment (backlog relief)")
+                    stop_event.wait(seg_secs if seg_secs > 0 else 15)
+                    continue
+            except Exception:
+                pass
 
             # Launch next segment (or continuous job)
             seg_num += 1

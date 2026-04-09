@@ -49,10 +49,14 @@ def _item_to_camera(item: dict) -> dict:
         "interval_seconds": float(item["segmentInterval"]) if item.get("segmentInterval") else None,
         "enabled":         bool(item.get("enabled", True)),
         "notes":           item.get("notes", ""),
-        "config_path":     None,
-        "shift_id":        None,
+        "config_path":      None,
+        "shift_id":         None,
+        # Per-camera people-count calibration (0 = use global default)
+        "blobs_per_person": int(item.get("blobsPerPerson", 0)),
+        # Bar zone/line config saved by the React zone editor (JSON string)
+        "bar_config_json":  item.get("barConfigJson", ""),
         # Source flag so camera_loop knows this came from DDB
-        "_source":         "dynamodb",
+        "_source":          "dynamodb",
     }
 
 

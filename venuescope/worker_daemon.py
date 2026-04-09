@@ -34,6 +34,30 @@ except ImportError:
     log = logging.getLogger("worker")
 
 from core.config   import RESULT_DIR
+
+# Directory for cross-segment bartender state files (one JSON per camera)
+STATE_DIR = Path(RESULT_DIR).parent / "camera_state"
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _load_camera_state(camera_id: str) -> dict:
+    """Load cross-segment state for a camera, or {} if none exists."""
+    try:
+        f = STATE_DIR / f"{camera_id}.json"
+        if f.exists():
+            return json.loads(f.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _save_camera_state(camera_id: str, state: dict) -> None:
+    """Persist cross-segment state for a camera."""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / f"{camera_id}.json").write_text(json.dumps(state, default=str))
+    except Exception as e:
+        log.debug(f"Could not save camera state for {camera_id}: {e}")
 from core.database import (list_jobs, list_jobs_by_status, get_job,
                             set_running, set_progress, set_done, set_failed,
                             set_failed as _set_failed, _raw_update)
@@ -102,6 +126,17 @@ def run_job(job_id: str):
             except Exception as e:
                 log.warning(f"Bar config failed: {e}")
 
+        # Fallback: bar config stored in DDB camera record (from React zone editor)
+        if bar_config is None and extra_config.get("bar_config_json"):
+            try:
+                d        = json.loads(extra_config["bar_config_json"])
+                stations = [BarStation(**s) for s in d.pop("stations", [])]
+                cfg      = BarConfig(**d); cfg.stations = stations
+                bar_config = cfg
+                log.info("Bar config loaded from DDB camera record")
+            except Exception as e:
+                log.warning(f"DDB bar config parse failed: {e}")
+
         shift = None
         if job.get("shift_json"):
             try:
@@ -123,6 +158,14 @@ def run_job(job_id: str):
 
         # Per-camera venue ID — supports multiple venues on one worker
         job_venue_id = extra_config.get("venue_id", "")
+
+        # Load cross-segment state (bar line cooldowns from previous clip)
+        camera_id = extra_config.get("camera_id", "")
+        if camera_id and mode == "drink_count":
+            prior_state = _load_camera_state(camera_id)
+            if prior_state:
+                extra_config["prior_camera_state"] = prior_state
+                log.info(f"Loaded cross-segment state for camera {camera_id}")
 
         # Write a "running" record to DynamoDB (after venue_id is resolved)
         try:
@@ -202,6 +245,11 @@ def run_job(job_id: str):
         set_done(job_id, str(result_dir), summary)
         log.info(f"Job {job_id} DONE — drinks={summary.get('total_drinks', 0)}, "
                  f"unrung={summary.get('unrung_drinks', 0)}")
+
+        # Persist cross-segment state for the next clip of this camera
+        if camera_id and mode == "drink_count" and summary.get("_camera_state"):
+            _save_camera_state(camera_id, summary["_camera_state"])
+            log.debug(f"Saved cross-segment state for camera {camera_id}")
 
         # Send theft alert if needed
         try:
@@ -314,6 +362,18 @@ def _camera_loop_proc_entry():
 def main():
     log.info(f"VenueScope v6 worker started — polling every {POLL_INTERVAL}s, "
              f"MAX_PARALLEL={MAX_PARALLEL}")
+
+    # Pre-load the default YOLO model in the parent process so forked child
+    # processes inherit it via copy-on-write (Linux fork semantics).
+    # This eliminates the 3-5s cold-start cost for every drink_count job.
+    try:
+        from core.tracking.engine import _get_cached_model
+        _default_model = os.environ.get("VENUESCOPE_DEFAULT_MODEL", "yolov8n.pt")
+        log.info(f"Pre-loading {_default_model} for fork-based job starts...")
+        _get_cached_model(_default_model)
+        log.info(f"YOLO model pre-loaded — forked workers will inherit via COW")
+    except Exception as _me:
+        log.warning(f"Model pre-load skipped (non-fatal): {_me}")
 
     # Reset stuck running jobs from previous session
     for job in list_jobs(50):

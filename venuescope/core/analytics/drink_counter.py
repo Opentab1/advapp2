@@ -36,15 +36,23 @@ def _side_of_line(p: Tuple[float,float],
 
 def _reach_probe(x1: float, y1: float, x2: float, y2: float,
                  p1, p2, customer_side: int) -> Tuple[float, float]:
-    """Return the bounding-box corner most advanced toward the customer side.
+    """Return the bounding-box point most advanced toward the customer side.
 
     Catches arm-reach serves where only the bartender's arm/torso crosses the
     bar line but the body centroid stays on the bartender side.
+
+    Checks 8 points (4 corners + midpoint of each edge) so leaning-arm serves
+    are caught even when the arm doesn't reach a corner position.
     """
     dx = p2[0] - p1[0]; dy = p2[1] - p1[1]
-    corners = ((x1, y1), (x2, y1), (x1, y2), (x2, y2))
-    best_pt = corners[0]; best_val = float('-inf')
-    for (px, py) in corners:
+    mx = (x1 + x2) / 2; my = (y1 + y2) / 2
+    candidates = (
+        (x1, y1), (x2, y1), (x1, y2), (x2, y2),  # corners
+        (mx, y1), (mx, y2),                         # top/bottom edge midpoints
+        (x1, my), (x2, my),                         # left/right edge midpoints
+    )
+    best_pt = candidates[0]; best_val = float('-inf')
+    for (px, py) in candidates:
         val = customer_side * (dx * (py - p1[1]) - dy * (px - p1[0]))
         if val > best_val:
             best_val = val; best_pt = (px, py)
@@ -71,6 +79,8 @@ class DrinkCounter:
     def __init__(self, bar_config: Optional[BarConfig],
                  shift: ShiftManager, rules: DrinkCountRules,
                  W: int, H: int):
+        import time as _t
+        self._wall_start = _t.time()   # wall clock at job start (for state snapshots)
         self.cfg   = bar_config
         self.shift = shift
         self.rules = rules
@@ -396,6 +406,39 @@ class DrinkCounter:
             if rec and rec.track_id == old_id:
                 rec.track_id = new_id
         del self._states[old_id]
+
+    # ── Cross-segment state persistence ──────────────────────────────────────
+
+    def get_cross_segment_state(self) -> dict:
+        """
+        Return a JSON-serialisable snapshot for handoff to the next segment.
+        Converts video-relative serve timestamps to wall-clock epochs so they
+        survive across independently-scheduled jobs.
+        """
+        import time
+        return {
+            "saved_wall": time.time(),
+            "station_serve_walls": {
+                sid: self._wall_start + tsec
+                for sid, tsec in self._station_last_serve_tsec.items()
+            },
+        }
+
+    def restore_cross_segment_state(self, state: dict) -> None:
+        """
+        Seed cooldown state from the previous segment's snapshot.
+        Maps wall-clock serve times back to negative t_sec offsets so the
+        time-based cooldown check (t_sec - last_serve_tsec) works correctly
+        even though this segment starts at t_sec = 0.
+        """
+        if not state:
+            return
+        import time
+        now = time.time()
+        for sid, serve_wall in state.get("station_serve_walls", {}).items():
+            elapsed = now - serve_wall
+            # Negative offset: at t_sec=0 the check reads  0 - (-elapsed) = elapsed seconds
+            self._station_last_serve_tsec[sid] = -elapsed
 
     def quality_report(self) -> Dict[str,Any]:
         warnings=[]

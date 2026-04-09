@@ -50,6 +50,9 @@ def run_lightweight(
     job_id      = job["job_id"]
     clip_label  = job.get("clip_label", "")
     max_seconds = float(extra_config.get("max_seconds", 0))  # 0 = no limit
+    # Per-camera calibration overrides the global constant (0 = use default)
+    _bpp = int(extra_config.get("blobs_per_person", 0))
+    blobs_per_person = _bpp if _bpp > 0 else BLOBS_PER_PERSON
 
     log.info(f"[lightweight] Opening stream: {Path(source).name}")
     cap = cv2.VideoCapture(source)
@@ -111,7 +114,7 @@ def run_lightweight(
             blobs = sum(1 for c in contours if MIN_BLOB_AREA < cv2.contourArea(c) < MAX_BLOB_AREA)
 
             # Convert blobs → estimated people
-            estimated = max(0, round(blobs / BLOBS_PER_PERSON))
+            estimated = max(0, round(blobs / blobs_per_person))
             frame_estimates.append(estimated)
 
             # Sample for log

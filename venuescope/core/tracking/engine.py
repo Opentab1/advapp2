@@ -60,6 +60,12 @@ def _in_ignore_zone(cx, cy, zones, W, H):
 _MIN_MODEL_MB = 1      # reject files smaller than this (corrupted download)
 _MAX_MODEL_MB = 800    # reject files larger than this (wrong file type)
 
+# Per-process model cache — survives across jobs in the same process (Pool workers
+# or parent-fork COW inheritance). On Linux the worker_daemon pre-loads the default
+# model in the parent so forked child processes inherit it via copy-on-write.
+_model_cache: dict = {}
+
+
 def _load_yolo(model_name: str) -> YOLO:
     """Find and load YOLO model from any common location, with size validation."""
     candidates = [
@@ -84,6 +90,13 @@ def _load_yolo(model_name: str) -> YOLO:
             return YOLO(str(c))
     # Not found locally — let ultralytics download it
     return YOLO(model_name)
+
+
+def _get_cached_model(model_name: str) -> YOLO:
+    """Return a cached YOLO model, loading from disk only on first call per process."""
+    if model_name not in _model_cache:
+        _model_cache[model_name] = _load_yolo(model_name)
+    return _model_cache[model_name]
 
 
 def _check_memory_mb(required_mb: int = 1024):
@@ -515,7 +528,7 @@ class VenueProcessor:
         analyzer   = analyzers[self.mode]   # primary (used for annotation)
         model_name = self.profile["model"]
         self.cb(4, f"Loading {model_name}...")
-        model = _load_yolo(model_name)
+        model = _get_cached_model(model_name)
         self.cb(5, f"Model ready. Starting analysis...")
 
         writer = ResultWriter(self.job_id, self.result_dir, fps)
@@ -988,6 +1001,12 @@ class VenueProcessor:
         self.cb(96, "Writing results...")
         summary = self._build_summary(analyzers, frame_idx/fps, fps)
         writer.write_all(summary)
+        # Attach cross-segment state snapshot so worker_daemon can persist it
+        if "drink_count" in analyzers:
+            try:
+                summary["_camera_state"] = analyzers["drink_count"].get_cross_segment_state()
+            except Exception:
+                pass
         self.cb(100, "Done.")
         return summary
 
@@ -1016,7 +1035,12 @@ class VenueProcessor:
                                    "color": "#f97316"}]
                 shift = ShiftManager("auto", bartenders)
                 self.shift = shift  # store so _build_summary can read it
-            return DrinkCounter(self.bar_config, shift, rules, W, H)
+            dc = DrinkCounter(self.bar_config, shift, rules, W, H)
+            # Restore cross-segment cooldown state from previous clip (if any)
+            prior = self.ec.get("prior_camera_state")
+            if prior:
+                dc.restore_cross_segment_state(prior)
+            return dc
         elif mode == "bottle_count":
             zones = ec.get("zones", [])
             polys     = [z.get("polygon", []) for z in zones] if zones else [
