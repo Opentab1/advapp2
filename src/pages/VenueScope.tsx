@@ -6,6 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import Hls from 'hls.js';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Video, ShieldCheck, AlertTriangle, RefreshCw,
@@ -870,17 +871,76 @@ function CameraLiveView({
   onConfigureZones?: () => void;
 }) {
   const videoRef = React.useRef<HTMLVideoElement>(null);
-  const [state, setState] = React.useState<'loading' | 'playing' | 'error'>('loading');
+  const hlsRef   = React.useRef<Hls | null>(null);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [state, setState] = React.useState<'loading' | 'playing' | 'error' | 'mixed_content'>('loading');
+  const [errorMsg, setErrorMsg] = React.useState('Stream unavailable');
   const url = liveStreamUrl(label, proxyBase);
 
   React.useEffect(() => {
     if (!url || !videoRef.current) return;
+
+    // Detect mixed-content before attempting load — saves 10s timeout
+    const isHttps = window.location.protocol === 'https:';
+    const isHttpStream = url.startsWith('http://');
+    if (isHttps && isHttpStream) {
+      setState('mixed_content');
+      return;
+    }
+
     const v = videoRef.current;
-    v.src = url;
-    v.load();
+
+    // 10-second timeout — if nothing plays, show error
+    timerRef.current = setTimeout(() => {
+      if (state !== 'playing') {
+        setErrorMsg('Stream timed out — check proxy URL');
+        setState('error');
+      }
+    }, 10_000);
+
+    const cleanup = () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    };
+
+    if (Hls.isSupported()) {
+      cleanup(); // reset any previous instance
+      const hls = new Hls({
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 3,
+        enableWorker: true,
+        lowLatencyMode: true,
+      });
+      hlsRef.current = hls;
+      hls.loadSource(url);
+      hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        v.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (data.fatal) {
+          setErrorMsg('Stream error — check camera/proxy');
+          setState('error');
+        }
+      });
+    } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari native HLS
+      v.src = url;
+      v.load();
+    } else {
+      setErrorMsg('Browser does not support HLS streams');
+      setState('error');
+    }
+
+    return cleanup;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
   if (!url) return null;
+
+  const errorDisplay = state === 'mixed_content'
+    ? { icon: <Camera className="w-5 h-5 text-yellow-400" />, msg: 'Set proxy URL to HTTPS to load stream', sub: proxyBase }
+    : { icon: <Camera className="w-5 h-5 text-text-muted" />, msg: errorMsg, sub: '' };
 
   return (
     <div className="relative w-full overflow-hidden rounded-xl bg-black aspect-video">
@@ -890,19 +950,19 @@ function CameraLiveView({
           <span className="text-[10px] text-text-muted">Connecting to camera…</span>
         </div>
       )}
-      {state === 'error' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-          <Camera className="w-5 h-5 text-text-muted" />
-          <span className="text-[10px] text-text-muted">Stream unavailable</span>
+      {(state === 'error' || state === 'mixed_content') && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-4 text-center">
+          {errorDisplay.icon}
+          <span className="text-[10px] text-text-muted">{errorDisplay.msg}</span>
+          {errorDisplay.sub && <span className="text-[9px] text-text-muted/50 break-all">{errorDisplay.sub}</span>}
         </div>
       )}
       <video
         ref={videoRef}
         className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
         autoPlay muted playsInline
-        onCanPlay={() => setState('playing')}
-        onError={() => setState('error')}
-        onStalled={() => setState('loading')}
+        onCanPlay={() => { if (timerRef.current) clearTimeout(timerRef.current); setState('playing'); }}
+        onError={() => { setErrorMsg('Stream unavailable'); setState('error'); }}
       />
       {/* Zone overlay */}
       {barConfig && state === 'playing' && <ZoneOverlay config={barConfig} />}
