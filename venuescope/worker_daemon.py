@@ -17,7 +17,7 @@ sys.path.insert(0, str(BASE))
 
 # Load .env from parent directory if AWS creds are missing (safety fallback)
 if not os.environ.get("AWS_ACCESS_KEY_ID"):
-    _env_file = BASE.parent / ".env"
+    _env_file = BASE / ".env"
     if _env_file.exists():
         for _line in _env_file.read_text().splitlines():
             _line = _line.strip()
