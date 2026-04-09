@@ -117,6 +117,8 @@ function ZoneOverlay({ config }: { config: BarConfig }) {
 
 type DrawMode = 'zone' | 'barline' | null;
 
+const SNAP_RADIUS = 0.035; // normalized units — snap-to-close threshold
+
 function ZoneEditorModal({
   camera,
   proxyBase,
@@ -129,13 +131,14 @@ function ZoneEditorModal({
   const [config, setConfig]         = useState<BarConfig>(() => parseBarConfig(camera.barConfigJson) ?? { stations: [] });
   const [drawMode, setDrawMode]     = useState<DrawMode>(null);
   const [currentPts, setCurrentPts] = useState<[number, number][]>([]);
-  const [barLineFor, setBarLineFor] = useState<number | null>(null); // zone idx
+  const [barLineFor, setBarLineFor] = useState<number | null>(null);
+  const [cursor, setCursor]         = useState<[number, number] | null>(null); // live mouse position
+  const [nearClose, setNearClose]   = useState(false); // hovering near first point
   const [saving, setSaving]         = useState(false);
   const [saveOk, setSaveOk]         = useState(false);
-  const svgRef = useRef<SVGSVGElement>(null);
+  const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Stream the live feed in the background
   const streamUrl = (() => {
     if (!proxyBase) return null;
     const m = (camera.name || '').match(/ch(\d+)/i);
@@ -155,27 +158,46 @@ function ZoneEditorModal({
     return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
   }
 
+  function handleSvgMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    if (!drawMode) return;
+    const pt = getRelPt(e);
+    setCursor(pt);
+    if (drawMode === 'zone' && currentPts.length >= 3) {
+      const [fx, fy] = currentPts[0];
+      setNearClose(Math.hypot(pt[0] - fx, pt[1] - fy) < SNAP_RADIUS);
+    } else {
+      setNearClose(false);
+    }
+  }
+
+  function handleSvgLeave() {
+    setCursor(null);
+    setNearClose(false);
+  }
+
   function handleSvgClick(e: React.MouseEvent<SVGSVGElement>) {
     const pt = getRelPt(e);
 
     if (drawMode === 'zone') {
-      // Close polygon if clicking near first point (≥3 pts)
       if (currentPts.length >= 3) {
         const [fx, fy] = currentPts[0];
-        if (Math.hypot(pt[0] - fx, pt[1] - fy) < 0.03) {
+        if (Math.hypot(pt[0] - fx, pt[1] - fy) < SNAP_RADIUS) {
+          // Close polygon
           const xs = currentPts.map(p => p[0]);
           const ys = currentPts.map(p => p[1]);
           const midY = (Math.min(...ys) + Math.max(...ys)) / 2;
           const newStation: BarStation = {
-            zone_id: `zone_${Date.now()}`,
-            label:   `Zone ${config.stations.length + 1}`,
-            polygon: currentPts,
-            bar_line_p1: [Math.min(...xs), midY],
-            bar_line_p2: [Math.max(...xs), midY],
+            zone_id:      `zone_${Date.now()}`,
+            label:        `Zone ${config.stations.length + 1}`,
+            polygon:      currentPts,
+            bar_line_p1:  [Math.min(...xs), midY],
+            bar_line_p2:  [Math.max(...xs), midY],
             customer_side: 1,
           };
           setConfig(c => ({ stations: [...c.stations, newStation] }));
           setCurrentPts([]);
+          setCursor(null);
+          setNearClose(false);
           setDrawMode(null);
           return;
         }
@@ -192,15 +214,25 @@ function ZoneEditorModal({
           ),
         }));
         setCurrentPts([]);
+        setCursor(null);
         setDrawMode(null);
         setBarLineFor(null);
       }
     }
   }
 
+  function cancelDraw() {
+    setDrawMode(null);
+    setCurrentPts([]);
+    setCursor(null);
+    setNearClose(false);
+    setBarLineFor(null);
+  }
+
   function startBarLine(idx: number) {
     setBarLineFor(idx);
     setCurrentPts([]);
+    setCursor(null);
     setDrawMode('barline');
   }
 
@@ -217,7 +249,7 @@ function ZoneEditorModal({
   function toggleCustomerSide(idx: number) {
     setConfig(c => ({
       stations: c.stations.map((s, i) =>
-        i === idx ? { ...s, customer_side: (s.customer_side === 1 ? -1 : 1) } : s
+        i === idx ? { ...s, customer_side: s.customer_side === 1 ? -1 : 1 } : s
       ),
     }));
   }
@@ -236,150 +268,194 @@ function ZoneEditorModal({
     }
   }
 
-  const cursorClass = drawMode ? 'cursor-crosshair' : 'cursor-default';
+  // Status hint shown inside the canvas
+  const hint =
+    drawMode === 'zone' && currentPts.length === 0 ? 'Click to place first point' :
+    drawMode === 'zone' && nearClose               ? 'Click to close zone ✓' :
+    drawMode === 'zone'                            ? `${currentPts.length} points — click first point to close` :
+    drawMode === 'barline' && currentPts.length === 0 ? 'Click to set bar line start' :
+    drawMode === 'barline'                         ? 'Click to set bar line end' :
+    null;
 
   return (
     <motion.div
-      className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-3"
+      className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-2"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={onClose}
     >
       <motion.div
-        className="bg-whoop-panel border border-whoop-divider rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden"
-        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-        onClick={e => e.stopPropagation()}
+        className="bg-whoop-panel border border-whoop-divider rounded-2xl w-full max-w-5xl flex flex-col overflow-hidden"
+        style={{ maxHeight: '95vh' }}
+        initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.97, opacity: 0 }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-whoop-divider flex-shrink-0">
-          <div>
-            <p className="text-sm font-semibold text-white">Configure Zones — {camera.name}</p>
-            <p className="text-[10px] text-text-muted mt-0.5">
-              {drawMode === 'zone'
-                ? 'Click to add polygon points • Click first point to close zone'
-                : drawMode === 'barline'
-                ? 'Click two points to set the bar line'
-                : 'Draw zones to define where drinks are served'}
-            </p>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-whoop-divider flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-7 h-7 rounded-lg bg-teal/10 border border-teal/20 flex items-center justify-center">
+              <Crosshair className="w-3.5 h-3.5 text-teal" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">Zone Editor — {camera.name}</p>
+              <p className="text-[10px] text-text-muted">Draw detection zones on the camera feed</p>
+            </div>
           </div>
-          <button onClick={onClose} className="text-text-muted hover:text-white transition-colors">
+          <button onClick={onClose} className="text-text-muted hover:text-white transition-colors p-1">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Canvas */}
-        <div className="relative bg-black flex-1 min-h-0" style={{ aspectRatio: '16/9', maxHeight: '55vh' }}>
-          {/* Background video */}
+        {/* Canvas — fills remaining space */}
+        <div className="relative bg-black" style={{ aspectRatio: '16/9', maxHeight: 'calc(95vh - 180px)' }}>
           <video
             ref={videoRef}
-            className="absolute inset-0 w-full h-full object-cover opacity-60"
+            className="absolute inset-0 w-full h-full object-cover opacity-70"
             autoPlay muted playsInline
           />
           {!streamUrl && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <p className="text-text-muted text-xs">No live feed — drawing on blank canvas</p>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <p className="text-text-muted text-xs bg-black/40 px-3 py-1.5 rounded-lg">No live feed</p>
             </div>
           )}
 
           {/* SVG drawing layer */}
           <svg
             ref={svgRef}
-            className={`absolute inset-0 w-full h-full ${cursorClass}`}
+            className={`absolute inset-0 w-full h-full ${drawMode ? 'cursor-crosshair' : 'cursor-default'}`}
             viewBox="0 0 1 1"
             preserveAspectRatio="none"
             onClick={handleSvgClick}
+            onMouseMove={handleSvgMouseMove}
+            onMouseLeave={handleSvgLeave}
           >
             {/* Saved zones */}
             {config.stations.map((s, i) => (
               <g key={i}>
                 <polygon
                   points={s.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
-                  fill="rgba(0,200,160,0.12)"
-                  stroke="rgba(0,200,160,0.7)"
-                  strokeWidth="0.004"
+                  fill="rgba(0,200,160,0.10)"
+                  stroke="rgba(0,200,160,0.65)"
+                  strokeWidth="0.003"
                 />
                 <line
                   x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
                   x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
                   stroke="rgba(255,140,0,0.9)"
                   strokeWidth="0.004"
-                  strokeDasharray="0.025 0.012"
+                  strokeDasharray="0.02 0.01"
                 />
-                {/* Zone label */}
                 <text
                   x={(s.bar_line_p1[0] + s.bar_line_p2[0]) / 2}
-                  y={s.bar_line_p1[1] - 0.03}
-                  fontSize="0.04"
-                  fill="rgba(255,255,255,0.8)"
-                  textAnchor="middle"
+                  y={Math.min(...s.polygon.map(p => p[1])) + 0.04}
+                  fontSize="0.035" fill="rgba(255,255,255,0.85)" textAnchor="middle"
                   style={{ pointerEvents: 'none' }}
-                >
-                  {s.label}
-                </text>
-                {/* Customer side arrow */}
+                >{s.label}</text>
                 <text
                   x={(s.bar_line_p1[0] + s.bar_line_p2[0]) / 2}
-                  y={s.customer_side === 1 ? s.bar_line_p1[1] + 0.06 : s.bar_line_p1[1] - 0.07}
-                  fontSize="0.03"
-                  fill="rgba(255,200,80,0.7)"
-                  textAnchor="middle"
+                  y={s.customer_side === 1 ? s.bar_line_p2[1] + 0.055 : s.bar_line_p1[1] - 0.045}
+                  fontSize="0.028" fill="rgba(255,200,80,0.7)" textAnchor="middle"
                   style={{ pointerEvents: 'none' }}
-                >
-                  👤 customer
-                </text>
+                >👤 customer</text>
               </g>
             ))}
 
             {/* In-progress polygon */}
             {currentPts.length > 0 && (
               <g>
+                {/* Completed edges */}
                 {currentPts.length >= 2 && (
                   <polyline
                     points={currentPts.map(([x, y]) => `${x},${y}`).join(' ')}
                     fill="none"
-                    stroke="rgba(100,200,255,0.8)"
+                    stroke={nearClose ? 'rgba(0,255,160,0.9)' : 'rgba(100,200,255,0.85)'}
                     strokeWidth="0.004"
-                    strokeDasharray="0.015 0.008"
+                    strokeDasharray="0.018 0.009"
                   />
                 )}
+                {/* Live preview edge: last point → cursor */}
+                {cursor && drawMode === 'zone' && (
+                  <line
+                    x1={currentPts[currentPts.length - 1][0]}
+                    y1={currentPts[currentPts.length - 1][1]}
+                    x2={nearClose ? currentPts[0][0] : cursor[0]}
+                    y2={nearClose ? currentPts[0][1] : cursor[1]}
+                    stroke={nearClose ? 'rgba(0,255,160,0.9)' : 'rgba(100,200,255,0.6)'}
+                    strokeWidth="0.003"
+                    strokeDasharray="0.012 0.008"
+                  />
+                )}
+                {/* Live preview edge: barline first point → cursor */}
+                {cursor && drawMode === 'barline' && currentPts.length === 1 && (
+                  <line
+                    x1={currentPts[0][0]} y1={currentPts[0][1]}
+                    x2={cursor[0]} y2={cursor[1]}
+                    stroke="rgba(255,140,0,0.7)"
+                    strokeWidth="0.004"
+                    strokeDasharray="0.02 0.01"
+                  />
+                )}
+                {/* Vertices */}
                 {currentPts.map(([x, y], i) => (
-                  <circle key={i} cx={x} cy={y} r="0.012"
-                    fill={i === 0 ? 'rgba(100,200,255,0.9)' : 'rgba(100,200,255,0.5)'}
+                  <circle key={i} cx={x} cy={y}
+                    r={i === 0 && currentPts.length >= 3 ? (nearClose ? 0.022 : 0.018) : 0.012}
+                    fill={i === 0 ? (nearClose ? 'rgba(0,255,160,0.9)' : 'rgba(100,220,255,0.9)') : 'rgba(100,200,255,0.6)'}
                     stroke="white" strokeWidth="0.003"
                   />
                 ))}
+                {/* Snap ring around first point */}
+                {currentPts.length >= 3 && (
+                  <circle
+                    cx={currentPts[0][0]} cy={currentPts[0][1]}
+                    r={SNAP_RADIUS}
+                    fill="none"
+                    stroke={nearClose ? 'rgba(0,255,160,0.5)' : 'rgba(100,200,255,0.15)'}
+                    strokeWidth="0.002"
+                    strokeDasharray="0.008 0.006"
+                  />
+                )}
               </g>
             )}
+
+            {/* Barline preview cursor dot */}
+            {cursor && drawMode === 'barline' && currentPts.length === 0 && (
+              <circle cx={cursor[0]} cy={cursor[1]} r="0.01"
+                fill="rgba(255,140,0,0.7)" stroke="white" strokeWidth="0.002"
+              />
+            )}
           </svg>
+
+          {/* Hint pill — bottom center of canvas */}
+          {hint && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-sm text-[11px] text-white/80 pointer-events-none select-none">
+              {hint}
+            </div>
+          )}
         </div>
 
         {/* Controls */}
-        <div className="px-5 py-4 border-t border-whoop-divider flex-shrink-0 space-y-3 overflow-y-auto max-h-[30vh]">
-          {/* Draw toolbar */}
+        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 space-y-3 overflow-y-auto" style={{ maxHeight: '30vh' }}>
+          {/* Toolbar */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => { setDrawMode('zone'); setCurrentPts([]); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
-                drawMode === 'zone'
-                  ? 'bg-teal/20 text-teal border border-teal/40'
-                  : 'bg-whoop-bg border border-whoop-divider text-text-secondary hover:text-white'
-              }`}
-            >
-              <Crosshair className="w-3 h-3" />
-              Draw Zone
-            </button>
-            {drawMode === 'zone' && currentPts.length > 0 && (
+            {!drawMode ? (
               <button
-                onClick={() => { setCurrentPts([]); setDrawMode(null); }}
-                className="text-[10px] text-text-muted hover:text-white transition-colors"
+                onClick={() => setDrawMode('zone')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-teal/10 text-teal border border-teal/30 hover:bg-teal/20 transition-colors"
               >
-                Cancel
+                <Crosshair className="w-3 h-3" />
+                Draw Zone
+              </button>
+            ) : (
+              <button
+                onClick={cancelDraw}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors"
+              >
+                <X className="w-3 h-3" />
+                Cancel Draw
               </button>
             )}
             <div className="flex-1" />
             <button
               onClick={save}
               disabled={saving || config.stations.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal text-black hover:bg-teal/90 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold bg-teal text-black hover:bg-teal/90 disabled:opacity-40 transition-colors"
             >
               {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
               {saveOk ? 'Saved!' : 'Save Zones'}
@@ -387,11 +463,11 @@ function ZoneEditorModal({
           </div>
 
           {/* Zone list */}
-          {config.stations.length === 0 ? (
-            <p className="text-[11px] text-text-muted text-center py-2">
-              No zones yet — click "Draw Zone" then click on the camera feed to place points
+          {config.stations.length === 0 && !drawMode ? (
+            <p className="text-[11px] text-text-muted text-center py-1">
+              Click <strong className="text-white/60">Draw Zone</strong> then click on the feed to place polygon points
             </p>
-          ) : (
+          ) : config.stations.length === 0 && drawMode === 'zone' ? null : (
             <div className="space-y-2">
               {config.stations.map((s, i) => (
                 <div key={i} className="flex items-center gap-2 bg-whoop-bg rounded-xl px-3 py-2">
