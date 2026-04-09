@@ -1934,8 +1934,11 @@ export function VenueScope() {
   const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !isJobLive(j)), [safeJobs, todayStart]);
 
   const allRooms    = useMemo(() => { try { return buildRooms(tonightJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [tonightJobs]);
-  const liveRooms   = useMemo(() => allRooms.filter(r => r.isLive || r.job?.status === 'running'), [allRooms]);
-  const doneRooms   = useMemo(() => allRooms.filter(r => !r.isLive && r.job?.status !== 'running'), [allRooms]);
+  // Show ALL rooms in the camera grid (live + done snapshots). Snapshot cameras are
+  // almost always "done" between their 20-min polling intervals — hiding done rooms
+  // means the grid would appear empty most of the time.
+  const liveRooms   = allRooms;
+  const doneRooms   = useMemo(() => [] as RoomSummary[], []);
 
   // Match a room label to its camera config record (for zone overlay + editor)
   const cameraForRoom = useCallback((room: RoomSummary): CameraConfig | null => {
@@ -1946,11 +1949,8 @@ export function VenueScope() {
     ) ?? null;
   }, [cameras]);
   const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
-  // History = today's completed rooms + all older jobs
-  const historyJobs = useMemo(() => [
-    ...doneRooms.map(r => r.job),
-    ...olderJobs,
-  ], [doneRooms, olderJobs]);
+  // History = all older jobs (today's rooms are shown in the camera grid above)
+  const historyJobs = useMemo(() => [...olderJobs], [olderJobs]);
 
   return (
     <div className="space-y-6">
