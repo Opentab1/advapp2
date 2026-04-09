@@ -657,23 +657,23 @@ class VenueProcessor:
 
             # Buffer thumbnail for clip saving (before detection) — RTSP jobs skip this
             if _save_local:
-              try:
-                thumb_buf = cv2.resize(frame, (self._clip_W, self._clip_H),
-                                       interpolation=cv2.INTER_LINEAR)
-                self._frame_buf.append(thumb_buf)
-                # Write forward frames into any open clip writers
-                for pc in self._pending_clips:
-                    if pc["frames_left"] > 0:
-                        pc["writer"].write(thumb_buf)
-                        pc["frames_left"] -= 1
-                # Close finished clips
-                done = [pc for pc in self._pending_clips if pc["frames_left"] <= 0]
-                for pc in done:
-                    pc["writer"].release()
-                self._pending_clips = [pc for pc in self._pending_clips if pc["frames_left"] > 0]
-              except Exception: pass
-            except Exception:
-                pass
+                try:
+                    thumb_buf = cv2.resize(frame, (self._clip_W, self._clip_H),
+                                           interpolation=cv2.INTER_LINEAR)
+                    self._frame_buf.append(thumb_buf)
+                    # Write forward frames into any open clip writers
+                    for pc in self._pending_clips:
+                        if pc["frames_left"] > 0:
+                            pc["writer"].write(thumb_buf)
+                            pc["frames_left"] -= 1
+                    # Close finished clips
+                    done = [pc for pc in self._pending_clips if pc["frames_left"] <= 0]
+                    for pc in done:
+                        pc["writer"].release()
+                    self._pending_clips = [pc for pc in self._pending_clips
+                                           if pc["frames_left"] > 0]
+                except Exception:
+                    pass
 
             # Gap 2: Screen recording check on first processed frame only
             if self._processed == 1 and self._screen_recording_warning is None:
