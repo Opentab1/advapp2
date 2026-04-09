@@ -168,23 +168,30 @@ def run_job(job_id: str):
             except Exception as _le:
                 log.debug(f"Live metrics push error (non-fatal): {_le}")
 
-        proc = VenueProcessor(
-            job_id        = job_id,
-            analysis_mode = mode,
-            source        = job["source_path"],
-            source_type   = job["source_type"],
-            model_profile = job["model_profile"],
-            bar_config    = bar_config,
-            shift         = shift,
-            extra_config  = extra_config,
-            result_dir    = result_dir,
-            annotate      = bool(job.get("annotate", False)),
-            progress_cb   = cb,
-            extra_modes   = extra_config.get("extra_modes", []),
-            live_event_cb = live_cb if is_continuous else None,
-        )
-
-        summary = proc.run()
+        # Route people_count to lightweight OpenCV runner (no YOLO, ~15MB RAM)
+        if mode == "people_count" and not extra_config.get("force_yolo"):
+            from core.lightweight_runner import run_lightweight
+            log.info(f"Using lightweight counter (no YOLO) for job {job_id}")
+            summary = run_lightweight(job, extra_config, result_dir, cb,
+                                      live_cb if is_continuous else lambda s,e: None,
+                                      is_continuous)
+        else:
+            proc = VenueProcessor(
+                job_id        = job_id,
+                analysis_mode = mode,
+                source        = job["source_path"],
+                source_type   = job["source_type"],
+                model_profile = job["model_profile"],
+                bar_config    = bar_config,
+                shift         = shift,
+                extra_config  = extra_config,
+                result_dir    = result_dir,
+                annotate      = bool(job.get("annotate", False)),
+                progress_cb   = cb,
+                extra_modes   = extra_config.get("extra_modes", []),
+                live_event_cb = live_cb if is_continuous else None,
+            )
+            summary = proc.run()
 
         if is_continuous:
             # Stream disconnected — log it. The camera_loop will immediately
