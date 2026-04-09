@@ -642,11 +642,14 @@ function buildRooms(jobs: VenueScopeJob[]): RoomSummary[] {
     const totalEntries  = roomJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
     const peakOccupancy = Math.max(...roomJobs.map(j => j.peakOccupancy ?? 0), 0);
     // For live cameras, peakOccupancy is repurposed as current in-frame count (see aws_sync.py)
-    // Prefer entries-exits for true entrance cameras, otherwise use the live in-frame count
+    // Prefer entries-exits for true entrance cameras, otherwise use the live in-frame count.
+    // For snapshot cameras (done, not isLive), treat as current if completed within 25 minutes.
     const entriesExits  = Math.max(0, (best.totalEntries ?? 0) - (best.totalExits ?? 0));
+    const jobAge = Date.now() / 1000 - (best.finishedAt ?? best.updatedAt ?? best.createdAt ?? 0);
+    const isRecentSnapshot = isPeople && !best.isLive && jobAge < 1500 && (best.peakOccupancy ?? 0) > 0;
     const currentOcc    = best.isLive
       ? (entriesExits > 0 ? entriesExits : (best.peakOccupancy ?? 0))
-      : 0;
+      : isRecentSnapshot ? (best.peakOccupancy ?? 0) : 0;
 
     return {
       label,
@@ -753,18 +756,25 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
 function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScopeJob[]; avgDrinkPrice: number; barOpen?: boolean }) {
   const totalDrinks    = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const liveJobs       = jobs.filter(j => j.isLive);
+  const nowSec         = Date.now() / 1000;
 
-  // Only people_count cameras carry meaningful occupancy data
-  const peopleLive     = liveJobs.filter(j => j.analysisMode === 'people_count');
+  // Include live jobs AND recent snapshot jobs (done within 25 min) for people_count
+  const peopleRecent = jobs.filter(j =>
+    j.analysisMode === 'people_count' && (
+      j.isLive ||
+      (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 1500
+    )
+  );
 
   // Entrance cameras: sum entries - exits across all people_count cameras
-  const totalEntries   = peopleLive.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
-  const totalExits     = peopleLive.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
+  const totalEntries   = peopleRecent.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+  const totalExits     = peopleRecent.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
   const netLineCount   = totalEntries > 0 ? Math.max(0, totalEntries - totalExits) : 0;
 
-  // Fallback: sum peakOccupancy across people_count live cameras only
-  // (excludes bar/bottle cameras that don't measure floor occupancy)
-  const liveCamOccupancy = peopleLive.reduce((s, j) => s + (j.peakOccupancy ?? 0), 0);
+  // Fallback: use highest single-camera peakOccupancy (not sum — cameras overlap)
+  const liveCamOccupancy = peopleRecent.length > 0
+    ? Math.max(...peopleRecent.map(j => j.peakOccupancy ?? 0))
+    : 0;
   const currentOccupancy = netLineCount > 0 ? netLineCount : liveCamOccupancy;
   const occupancyIsEntrance = netLineCount > 0;
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
@@ -1042,10 +1052,10 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
         <div className="grid grid-cols-2 gap-2">
           <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
             <div className={`text-xl font-bold ${room.currentOccupancy > 0 ? 'text-teal' : 'text-text-muted'}`}>
-              {room.currentOccupancy > 0 ? room.currentOccupancy : (room.isLive ? '—' : room.peakOccupancy)}
+              {room.currentOccupancy > 0 ? room.currentOccupancy : '—'}
             </div>
             <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">
-              {room.isLive ? 'In Room' : 'Peak'}
+              In Room
             </div>
           </div>
           <div className="bg-whoop-bg rounded-xl p-2.5 text-center">

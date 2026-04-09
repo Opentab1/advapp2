@@ -505,11 +505,18 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
 
   const vsOccupancy = useMemo(() => {
     if (vsTodayJobs.length === 0) return null;
-    // Only people_count cameras carry meaningful occupancy data
-    const peopleLive = vsTodayJobs.filter(j => j.isLive && j.analysisMode === 'people_count');
-    // peakOccupancy is repurposed as current head-count for live cameras (see aws_sync.py)
-    const liveCurrent = peopleLive.reduce((s, j) => s + (j.peakOccupancy ?? 0), 0);
+    // Only people_count cameras carry meaningful occupancy data.
+    // Include live jobs AND recent snapshots (done within 25 min) — snapshot cameras
+    // complete as 'done' (isLive=false) but their reading is still current.
+    const nowSec = Date.now() / 1000;
     const peoplJobs   = vsTodayJobs.filter(j => j.analysisMode === 'people_count');
+    const peopleRecent = peoplJobs.filter(j =>
+      j.isLive || (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 1500
+    );
+    // Use highest single-camera value (cameras overlap; don't sum)
+    const liveCurrent = peopleRecent.length > 0
+      ? Math.max(...peopleRecent.map(j => j.peakOccupancy ?? 0))
+      : 0;
     return {
       todayEntries:  peoplJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
       todayExits:    peoplJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
