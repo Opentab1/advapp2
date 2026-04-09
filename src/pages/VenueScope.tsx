@@ -1933,7 +1933,13 @@ export function VenueScope() {
   ), [safeJobs, todayStart]);
   const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !isJobLive(j)), [safeJobs, todayStart]);
 
-  const allRooms    = useMemo(() => { try { return buildRooms(tonightJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [tonightJobs]);
+  // For the camera grid: only jobs with a real camera label, not failed/ghost ones
+  const gridJobs = useMemo(() => tonightJobs.filter(j =>
+    j.status !== 'failed' &&
+    !j.jobId.startsWith('~') &&
+    (j.clipLabel || j.cameraLabel || j.roomLabel)  // must have a displayable name
+  ), [tonightJobs]);
+  const allRooms    = useMemo(() => { try { return buildRooms(gridJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [gridJobs]);
   // Show ALL rooms in the camera grid (live + done snapshots). Snapshot cameras are
   // almost always "done" between their 20-min polling intervals — hiding done rooms
   // means the grid would appear empty most of the time.
