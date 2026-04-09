@@ -289,11 +289,14 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
     created_at_val: Optional[float] = None
     if job_data:
         created_at_val = job_data.get("created_at")
-        update_expr += ", clipLabel = :cl, analysisMode = :am, createdAt = :ca, internalJobId = :ij"
-        expr_vals[":cl"] = {"S": str(job_data.get("clip_label", "") or "")}
+        clip_label = str(job_data.get("clip_label", "") or "")
+        is_live_cam = "🔴 LIVE" in clip_label
+        update_expr += ", clipLabel = :cl, analysisMode = :am, createdAt = :ca, internalJobId = :ij, isLive = :il"
+        expr_vals[":cl"] = {"S": clip_label}
         expr_vals[":am"] = {"S": str(job_data.get("analysis_mode", "drink_count"))}
         expr_vals[":ca"] = {"N": str(created_at_val or time.time())}
         expr_vals[":ij"] = {"S": job_id}
+        expr_vals[":il"] = {"BOOL": is_live_cam}
 
     ddb_key = _ddb_sort_key(job_id, created_at_val)
     try:
@@ -367,11 +370,19 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
 
     # Include per-bartender breakdown if available
     if bts:
-        bt_compact = {name: {"drinks": int(d.get("total_drinks", 0)),
-                             "per_hour": round(float(d.get("drinks_per_hour", 0.0)), 1)}
-                      for name, d in bts.items()}
-        update_expr += ", bartenderSummary = :bs"
-        expr_vals[":bs"] = {"S": json.dumps(bt_compact)}
+        bt_compact = {
+            name: {
+                "drinks":     int(d.get("total_drinks", 0)),
+                "per_hour":   round(float(d.get("drinks_per_hour", 0.0)), 1),
+                # Last 20 timestamps (secs-into-video) so React can show drink log
+                "timestamps": [round(t, 1) for t in d.get("drink_timestamps", [])[-20:]],
+            }
+            for name, d in bts.items()
+        }
+        bt_json = json.dumps(bt_compact)
+        update_expr += ", bartenderSummary = :bs, bartenderBreakdown = :bd"
+        expr_vals[":bs"] = {"S": bt_json}
+        expr_vals[":bd"] = {"S": bt_json}
 
     # Include table visits by staff for live dashboard attribution
     tables_data = summary.get("tables", {})
@@ -431,13 +442,20 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
     created_at = summary.get("created_at", time.time())
     ddb_key    = _ddb_sort_key(job_id, created_at)
 
+    # Live camera jobs (continuous RTSP streams) keep status=running + isLive=true so
+    # the React dashboard never shows a disconnect during the ~60s restart gap between
+    # segments. The new segment's sync_partial_to_aws overwrites this within seconds.
+    is_live_cam = "🔴 LIVE" in summary.get("clip_label", "")
+    now_ts = str(time.time())
+
     item: Dict[str, Any] = {
         "venueId":         {"S": venue_id},
         "jobId":           {"S": ddb_key},
         "internalJobId":   {"S": job_id},   # original UUID for reference
-        "status":          {"S": "done"},
+        "status":          {"S": "running" if is_live_cam else "done"},
+        "isLive":          {"BOOL": is_live_cam},
+        "updatedAt":       {"N": now_ts},
         "createdAt":       {"N": str(created_at)},
-        "finishedAt":      {"N": str(time.time())},
         "analysisMode":    {"S": summary.get("analysis_mode", "drink_count")},
         "activeModes":     {"S": json.dumps(active_modes)},
         "clipLabel":       {"S": summary.get("clip_label", "")},
@@ -451,6 +469,8 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
         "unrungDrinks":    {"N": str(int(summary.get("unrung_drinks", 0)))},
         "syncStatus":      {"S": "synced"},
     }
+    if not is_live_cam:
+        item["finishedAt"] = {"N": now_ts}
 
     if clip_s3_key:
         item["s3ClipKey"] = {"S": clip_s3_key}
