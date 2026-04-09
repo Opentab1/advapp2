@@ -589,6 +589,9 @@ function RoomCard({ room, camProxyUrl, onInvestigate }: { room: RoomSummary; cam
         )}
       </div>
 
+      {/* Drink log — expandable, drink_count cameras only */}
+      {isDrink && <DrinkLogSection job={room.job} />}
+
       {/* Table visits by staff */}
       <TableVisitsSection job={room.job} />
     </motion.div>
@@ -1086,6 +1089,72 @@ function TableVisitsSection({ job }: { job: VenueScopeJob }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ── Drink log ─────────────────────────────────────────────────────────────────
+
+interface DrinkEntry {
+  wallTime: number; // epoch seconds
+  bartender: string;
+}
+
+function DrinkLogSection({ job }: { job: VenueScopeJob }) {
+  const [open, setOpen] = useState(false);
+
+  if (!job.bartenderBreakdown) return null;
+
+  let entries: DrinkEntry[] = [];
+  try {
+    const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks?: number; per_hour?: number; timestamps?: number[] }>;
+    for (const [name, d] of Object.entries(bd)) {
+      for (const t of d.timestamps ?? []) {
+        entries.push({ wallTime: (job.createdAt ?? 0) + t, bartender: name });
+      }
+    }
+  } catch { /* no-op */ }
+
+  if (entries.length === 0) return null;
+
+  // Most recent first
+  entries = entries.sort((a, b) => b.wallTime - a.wallTime);
+
+  return (
+    <div className="mt-3 pt-3 border-t border-whoop-divider/60">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between text-[10px] text-text-muted hover:text-white transition-colors"
+      >
+        <span className="flex items-center gap-1.5 uppercase tracking-wide font-semibold">
+          <Activity className="w-3 h-3" />
+          Drink Log ({entries.length})
+        </span>
+        {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-2 space-y-1 max-h-48 overflow-y-auto pr-1">
+              {entries.map((e, i) => (
+                <div key={i} className="flex items-center justify-between text-[11px] py-1 border-b border-whoop-divider/30 last:border-0">
+                  <span className="text-teal font-mono tabular-nums">
+                    {new Date(e.wallTime * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                  <span className="text-text-muted truncate max-w-[100px] ml-2">{e.bartender}</span>
+                  <span className="ml-auto text-emerald-400 flex-shrink-0">✓</span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

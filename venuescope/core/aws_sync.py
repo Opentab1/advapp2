@@ -459,13 +459,15 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
         item["summaryS3Key"] = {"S": summary_s3_key}
 
     # ── Per-station bartender breakdown ────────────────────────────────────────
-    # React reads bartenderBreakdown as JSON: {name: {drinks, per_hour}}
+    # React reads bartenderBreakdown as JSON: {name: {drinks, per_hour, timestamps}}
     bts = summary.get("bartenders", {})
     if bts:
         bt_breakdown = {
             name: {
-                "drinks":   int(d.get("total_drinks", 0)),
-                "per_hour": round(float(d.get("drinks_per_hour", 0.0)), 1),
+                "drinks":     int(d.get("total_drinks", 0)),
+                "per_hour":   round(float(d.get("drinks_per_hour", 0.0)), 1),
+                # Last 20 drink timestamps as seconds-into-video (wall_time = createdAt + t)
+                "timestamps": [round(t, 1) for t in d.get("drink_timestamps", [])[-20:]],
             }
             for name, d in bts.items()
         }
