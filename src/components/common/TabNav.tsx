@@ -9,10 +9,10 @@
  */
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, BarChart2, Settings, Sparkles, Users, Smartphone, Video, UserCheck, LucideIcon } from 'lucide-react';
+import { Zap, BarChart2, Settings, Sparkles, Users, Smartphone, Video, LucideIcon } from 'lucide-react';
 import { haptic } from '../../utils/haptics';
 
-export type TabId = 'live' | 'analytics' | 'events' | 'staffing' | 'leads' | 'venuescope' | 'bartenders' | 'settings';
+export type TabId = 'live' | 'analytics' | 'events' | 'staffing' | 'leads' | 'venuescope' | 'settings';
 
 interface Tab {
   id: TabId;
@@ -24,7 +24,6 @@ interface Tab {
 const TABS: Tab[] = [
   { id: 'live',        label: 'Live',        icon: Zap },
   { id: 'venuescope',  label: 'VenueScope',  icon: Video },
-  { id: 'bartenders',  label: 'Bar Staff',   icon: UserCheck },
   { id: 'analytics',   label: 'Results',     icon: BarChart2 },
   { id: 'events',      label: 'Events',      icon: Sparkles },
   { id: 'staffing',    label: 'Staffing',    icon: Users },
