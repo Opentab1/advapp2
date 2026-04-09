@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
+import {
   Users, Calendar, Clock, Plus, X, Save, Trash2,
-  TrendingUp, TrendingDown, RefreshCw, BarChart3, User, Upload
+  TrendingUp, TrendingDown, RefreshCw, BarChart3, User, Upload,
+  ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Camera
 } from 'lucide-react';
 import { format, parseISO, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks } from 'date-fns';
 import dynamoDBService from '../services/dynamodb.service';
@@ -13,203 +14,7 @@ import { PullToRefresh } from '../components/common/PullToRefresh';
 import { CSVImport } from '../components/common/CSVImport';
 import { isDemoAccount } from '../utils/demoData';
 
-// Demo data for demo accounts
-const DEMO_STAFF: StaffMember[] = [
-  { id: 'demo-1', name: 'Sabrina Martinez', role: 'bartender', color: 'bg-purple-500' },
-  { id: 'demo-2', name: 'Jake Thompson', role: 'bartender', color: 'bg-purple-500' },
-  { id: 'demo-3', name: 'Ashley Chen', role: 'server', color: 'bg-cyan-500' },
-  { id: 'demo-4', name: 'Marcus Williams', role: 'server', color: 'bg-cyan-500' },
-  { id: 'demo-5', name: 'Tyler Johnson', role: 'door', color: 'bg-amber-500' },
-  { id: 'demo-6', name: 'Rachel Kim', role: 'manager', color: 'bg-emerald-500' },
-];
-
-const generateDemoShifts = (): Shift[] => {
-  const shifts: Shift[] = [];
-  const today = new Date();
-  const weekStart = startOfWeek(today, { weekStartsOn: 1 });
-  
-  // Generate shifts for this week and last week
-  for (let weekOffset = -1; weekOffset <= 1; weekOffset++) {
-    const week = addWeeks(weekStart, weekOffset);
-    const days = eachDayOfInterval({ 
-      start: week, 
-      end: endOfWeek(week, { weekStartsOn: 1 }) 
-    });
-    
-    days.forEach((day, dayIndex) => {
-      const dateStr = format(day, 'yyyy-MM-dd');
-      const isWeekend = dayIndex >= 4; // Fri, Sat, Sun
-      
-      // Bartenders
-      if (isWeekend) {
-        shifts.push({
-          id: `shift-${dateStr}-1`,
-          staffId: 'demo-1',
-          staffName: 'Sabrina Martinez',
-          role: 'bartender',
-          date: dateStr,
-          startTime: '18:00',
-          endTime: '02:00'
-        });
-        shifts.push({
-          id: `shift-${dateStr}-2`,
-          staffId: 'demo-2',
-          staffName: 'Jake Thompson',
-          role: 'bartender',
-          date: dateStr,
-          startTime: '20:00',
-          endTime: '02:00'
-        });
-      } else if (dayIndex >= 2) { // Wed, Thu
-        shifts.push({
-          id: `shift-${dateStr}-1`,
-          staffId: dayIndex % 2 === 0 ? 'demo-1' : 'demo-2',
-          staffName: dayIndex % 2 === 0 ? 'Sabrina Martinez' : 'Jake Thompson',
-          role: 'bartender',
-          date: dateStr,
-          startTime: '17:00',
-          endTime: '23:00'
-        });
-      }
-      
-      // Servers on busy nights
-      if (isWeekend || dayIndex === 3) {
-        shifts.push({
-          id: `shift-${dateStr}-3`,
-          staffId: 'demo-3',
-          staffName: 'Ashley Chen',
-          role: 'server',
-          date: dateStr,
-          startTime: '18:00',
-          endTime: '01:00'
-        });
-        if (isWeekend) {
-          shifts.push({
-            id: `shift-${dateStr}-4`,
-            staffId: 'demo-4',
-            staffName: 'Marcus Williams',
-            role: 'server',
-            date: dateStr,
-            startTime: '19:00',
-            endTime: '02:00'
-          });
-        }
-      }
-      
-      // Door on weekends
-      if (isWeekend) {
-        shifts.push({
-          id: `shift-${dateStr}-5`,
-          staffId: 'demo-5',
-          staffName: 'Tyler Johnson',
-          role: 'door',
-          date: dateStr,
-          startTime: '21:00',
-          endTime: '02:00'
-        });
-      }
-      
-      // Manager on Fri/Sat
-      if (dayIndex >= 4 && dayIndex <= 5) {
-        shifts.push({
-          id: `shift-${dateStr}-6`,
-          staffId: 'demo-6',
-          staffName: 'Rachel Kim',
-          role: 'manager',
-          date: dateStr,
-          startTime: '18:00',
-          endTime: '02:00'
-        });
-      }
-    });
-  }
-  
-  return shifts;
-};
-
-const DEMO_PERFORMANCE: StaffPerformance[] = [
-  {
-    staffId: 'demo-1',
-    staffName: 'Sabrina Martinez',
-    role: 'bartender',
-    shiftsWorked: 12,
-    avgGuestsPerShift: 187,
-    avgStayTime: 94,
-    avgOccupancy: 78,
-    performanceScore: 92
-  },
-  {
-    staffId: 'demo-6',
-    staffName: 'Rachel Kim',
-    role: 'manager',
-    shiftsWorked: 8,
-    avgGuestsPerShift: 165,
-    avgStayTime: 88,
-    avgOccupancy: 72,
-    performanceScore: 85
-  },
-  {
-    staffId: 'demo-3',
-    staffName: 'Ashley Chen',
-    role: 'server',
-    shiftsWorked: 10,
-    avgGuestsPerShift: 156,
-    avgStayTime: 82,
-    avgOccupancy: 68,
-    performanceScore: 79
-  },
-  {
-    staffId: 'demo-2',
-    staffName: 'Jake Thompson',
-    role: 'bartender',
-    shiftsWorked: 11,
-    avgGuestsPerShift: 142,
-    avgStayTime: 76,
-    avgOccupancy: 65,
-    performanceScore: 74
-  },
-  {
-    staffId: 'demo-4',
-    staffName: 'Marcus Williams',
-    role: 'server',
-    shiftsWorked: 8,
-    avgGuestsPerShift: 134,
-    avgStayTime: 71,
-    avgOccupancy: 62,
-    performanceScore: 68
-  },
-  {
-    staffId: 'demo-5',
-    staffName: 'Tyler Johnson',
-    role: 'door',
-    shiftsWorked: 8,
-    avgGuestsPerShift: 158,
-    avgStayTime: 85,
-    avgOccupancy: 70,
-    performanceScore: 76
-  },
-];
-
-// API endpoints — use external API if configured, otherwise localStorage
-const API_BASE = import.meta.env.VITE_STAFFING_API_URL || '';
-const STAFF_API = API_BASE ? `${API_BASE}/staff` : '';
-const SHIFTS_API = API_BASE ? `${API_BASE}/shifts` : '';
-
-// localStorage-based persistence when no external API is configured
-const _lsKey = (venueId: string, type: 'staff' | 'shifts') => `vs_staffing_${type}_${venueId}`;
-
-function _lsGetStaff(venueId: string): StaffMember[] {
-  try { return JSON.parse(localStorage.getItem(_lsKey(venueId, 'staff')) || '[]'); } catch { return []; }
-}
-function _lsSaveStaff(venueId: string, data: StaffMember[]) {
-  localStorage.setItem(_lsKey(venueId, 'staff'), JSON.stringify(data));
-}
-function _lsGetShifts(venueId: string): Shift[] {
-  try { return JSON.parse(localStorage.getItem(_lsKey(venueId, 'shifts')) || '[]'); } catch { return []; }
-}
-function _lsSaveShifts(venueId: string, data: Shift[]) {
-  localStorage.setItem(_lsKey(venueId, 'shifts'), JSON.stringify(data));
-}
+// ── Types ──────────────────────────────────────────────────────────────────
 
 interface StaffMember {
   id: string;
@@ -228,16 +33,15 @@ interface Shift {
   endTime: string;
 }
 
-interface StaffPerformance {
-  staffId: string;
-  staffName: string;
-  role: string;
-  shiftsWorked: number;
-  avgGuestsPerShift: number;
-  avgStayTime: number; // minutes
-  avgOccupancy: number;
-  performanceScore: number; // 0-100
+interface CamPerf {
+  name: string;
+  drinks: number;
+  shifts: number;
+  theftFlags: number;
+  drinksPerShift: number;
 }
+
+// ── Constants ──────────────────────────────────────────────────────────────
 
 const ROLE_COLORS: Record<string, string> = {
   bartender: 'bg-purple-500',
@@ -255,128 +59,563 @@ const ROLE_LABELS: Record<string, string> = {
   other: 'Other'
 };
 
-// ── Shift Scoreboard (mirrors VenueScope tab) ──────────────────────────────
-function StaffingShiftScoreboard({ jobs }: { jobs: VenueScopeJob[] }) {
-  if (jobs.length === 0) return null;
+// ── Persistence helpers ────────────────────────────────────────────────────
 
-  const latestJob = jobs[0];
-  const latestDow = latestJob.createdAt ? new Date(latestJob.createdAt * 1000).getDay() : -1;
-  const compareJob = jobs.slice(1).find(j => {
-    if (!j.createdAt || !latestJob.createdAt) return false;
-    const ageDays = (latestJob.createdAt - j.createdAt) / 86400;
-    return ageDays >= 6 && new Date(j.createdAt * 1000).getDay() === latestDow;
-  });
-  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const dayLabel = latestDow >= 0 ? dayNames[latestDow] : 'last week';
-  const pctDiff = (compareJob && (compareJob.totalDrinks ?? 0) > 0 && (latestJob.totalDrinks ?? 0) > 0)
-    ? Math.round(((latestJob.totalDrinks! - compareJob.totalDrinks!) / compareJob.totalDrinks!) * 100)
-    : null;
+const API_BASE = import.meta.env.VITE_STAFFING_API_URL || '';
+const STAFF_API = API_BASE ? `${API_BASE}/staff` : '';
+const SHIFTS_API = API_BASE ? `${API_BASE}/shifts` : '';
+
+const _lsKey = (venueId: string, type: 'staff' | 'shifts') => `vs_staffing_${type}_${venueId}`;
+function _lsGetStaff(venueId: string): StaffMember[] {
+  try { return JSON.parse(localStorage.getItem(_lsKey(venueId, 'staff')) || '[]'); } catch { return []; }
+}
+function _lsSaveStaff(venueId: string, data: StaffMember[]) {
+  localStorage.setItem(_lsKey(venueId, 'staff'), JSON.stringify(data));
+}
+function _lsGetShifts(venueId: string): Shift[] {
+  try { return JSON.parse(localStorage.getItem(_lsKey(venueId, 'shifts')) || '[]'); } catch { return []; }
+}
+function _lsSaveShifts(venueId: string, data: Shift[]) {
+  localStorage.setItem(_lsKey(venueId, 'shifts'), JSON.stringify(data));
+}
+
+// ── Demo data ──────────────────────────────────────────────────────────────
+
+const DEMO_STAFF: StaffMember[] = [
+  { id: 'demo-1', name: 'Sabrina Martinez', role: 'bartender', color: 'bg-purple-500' },
+  { id: 'demo-2', name: 'Jake Thompson', role: 'bartender', color: 'bg-purple-500' },
+  { id: 'demo-3', name: 'Ashley Chen', role: 'server', color: 'bg-cyan-500' },
+  { id: 'demo-4', name: 'Marcus Williams', role: 'server', color: 'bg-cyan-500' },
+  { id: 'demo-5', name: 'Tyler Johnson', role: 'door', color: 'bg-amber-500' },
+  { id: 'demo-6', name: 'Rachel Kim', role: 'manager', color: 'bg-emerald-500' },
+];
+
+const DEMO_CAM_PERF: CamPerf[] = [
+  { name: 'Sabrina Martinez', drinks: 284, shifts: 12, theftFlags: 1, drinksPerShift: 23.7 },
+  { name: 'Jake Thompson', drinks: 241, shifts: 11, theftFlags: 0, drinksPerShift: 21.9 },
+  { name: 'Rachel Kim', drinks: 188, shifts: 8, theftFlags: 0, drinksPerShift: 23.5 },
+];
+
+const generateDemoShifts = (): Shift[] => {
+  const shifts: Shift[] = [];
+  const today = new Date();
+  const weekStart = startOfWeek(today, { weekStartsOn: 1 });
+  for (let weekOffset = -1; weekOffset <= 1; weekOffset++) {
+    const week = addWeeks(weekStart, weekOffset);
+    const days = eachDayOfInterval({ start: week, end: endOfWeek(week, { weekStartsOn: 1 }) });
+    days.forEach((day, dayIndex) => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const isWeekend = dayIndex >= 4;
+      if (isWeekend) {
+        shifts.push({ id: `s-${dateStr}-1`, staffId: 'demo-1', staffName: 'Sabrina Martinez', role: 'bartender', date: dateStr, startTime: '18:00', endTime: '02:00' });
+        shifts.push({ id: `s-${dateStr}-2`, staffId: 'demo-2', staffName: 'Jake Thompson', role: 'bartender', date: dateStr, startTime: '20:00', endTime: '02:00' });
+        shifts.push({ id: `s-${dateStr}-3`, staffId: 'demo-3', staffName: 'Ashley Chen', role: 'server', date: dateStr, startTime: '18:00', endTime: '01:00' });
+        shifts.push({ id: `s-${dateStr}-5`, staffId: 'demo-5', staffName: 'Tyler Johnson', role: 'door', date: dateStr, startTime: '21:00', endTime: '02:00' });
+      }
+      if (dayIndex >= 4 && dayIndex <= 5) {
+        shifts.push({ id: `s-${dateStr}-6`, staffId: 'demo-6', staffName: 'Rachel Kim', role: 'manager', date: dateStr, startTime: '18:00', endTime: '02:00' });
+      }
+    });
+  }
+  return shifts;
+};
+
+// ── Sub-components ─────────────────────────────────────────────────────────
+
+function CameraPerformanceView({
+  camPerf,
+  staff,
+  shifts,
+  jobs,
+}: {
+  camPerf: CamPerf[];
+  staff: StaffMember[];
+  shifts: Shift[];
+  jobs: VenueScopeJob[];
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const today = new Date();
+
+  // Find next scheduled shift for a staff name
+  const nextShift = (name: string): Shift | undefined => {
+    const todayStr = format(today, 'yyyy-MM-dd');
+    return shifts
+      .filter(s => s.staffName.toLowerCase() === name.toLowerCase() && s.date >= todayStr)
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+  };
+
+  // Get job history where this bartender appears
+  const jobsForPerson = (name: string): VenueScopeJob[] => {
+    return jobs.filter(j => {
+      if (j.topBartender?.toLowerCase() === name.toLowerCase()) return true;
+      if (j.bartenderBreakdown) {
+        try {
+          const bd = JSON.parse(j.bartenderBreakdown) as Record<string, unknown>;
+          return Object.keys(bd).some(k => k.toLowerCase() === name.toLowerCase());
+        } catch { return false; }
+      }
+      return false;
+    }).slice(0, 8);
+  };
+
+  const roleFor = (name: string): string => {
+    const m = staff.find(s => s.name.toLowerCase() === name.toLowerCase());
+    return m ? ROLE_LABELS[m.role] || m.role : 'Bartender';
+  };
+
+  if (camPerf.length === 0) {
+    return (
+      <div className="glass-card p-12 text-center">
+        <Camera className="w-12 h-12 text-warm-600 mx-auto mb-3" />
+        <p className="text-warm-400 mb-1">No camera data yet</p>
+        <p className="text-sm text-warm-500">Run VenueScope on a shift to see staff performance here</p>
+      </div>
+    );
+  }
+
+  const maxDrinks = Math.max(...camPerf.map(p => p.drinks), 1);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="bg-warm-800/50 border border-warm-700 rounded-2xl p-4"
-    >
-      <div className="flex items-center gap-2 mb-3">
-        <TrendingUp className="w-4 h-4 text-teal" />
-        <h2 className="text-sm font-semibold text-white">Shift Scoreboard</h2>
-        {compareJob && (
-          <span className="text-[10px] text-warm-500 ml-auto">vs last {dayLabel}</span>
-        )}
-      </div>
-      <div className={`grid ${compareJob ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
-        <div className="space-y-2">
-          <p className="text-[10px] text-teal uppercase tracking-wider font-semibold">Last Shift</p>
-          <div className="space-y-1.5 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-warm-500">Drinks</span>
-              <div className="flex items-center gap-1.5">
-                <span className="text-white font-bold">{latestJob.totalDrinks ?? 0}</span>
-                {pctDiff !== null && (
-                  <span className={`flex items-center gap-0.5 text-[10px] font-semibold ${pctDiff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {pctDiff >= 0 ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
-                    {pctDiff >= 0 ? '+' : ''}{pctDiff}%
+    <div className="space-y-3">
+      {camPerf.map((perf, i) => {
+        const isOpen = expanded === perf.name;
+        const ns = nextShift(perf.name);
+        const history = jobsForPerson(perf.name);
+
+        return (
+          <motion.div
+            key={perf.name}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.04 }}
+            className="glass-card overflow-hidden"
+          >
+            {/* Row */}
+            <button
+              className="w-full flex items-center gap-4 p-4 text-left"
+              onClick={() => setExpanded(isOpen ? null : perf.name)}
+            >
+              {/* Rank */}
+              <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0 ${
+                i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-warm-500' : i === 2 ? 'bg-orange-700' : 'bg-warm-700'
+              }`}>
+                {i + 1}
+              </div>
+
+              {/* Name + bar */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-semibold text-white truncate">{perf.name}</span>
+                  <span className="text-[10px] text-warm-500 bg-warm-800 px-1.5 py-0.5 rounded flex-shrink-0">
+                    {roleFor(perf.name)}
                   </span>
-                )}
+                  {perf.theftFlags > 0 && (
+                    <span className="text-[10px] text-red-400 flex items-center gap-0.5 flex-shrink-0">
+                      <AlertTriangle className="w-3 h-3" />
+                      {perf.theftFlags} flag{perf.theftFlags > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="w-full bg-warm-700 rounded-full h-1.5">
+                  <div
+                    className="h-1.5 rounded-full bg-teal"
+                    style={{ width: `${(perf.drinks / maxDrinks) * 100}%` }}
+                  />
+                </div>
               </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-warm-500">Per Hour</span>
-              <span className="text-white font-semibold">{latestJob.drinksPerHour != null ? latestJob.drinksPerHour.toFixed(0) : '—'}</span>
-            </div>
-            {latestJob.topBartender && (
-              <div className="flex items-center justify-between">
-                <span className="text-warm-500">Top Performer</span>
-                <span className="text-white font-semibold truncate max-w-[120px]">{latestJob.topBartender}</span>
+
+              {/* Stats */}
+              <div className="grid grid-cols-3 gap-4 text-center flex-shrink-0">
+                <div>
+                  <div className="text-lg font-bold text-white">{perf.drinks}</div>
+                  <div className="text-[10px] text-warm-500">Total Drinks</div>
+                </div>
+                <div>
+                  <div className="text-lg font-bold text-white">{perf.shifts}</div>
+                  <div className="text-[10px] text-warm-500">Shifts</div>
+                </div>
+                <div>
+                  <div className="text-lg font-bold text-teal">{perf.drinksPerShift.toFixed(1)}</div>
+                  <div className="text-[10px] text-warm-500">Avg/Shift</div>
+                </div>
               </div>
-            )}
-            <div className="flex items-center justify-between">
-              <span className="text-warm-500">Theft</span>
-              {latestJob.hasTheftFlag
-                ? <span className="text-red-400 font-semibold text-[10px]">{latestJob.unrungDrinks ?? 0} unrung</span>
-                : <span className="text-emerald-400 font-semibold text-[10px]">✓ Clean</span>
-              }
-            </div>
+
+              {isOpen ? <ChevronDown className="w-4 h-4 text-warm-500 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-warm-500 flex-shrink-0" />}
+            </button>
+
+            {/* Expanded detail */}
+            <AnimatePresence>
+              {isOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden border-t border-warm-700"
+                >
+                  <div className="p-4 space-y-4">
+                    {/* Next shift */}
+                    <div>
+                      <p className="text-xs text-warm-500 uppercase tracking-wider mb-2">Next Scheduled Shift</p>
+                      {ns ? (
+                        <div className="flex items-center gap-3 bg-warm-800 rounded-lg px-3 py-2">
+                          <Calendar className="w-4 h-4 text-teal flex-shrink-0" />
+                          <span className="text-white text-sm font-medium">
+                            {format(parseISO(ns.date), 'EEE, MMM d')}
+                          </span>
+                          <span className="text-warm-400 text-sm">{ns.startTime}–{ns.endTime}</span>
+                        </div>
+                      ) : (
+                        <p className="text-warm-500 text-sm">No upcoming shifts scheduled</p>
+                      )}
+                    </div>
+
+                    {/* Shift history from camera */}
+                    {history.length > 0 && (
+                      <div>
+                        <p className="text-xs text-warm-500 uppercase tracking-wider mb-2">Recent Camera Sessions</p>
+                        <div className="space-y-1.5">
+                          {history.map(job => {
+                            let drinks = job.totalDrinks ?? 0;
+                            if (job.bartenderBreakdown) {
+                              try {
+                                const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks?: number }>;
+                                const entry = Object.entries(bd).find(([k]) => k.toLowerCase() === perf.name.toLowerCase());
+                                if (entry) drinks = entry[1].drinks ?? drinks;
+                              } catch { /* use job total */ }
+                            }
+                            return (
+                              <div key={job.jobId} className="flex items-center justify-between text-sm bg-warm-800/50 rounded px-3 py-1.5">
+                                <span className="text-warm-400">
+                                  {job.createdAt ? format(new Date(job.createdAt * 1000), 'EEE MMM d') : '—'}
+                                </span>
+                                <span className="text-white font-medium">{drinks} drinks</span>
+                                {job.hasTheftFlag
+                                  ? <span className="text-red-400 text-xs flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> flagged</span>
+                                  : <span className="text-emerald-400 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> clean</span>
+                                }
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ScheduleView({
+  staff,
+  shifts,
+  weekOffset,
+  setWeekOffset,
+  bartenderStats,
+  onAddStaff,
+  onDeleteStaff,
+  onAddShift,
+  onDeleteShift,
+  onImportCSV,
+}: {
+  staff: StaffMember[];
+  shifts: Shift[];
+  weekOffset: number;
+  setWeekOffset: React.Dispatch<React.SetStateAction<number>>;
+  bartenderStats: Record<string, { drinks: number; shifts: number; theftFlags: number }>;
+  onAddStaff: () => void;
+  onDeleteStaff: (id: string) => void;
+  onAddShift: (date: string) => void;
+  onDeleteShift: (id: string) => void;
+  onImportCSV: () => void;
+}) {
+  const currentWeekStart = startOfWeek(addWeeks(new Date(), weekOffset), { weekStartsOn: 1 });
+  const currentWeekEnd = endOfWeek(currentWeekStart, { weekStartsOn: 1 });
+  const weekDays = eachDayOfInterval({ start: currentWeekStart, end: currentWeekEnd });
+
+  const getShiftsForDay = (day: Date) => {
+    const dateStr = format(day, 'yyyy-MM-dd');
+    return shifts.filter(s => s.date === dateStr);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Team Roster */}
+      <div className="glass-card p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold text-white flex items-center gap-2">
+            <User className="w-4 h-4 text-primary" />
+            Team Members
+          </h2>
+          <div className="flex items-center gap-2">
+            <button onClick={onImportCSV} className="btn-secondary text-sm flex items-center gap-1">
+              <Upload className="w-4 h-4" />
+              Import CSV
+            </button>
+            <button onClick={onAddStaff} className="btn-primary text-sm flex items-center gap-1">
+              <Plus className="w-4 h-4" />
+              Add Staff
+            </button>
           </div>
         </div>
-        {compareJob && (
-          <div className="space-y-2 pl-4 border-l border-warm-700">
-            <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold">Last {dayLabel}</p>
-            <div className="space-y-1.5 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-warm-500">Drinks</span>
-                <span className="text-warm-300 font-semibold">{compareJob.totalDrinks ?? 0}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-warm-500">Per Hour</span>
-                <span className="text-warm-300 font-semibold">{compareJob.drinksPerHour != null ? compareJob.drinksPerHour.toFixed(0) : '—'}</span>
-              </div>
-              {compareJob.topBartender && (
-                <div className="flex items-center justify-between">
-                  <span className="text-warm-500">Top</span>
-                  <span className="text-warm-300 font-semibold truncate max-w-[100px]">{compareJob.topBartender}</span>
+
+        {staff.length === 0 ? (
+          <p className="text-warm-400 text-center py-4 text-sm">No staff yet. Add your team to start tracking schedules.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {staff.map(s => (
+              <div key={s.id} className="flex items-center gap-2 px-3 py-2 bg-warm-800 rounded-lg group">
+                <div className={`w-2.5 h-2.5 rounded-full ${ROLE_COLORS[s.role]}`} />
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white text-sm">{s.name}</span>
+                    <span className="text-xs text-warm-500">({ROLE_LABELS[s.role]})</span>
+                  </div>
+                  {bartenderStats[s.name] && (
+                    <div className="text-[10px] text-teal mt-0.5">
+                      {bartenderStats[s.name].drinks} drinks · {bartenderStats[s.name].shifts} shifts
+                      {bartenderStats[s.name].theftFlags > 0 && (
+                        <span className="text-red-400 ml-1">· {bartenderStats[s.name].theftFlags} flag{bartenderStats[s.name].theftFlags > 1 ? 's' : ''}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
-              <div className="flex items-center justify-between">
-                <span className="text-warm-500">Theft</span>
-                {compareJob.hasTheftFlag
-                  ? <span className="text-red-400/70 font-semibold text-[10px]">{compareJob.unrungDrinks ?? 0} unrung</span>
-                  : <span className="text-emerald-400/70 font-semibold text-[10px]">✓ Clean</span>
-                }
+                <button onClick={() => onDeleteStaff(s.id)} className="opacity-0 group-hover:opacity-100 text-warm-500 hover:text-red-400 transition-all ml-1">
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-            </div>
+            ))}
           </div>
         )}
       </div>
+
+      {/* Week Navigation */}
+      <div className="flex items-center justify-between">
+        <button onClick={() => setWeekOffset(w => w - 1)} className="btn-secondary text-sm">← Prev</button>
+        <span className="text-white font-medium text-sm">
+          {format(currentWeekStart, 'MMM d')} – {format(currentWeekEnd, 'MMM d, yyyy')}
+        </span>
+        <button onClick={() => setWeekOffset(w => w + 1)} className="btn-secondary text-sm">Next →</button>
+      </div>
+
+      {/* Week Grid */}
+      <div className="grid grid-cols-7 gap-2">
+        {weekDays.map(day => {
+          const dayShifts = getShiftsForDay(day);
+          const isToday = format(day, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
+          const dateStr = format(day, 'yyyy-MM-dd');
+          return (
+            <div key={dateStr} className={`glass-card p-3 min-h-[150px] ${isToday ? 'ring-2 ring-primary' : ''}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <div className={`text-xs ${isToday ? 'text-primary' : 'text-warm-400'}`}>{format(day, 'EEE')}</div>
+                  <div className="text-lg font-bold text-white">{format(day, 'd')}</div>
+                </div>
+                <button onClick={() => onAddShift(dateStr)} className="text-warm-500 hover:text-primary transition-colors">
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-1">
+                {dayShifts.map(shift => (
+                  <div key={shift.id} className={`text-xs p-1.5 rounded ${ROLE_COLORS[shift.role]} bg-opacity-20 group relative`}>
+                    <div className="font-medium text-white truncate">{shift.staffName}</div>
+                    <div className="text-warm-300">{shift.startTime}–{shift.endTime}</div>
+                    <button onClick={() => onDeleteShift(shift.id)} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-red-400">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Modals ─────────────────────────────────────────────────────────────────
+
+function AddStaffModal({ onClose, onSave }: { onClose: () => void; onSave: (name: string, role: StaffMember['role']) => void }) {
+  const [name, setName] = useState('');
+  const [role, setRole] = useState<StaffMember['role']>('bartender');
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+        className="glass-card p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold text-white">Add Staff Member</h3>
+          <button onClick={onClose} className="text-warm-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={e => { e.preventDefault(); if (name.trim()) { onSave(name.trim(), role); } }} className="space-y-4">
+          <div>
+            <label className="block text-sm text-warm-400 mb-2">Name</label>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Sarah Johnson"
+              className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white placeholder-warm-500 focus:outline-none focus:ring-2 focus:ring-primary"
+              required autoFocus />
+          </div>
+          <div>
+            <label className="block text-sm text-warm-400 mb-2">Role</label>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(ROLE_LABELS).map(([key, label]) => (
+                <button key={key} type="button" onClick={() => setRole(key as StaffMember['role'])}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                    role === key ? 'bg-primary/20 border border-primary/30 text-white' : 'bg-warm-800 text-warm-400 hover:text-white'
+                  }`}>
+                  <div className={`w-3 h-3 rounded-full ${ROLE_COLORS[key]}`} />
+                  <span className="text-sm">{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+            <button type="submit" className="flex-1 btn-primary flex items-center justify-center gap-2">
+              <Save className="w-4 h-4" /> Add Staff
+            </button>
+          </div>
+        </form>
+      </motion.div>
     </motion.div>
   );
 }
 
+function AddShiftModal({ date, staff, onClose, onSave }: {
+  date: string; staff: StaffMember[];
+  onClose: () => void;
+  onSave: (staffId: string, date: string, startTime: string, endTime: string) => void;
+}) {
+  const [staffId, setStaffId] = useState(staff[0]?.id || '');
+  const [startTime, setStartTime] = useState('18:00');
+  const [endTime, setEndTime] = useState('02:00');
+
+  if (staff.length === 0) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
+        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+          className="glass-card p-6 w-full max-w-md text-center" onClick={e => e.stopPropagation()}>
+          <Users className="w-12 h-12 text-warm-600 mx-auto mb-3" />
+          <p className="text-warm-400 mb-4">Add staff members first before creating shifts</p>
+          <button onClick={onClose} className="btn-primary">Got it</button>
+        </motion.div>
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+        className="glass-card p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold text-white">Add Shift</h3>
+          <button onClick={onClose} className="text-warm-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <p className="text-sm text-warm-400 mb-4">{format(parseISO(date), 'EEEE, MMMM d, yyyy')}</p>
+        <form onSubmit={e => { e.preventDefault(); if (staffId) onSave(staffId, date, startTime, endTime); }} className="space-y-4">
+          <div>
+            <label className="block text-sm text-warm-400 mb-2">Staff Member</label>
+            <select value={staffId} onChange={e => setStaffId(e.target.value)}
+              className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary">
+              {staff.map(s => <option key={s.id} value={s.id}>{s.name} ({ROLE_LABELS[s.role]})</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-warm-400 mb-2">Start Time</label>
+              <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)}
+                className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary" />
+            </div>
+            <div>
+              <label className="block text-sm text-warm-400 mb-2">End Time</label>
+              <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)}
+                className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary" />
+            </div>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+            <button type="submit" className="flex-1 btn-primary flex items-center justify-center gap-2">
+              <Save className="w-4 h-4" /> Add Shift
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────
+
 export function Staffing() {
-  const [activeTab, setActiveTab] = useState<'schedule' | 'performance'>('schedule');
+  const [activeTab, setActiveTab] = useState<'performance' | 'schedule'>('performance');
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
-  const [performance, setPerformance] = useState<StaffPerformance[]>([]);
+  const [camPerf, setCamPerf] = useState<CamPerf[]>([]);
+  const [allJobs, setAllJobs] = useState<VenueScopeJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0);
   const [showAddStaff, setShowAddStaff] = useState(false);
-  const [showAddShift, setShowAddShift] = useState<string | null>(null); // date string
+  const [showAddShift, setShowAddShift] = useState<string | null>(null);
   const [showCSVImport, setShowCSVImport] = useState(false);
   const [bartenderStats, setBartenderStats] = useState<Record<string, { drinks: number; shifts: number; theftFlags: number }>>({});
-  const [scoreboardJobs, setScoreboardJobs] = useState<VenueScopeJob[]>([]);
 
   const user = authService.getStoredUser();
   const venueId = user?.venueId;
 
-  useEffect(() => {
+  const loadData = useCallback(async () => {
     if (!venueId) return;
-    venueScopeService.listJobs(venueId, 50).then(jobs => {
+    setLoading(true);
+    try {
+      if (isDemoAccount(venueId)) {
+        await new Promise(r => setTimeout(r, 400));
+        setStaff(DEMO_STAFF);
+        setShifts(generateDemoShifts());
+        setCamPerf(DEMO_CAM_PERF);
+        setAllJobs([]);
+        setLoading(false);
+        return;
+      }
+
+      // Load staff + shifts
+      let mappedStaff: StaffMember[] = [];
+      let mappedShifts: Shift[] = [];
+      if (API_BASE) {
+        const [sr, shr] = await Promise.all([fetch(`${STAFF_API}/${venueId}`), fetch(`${SHIFTS_API}/${venueId}`)]);
+        const sd = sr.ok ? await sr.json() : [];
+        const shd = shr.ok ? await shr.json() : [];
+        mappedStaff = sd.map((s: { staffId: string; name: string; role: string; color?: string }) => ({
+          id: s.staffId, name: s.name, role: s.role as StaffMember['role'], color: s.color || ROLE_COLORS[s.role] || ROLE_COLORS.other
+        }));
+        mappedShifts = shd.map((s: { shiftId: string; staffId: string; staffName: string; role: string; date: string; startTime: string; endTime: string }) => ({
+          id: s.shiftId, staffId: s.staffId, staffName: s.staffName, role: s.role, date: s.date, startTime: s.startTime, endTime: s.endTime
+        }));
+      } else {
+        mappedStaff = _lsGetStaff(venueId);
+        mappedShifts = _lsGetShifts(venueId);
+      }
+      setStaff(mappedStaff);
+      setShifts(mappedShifts);
+
+      // Load VenueScope jobs for camera performance
+      const jobs = await venueScopeService.listJobs(venueId, 100);
+      const relevantJobs = jobs.filter(j => j.status === 'done' || j.isLive);
+      setAllJobs(relevantJobs);
+
+      // Build camera performance aggregates
       const stats: Record<string, { drinks: number; shifts: number; theftFlags: number }> = {};
-      jobs.filter(j => j.status === 'done' || j.isLive).forEach(job => {
+      relevantJobs.forEach(job => {
         if (job.bartenderBreakdown) {
           try {
-            const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks: number }>;
+            const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks?: number }>;
             Object.entries(bd).forEach(([name, data]) => {
               if (!stats[name]) stats[name] = { drinks: 0, shifts: 0, theftFlags: 0 };
               stats[name].drinks += data.drinks ?? 0;
@@ -395,331 +634,92 @@ export function Staffing() {
         }
       });
       setBartenderStats(stats);
-      setScoreboardJobs(jobs.filter(j => j.status === 'done' || j.isLive));
-    }).catch(() => {});
-  }, [venueId]);
 
-  // Calculate current week based on offset
-  const currentWeekStart = startOfWeek(addWeeks(new Date(), weekOffset), { weekStartsOn: 1 });
-  const currentWeekEnd = endOfWeek(currentWeekStart, { weekStartsOn: 1 });
-  const weekDays = eachDayOfInterval({ start: currentWeekStart, end: currentWeekEnd });
-
-  const loadData = useCallback(async () => {
-    if (!venueId) return;
-    setLoading(true);
-    
-    try {
-      // Demo account - use fake data
-      if (isDemoAccount(venueId)) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Simulate loading
-        setStaff(DEMO_STAFF);
-        setShifts(generateDemoShifts());
-        setPerformance(DEMO_PERFORMANCE);
-        setLoading(false);
-        return;
-      }
-      
-      // Load staff and shifts — use external API if configured, else localStorage
-      let mappedStaff: StaffMember[] = [];
-      let mappedShifts: Shift[] = [];
-
-      if (API_BASE) {
-        const [staffRes, shiftsRes] = await Promise.all([
-          fetch(`${STAFF_API}/${venueId}`),
-          fetch(`${SHIFTS_API}/${venueId}`)
-        ]);
-        const staffData = staffRes.ok ? await staffRes.json() : [];
-        const shiftsData = shiftsRes.ok ? await shiftsRes.json() : [];
-        mappedStaff = staffData.map((s: { staffId: string; name: string; role: string; color?: string }) => ({
-          id: s.staffId, name: s.name,
-          role: s.role as StaffMember['role'],
-          color: s.color || ROLE_COLORS[s.role] || ROLE_COLORS.other
-        }));
-        mappedShifts = shiftsData.map((s: { shiftId: string; staffId: string; staffName: string; role: string; date: string; startTime: string; endTime: string }) => ({
-          id: s.shiftId, staffId: s.staffId, staffName: s.staffName,
-          role: s.role, date: s.date, startTime: s.startTime, endTime: s.endTime
-        }));
-      } else {
-        mappedStaff = _lsGetStaff(venueId);
-        mappedShifts = _lsGetShifts(venueId);
-      }
-
-      setStaff(mappedStaff);
-      setShifts(mappedShifts);
-      
-      // Calculate performance metrics
-      await calculatePerformance(mappedStaff, mappedShifts);
-    } catch (error) {
-      console.error('Error loading staffing data:', error);
+      const perfArr: CamPerf[] = Object.entries(stats)
+        .map(([name, s]) => ({
+          name,
+          drinks: s.drinks,
+          shifts: s.shifts,
+          theftFlags: s.theftFlags,
+          drinksPerShift: s.shifts > 0 ? s.drinks / s.shifts : 0,
+        }))
+        .sort((a, b) => b.drinks - a.drinks);
+      setCamPerf(perfArr);
+    } catch (err) {
+      console.error('Staff load error', err);
     } finally {
       setLoading(false);
     }
   }, [venueId]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  const calculatePerformance = async (staffList: StaffMember[], shiftList: Shift[]) => {
-    if (!venueId || staffList.length === 0) {
-      setPerformance([]);
-      return;
-    }
-
-    try {
-      // Get 30 days of sensor data
-      const data = await dynamoDBService.getHistoricalSensorData(venueId, '30d');
-
-      // VenueScope fallback — use job data when no IoT sensor
-      if (!data?.data?.length) {
-        const vsJobs = await venueScopeService.listJobs(venueId, 100);
-        const doneJobs = vsJobs.filter(j => j.status === 'done' && j.finishedAt);
-        if (!doneJobs.length) { setPerformance([]); return; }
-
-        const perfMap = new Map<string, { shifts: number; totalDrinks: number; totalDph: number }>();
-        staffList.forEach(s => perfMap.set(s.id, { shifts: 0, totalDrinks: 0, totalDph: 0 }));
-
-        shiftList.forEach(shift => {
-          const shiftStart = new Date(`${shift.date}T${shift.startTime}`).getTime() / 1000;
-          const shiftEnd   = new Date(`${shift.date}T${shift.endTime}`).getTime() / 1000;
-          const matching   = doneJobs.filter(j => j.createdAt >= shiftStart && j.createdAt <= shiftEnd);
-          if (matching.length && perfMap.has(shift.staffId)) {
-            const p = perfMap.get(shift.staffId)!;
-            p.shifts++;
-            p.totalDrinks += matching.reduce((s, j) => s + (j.totalDrinks || 0), 0);
-            p.totalDph    += matching.reduce((s, j) => s + (j.drinksPerHour || 0), 0) / matching.length;
-          }
-        });
-
-        // If no shift matches, attribute all jobs to bartenders proportionally
-        if ([...perfMap.values()].every(p => p.shifts === 0)) {
-          const bartenders = staffList.filter(s => s.role === 'bartender');
-          const targets = bartenders.length ? bartenders : staffList;
-          const totalDrinks = doneJobs.reduce((s, j) => s + (j.totalDrinks || 0), 0);
-          const avgDph = doneJobs.reduce((s, j) => s + (j.drinksPerHour || 0), 0) / doneJobs.length;
-          targets.forEach(s => {
-            const p = perfMap.get(s.id)!;
-            p.shifts = doneJobs.length;
-            p.totalDrinks = Math.round(totalDrinks / targets.length);
-            p.totalDph = avgDph;
-          });
-        }
-
-        const perfArray: StaffPerformance[] = [];
-        staffList.forEach(s => {
-          const p = perfMap.get(s.id);
-          if (p && p.shifts > 0) {
-            const avgDrinks = Math.round(p.totalDrinks / p.shifts);
-            const avgDph    = p.totalDph / p.shifts;
-            const score     = Math.min(100, Math.round((avgDph / 30) * 60 + (avgDrinks / 20) * 40));
-            perfArray.push({
-              staffId: s.id, staffName: s.name, role: s.role,
-              shiftsWorked: p.shifts, avgGuestsPerShift: avgDrinks,
-              avgStayTime: 45, avgOccupancy: Math.round(avgDph),
-              performanceScore: score,
-            });
-          }
-        });
-        perfArray.sort((a, b) => b.performanceScore - a.performanceScore);
-        setPerformance(perfArray);
-        return;
-      }
-
-      const performanceMap = new Map<string, {
-        shifts: number;
-        totalGuests: number;
-        totalStayTime: number;
-        totalOccupancy: number;
-        dataPoints: number;
-      }>();
-
-      // Initialize performance tracking for each staff member
-      staffList.forEach(s => {
-        performanceMap.set(s.id, {
-          shifts: 0,
-          totalGuests: 0,
-          totalStayTime: 0,
-          totalOccupancy: 0,
-          dataPoints: 0
-        });
-      });
-
-      // For each shift, find matching sensor data
-      shiftList.forEach(shift => {
-        const shiftDate = shift.date;
-        const shiftStart = parseInt(shift.startTime.split(':')[0]);
-        const shiftEnd = parseInt(shift.endTime.split(':')[0]);
-        
-        // Find sensor readings during this shift
-        const shiftReadings = data.data.filter(d => {
-          const readingDate = format(new Date(d.timestamp), 'yyyy-MM-dd');
-          const readingHour = new Date(d.timestamp).getHours();
-          return readingDate === shiftDate && readingHour >= shiftStart && readingHour < shiftEnd;
-        });
-
-        if (shiftReadings.length > 0 && performanceMap.has(shift.staffId)) {
-          const perf = performanceMap.get(shift.staffId)!;
-          perf.shifts++;
-          
-          // Calculate guests for shift
-          const withEntries = shiftReadings.filter(d => d.occupancy?.entries !== undefined);
-          if (withEntries.length >= 2) {
-            const sorted = withEntries.sort((a, b) => 
-              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-            );
-            const guests = Math.max(0,
-              (sorted[sorted.length - 1].occupancy?.entries || 0) -
-              (sorted[0].occupancy?.entries || 0)
-            );
-            perf.totalGuests += guests;
-          }
-          
-          // Average occupancy during shift
-          const avgOcc = shiftReadings.reduce((sum, d) => sum + (d.occupancy?.current || 0), 0) / shiftReadings.length;
-          perf.totalOccupancy += avgOcc;
-          perf.dataPoints++;
-          
-          // Estimate stay time (simplified)
-          const maxOcc = Math.max(...shiftReadings.map(d => d.occupancy?.current || 0));
-          if (maxOcc > 0 && perf.totalGuests > 0) {
-            perf.totalStayTime += (avgOcc / maxOcc) * 60; // rough estimate in minutes
-          }
-        }
-      });
-
-      // Convert to performance array
-      const perfArray: StaffPerformance[] = [];
-      staffList.forEach(s => {
-        const perf = performanceMap.get(s.id);
-        if (perf && perf.shifts > 0) {
-          const avgGuests = Math.round(perf.totalGuests / perf.shifts);
-          const avgStay = Math.round(perf.totalStayTime / perf.shifts);
-          const avgOcc = Math.round(perf.totalOccupancy / perf.dataPoints);
-          
-          // Performance score based on guests and occupancy
-          const score = Math.min(100, Math.round((avgGuests / 100) * 50 + (avgOcc / 50) * 50));
-          
-          perfArray.push({
-            staffId: s.id,
-            staffName: s.name,
-            role: s.role,
-            shiftsWorked: perf.shifts,
-            avgGuestsPerShift: avgGuests,
-            avgStayTime: avgStay || 45, // default if can't calculate
-            avgOccupancy: avgOcc,
-            performanceScore: score
-          });
-        }
-      });
-
-      // Sort by performance score
-      perfArray.sort((a, b) => b.performanceScore - a.performanceScore);
-      setPerformance(perfArray);
-      
-    } catch (error) {
-      console.error('Error calculating performance:', error);
-    }
-  };
+  // ── Handlers ──
 
   const handleAddStaff = async (name: string, role: StaffMember['role']) => {
     if (!venueId) return;
-    try {
-      if (API_BASE) {
-        const response = await fetch(`${STAFF_API}/${venueId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, role, color: ROLE_COLORS[role] })
-        });
-        if (!response.ok) throw new Error('Failed to add staff');
-      } else {
-        const existing = _lsGetStaff(venueId);
-        existing.push({ id: `staff-${Date.now()}`, name, role, color: ROLE_COLORS[role] });
-        _lsSaveStaff(venueId, existing);
-      }
-      setShowAddStaff(false);
-      loadData();
-    } catch (error) {
-      console.error('Error adding staff:', error);
-      alert('Failed to add staff member. Please try again.');
+    if (API_BASE) {
+      await fetch(`${STAFF_API}/${venueId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, role, color: ROLE_COLORS[role] }) });
+    } else {
+      const existing = _lsGetStaff(venueId);
+      existing.push({ id: `staff-${Date.now()}`, name, role, color: ROLE_COLORS[role] });
+      _lsSaveStaff(venueId, existing);
     }
+    setShowAddStaff(false);
+    loadData();
   };
 
   const handleDeleteStaff = async (staffId: string) => {
     if (!venueId) return;
     if (!confirm('Delete this staff member and all their shifts?')) return;
-    try {
-      if (API_BASE) {
-        await fetch(`${STAFF_API}/${venueId}/${staffId}`, { method: 'DELETE' });
-        const staffShifts = shifts.filter(s => s.staffId === staffId);
-        await Promise.all(staffShifts.map(s => fetch(`${SHIFTS_API}/${venueId}/${s.id}`, { method: 'DELETE' })));
-      } else {
-        _lsSaveStaff(venueId, _lsGetStaff(venueId).filter(s => s.id !== staffId));
-        _lsSaveShifts(venueId, _lsGetShifts(venueId).filter(s => s.staffId !== staffId));
-      }
-      loadData();
-    } catch (error) {
-      console.error('Error deleting staff:', error);
-      alert('Failed to delete staff member. Please try again.');
+    if (API_BASE) {
+      await fetch(`${STAFF_API}/${venueId}/${staffId}`, { method: 'DELETE' });
+      const staffShifts = shifts.filter(s => s.staffId === staffId);
+      await Promise.all(staffShifts.map(s => fetch(`${SHIFTS_API}/${venueId}/${s.id}`, { method: 'DELETE' })));
+    } else {
+      _lsSaveStaff(venueId, _lsGetStaff(venueId).filter(s => s.id !== staffId));
+      _lsSaveShifts(venueId, _lsGetShifts(venueId).filter(s => s.staffId !== staffId));
     }
+    loadData();
   };
 
   const handleAddShift = async (staffId: string, date: string, startTime: string, endTime: string) => {
     if (!venueId) return;
     const staffMember = staff.find(s => s.id === staffId);
     if (!staffMember) return;
-    try {
-      if (API_BASE) {
-        const response = await fetch(`${SHIFTS_API}/${venueId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ staffId, staffName: staffMember.name, role: staffMember.role, date, startTime, endTime })
-        });
-        if (!response.ok) throw new Error('Failed to add shift');
-      } else {
-        const existing = _lsGetShifts(venueId);
-        existing.push({ id: `shift-${Date.now()}`, staffId, staffName: staffMember.name, role: staffMember.role, date, startTime, endTime });
-        _lsSaveShifts(venueId, existing);
-      }
-      setShowAddShift(null);
-      loadData();
-    } catch (error) {
-      console.error('Error adding shift:', error);
-      alert('Failed to add shift. Please try again.');
+    if (API_BASE) {
+      await fetch(`${SHIFTS_API}/${venueId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId, staffName: staffMember.name, role: staffMember.role, date, startTime, endTime }) });
+    } else {
+      const existing = _lsGetShifts(venueId);
+      existing.push({ id: `shift-${Date.now()}`, staffId, staffName: staffMember.name, role: staffMember.role, date, startTime, endTime });
+      _lsSaveShifts(venueId, existing);
     }
+    setShowAddShift(null);
+    loadData();
   };
 
   const handleDeleteShift = async (shiftId: string) => {
     if (!venueId) return;
-    try {
-      if (API_BASE) {
-        await fetch(`${SHIFTS_API}/${venueId}/${shiftId}`, { method: 'DELETE' });
-      } else {
-        _lsSaveShifts(venueId, _lsGetShifts(venueId).filter(s => s.id !== shiftId));
-      }
-      loadData();
-    } catch (error) {
-      console.error('Error deleting shift:', error);
+    if (API_BASE) {
+      await fetch(`${SHIFTS_API}/${venueId}/${shiftId}`, { method: 'DELETE' });
+    } else {
+      _lsSaveShifts(venueId, _lsGetShifts(venueId).filter(s => s.id !== shiftId));
     }
+    loadData();
   };
 
   const handleCSVImport = async (data: Record<string, string>[]): Promise<{ success: number; failed: number }> => {
     if (!venueId) return { success: 0, failed: data.length };
-
-    let success = 0;
-    let failed = 0;
+    let success = 0, failed = 0;
     const lsStaff = API_BASE ? null : _lsGetStaff(venueId);
     const lsShifts = API_BASE ? null : _lsGetShifts(venueId);
-
     for (const row of data) {
       try {
         if (row.name && row.role) {
           const role = row.role.toLowerCase();
           const validRole = (['bartender', 'server', 'door', 'manager', 'other'].includes(role) ? role : 'other') as StaffMember['role'];
           if (API_BASE) {
-            await fetch(`${STAFF_API}/${venueId}`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: row.name, role: validRole, color: ROLE_COLORS[validRole] })
-            });
+            await fetch(`${STAFF_API}/${venueId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: row.name, role: validRole, color: ROLE_COLORS[validRole] }) });
           } else {
             lsStaff!.push({ id: `staff-${Date.now()}-${Math.random()}`, name: row.name, role: validRole, color: ROLE_COLORS[validRole] });
           }
@@ -727,18 +727,13 @@ export function Staffing() {
         } else if (row.date && row.staffname && row.starttime && row.endtime) {
           let staffMember = (lsStaff || staff).find(s => s.name.toLowerCase() === row.staffname.toLowerCase());
           if (!staffMember) {
-            const role = (row.role?.toLowerCase() || 'other') as StaffMember['role'];
-            const validRole = ['bartender', 'server', 'door', 'manager', 'other'].includes(role) ? role : 'other' as StaffMember['role'];
+            const validRole = (['bartender', 'server', 'door', 'manager', 'other'].includes(row.role?.toLowerCase()) ? row.role.toLowerCase() : 'other') as StaffMember['role'];
             if (API_BASE) {
-              const res = await fetch(`${STAFF_API}/${venueId}`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: row.staffname, role: validRole, color: ROLE_COLORS[validRole] })
-              });
+              const res = await fetch(`${STAFF_API}/${venueId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: row.staffname, role: validRole, color: ROLE_COLORS[validRole] }) });
               if (res.ok) { const ns = await res.json(); staffMember = { id: ns.staffId, name: ns.name, role: ns.role, color: ns.color }; }
             } else {
               const ns: StaffMember = { id: `staff-${Date.now()}-${Math.random()}`, name: row.staffname, role: validRole, color: ROLE_COLORS[validRole] };
-              lsStaff!.push(ns);
-              staffMember = ns;
+              lsStaff!.push(ns); staffMember = ns;
             }
           }
           if (staffMember) {
@@ -748,80 +743,52 @@ export function Staffing() {
               if (parts.length === 3) formattedDate = `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`;
             }
             if (API_BASE) {
-              await fetch(`${SHIFTS_API}/${venueId}`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ staffId: staffMember.id, staffName: staffMember.name, role: staffMember.role, date: formattedDate, startTime: row.starttime, endTime: row.endtime })
-              });
+              await fetch(`${SHIFTS_API}/${venueId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId: staffMember.id, staffName: staffMember.name, role: staffMember.role, date: formattedDate, startTime: row.starttime, endTime: row.endtime }) });
             } else {
               lsShifts!.push({ id: `shift-${Date.now()}-${Math.random()}`, staffId: staffMember.id, staffName: staffMember.name, role: staffMember.role, date: formattedDate, startTime: row.starttime, endTime: row.endtime });
             }
             success++;
           } else { failed++; }
         } else { failed++; }
-      } catch (error) {
-        console.error('Error importing row:', error);
-        failed++;
-      }
+      } catch { failed++; }
     }
-
-    // Persist localStorage batches if not using external API
     if (!API_BASE && venueId) {
       if (lsStaff) _lsSaveStaff(venueId, lsStaff);
       if (lsShifts) _lsSaveShifts(venueId, lsShifts);
     }
-
-    // Reload data after import
     await loadData();
-
     return { success, failed };
   };
 
-  const getShiftsForDay = (date: Date) => {
-    const dateStr = format(date, 'yyyy-MM-dd');
-    return shifts.filter(s => s.date === dateStr);
-  };
-
-  const handleRefresh = async () => {
-    await loadData();
-  };
+  // ── Render ──
 
   return (
-    <PullToRefresh onRefresh={handleRefresh}>
+    <PullToRefresh onRefresh={loadData}>
       <div className="max-w-6xl mx-auto space-y-6 pb-20">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-3xl font-bold text-white flex items-center gap-3">
                 <Users className="w-8 h-8 text-primary" />
-                Staffing
+                Staff
               </h1>
-              <p className="text-warm-400 mt-1">Track schedules and measure staff impact</p>
+              <p className="text-warm-400 mt-1">Camera performance + schedule — full picture</p>
             </div>
           </div>
-
-          {/* Shift Scoreboard */}
-          <StaffingShiftScoreboard jobs={scoreboardJobs} />
 
           {/* Tabs */}
           <div className="flex gap-2 mb-6">
             {[
+              { id: 'performance' as const, label: 'Performance', icon: Camera },
               { id: 'schedule' as const, label: 'Schedule', icon: Calendar },
-              { id: 'performance' as const, label: 'Performance', icon: BarChart3 },
-            ].map((tab) => (
-              <motion.button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+            ].map(tab => (
+              <motion.button key={tab.id} onClick={() => setActiveTab(tab.id)} whileTap={{ scale: 0.95 }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
                   activeTab === tab.id
                     ? 'bg-primary/20 border border-primary/50 text-white'
                     : 'bg-warm-800 border border-warm-700 text-warm-400 hover:text-white'
-                }`}
-                whileTap={{ scale: 0.95 }}
-              >
+                }`}>
                 <tab.icon className="w-4 h-4" />
                 {tab.label}
               </motion.button>
@@ -832,257 +799,45 @@ export function Staffing() {
             <div className="flex items-center justify-center py-24">
               <RefreshCw className="w-8 h-8 text-primary animate-spin" />
             </div>
-          ) : activeTab === 'schedule' ? (
-            <>
-              {/* Staff List */}
-              <div className="glass-card p-4 mb-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                    <User className="w-5 h-5 text-primary" />
-                    Team Members
-                  </h2>
-                  <div className="flex items-center gap-2">
-                    <motion.button
-                      onClick={() => setShowCSVImport(true)}
-                      className="btn-secondary text-sm flex items-center gap-1"
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                    >
-                      <Upload className="w-4 h-4" />
-                      Import CSV
-                    </motion.button>
-                    <motion.button
-                      onClick={() => setShowAddStaff(true)}
-                      className="btn-primary text-sm flex items-center gap-1"
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                    >
-                      <Plus className="w-4 h-4" />
-                      Add Staff
-                    </motion.button>
-                  </div>
-                </div>
-                
-                {staff.length === 0 ? (
-                  <p className="text-warm-400 text-center py-4">No staff members yet. Add your team to start tracking.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {staff.map(s => (
-                      <div
-                        key={s.id}
-                        className="flex items-center gap-2 px-3 py-2 bg-warm-800 rounded-lg group"
-                      >
-                        <div className={`w-3 h-3 rounded-full ${ROLE_COLORS[s.role]}`} />
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-white">{s.name}</span>
-                            <span className="text-xs text-warm-400">({ROLE_LABELS[s.role]})</span>
-                          </div>
-                          {bartenderStats[s.name] && (
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <span className="text-[10px] text-teal">
-                                {bartenderStats[s.name].drinks} drinks · {bartenderStats[s.name].shifts} shifts
-                              </span>
-                              {bartenderStats[s.name].theftFlags > 0 && (
-                                <span className="text-[10px] text-red-400">
-                                  · {bartenderStats[s.name].theftFlags} flag{bartenderStats[s.name].theftFlags > 1 ? 's' : ''}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        <button
-                          onClick={() => handleDeleteStaff(s.id)}
-                          className="opacity-0 group-hover:opacity-100 text-warm-500 hover:text-red-400 transition-all"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Week Navigation */}
-              <div className="flex items-center justify-between mb-4">
-                <button
-                  onClick={() => setWeekOffset(w => w - 1)}
-                  className="btn-secondary text-sm"
-                >
-                  ← Previous Week
-                </button>
-                <div className="text-white font-medium">
-                  {format(currentWeekStart, 'MMM d')} - {format(currentWeekEnd, 'MMM d, yyyy')}
-                </div>
-                <button
-                  onClick={() => setWeekOffset(w => w + 1)}
-                  className="btn-secondary text-sm"
-                >
-                  Next Week →
-                </button>
-              </div>
-
-              {/* Week Schedule Grid */}
-              <div className="grid grid-cols-7 gap-2">
-                {weekDays.map(day => {
-                  const dayShifts = getShiftsForDay(day);
-                  const isToday = format(day, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
-                  const dateStr = format(day, 'yyyy-MM-dd');
-                  
-                  return (
-                    <div
-                      key={dateStr}
-                      className={`glass-card p-3 min-h-[150px] ${isToday ? 'ring-2 ring-primary' : ''}`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <div className={`text-xs ${isToday ? 'text-primary' : 'text-warm-400'}`}>
-                            {format(day, 'EEE')}
-                          </div>
-                          <div className="text-lg font-bold text-white">{format(day, 'd')}</div>
-                        </div>
-                        <button
-                          onClick={() => setShowAddShift(dateStr)}
-                          className="text-warm-500 hover:text-primary transition-colors"
-                        >
-                          <Plus className="w-4 h-4" />
-                        </button>
-                      </div>
-                      
-                      <div className="space-y-1">
-                        {dayShifts.map(shift => (
-                          <div
-                            key={shift.id}
-                            className={`text-xs p-1.5 rounded ${ROLE_COLORS[shift.role]} bg-opacity-20 group relative`}
-                          >
-                            <div className="font-medium text-white truncate">{shift.staffName}</div>
-                            <div className="text-warm-300">{shift.startTime}-{shift.endTime}</div>
-                            <button
-                              onClick={() => handleDeleteShift(shift.id)}
-                              className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-red-400"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
+          ) : activeTab === 'performance' ? (
+            <CameraPerformanceView
+              camPerf={camPerf}
+              staff={staff}
+              shifts={shifts}
+              jobs={allJobs}
+            />
           ) : (
-            /* Performance Tab */
-            <div className="space-y-4">
-              {performance.length === 0 ? (
-                <div className="glass-card p-12 text-center">
-                  <BarChart3 className="w-12 h-12 text-warm-600 mx-auto mb-3" />
-                  <p className="text-warm-400 mb-2">No performance data yet</p>
-                  <p className="text-sm text-warm-500">Add staff and log their shifts to see performance metrics</p>
-                </div>
-              ) : (
-                <>
-                  <div className="glass-card p-4">
-                    <h2 className="text-lg font-semibold text-white mb-4">Staff Performance Rankings</h2>
-                    <p className="text-sm text-warm-400 mb-4">
-                      Based on guest counts and occupancy during each staff member's shifts
-                    </p>
-                    
-                    <div className="space-y-3">
-                      {performance.map((perf, i) => (
-                        <motion.div
-                          key={perf.staffId}
-                          initial={{ opacity: 0, x: -20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.05 }}
-                          className="flex items-center gap-4 p-4 bg-warm-800 rounded-xl"
-                        >
-                          <div className={`w-10 h-10 rounded-full ${ROLE_COLORS[perf.role]} flex items-center justify-center text-white font-bold`}>
-                            {i + 1}
-                          </div>
-                          
-                          <div className="flex-1">
-                            <div className="font-medium text-white">{perf.staffName}</div>
-                            <div className="text-xs text-warm-400">{ROLE_LABELS[perf.role]} • {perf.shiftsWorked} shifts</div>
-                          </div>
-                          
-                          <div className="grid grid-cols-3 gap-6 text-center">
-                            <div>
-                              <div className="text-lg font-bold text-white">{perf.avgGuestsPerShift}</div>
-                              <div className="text-xs text-warm-400">Avg Guests</div>
-                            </div>
-                            <div>
-                              <div className="text-lg font-bold text-white">{perf.avgStayTime} min</div>
-                              <div className="text-xs text-warm-400">Avg Stay</div>
-                            </div>
-                            <div>
-                              <div className={`text-lg font-bold ${perf.performanceScore >= 70 ? 'text-emerald-400' : perf.performanceScore >= 40 ? 'text-amber-400' : 'text-red-400'}`}>
-                                {perf.performanceScore}
-                              </div>
-                              <div className="w-full bg-warm-700 rounded-full h-1.5 mt-1">
-                                <div
-                                  className={`h-1.5 rounded-full ${perf.performanceScore >= 70 ? 'bg-emerald-400' : perf.performanceScore >= 40 ? 'bg-amber-400' : 'bg-red-400'}`}
-                                  style={{ width: `${perf.performanceScore}%` }}
-                                />
-                              </div>
-                              <div className="text-xs text-warm-400 mt-0.5">Score</div>
-                            </div>
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  <div className="glass-card p-4 space-y-2">
-                    <p className="text-sm font-semibold text-white">How the score works</p>
-                    <p className="text-xs text-warm-400">
-                      Score = avg guests during their shifts (50pts) + avg occupancy % during their shifts (50pts). It reflects how busy the venue was when each person worked — not individual actions.
-                    </p>
-                    <div className="flex gap-4 pt-1">
-                      <span className="text-xs text-emerald-400">70–100: Strong night</span>
-                      <span className="text-xs text-amber-400">40–69: Average</span>
-                      <span className="text-xs text-red-400">0–39: Slow shift</span>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
+            <ScheduleView
+              staff={staff}
+              shifts={shifts}
+              weekOffset={weekOffset}
+              setWeekOffset={setWeekOffset}
+              bartenderStats={bartenderStats}
+              onAddStaff={() => setShowAddStaff(true)}
+              onDeleteStaff={handleDeleteStaff}
+              onAddShift={date => setShowAddShift(date)}
+              onDeleteShift={handleDeleteShift}
+              onImportCSV={() => setShowCSVImport(true)}
+            />
           )}
         </motion.div>
 
-        {/* Add Staff Modal */}
+        {/* Modals */}
         <AnimatePresence>
-          {showAddStaff && (
-            <AddStaffModal
-              onClose={() => setShowAddStaff(false)}
-              onSave={handleAddStaff}
-            />
-          )}
+          {showAddStaff && <AddStaffModal onClose={() => setShowAddStaff(false)} onSave={handleAddStaff} />}
         </AnimatePresence>
-
-        {/* Add Shift Modal */}
         <AnimatePresence>
-          {showAddShift && (
-            <AddShiftModal
-              date={showAddShift}
-              staff={staff}
-              onClose={() => setShowAddShift(null)}
-              onSave={handleAddShift}
-            />
-          )}
+          {showAddShift && <AddShiftModal date={showAddShift} staff={staff} onClose={() => setShowAddShift(null)} onSave={handleAddShift} />}
         </AnimatePresence>
-
-        {/* CSV Import Modal */}
         <AnimatePresence>
           {showCSVImport && (
             <CSVImport
               title="Import Schedule"
-              description="Upload a CSV file with your staff schedule. You can import staff members, shifts, or both."
+              description="Upload a CSV with your staff schedule."
               templateColumns={['staffname', 'role', 'date', 'starttime', 'endtime']}
               templateExample={[
                 ['Sarah Johnson', 'bartender', '2026-01-20', '18:00', '02:00'],
                 ['Mike Smith', 'server', '2026-01-20', '17:00', '23:00'],
-                ['Lisa Chen', 'door', '2026-01-21', '20:00', '02:00'],
               ]}
               onImport={handleCSVImport}
               onClose={() => setShowCSVImport(false)}
@@ -1091,211 +846,6 @@ export function Staffing() {
         </AnimatePresence>
       </div>
     </PullToRefresh>
-  );
-}
-
-// Add Staff Modal
-function AddStaffModal({ onClose, onSave }: { onClose: () => void; onSave: (name: string, role: StaffMember['role']) => void }) {
-  const [name, setName] = useState('');
-  const [role, setRole] = useState<StaffMember['role']>('bartender');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
-    onSave(name.trim(), role);
-  };
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.9, opacity: 0 }}
-        className="glass-card p-6 w-full max-w-md"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-bold text-white">Add Staff Member</h3>
-          <button onClick={onClose} className="text-warm-400 hover:text-white">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm text-warm-400 mb-2">Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="e.g., Sarah Johnson"
-              className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white placeholder-warm-500 focus:outline-none focus:ring-2 focus:ring-primary"
-              required
-              autoFocus
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-warm-400 mb-2">Role</label>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(ROLE_LABELS).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setRole(key as StaffMember['role'])}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                    role === key
-                      ? 'bg-primary/20 border border-primary/30 text-white'
-                      : 'bg-warm-800 text-warm-400 hover:text-white'
-                  }`}
-                >
-                  <div className={`w-3 h-3 rounded-full ${ROLE_COLORS[key]}`} />
-                  <span className="text-sm">{label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 btn-secondary">
-              Cancel
-            </button>
-            <button type="submit" className="flex-1 btn-primary flex items-center justify-center gap-2">
-              <Save className="w-4 h-4" />
-              Add Staff
-            </button>
-          </div>
-        </form>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-// Add Shift Modal
-function AddShiftModal({ 
-  date, 
-  staff, 
-  onClose, 
-  onSave 
-}: { 
-  date: string; 
-  staff: StaffMember[]; 
-  onClose: () => void; 
-  onSave: (staffId: string, date: string, startTime: string, endTime: string) => void;
-}) {
-  const [staffId, setStaffId] = useState(staff[0]?.id || '');
-  const [startTime, setStartTime] = useState('18:00');
-  const [endTime, setEndTime] = useState('02:00');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!staffId) return;
-    onSave(staffId, date, startTime, endTime);
-  };
-
-  if (staff.length === 0) {
-    return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
-        onClick={onClose}
-      >
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0.9, opacity: 0 }}
-          className="glass-card p-6 w-full max-w-md text-center"
-          onClick={e => e.stopPropagation()}
-        >
-          <Users className="w-12 h-12 text-warm-600 mx-auto mb-3" />
-          <p className="text-warm-400 mb-4">Add staff members first before creating shifts</p>
-          <button onClick={onClose} className="btn-primary">Got it</button>
-        </motion.div>
-      </motion.div>
-    );
-  }
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.9, opacity: 0 }}
-        className="glass-card p-6 w-full max-w-md"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-bold text-white">Add Shift</h3>
-          <button onClick={onClose} className="text-warm-400 hover:text-white">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <p className="text-sm text-warm-400 mb-4">
-          {format(parseISO(date), 'EEEE, MMMM d, yyyy')}
-        </p>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm text-warm-400 mb-2">Staff Member</label>
-            <select
-              value={staffId}
-              onChange={e => setStaffId(e.target.value)}
-              className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              {staff.map(s => (
-                <option key={s.id} value={s.id}>{s.name} ({ROLE_LABELS[s.role]})</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-warm-400 mb-2">Start Time</label>
-              <input
-                type="time"
-                value={startTime}
-                onChange={e => setStartTime(e.target.value)}
-                className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-warm-400 mb-2">End Time</label>
-              <input
-                type="time"
-                value={endTime}
-                onChange={e => setEndTime(e.target.value)}
-                className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 btn-secondary">
-              Cancel
-            </button>
-            <button type="submit" className="flex-1 btn-primary flex items-center justify-center gap-2">
-              <Save className="w-4 h-4" />
-              Add Shift
-            </button>
-          </div>
-        </form>
-      </motion.div>
-    </motion.div>
   );
 }
 
