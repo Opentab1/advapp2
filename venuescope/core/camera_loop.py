@@ -88,23 +88,38 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     return jid
 
 
+_PEOPLE_MODES = {"people_count", "people_counter"}  # both spellings
+
+
+def _is_people_only(cam: dict) -> bool:
+    """True if this camera runs people_count and nothing else."""
+    modes = {m.strip() for m in cam.get("mode", "").split(",") if m.strip()}
+    modes |= set(cam.get("extra_modes") or [])
+    return bool(modes) and modes.issubset(_PEOPLE_MODES)
+
+
 def _effective_cam(cam: dict, last_occupancy_t: float) -> dict:
     """
-    Return a copy of cam with people_counter throttled to OCCUPANCY_INTERVAL.
-    If it's not yet time for an occupancy run, strip people_counter from modes
-    so the segment runs only the high-priority modes (drink_count, bottle_counter,
-    staff_activity, table_turns).
+    Return a copy of cam with people_count throttled to OCCUPANCY_INTERVAL.
+    - For cameras that mix drink/bottle + people_count: strip people_count from
+      extra_modes when it's not yet time, so the segment still runs the primary mode.
+    - For people_count-only cameras: handled by _run_camera_loop via interval wait.
     """
-    mode_str = cam.get("mode", "drink_count")
+    mode_str  = cam.get("mode", "drink_count")
     all_modes = [m.strip() for m in mode_str.split(",") if m.strip()]
 
-    if "people_counter" not in all_modes:
+    has_people = any(m in _PEOPLE_MODES for m in all_modes)
+    if not has_people:
         return cam  # nothing to throttle
+
+    # people_count-only cameras — throttle is handled via interval sleep, not here
+    if _is_people_only(cam):
+        return cam
 
     elapsed = time.time() - last_occupancy_t
     if elapsed < OCCUPANCY_INTERVAL:
-        # Not yet — strip people_counter for this segment
-        filtered = [m for m in all_modes if m != "people_counter"]
+        # Not yet — strip people_count for this segment
+        filtered = [m for m in all_modes if m not in _PEOPLE_MODES]
         if not filtered:
             filtered = ["drink_count"]
         cam = dict(cam)
@@ -117,7 +132,7 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
     camera_id   = cam["camera_id"]
     camera_name = cam["name"]
     seg_num     = 0
-    last_occupancy_t = 0.0  # epoch of last people_counter segment launch
+    last_occupancy_t = 0.0  # epoch of last people_count segment launch
     log.info(f"[camera_loop] Starting loop for '{camera_name}' ({camera_id})")
 
     while not stop_event.is_set():
@@ -144,15 +159,28 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                     stop_event.wait(60)
                     # fall through to launch new segment after wait
 
-            # Apply occupancy throttle — people_counter only every 20 minutes
+            # people_count-only cameras: wait OCCUPANCY_INTERVAL between snapshots
+            if _is_people_only(current):
+                elapsed = time.time() - last_occupancy_t
+                if last_occupancy_t > 0 and elapsed < OCCUPANCY_INTERVAL:
+                    wait_secs = OCCUPANCY_INTERVAL - elapsed
+                    log.info(f"[camera_loop] '{camera_name}' — people_count next "
+                             f"in {wait_secs/60:.0f}m, sleeping")
+                    stop_event.wait(wait_secs)
+                    continue
+                last_occupancy_t = time.time()
+                log.info(f"[camera_loop] '{camera_name}' — people_count snapshot "
+                         f"(next in {OCCUPANCY_INTERVAL//60}m)")
+
+            # Apply mixed-mode occupancy throttle (drink_count + people_count cameras)
             effective = _effective_cam(current, last_occupancy_t)
             all_effective_modes = [m.strip() for m in effective.get("mode","").split(",") if m.strip()]
-            if "people_counter" in all_effective_modes:
+            if any(m in _PEOPLE_MODES for m in all_effective_modes) and not _is_people_only(current):
                 last_occupancy_t = time.time()
-                mins_next = OCCUPANCY_INTERVAL / 60
-                log.info(f"[camera_loop] '{camera_name}' — occupancy run included "
-                         f"(next in {mins_next:.0f} min)")
-            elif "people_counter" in (current.get("mode","") or ""):
+                log.info(f"[camera_loop] '{camera_name}' — mixed occupancy run "
+                         f"(next in {OCCUPANCY_INTERVAL//60}m)")
+            elif any(m in _PEOPLE_MODES for m in (current.get("mode","") or "").split(",")) \
+                    and not _is_people_only(current):
                 remaining = int((OCCUPANCY_INTERVAL - (time.time() - last_occupancy_t)) / 60)
                 log.debug(f"[camera_loop] '{camera_name}' — occupancy skipped "
                           f"({remaining}m until next run)")
