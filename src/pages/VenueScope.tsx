@@ -2133,12 +2133,6 @@ export function VenueScope() {
             />
           )}
 
-          {/* 5. History — completed tonight + all older jobs */}
-          <HistoryAccordion
-            jobs={historyJobs}
-            onInvestigate={setInvestigating}
-            onExport={() => exportCsv(jobs)}
-          />
         </>
       )}
     </div>
