@@ -13,7 +13,7 @@ import {
   Camera, Loader2, X, Download,
   ChevronDown, ChevronUp, FileText,
   Activity, Users, Zap, DollarSign, Calendar, TrendingUp,
-  CreditCard, Edit2, Crosshair, Trash2, Check,
+  CreditCard, Crosshair, Trash2, Check,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
@@ -115,9 +115,8 @@ function ZoneOverlay({ config }: { config: BarConfig }) {
 
 // ── Zone editor modal ─────────────────────────────────────────────────────────
 
-type DrawMode = 'zone' | 'barline' | null;
-
-const SNAP_RADIUS = 0.035; // normalized units — snap-to-close threshold
+// Drag state for bar line handle dragging
+type DragTarget = { stationIdx: number; handle: 'p1' | 'p2' } | null;
 
 function ZoneEditorModal({
   camera,
@@ -128,16 +127,18 @@ function ZoneEditorModal({
   proxyBase: string;
   onClose: () => void;
 }) {
-  const [config, setConfig]         = useState<BarConfig>(() => parseBarConfig(camera.barConfigJson) ?? { stations: [] });
-  const [drawMode, setDrawMode]     = useState<DrawMode>(null);
-  const [currentPts, setCurrentPts] = useState<[number, number][]>([]);
-  const [barLineFor, setBarLineFor] = useState<number | null>(null);
-  const [cursor, setCursor]         = useState<[number, number] | null>(null); // live mouse position
-  const [nearClose, setNearClose]   = useState(false); // hovering near first point
+  const [config, setConfig]     = useState<BarConfig>(() => parseBarConfig(camera.barConfigJson) ?? { stations: [] });
+  // rect draw state: null = idle, [x,y] = anchor corner placed
+  const [rectAnchor, setRectAnchor] = useState<[number, number] | null>(null);
+  const [cursor, setCursor]         = useState<[number, number] | null>(null);
+  const [dragTarget, setDragTarget] = useState<DragTarget>(null);
   const [saving, setSaving]         = useState(false);
   const [saveOk, setSaveOk]         = useState(false);
+  const [step, setStep]             = useState<'draw' | 'done'>('draw');
   const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  const isDrawing = rectAnchor !== null;
 
   const streamUrl = (() => {
     if (!proxyBase) return null;
@@ -155,89 +156,90 @@ function ZoneEditorModal({
 
   function getRelPt(e: React.MouseEvent<SVGSVGElement>): [number, number] {
     const r = svgRef.current!.getBoundingClientRect();
-    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+    const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    return [x, y];
+  }
+
+  function handleSvgMouseDown(e: React.MouseEvent<SVGSVGElement>) {
+    if (dragTarget) return; // already dragging a handle
+    if (e.button !== 0) return;
+    const pt = getRelPt(e);
+
+    // Check if clicking near a bar line handle (drag to reposition)
+    for (let i = 0; i < config.stations.length; i++) {
+      const s = config.stations[i];
+      if (Math.hypot(pt[0] - s.bar_line_p1[0], pt[1] - s.bar_line_p1[1]) < 0.03) {
+        setDragTarget({ stationIdx: i, handle: 'p1' });
+        e.preventDefault();
+        return;
+      }
+      if (Math.hypot(pt[0] - s.bar_line_p2[0], pt[1] - s.bar_line_p2[1]) < 0.03) {
+        setDragTarget({ stationIdx: i, handle: 'p2' });
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // Start rectangle draw
+    setRectAnchor(pt);
+    setCursor(pt);
   }
 
   function handleSvgMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    if (!drawMode) return;
     const pt = getRelPt(e);
     setCursor(pt);
-    if (drawMode === 'zone' && currentPts.length >= 3) {
-      const [fx, fy] = currentPts[0];
-      setNearClose(Math.hypot(pt[0] - fx, pt[1] - fy) < SNAP_RADIUS);
-    } else {
-      setNearClose(false);
+
+    if (dragTarget) {
+      setConfig(c => ({
+        stations: c.stations.map((s, i) =>
+          i === dragTarget.stationIdx
+            ? { ...s, [dragTarget.handle === 'p1' ? 'bar_line_p1' : 'bar_line_p2']: pt }
+            : s
+        ),
+      }));
     }
+  }
+
+  function handleSvgMouseUp(e: React.MouseEvent<SVGSVGElement>) {
+    if (dragTarget) {
+      setDragTarget(null);
+      return;
+    }
+
+    if (!rectAnchor) return;
+    const pt = getRelPt(e);
+    const [ax, ay] = rectAnchor;
+    const x1 = Math.min(ax, pt[0]), x2 = Math.max(ax, pt[0]);
+    const y1 = Math.min(ay, pt[1]), y2 = Math.max(ay, pt[1]);
+
+    // Require a minimum size
+    if (x2 - x1 < 0.05 || y2 - y1 < 0.05) {
+      setRectAnchor(null);
+      return;
+    }
+
+    const midY = (y1 + y2) / 2;
+    const newStation: BarStation = {
+      zone_id:       `zone_${Date.now()}`,
+      label:         `Bar Zone ${config.stations.length + 1}`,
+      polygon:       [[x1,y1],[x2,y1],[x2,y2],[x1,y2]],
+      bar_line_p1:   [x1, midY],
+      bar_line_p2:   [x2, midY],
+      customer_side: 1,
+    };
+    setConfig(c => ({ stations: [...c.stations, newStation] }));
+    setRectAnchor(null);
+    setStep('done');
   }
 
   function handleSvgLeave() {
-    setCursor(null);
-    setNearClose(false);
-  }
-
-  function handleSvgClick(e: React.MouseEvent<SVGSVGElement>) {
-    const pt = getRelPt(e);
-
-    if (drawMode === 'zone') {
-      if (currentPts.length >= 3) {
-        const [fx, fy] = currentPts[0];
-        if (Math.hypot(pt[0] - fx, pt[1] - fy) < SNAP_RADIUS) {
-          // Close polygon
-          const xs = currentPts.map(p => p[0]);
-          const ys = currentPts.map(p => p[1]);
-          const midY = (Math.min(...ys) + Math.max(...ys)) / 2;
-          const newStation: BarStation = {
-            zone_id:      `zone_${Date.now()}`,
-            label:        `Zone ${config.stations.length + 1}`,
-            polygon:      currentPts,
-            bar_line_p1:  [Math.min(...xs), midY],
-            bar_line_p2:  [Math.max(...xs), midY],
-            customer_side: 1,
-          };
-          setConfig(c => ({ stations: [...c.stations, newStation] }));
-          setCurrentPts([]);
-          setCursor(null);
-          setNearClose(false);
-          setDrawMode(null);
-          return;
-        }
-      }
-      setCurrentPts(p => [...p, pt]);
-
-    } else if (drawMode === 'barline' && barLineFor !== null) {
-      if (currentPts.length === 0) {
-        setCurrentPts([pt]);
-      } else {
-        setConfig(c => ({
-          stations: c.stations.map((s, i) =>
-            i === barLineFor ? { ...s, bar_line_p1: currentPts[0], bar_line_p2: pt } : s
-          ),
-        }));
-        setCurrentPts([]);
-        setCursor(null);
-        setDrawMode(null);
-        setBarLineFor(null);
-      }
-    }
-  }
-
-  function cancelDraw() {
-    setDrawMode(null);
-    setCurrentPts([]);
-    setCursor(null);
-    setNearClose(false);
-    setBarLineFor(null);
-  }
-
-  function startBarLine(idx: number) {
-    setBarLineFor(idx);
-    setCurrentPts([]);
-    setCursor(null);
-    setDrawMode('barline');
+    if (!dragTarget) setCursor(null);
   }
 
   function deleteZone(idx: number) {
     setConfig(c => ({ stations: c.stations.filter((_, i) => i !== idx) }));
+    if (config.stations.length <= 1) setStep('draw');
   }
 
   function updateLabel(idx: number, label: string) {
@@ -268,14 +270,18 @@ function ZoneEditorModal({
     }
   }
 
-  // Status hint shown inside the canvas
-  const hint =
-    drawMode === 'zone' && currentPts.length === 0 ? 'Click to place first point' :
-    drawMode === 'zone' && nearClose               ? 'Click to close zone ✓' :
-    drawMode === 'zone'                            ? `${currentPts.length} points — click first point to close` :
-    drawMode === 'barline' && currentPts.length === 0 ? 'Click to set bar line start' :
-    drawMode === 'barline'                         ? 'Click to set bar line end' :
-    null;
+  // Preview rect while dragging
+  const previewRect = isDrawing && cursor ? (() => {
+    const [ax, ay] = rectAnchor!;
+    return {
+      x: Math.min(ax, cursor[0]),
+      y: Math.min(ay, cursor[1]),
+      w: Math.abs(cursor[0] - ax),
+      h: Math.abs(cursor[1] - ay),
+    };
+  })() : null;
+
+  const cursorClass = dragTarget ? 'cursor-grabbing' : isDrawing ? 'cursor-crosshair' : 'cursor-crosshair';
 
   return (
     <motion.div
@@ -294,8 +300,8 @@ function ZoneEditorModal({
               <Crosshair className="w-3.5 h-3.5 text-teal" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-white">Zone Editor — {camera.name}</p>
-              <p className="text-[10px] text-text-muted">Draw detection zones on the camera feed</p>
+              <p className="text-sm font-semibold text-white">Zone Setup — {camera.name}</p>
+              <p className="text-[10px] text-text-muted">Mark your bar area so the AI knows where to watch for drink service</p>
             </div>
           </div>
           <button onClick={onClose} className="text-text-muted hover:text-white transition-colors p-1">
@@ -303,8 +309,36 @@ function ZoneEditorModal({
           </button>
         </div>
 
-        {/* Canvas — fills remaining space */}
-        <div className="relative bg-black" style={{ aspectRatio: '16/9', maxHeight: 'calc(95vh - 180px)' }}>
+        {/* How it works — instruction strip */}
+        <div className="flex items-stretch gap-0 border-b border-whoop-divider flex-shrink-0 bg-whoop-bg/60">
+          <div className="flex items-start gap-2 px-4 py-2.5 flex-1 border-r border-whoop-divider/50">
+            <div className="w-5 h-5 rounded-full bg-teal/20 text-teal text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</div>
+            <div>
+              <p className="text-[11px] font-semibold text-white">Draw Bar Zone</p>
+              <p className="text-[10px] text-text-muted leading-snug">Click and drag a box around the bar area on the camera image — this tells the AI where to look for bartenders</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2 px-4 py-2.5 flex-1 border-r border-whoop-divider/50">
+            <div className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</div>
+            <div>
+              <p className="text-[11px] font-semibold text-white">Position the Bar Line <span className="text-amber-400">(orange)</span></p>
+              <p className="text-[10px] text-text-muted leading-snug">This line sits along the bar counter edge. Every time a drink is passed over this line to a customer, it counts as a sale</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2 px-4 py-2.5 flex-1">
+            <div className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">3</div>
+            <div>
+              <p className="text-[11px] font-semibold text-white">Set Customer Side</p>
+              <p className="text-[10px] text-text-muted leading-snug">Tell the AI which side of the orange line customers stand on — so it knows the direction of every handoff</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Canvas */}
+        <div
+          className="relative bg-black select-none"
+          style={{ aspectRatio: '16/9', maxHeight: 'calc(95vh - 230px)' }}
+        >
           <video
             ref={videoRef}
             className="absolute inset-0 w-full h-full object-cover opacity-70"
@@ -312,199 +346,165 @@ function ZoneEditorModal({
           />
           {!streamUrl && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <p className="text-text-muted text-xs bg-black/40 px-3 py-1.5 rounded-lg">No live feed</p>
+              <p className="text-text-muted text-xs bg-black/40 px-3 py-1.5 rounded-lg">No live feed — drawing on blank canvas</p>
             </div>
           )}
 
-          {/* SVG drawing layer */}
           <svg
             ref={svgRef}
-            className={`absolute inset-0 w-full h-full ${drawMode ? 'cursor-crosshair' : 'cursor-default'}`}
+            className={`absolute inset-0 w-full h-full ${cursorClass}`}
             viewBox="0 0 1 1"
             preserveAspectRatio="none"
-            onClick={handleSvgClick}
+            onMouseDown={handleSvgMouseDown}
             onMouseMove={handleSvgMouseMove}
+            onMouseUp={handleSvgMouseUp}
             onMouseLeave={handleSvgLeave}
           >
             {/* Saved zones */}
-            {config.stations.map((s, i) => (
-              <g key={i}>
-                <polygon
-                  points={s.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
-                  fill="rgba(0,200,160,0.10)"
-                  stroke="rgba(0,200,160,0.65)"
-                  strokeWidth="0.003"
-                />
-                <line
-                  x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
-                  x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
-                  stroke="rgba(255,140,0,0.9)"
-                  strokeWidth="0.004"
-                  strokeDasharray="0.02 0.01"
-                />
-                <text
-                  x={(s.bar_line_p1[0] + s.bar_line_p2[0]) / 2}
-                  y={Math.min(...s.polygon.map(p => p[1])) + 0.04}
-                  fontSize="0.035" fill="rgba(255,255,255,0.85)" textAnchor="middle"
-                  style={{ pointerEvents: 'none' }}
-                >{s.label}</text>
-                <text
-                  x={(s.bar_line_p1[0] + s.bar_line_p2[0]) / 2}
-                  y={s.customer_side === 1 ? s.bar_line_p2[1] + 0.055 : s.bar_line_p1[1] - 0.045}
-                  fontSize="0.028" fill="rgba(255,200,80,0.7)" textAnchor="middle"
-                  style={{ pointerEvents: 'none' }}
-                >👤 customer</text>
-              </g>
-            ))}
-
-            {/* In-progress polygon */}
-            {currentPts.length > 0 && (
-              <g>
-                {/* Completed edges */}
-                {currentPts.length >= 2 && (
-                  <polyline
-                    points={currentPts.map(([x, y]) => `${x},${y}`).join(' ')}
-                    fill="none"
-                    stroke={nearClose ? 'rgba(0,255,160,0.9)' : 'rgba(100,200,255,0.85)'}
-                    strokeWidth="0.004"
-                    strokeDasharray="0.018 0.009"
-                  />
-                )}
-                {/* Live preview edge: last point → cursor */}
-                {cursor && drawMode === 'zone' && (
-                  <line
-                    x1={currentPts[currentPts.length - 1][0]}
-                    y1={currentPts[currentPts.length - 1][1]}
-                    x2={nearClose ? currentPts[0][0] : cursor[0]}
-                    y2={nearClose ? currentPts[0][1] : cursor[1]}
-                    stroke={nearClose ? 'rgba(0,255,160,0.9)' : 'rgba(100,200,255,0.6)'}
+            {config.stations.map((s, i) => {
+              const [x1,y1] = s.polygon[0], [x2,,y2] = [s.polygon[1][0], 0, s.polygon[2][1]];
+              const midX = (s.bar_line_p1[0] + s.bar_line_p2[0]) / 2;
+              const custY = s.customer_side === 1
+                ? s.bar_line_p2[1] + 0.055
+                : s.bar_line_p1[1] - 0.045;
+              return (
+                <g key={i}>
+                  {/* Zone rectangle fill */}
+                  <polygon
+                    points={s.polygon.map(([px, py]) => `${px},${py}`).join(' ')}
+                    fill="rgba(0,200,160,0.08)"
+                    stroke="rgba(0,200,160,0.6)"
                     strokeWidth="0.003"
-                    strokeDasharray="0.012 0.008"
                   />
-                )}
-                {/* Live preview edge: barline first point → cursor */}
-                {cursor && drawMode === 'barline' && currentPts.length === 1 && (
-                  <line
-                    x1={currentPts[0][0]} y1={currentPts[0][1]}
-                    x2={cursor[0]} y2={cursor[1]}
-                    stroke="rgba(255,140,0,0.7)"
-                    strokeWidth="0.004"
-                    strokeDasharray="0.02 0.01"
-                  />
-                )}
-                {/* Vertices */}
-                {currentPts.map(([x, y], i) => (
-                  <circle key={i} cx={x} cy={y}
-                    r={i === 0 && currentPts.length >= 3 ? (nearClose ? 0.022 : 0.018) : 0.012}
-                    fill={i === 0 ? (nearClose ? 'rgba(0,255,160,0.9)' : 'rgba(100,220,255,0.9)') : 'rgba(100,200,255,0.6)'}
-                    stroke="white" strokeWidth="0.003"
-                  />
-                ))}
-                {/* Snap ring around first point */}
-                {currentPts.length >= 3 && (
-                  <circle
-                    cx={currentPts[0][0]} cy={currentPts[0][1]}
-                    r={SNAP_RADIUS}
-                    fill="none"
-                    stroke={nearClose ? 'rgba(0,255,160,0.5)' : 'rgba(100,200,255,0.15)'}
-                    strokeWidth="0.002"
-                    strokeDasharray="0.008 0.006"
-                  />
-                )}
-              </g>
-            )}
+                  {/* Zone label */}
+                  <text
+                    x={(x1 + x2) / 2} y={y1 + 0.04}
+                    fontSize="0.038" fill="rgba(255,255,255,0.9)" textAnchor="middle"
+                    style={{ pointerEvents: 'none', fontWeight: 600 }}
+                  >{s.label}</text>
 
-            {/* Barline preview cursor dot */}
-            {cursor && drawMode === 'barline' && currentPts.length === 0 && (
-              <circle cx={cursor[0]} cy={cursor[1]} r="0.01"
-                fill="rgba(255,140,0,0.7)" stroke="white" strokeWidth="0.002"
+                  {/* Bar line */}
+                  <line
+                    x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
+                    x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
+                    stroke="rgba(255,140,0,0.95)"
+                    strokeWidth="0.005"
+                    strokeDasharray="0.022 0.011"
+                  />
+                  {/* Bar line label */}
+                  <text
+                    x={midX} y={s.bar_line_p1[1] - 0.02}
+                    fontSize="0.028" fill="rgba(255,160,40,0.85)" textAnchor="middle"
+                    style={{ pointerEvents: 'none' }}
+                  >← bar counter edge →</text>
+
+                  {/* Draggable handles on bar line endpoints */}
+                  <circle cx={s.bar_line_p1[0]} cy={s.bar_line_p1[1]} r="0.022"
+                    fill="rgba(255,140,0,0.25)" stroke="rgba(255,140,0,0.9)" strokeWidth="0.004"
+                    style={{ cursor: 'grab' }}
+                  />
+                  <circle cx={s.bar_line_p2[0]} cy={s.bar_line_p2[1]} r="0.022"
+                    fill="rgba(255,140,0,0.25)" stroke="rgba(255,140,0,0.9)" strokeWidth="0.004"
+                    style={{ cursor: 'grab' }}
+                  />
+
+                  {/* Customer side arrow */}
+                  <text
+                    x={midX} y={custY}
+                    fontSize="0.032" fill="rgba(200,160,255,0.85)" textAnchor="middle"
+                    style={{ pointerEvents: 'none' }}
+                  >{s.customer_side === 1 ? '▼ customers' : '▲ customers'}</text>
+                </g>
+              );
+            })}
+
+            {/* Preview rectangle while dragging */}
+            {previewRect && previewRect.w > 0.01 && previewRect.h > 0.01 && (
+              <rect
+                x={previewRect.x} y={previewRect.y}
+                width={previewRect.w} height={previewRect.h}
+                fill="rgba(0,200,160,0.12)"
+                stroke="rgba(0,200,160,0.8)"
+                strokeWidth="0.003"
+                strokeDasharray="0.015 0.008"
               />
             )}
           </svg>
 
-          {/* Hint pill — bottom center of canvas */}
-          {hint && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-sm text-[11px] text-white/80 pointer-events-none select-none">
-              {hint}
+          {/* Instruction overlay when no zones yet */}
+          {config.stations.length === 0 && !isDrawing && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="bg-black/60 backdrop-blur-sm rounded-2xl px-5 py-4 text-center">
+                <Crosshair className="w-6 h-6 text-teal mx-auto mb-2" />
+                <p className="text-white text-sm font-semibold">Click and drag to draw a box</p>
+                <p className="text-text-muted text-xs mt-1">Draw around your bar area on the camera image above</p>
+              </div>
+            </div>
+          )}
+
+          {/* Drag hint when drawing */}
+          {isDrawing && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-sm text-[11px] text-teal pointer-events-none">
+              Release to place zone
+            </div>
+          )}
+
+          {/* Bar line drag hint after first zone placed */}
+          {config.stations.length > 0 && !isDrawing && !dragTarget && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[11px] text-amber-400/80 pointer-events-none whitespace-nowrap">
+              Drag the orange ● handles to reposition the bar line
             </div>
           )}
         </div>
 
-        {/* Controls */}
-        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 space-y-3 overflow-y-auto" style={{ maxHeight: '30vh' }}>
-          {/* Toolbar */}
-          <div className="flex items-center gap-2">
-            {!drawMode ? (
-              <button
-                onClick={() => setDrawMode('zone')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-teal/10 text-teal border border-teal/30 hover:bg-teal/20 transition-colors"
-              >
-                <Crosshair className="w-3 h-3" />
-                Draw Zone
-              </button>
-            ) : (
-              <button
-                onClick={cancelDraw}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors"
-              >
-                <X className="w-3 h-3" />
-                Cancel Draw
-              </button>
-            )}
-            <div className="flex-1" />
-            <button
-              onClick={save}
-              disabled={saving || config.stations.length === 0}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold bg-teal text-black hover:bg-teal/90 disabled:opacity-40 transition-colors"
-            >
-              {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-              {saveOk ? 'Saved!' : 'Save Zones'}
-            </button>
-          </div>
-
-          {/* Zone list */}
-          {config.stations.length === 0 && !drawMode ? (
-            <p className="text-[11px] text-text-muted text-center py-1">
-              Click <strong className="text-white/60">Draw Zone</strong> then click on the feed to place polygon points
-            </p>
-          ) : config.stations.length === 0 && drawMode === 'zone' ? null : (
-            <div className="space-y-2">
+        {/* Zone list + controls */}
+        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 space-y-2 overflow-y-auto" style={{ maxHeight: '28vh' }}>
+          {config.stations.length === 0 ? (
+            <p className="text-[11px] text-text-muted text-center py-1">No zones yet — drag a box on the camera image above</p>
+          ) : (
+            <>
               {config.stations.map((s, i) => (
-                <div key={i} className="flex items-center gap-2 bg-whoop-bg rounded-xl px-3 py-2">
+                <div key={i} className="flex items-center gap-2 bg-whoop-bg rounded-xl px-3 py-2.5">
                   <div className="w-2 h-2 rounded-full bg-teal/60 flex-shrink-0" />
                   <input
                     value={s.label}
                     onChange={e => updateLabel(i, e.target.value)}
                     className="flex-1 bg-transparent text-xs text-white outline-none min-w-0"
-                    placeholder="Zone label"
+                    placeholder="Zone label (e.g. Main Bar)"
                   />
-                  <button
-                    onClick={() => toggleCustomerSide(i)}
-                    title="Toggle customer side"
-                    className="text-[9px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30 transition-colors flex-shrink-0"
-                  >
-                    👤 {s.customer_side === 1 ? 'below line' : 'above line'}
-                  </button>
-                  <button
-                    onClick={() => startBarLine(i)}
-                    title="Redraw bar line"
-                    className={`text-[10px] px-2 py-1 rounded-lg transition-colors flex-shrink-0 ${
-                      drawMode === 'barline' && barLineFor === i
-                        ? 'bg-orange-500/30 text-orange-400 border border-orange-500/40'
-                        : 'bg-whoop-panel border border-whoop-divider text-text-muted hover:text-white'
-                    }`}
-                  >
-                    <Edit2 className="w-2.5 h-2.5" />
-                  </button>
+                  {/* Customer side toggle */}
+                  <div className="flex flex-col items-center flex-shrink-0">
+                    <p className="text-[9px] text-text-muted mb-0.5">Customers are</p>
+                    <button
+                      onClick={() => toggleCustomerSide(i)}
+                      className="text-[10px] px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/25 hover:bg-purple-500/25 transition-colors whitespace-nowrap"
+                    >
+                      {s.customer_side === 1 ? '▼ below bar line' : '▲ above bar line'}
+                    </button>
+                  </div>
                   <button
                     onClick={() => deleteZone(i)}
-                    className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0"
+                    className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0 ml-1"
+                    title="Delete zone"
                   >
-                    <Trash2 className="w-3 h-3" />
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ))}
-            </div>
+              <div className="flex items-center gap-2 pt-1">
+                <p className="text-[10px] text-text-muted flex-1">
+                  Tip: you can add multiple zones for different bar sections
+                </p>
+                <button
+                  onClick={save}
+                  disabled={saving || config.stations.length === 0}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold bg-teal text-black hover:bg-teal/90 disabled:opacity-40 transition-colors"
+                >
+                  {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                  {saveOk ? 'Saved!' : 'Save Zones'}
+                </button>
+              </div>
+            </>
           )}
         </div>
       </motion.div>
