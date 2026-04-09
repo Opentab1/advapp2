@@ -935,6 +935,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   const isDrink  = room.mode === 'drink_count';
   const isPeople = room.mode === 'people_count';
   const barConfig = camera ? parseBarConfig(camera.barConfigJson) : null;
+  const [feedOpen, setFeedOpen] = React.useState(false);
 
   return (
     <motion.div
@@ -964,33 +965,56 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
             </p>
           </div>
         </div>
-        {room.isLive ? (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal/20 text-teal border border-teal/30 flex-shrink-0">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-teal" />
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {room.isLive ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal/20 text-teal border border-teal/30">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-75" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-teal" />
+              </span>
+              Live
             </span>
-            Live
-          </span>
-        ) : (room.job?.jobId ?? '').startsWith('~') ? (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/20 flex-shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-            Reconnecting
-          </span>
-        ) : (
-          <span className="text-[10px] text-text-muted flex-shrink-0">{fmtTime(room.updatedAt)}</span>
-        )}
+          ) : (room.job?.jobId ?? '').startsWith('~') ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              Reconnecting
+            </span>
+          ) : (
+            <span className="text-[10px] text-text-muted">{fmtTime(room.updatedAt)}</span>
+          )}
+          {/* Feed toggle — only show when proxy is configured */}
+          {camProxyUrl && (
+            <button
+              onClick={() => setFeedOpen(o => !o)}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] text-text-muted hover:text-white hover:bg-whoop-bg transition-colors"
+            >
+              <Camera className="w-3 h-3" />
+              {feedOpen ? 'Hide' : 'Feed'}
+              <ChevronDown className={`w-3 h-3 transition-transform ${feedOpen ? 'rotate-180' : ''}`} />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Live camera feed */}
-      {camProxyUrl && (
-        <CameraLiveView
-          label={room.label}
-          proxyBase={camProxyUrl}
-          barConfig={barConfig}
-          onConfigureZones={camera && onConfigureZones ? () => onConfigureZones(camera) : undefined}
-        />
-      )}
+      {/* Collapsible live camera feed */}
+      <AnimatePresence>
+        {camProxyUrl && feedOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <CameraLiveView
+              label={room.label}
+              proxyBase={camProxyUrl}
+              barConfig={barConfig}
+              onConfigureZones={camera && onConfigureZones ? () => onConfigureZones(camera) : undefined}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Primary metrics */}
       {isDrink && (
