@@ -939,7 +939,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   const isDrink  = room.mode === 'drink_count';
   const isPeople = room.mode === 'people_count';
   const barConfig = camera ? parseBarConfig(camera.barConfigJson) : null;
-  const [feedOpen, setFeedOpen] = React.useState(false);
+  const [feedOpen, setFeedOpen] = React.useState(isDrink);
 
   return (
     <motion.div
