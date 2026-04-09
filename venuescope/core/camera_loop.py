@@ -63,6 +63,13 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
 
     primary_mode, extra_modes = _parse_modes(cam.get("mode", "drink_count"))
 
+    # Drink detection needs at least 'balanced' (yolov8s) — 'fast' (yolov8n) misses
+    # bartenders on overhead fisheye IR cameras. Upgrade silently if set to fast.
+    model_profile = cam.get("model_profile", "balanced")
+    if primary_mode == "drink_count" and model_profile == "fast":
+        model_profile = "balanced"
+        log.info(f"[camera_loop] '{cam['name']}' upgraded to balanced profile for drink_count")
+
     extra = {
         "max_seconds":     0 if continuous else seg_secs,
         "extra_modes":     extra_modes,
@@ -82,7 +89,7 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
         shift_json    = None,
         source_type   = "rtsp",
         source_path   = cam["rtsp_url"],
-        model_profile = cam.get("model_profile", "balanced"),
+        model_profile = model_profile,
         config_path   = cam.get("config_path"),
         annotate      = False,
         clip_label    = label,

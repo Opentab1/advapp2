@@ -146,6 +146,36 @@ def run_job(job_id: str):
             except Exception as e:
                 log.warning(f"DDB bar config parse failed: {e}")
 
+        # Auto-detect bar layout from stream frames when drink_count has no config
+        if (bar_config is None
+                and mode == "drink_count"
+                and job.get("source_type") == "rtsp"):
+            try:
+                from core.auto_bar_config import analyze_stream
+                log.info(f"[auto_bar_config] No bar config for {camera_id} — "
+                         "auto-detecting from stream...")
+                auto_cfg = analyze_stream(job["source_path"])
+                auto_json = json.dumps(auto_cfg)
+                # Parse for this job
+                d2       = dict(auto_cfg)
+                stations = [BarStation(**s) for s in d2.pop("stations", [])]
+                bar_config = BarConfig(**d2); bar_config.stations = stations
+                log.info(f"[auto_bar_config] Done — bar_line note: "
+                         f"{auto_cfg.get('auto_note', '')}")
+                # Persist to DDB so future segments skip re-analysis
+                _venue_id_for_cam = extra_config.get("venue_id", "")
+                if camera_id and _venue_id_for_cam:
+                    try:
+                        from core.ddb_cameras import update_camera_bar_config_json
+                        update_camera_bar_config_json(
+                            _venue_id_for_cam, camera_id, auto_json)
+                        log.info(f"[auto_bar_config] Config saved to DDB "
+                                 f"for {_venue_id_for_cam}/{camera_id}")
+                    except Exception as _de:
+                        log.warning(f"[auto_bar_config] DDB save failed: {_de}")
+            except Exception as _ace:
+                log.warning(f"[auto_bar_config] Failed (non-fatal): {_ace}")
+
         shift = None
         if job.get("shift_json"):
             try:
@@ -286,6 +316,16 @@ def run_job(job_id: str):
             sync_job_to_aws(job_id, summary, result_dir, venue_id=job_venue_id)
         except Exception as _sync_err:
             log.warning(f"AWS sync error (non-fatal): {_sync_err}")
+
+        # RTSP camera jobs: delete local result dir after AWS sync — everything
+        # lives in DynamoDB/S3. File-upload jobs keep results for local review.
+        if job.get("source_type") == "rtsp" and result_dir.exists():
+            try:
+                import shutil
+                shutil.rmtree(str(result_dir), ignore_errors=True)
+                log.debug(f"Cleaned up local result dir for RTSP job {job_id}")
+            except Exception:
+                pass
 
         # Track camera health
         try:
@@ -476,11 +516,12 @@ def main():
                     log.info(f"Reaped process for job {job_id}")
 
             # Retention cleanup (every 6 hours)
+            # RTSP camera results are deleted after sync; file uploads kept 7 days.
             if _now - _last_cleanup > 21600:
                 try:
                     from core.database import cleanup_old_results, get_preferences
                     prefs = get_preferences()
-                    days  = int(prefs.get("retention_days", 0))
+                    days  = int(prefs.get("retention_days", 7))  # default 7 days
                     if days > 0:
                         n = cleanup_old_results(days)
                         if n > 0:

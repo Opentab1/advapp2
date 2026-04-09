@@ -157,6 +157,30 @@ def sync_sqlite_to_ddb(venue_id: str) -> int:
         return 0
 
 
+def update_camera_bar_config_json(venue_id: str, camera_id: str,
+                                  bar_config_json: str) -> bool:
+    """
+    Write barConfigJson to a camera's DynamoDB record.
+    Called after auto-detection to persist the result for future segments.
+    Returns True on success.
+    """
+    ddb = _get_ddb()
+    if not ddb:
+        return False
+    try:
+        table = ddb.Table(TABLE)
+        table.update_item(
+            Key={"venueId": venue_id, "cameraId": camera_id},
+            UpdateExpression="SET barConfigJson = :v",
+            ExpressionAttributeValues={":v": bar_config_json},
+        )
+        log.info(f"[ddb_cameras] barConfigJson saved for {venue_id}/{camera_id}")
+        return True
+    except Exception as e:
+        log.warning(f"[ddb_cameras] update_camera_bar_config_json failed: {e}")
+        return False
+
+
 def get_camera_ddb(camera_id: str) -> Optional[dict]:
     """Get a single camera from DynamoDB by camera_id (scans by SK — use sparingly)."""
     ddb = _get_ddb()

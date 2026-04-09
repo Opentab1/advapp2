@@ -356,7 +356,9 @@ def _detect_screen_recording(frame: np.ndarray, W: int, H: int) -> Optional[str]
         return ("SCREEN_RECORDING: Solid color strip detected at the top of the frame — "
                 "likely a browser toolbar or app chrome. "
                 "Re-export directly from the CCTV DVR/NVR for full-frame accuracy.")
-    if (W, H) in _SCREEN_RESOLUTIONS:
+    # Only flag resolution match for file uploads — live RTSP streams are always
+    # served at native NVR resolution (1080p etc.) and are never screen-recorded.
+    if (W, H) in _SCREEN_RESOLUTIONS and source_type != "rtsp":
         return ("SCREEN_RECORDING_SUSPECTED: Video resolution matches a common desktop screen size. "
                 "If this was screen-recorded from a player app, bar content may be compressed. "
                 "Consider exporting directly from your DVR/NVR.")
@@ -501,10 +503,17 @@ class VenueProcessor:
 
     def run(self) -> Dict[str, Any]:
         self.cb(0, "Opening video...")
+        _src_str = str(self.source)
+        # Treat both .m3u8 and /hls/ path URLs as HLS — NVR streams use
+        # fragmented MP4 (.mp4 extension) under the /hls/ path and need
+        # the PyAV _HLSCapture wrapper to deliver full framerate.
         _is_hls     = (self.source_type == "rtsp"
-                       and str(self.source).startswith("http")
-                       and str(self.source).endswith(".m3u8"))
+                       and _src_str.startswith("http")
+                       and (_src_str.endswith(".m3u8") or "/hls/" in _src_str))
         _use_ffmpeg = (self.source_type == "rtsp" and not _is_hls)
+        # For RTSP camera jobs, skip writing clips/snapshots to disk —
+        # everything goes to AWS. Clips are only useful for local file-upload review.
+        _save_local = (self.source_type != "rtsp")
         cap = (cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
                if _use_ffmpeg
                else cv2.VideoCapture(str(self.source)))
@@ -520,7 +529,11 @@ class VenueProcessor:
         self.cb(2, f"Video: {W}x{H} @ {fps:.1f}fps  ({total_f} frames, {total_f/fps/60:.1f} min)")
         if self._overhead:
             self.cb(2, "Overhead camera mode: conf=0.15, imgsz=1280, stride=1")
-        (self.result_dir / "clips").mkdir(exist_ok=True)
+        if fps < 5.0 and self.source_type == "rtsp" and self.mode == "drink_count":
+            self.cb(2, f"WARNING: Stream fps={fps:.1f} — drink gesture detection needs ≥10fps. "
+                       "Check NVR stream settings or use the /hls/ stream URL.")
+        if _save_local:
+            (self.result_dir / "clips").mkdir(exist_ok=True)
 
         # Build one analyzer per mode — single YOLO pass feeds them all
         analyzers  = {m: self._build_analyzer(W, H, fps, mode_override=m)
@@ -642,8 +655,9 @@ class VenueProcessor:
                 frame_idx += 1; self._dropped += 1; continue
             self._processed += 1
 
-            # Buffer thumbnail for clip saving (before detection)
-            try:
+            # Buffer thumbnail for clip saving (before detection) — RTSP jobs skip this
+            if _save_local:
+              try:
                 thumb_buf = cv2.resize(frame, (self._clip_W, self._clip_H),
                                        interpolation=cv2.INTER_LINEAR)
                 self._frame_buf.append(thumb_buf)
@@ -657,12 +671,13 @@ class VenueProcessor:
                 for pc in done:
                     pc["writer"].release()
                 self._pending_clips = [pc for pc in self._pending_clips if pc["frames_left"] > 0]
+              except Exception: pass
             except Exception:
                 pass
 
             # Gap 2: Screen recording check on first processed frame only
             if self._processed == 1 and self._screen_recording_warning is None:
-                w = _detect_screen_recording(frame, W, H)
+                w = _detect_screen_recording(frame, W, H, source_type=self.source_type)
                 if w:
                     self._screen_recording_warning = w
                     self.cb(0, f"WARNING: {w[:120]}...")
@@ -874,6 +889,10 @@ class VenueProcessor:
             snap_dir = self.result_dir / "snapshots"
             clip_dir = self.result_dir / "clips"
             for ev in evs:
+                # Snapshot and clip writing only for file-upload jobs (not live RTSP)
+                if not _save_local:
+                    continue
+
                 # Snapshot (single frame)
                 if self._snap_count < 60:
                     try:
