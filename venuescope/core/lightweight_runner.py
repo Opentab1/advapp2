@@ -44,6 +44,7 @@ def run_lightweight(
     job_id      = job["job_id"]
     max_seconds = float(extra_config.get("max_seconds", 0))  # 0 = run forever
 
+    clip_label  = job.get("clip_label", "")
     log.info(f"[lightweight] Opening stream: {Path(source).name}")
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
@@ -162,6 +163,9 @@ def run_lightweight(
         unique_seen, hourly_entries, hourly_exits,
         occupancy_log, t_sec,
     )
+    # Pass job metadata through so aws_sync can label the DDB record correctly
+    summary["clip_label"]    = clip_label
+    summary["analysis_mode"] = "people_count"
     log.info(
         f"[lightweight] Done — peak_occ={peak_occupancy}, "
         f"entries={total_entries}, exits={total_exits}, duration={t_sec:.0f}s"

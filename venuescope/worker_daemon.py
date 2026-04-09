@@ -329,6 +329,8 @@ def main():
     _last_cam_sync     = 0.0
     _poll_count        = 0
     _active: Dict[str, multiprocessing.Process] = {}
+    _active_start: Dict[str, float] = {}  # job_id → launch timestamp
+    JOB_TIMEOUT = 600  # 10 minutes max per job — kills stuck YOLO/RTSP jobs
 
     # Start camera loop manager in its OWN process (not as threads in this
     # process). This prevents background threads from holding SQLite mutexes
@@ -390,14 +392,28 @@ def main():
             if _poll_count % 10 == 0:
                 _reap_stale_jobs()
 
-            # 1. Reap finished processes
+            _now = time.time()
+
+            # 1. Reap finished processes; kill any that exceed JOB_TIMEOUT
             for job_id, proc in list(_active.items()):
+                elapsed = _now - _active_start.get(job_id, _now)
+                if elapsed > JOB_TIMEOUT and proc.is_alive():
+                    log.warning(f"Job {job_id} exceeded {JOB_TIMEOUT}s timeout — killing (pid={proc.pid})")
+                    proc.kill()
+                    proc.join(timeout=5)
+                    del _active[job_id]
+                    _active_start.pop(job_id, None)
+                    try:
+                        from core.database import _raw_update
+                        _raw_update(job_id, status="failed", error_message="Job timeout — exceeded 10 minutes")
+                    except Exception:
+                        pass
+                    continue
                 if not proc.is_alive():
                     proc.join()
                     del _active[job_id]
+                    _active_start.pop(job_id, None)
                     log.info(f"Reaped process for job {job_id}")
-
-            _now = time.time()
 
             # Retention cleanup (every 6 hours)
             if _now - _last_cleanup > 21600:
@@ -452,6 +468,7 @@ def main():
                     )
                     p.start()
                     _active[job_id] = p
+                    _active_start[job_id] = time.time()
                     log.info(f"Launched job {job_id} (pid={p.pid})")
                     launched += 1
 

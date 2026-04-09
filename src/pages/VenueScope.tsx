@@ -13,7 +13,7 @@ import {
   Camera, Loader2, X, Download,
   ChevronDown, ChevronUp, FileText,
   Activity, Users, Zap, DollarSign, Calendar, TrendingUp,
-  CreditCard, Crosshair, Trash2, Check,
+  CreditCard, Edit2, Crosshair, Trash2, Check,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
