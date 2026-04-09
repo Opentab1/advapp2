@@ -52,6 +52,7 @@ export interface Camera {
   segmentInterval?: number; // seconds between clips (defaults to segmentSeconds)
   createdAt: number;
   notes?: string;
+  barConfigJson?: string; // JSON: {stations: [{zone_id, label, polygon, bar_line_p1, bar_line_p2, customer_side}]}
 }
 
 function _itemToCamera(item: Record<string, Record<string, unknown>>): Camera {
@@ -75,6 +76,7 @@ function _itemToCamera(item: Record<string, Record<string, unknown>>): Camera {
     segmentInterval: rawInterval ? Number(rawInterval) : undefined,
     createdAt:       n('createdAt'),
     notes:           s('notes') || undefined,
+    barConfigJson:   s('barConfigJson') || undefined,
   };
 }
 
@@ -139,7 +141,7 @@ const cameraService = {
   async updateCamera(
     venueId: string,
     cameraId: string,
-    updates: Partial<Pick<Camera, 'name' | 'rtspUrl' | 'modes' | 'enabled' | 'modelProfile' | 'segmentSeconds' | 'segmentInterval' | 'notes'>>
+    updates: Partial<Pick<Camera, 'name' | 'rtspUrl' | 'modes' | 'enabled' | 'modelProfile' | 'segmentSeconds' | 'segmentInterval' | 'notes' | 'barConfigJson'>>
   ): Promise<void> {
     const ddb = _requireDDB();
 
@@ -170,6 +172,9 @@ const cameraService = {
     }
     if (updates.notes !== undefined) {
       expParts.push('notes = :notes'); values[':notes'] = { S: updates.notes };
+    }
+    if (updates.barConfigJson !== undefined) {
+      expParts.push('barConfigJson = :bcj'); values[':bcj'] = { S: updates.barConfigJson };
     }
 
     if (expParts.length === 0) return;

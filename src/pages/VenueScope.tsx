@@ -13,7 +13,7 @@ import {
   Camera, Loader2, X, Download,
   ChevronDown, ChevronUp, FileText,
   Activity, Users, Zap, DollarSign, Calendar, TrendingUp,
-  CreditCard,
+  CreditCard, Edit2, Crosshair, Trash2, Check,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
@@ -21,6 +21,7 @@ import sportsService from '../services/sports.service';
 import { SportsGame } from '../types';
 import venueSettingsService from '../services/venue-settings.service';
 import { isDemoAccount, generateDemoVenueScopeJobs } from '../utils/demoData';
+import cameraService, { Camera as CameraConfig } from '../services/camera.service';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,381 @@ function ConfidenceBadge({ color, label }: { color: string; label: string }) {
       <BarChart3 className="w-2.5 h-2.5" />
       {label || 'Unknown'}
     </span>
+  );
+}
+
+// ── Bar zone config types ─────────────────────────────────────────────────────
+
+interface BarStation {
+  zone_id: string;
+  label: string;
+  polygon: [number, number][];       // normalized [0-1] x,y vertices
+  bar_line_p1: [number, number];     // normalized start of bar line
+  bar_line_p2: [number, number];     // normalized end of bar line
+  customer_side: 1 | -1;            // +1 = below bar line, -1 = above
+}
+
+interface BarConfig {
+  stations: BarStation[];
+}
+
+function parseBarConfig(json: string | undefined): BarConfig | null {
+  if (!json) return null;
+  try { return JSON.parse(json) as BarConfig; } catch { return null; }
+}
+
+// ── Zone overlay (read-only SVG on live feed) ─────────────────────────────────
+
+function ZoneOverlay({ config }: { config: BarConfig }) {
+  return (
+    <svg
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      viewBox="0 0 1 1"
+      preserveAspectRatio="none"
+    >
+      {config.stations.map((s, i) => (
+        <g key={i}>
+          {/* Zone polygon */}
+          <polygon
+            points={s.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
+            fill="rgba(0,200,160,0.07)"
+            stroke="rgba(0,200,160,0.55)"
+            strokeWidth="0.004"
+          />
+          {/* Bar line (orange dashed) */}
+          <line
+            x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
+            x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
+            stroke="rgba(255,140,0,0.85)"
+            strokeWidth="0.004"
+            strokeDasharray="0.025 0.012"
+          />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// ── Zone editor modal ─────────────────────────────────────────────────────────
+
+type DrawMode = 'zone' | 'barline' | null;
+
+function ZoneEditorModal({
+  camera,
+  proxyBase,
+  onClose,
+}: {
+  camera: CameraConfig;
+  proxyBase: string;
+  onClose: () => void;
+}) {
+  const [config, setConfig]         = useState<BarConfig>(() => parseBarConfig(camera.barConfigJson) ?? { stations: [] });
+  const [drawMode, setDrawMode]     = useState<DrawMode>(null);
+  const [currentPts, setCurrentPts] = useState<[number, number][]>([]);
+  const [barLineFor, setBarLineFor] = useState<number | null>(null); // zone idx
+  const [saving, setSaving]         = useState(false);
+  const [saveOk, setSaveOk]         = useState(false);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Stream the live feed in the background
+  const streamUrl = (() => {
+    if (!proxyBase) return null;
+    const m = (camera.name || '').match(/ch(\d+)/i);
+    if (!m) return null;
+    return `${proxyBase.replace(/\/$/, '')}/hls/live/ch${m[1]}/0/livetop.mp4`;
+  })();
+
+  useEffect(() => {
+    if (streamUrl && videoRef.current) {
+      videoRef.current.src = streamUrl;
+      videoRef.current.load();
+    }
+  }, [streamUrl]);
+
+  function getRelPt(e: React.MouseEvent<SVGSVGElement>): [number, number] {
+    const r = svgRef.current!.getBoundingClientRect();
+    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+  }
+
+  function handleSvgClick(e: React.MouseEvent<SVGSVGElement>) {
+    const pt = getRelPt(e);
+
+    if (drawMode === 'zone') {
+      // Close polygon if clicking near first point (≥3 pts)
+      if (currentPts.length >= 3) {
+        const [fx, fy] = currentPts[0];
+        if (Math.hypot(pt[0] - fx, pt[1] - fy) < 0.03) {
+          const xs = currentPts.map(p => p[0]);
+          const ys = currentPts.map(p => p[1]);
+          const midY = (Math.min(...ys) + Math.max(...ys)) / 2;
+          const newStation: BarStation = {
+            zone_id: `zone_${Date.now()}`,
+            label:   `Zone ${config.stations.length + 1}`,
+            polygon: currentPts,
+            bar_line_p1: [Math.min(...xs), midY],
+            bar_line_p2: [Math.max(...xs), midY],
+            customer_side: 1,
+          };
+          setConfig(c => ({ stations: [...c.stations, newStation] }));
+          setCurrentPts([]);
+          setDrawMode(null);
+          return;
+        }
+      }
+      setCurrentPts(p => [...p, pt]);
+
+    } else if (drawMode === 'barline' && barLineFor !== null) {
+      if (currentPts.length === 0) {
+        setCurrentPts([pt]);
+      } else {
+        setConfig(c => ({
+          stations: c.stations.map((s, i) =>
+            i === barLineFor ? { ...s, bar_line_p1: currentPts[0], bar_line_p2: pt } : s
+          ),
+        }));
+        setCurrentPts([]);
+        setDrawMode(null);
+        setBarLineFor(null);
+      }
+    }
+  }
+
+  function startBarLine(idx: number) {
+    setBarLineFor(idx);
+    setCurrentPts([]);
+    setDrawMode('barline');
+  }
+
+  function deleteZone(idx: number) {
+    setConfig(c => ({ stations: c.stations.filter((_, i) => i !== idx) }));
+  }
+
+  function updateLabel(idx: number, label: string) {
+    setConfig(c => ({
+      stations: c.stations.map((s, i) => i === idx ? { ...s, label } : s),
+    }));
+  }
+
+  function toggleCustomerSide(idx: number) {
+    setConfig(c => ({
+      stations: c.stations.map((s, i) =>
+        i === idx ? { ...s, customer_side: (s.customer_side === 1 ? -1 : 1) } : s
+      ),
+    }));
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await cameraService.updateCamera(camera.venueId, camera.cameraId, {
+        barConfigJson: JSON.stringify(config),
+      });
+      setSaveOk(true);
+      setTimeout(onClose, 800);
+    } catch (err) {
+      console.error(err);
+      setSaving(false);
+    }
+  }
+
+  const cursorClass = drawMode ? 'cursor-crosshair' : 'cursor-default';
+
+  return (
+    <motion.div
+      className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-3"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="bg-whoop-panel border border-whoop-divider rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden"
+        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-whoop-divider flex-shrink-0">
+          <div>
+            <p className="text-sm font-semibold text-white">Configure Zones — {camera.name}</p>
+            <p className="text-[10px] text-text-muted mt-0.5">
+              {drawMode === 'zone'
+                ? 'Click to add polygon points • Click first point to close zone'
+                : drawMode === 'barline'
+                ? 'Click two points to set the bar line'
+                : 'Draw zones to define where drinks are served'}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-text-muted hover:text-white transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Canvas */}
+        <div className="relative bg-black flex-1 min-h-0" style={{ aspectRatio: '16/9', maxHeight: '55vh' }}>
+          {/* Background video */}
+          <video
+            ref={videoRef}
+            className="absolute inset-0 w-full h-full object-cover opacity-60"
+            autoPlay muted playsInline
+          />
+          {!streamUrl && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <p className="text-text-muted text-xs">No live feed — drawing on blank canvas</p>
+            </div>
+          )}
+
+          {/* SVG drawing layer */}
+          <svg
+            ref={svgRef}
+            className={`absolute inset-0 w-full h-full ${cursorClass}`}
+            viewBox="0 0 1 1"
+            preserveAspectRatio="none"
+            onClick={handleSvgClick}
+          >
+            {/* Saved zones */}
+            {config.stations.map((s, i) => (
+              <g key={i}>
+                <polygon
+                  points={s.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
+                  fill="rgba(0,200,160,0.12)"
+                  stroke="rgba(0,200,160,0.7)"
+                  strokeWidth="0.004"
+                />
+                <line
+                  x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
+                  x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
+                  stroke="rgba(255,140,0,0.9)"
+                  strokeWidth="0.004"
+                  strokeDasharray="0.025 0.012"
+                />
+                {/* Zone label */}
+                <text
+                  x={(s.bar_line_p1[0] + s.bar_line_p2[0]) / 2}
+                  y={s.bar_line_p1[1] - 0.03}
+                  fontSize="0.04"
+                  fill="rgba(255,255,255,0.8)"
+                  textAnchor="middle"
+                  style={{ pointerEvents: 'none' }}
+                >
+                  {s.label}
+                </text>
+                {/* Customer side arrow */}
+                <text
+                  x={(s.bar_line_p1[0] + s.bar_line_p2[0]) / 2}
+                  y={s.customer_side === 1 ? s.bar_line_p1[1] + 0.06 : s.bar_line_p1[1] - 0.07}
+                  fontSize="0.03"
+                  fill="rgba(255,200,80,0.7)"
+                  textAnchor="middle"
+                  style={{ pointerEvents: 'none' }}
+                >
+                  👤 customer
+                </text>
+              </g>
+            ))}
+
+            {/* In-progress polygon */}
+            {currentPts.length > 0 && (
+              <g>
+                {currentPts.length >= 2 && (
+                  <polyline
+                    points={currentPts.map(([x, y]) => `${x},${y}`).join(' ')}
+                    fill="none"
+                    stroke="rgba(100,200,255,0.8)"
+                    strokeWidth="0.004"
+                    strokeDasharray="0.015 0.008"
+                  />
+                )}
+                {currentPts.map(([x, y], i) => (
+                  <circle key={i} cx={x} cy={y} r="0.012"
+                    fill={i === 0 ? 'rgba(100,200,255,0.9)' : 'rgba(100,200,255,0.5)'}
+                    stroke="white" strokeWidth="0.003"
+                  />
+                ))}
+              </g>
+            )}
+          </svg>
+        </div>
+
+        {/* Controls */}
+        <div className="px-5 py-4 border-t border-whoop-divider flex-shrink-0 space-y-3 overflow-y-auto max-h-[30vh]">
+          {/* Draw toolbar */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setDrawMode('zone'); setCurrentPts([]); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
+                drawMode === 'zone'
+                  ? 'bg-teal/20 text-teal border border-teal/40'
+                  : 'bg-whoop-bg border border-whoop-divider text-text-secondary hover:text-white'
+              }`}
+            >
+              <Crosshair className="w-3 h-3" />
+              Draw Zone
+            </button>
+            {drawMode === 'zone' && currentPts.length > 0 && (
+              <button
+                onClick={() => { setCurrentPts([]); setDrawMode(null); }}
+                className="text-[10px] text-text-muted hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+            <div className="flex-1" />
+            <button
+              onClick={save}
+              disabled={saving || config.stations.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal text-black hover:bg-teal/90 disabled:opacity-50 transition-colors"
+            >
+              {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+              {saveOk ? 'Saved!' : 'Save Zones'}
+            </button>
+          </div>
+
+          {/* Zone list */}
+          {config.stations.length === 0 ? (
+            <p className="text-[11px] text-text-muted text-center py-2">
+              No zones yet — click "Draw Zone" then click on the camera feed to place points
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {config.stations.map((s, i) => (
+                <div key={i} className="flex items-center gap-2 bg-whoop-bg rounded-xl px-3 py-2">
+                  <div className="w-2 h-2 rounded-full bg-teal/60 flex-shrink-0" />
+                  <input
+                    value={s.label}
+                    onChange={e => updateLabel(i, e.target.value)}
+                    className="flex-1 bg-transparent text-xs text-white outline-none min-w-0"
+                    placeholder="Zone label"
+                  />
+                  <button
+                    onClick={() => toggleCustomerSide(i)}
+                    title="Toggle customer side"
+                    className="text-[9px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30 transition-colors flex-shrink-0"
+                  >
+                    👤 {s.customer_side === 1 ? 'below line' : 'above line'}
+                  </button>
+                  <button
+                    onClick={() => startBarLine(i)}
+                    title="Redraw bar line"
+                    className={`text-[10px] px-2 py-1 rounded-lg transition-colors flex-shrink-0 ${
+                      drawMode === 'barline' && barLineFor === i
+                        ? 'bg-orange-500/30 text-orange-400 border border-orange-500/40'
+                        : 'bg-whoop-panel border border-whoop-divider text-text-muted hover:text-white'
+                    }`}
+                  >
+                    <Edit2 className="w-2.5 h-2.5" />
+                  </button>
+                  <button
+                    onClick={() => deleteZone(i)}
+                    className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -405,7 +781,14 @@ function liveStreamUrl(label: string, proxyBase: string): string | null {
   return `${base}/hls/live/${ch}/0/livetop.mp4`;
 }
 
-function CameraLiveView({ label, proxyBase }: { label: string; proxyBase: string }) {
+function CameraLiveView({
+  label, proxyBase, barConfig, onConfigureZones,
+}: {
+  label: string;
+  proxyBase: string;
+  barConfig?: BarConfig | null;
+  onConfigureZones?: () => void;
+}) {
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const [state, setState] = React.useState<'loading' | 'playing' | 'error'>('loading');
   const url = liveStreamUrl(label, proxyBase);
@@ -436,13 +819,13 @@ function CameraLiveView({ label, proxyBase }: { label: string; proxyBase: string
       <video
         ref={videoRef}
         className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
-        autoPlay
-        muted
-        playsInline
+        autoPlay muted playsInline
         onCanPlay={() => setState('playing')}
-        onError={() => { setState('error'); }}
+        onError={() => setState('error')}
         onStalled={() => setState('loading')}
       />
+      {/* Zone overlay */}
+      {barConfig && state === 'playing' && <ZoneOverlay config={barConfig} />}
       {state === 'playing' && (
         <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm">
           <span className="relative flex h-1.5 w-1.5">
@@ -452,13 +835,30 @@ function CameraLiveView({ label, proxyBase }: { label: string; proxyBase: string
           <span className="text-[9px] font-semibold text-white/90 uppercase tracking-wide">Live</span>
         </div>
       )}
+      {/* Configure zones button */}
+      {onConfigureZones && (
+        <button
+          onClick={e => { e.stopPropagation(); onConfigureZones(); }}
+          className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm text-[9px] text-white/60 hover:text-white transition-colors"
+        >
+          <Edit2 className="w-2.5 h-2.5" />
+          {barConfig ? 'Edit Zones' : 'Configure Zones'}
+        </button>
+      )}
     </div>
   );
 }
 
-function RoomCard({ room, camProxyUrl, onInvestigate }: { room: RoomSummary; camProxyUrl: string; onInvestigate: (job: VenueScopeJob) => void }) {
+function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }: {
+  room: RoomSummary;
+  camProxyUrl: string;
+  camera?: CameraConfig | null;
+  onInvestigate: (job: VenueScopeJob) => void;
+  onConfigureZones?: (camera: CameraConfig) => void;
+}) {
   const isDrink  = room.mode === 'drink_count';
   const isPeople = room.mode === 'people_count';
+  const barConfig = camera ? parseBarConfig(camera.barConfigJson) : null;
 
   return (
     <motion.div
@@ -507,7 +907,14 @@ function RoomCard({ room, camProxyUrl, onInvestigate }: { room: RoomSummary; cam
       </div>
 
       {/* Live camera feed */}
-      {camProxyUrl && <CameraLiveView label={room.label} proxyBase={camProxyUrl} />}
+      {camProxyUrl && (
+        <CameraLiveView
+          label={room.label}
+          proxyBase={camProxyUrl}
+          barConfig={barConfig}
+          onConfigureZones={camera && onConfigureZones ? () => onConfigureZones(camera) : undefined}
+        />
+      )}
 
       {/* Primary metrics */}
       {isDrink && (
@@ -1307,6 +1714,8 @@ export function VenueScope() {
   const [newToast, setNewToast]       = useState<string | null>(null);
   const [investigating, setInvestigating] = useState<VenueScopeJob | null>(null);
   const [nextPollIn, setNextPollIn]   = useState(POLL_INTERVAL_MS / 1000);
+  const [cameras, setCameras]         = useState<CameraConfig[]>([]);
+  const [configuringCamera, setConfiguringCamera] = useState<CameraConfig | null>(null);
   const knownIds    = useRef<Set<string>>(new Set());
   const pollTimer   = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1343,6 +1752,12 @@ export function VenueScope() {
       if (s?.camProxyUrl) setCamProxyUrl(s.camProxyUrl);
     });
   }, [venueId]);
+
+  // Load camera configs (for zone overlay + editor)
+  useEffect(() => {
+    if (!venueId || isDemo) return;
+    cameraService.listCameras(venueId).then(setCameras).catch(() => {});
+  }, [venueId, isDemo]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -1411,6 +1826,15 @@ export function VenueScope() {
   const allRooms    = useMemo(() => { try { return buildRooms(tonightJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [tonightJobs]);
   const liveRooms   = useMemo(() => allRooms.filter(r => r.isLive || r.job?.status === 'running'), [allRooms]);
   const doneRooms   = useMemo(() => allRooms.filter(r => !r.isLive && r.job?.status !== 'running'), [allRooms]);
+
+  // Match a room label to its camera config record (for zone overlay + editor)
+  const cameraForRoom = useCallback((room: RoomSummary): CameraConfig | null => {
+    if (!cameras.length) return null;
+    const label = room.label.toLowerCase();
+    return cameras.find(c =>
+      label.includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(label)
+    ) ?? null;
+  }, [cameras]);
   const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
   // History = today's completed rooms + all older jobs
   const historyJobs = useMemo(() => [
@@ -1424,6 +1848,21 @@ export function VenueScope() {
       {investigating && (
         <TheftModal job={investigating} avgDrinkPrice={avgDrinkPrice} onClose={() => setInvestigating(null)} />
       )}
+
+      {/* Zone editor modal */}
+      <AnimatePresence>
+        {configuringCamera && (
+          <ZoneEditorModal
+            camera={configuringCamera}
+            proxyBase={camProxyUrl}
+            onClose={() => {
+              // Refresh camera list so overlay shows updated zones
+              cameraService.listCameras(venueId).then(setCameras).catch(() => {});
+              setConfiguringCamera(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* New-job toast */}
       <AnimatePresence>
@@ -1537,7 +1976,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {barCams.map(room => (
-                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} />
                       ))}
                     </div>
                   </div>
@@ -1553,7 +1992,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {peopleCams.map(room => (
-                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} />
                       ))}
                     </div>
                   </div>
@@ -1566,7 +2005,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {otherCams.map(room => (
-                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} onInvestigate={setInvestigating} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} />
                       ))}
                     </div>
                   </div>
