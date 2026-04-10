@@ -1022,6 +1022,18 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   const isPeople = room.mode === 'people_count';
   const barConfig = camera ? parseBarConfig(camera.barConfigJson) : null;
   const [feedOpen, setFeedOpen] = React.useState(isDrink);
+  const [secondsLeft, setSecondsLeft] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!isPeople || room.isLive) return;
+    const tick = () => {
+      const nextAt = (room.updatedAt ?? 0) + 1200;
+      setSecondsLeft(Math.max(0, Math.round(nextAt - Date.now() / 1000)));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [isPeople, room.isLive, room.updatedAt]);
 
   return (
     <motion.div
@@ -1126,21 +1138,29 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
       )}
 
       {isPeople && (
-        <div className="grid grid-cols-2 gap-2">
-          <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
-            <div className={`text-xl font-bold ${room.currentOccupancy > 0 ? 'text-teal' : 'text-text-muted'}`}>
-              {room.currentOccupancy > 0 ? room.currentOccupancy : '—'}
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+              <div className={`text-xl font-bold ${room.currentOccupancy > 0 ? 'text-teal' : 'text-text-muted'}`}>
+                {room.currentOccupancy > 0 ? room.currentOccupancy : '—'}
+              </div>
+              <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">In Room</div>
             </div>
-            <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">
-              In Room
+            <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+              <div className={`text-xl font-bold ${room.peakOccupancy > 0 ? 'text-white' : 'text-text-muted'}`}>
+                {room.peakOccupancy > 0 ? room.peakOccupancy : '—'}
+              </div>
+              <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Peak</div>
             </div>
           </div>
-          <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
-            <div className={`text-xl font-bold ${room.peakOccupancy > 0 ? 'text-white' : 'text-text-muted'}`}>
-              {room.peakOccupancy > 0 ? room.peakOccupancy : '—'}
+          {!room.isLive && (
+            <div className="text-center text-[10px] text-text-muted">
+              {secondsLeft > 0
+                ? `Next count in ${Math.floor(secondsLeft / 60)}m ${String(secondsLeft % 60).padStart(2, '0')}s`
+                : <span className="text-teal animate-pulse">Counting now…</span>
+              }
             </div>
-            <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Peak</div>
-          </div>
+          )}
         </div>
       )}
 
