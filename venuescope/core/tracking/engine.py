@@ -335,7 +335,7 @@ def _get_tracker_yaml(mode: str) -> str:
 # Gap 2: Screen recording detection
 _SCREEN_RESOLUTIONS = {(1920,1080),(1280,720),(2560,1440),(3840,2160),(2560,1600),(1366,768)}
 
-def _detect_screen_recording(frame: np.ndarray, W: int, H: int) -> Optional[str]:
+def _detect_screen_recording(frame: np.ndarray, W: int, H: int, source_type: str = "file") -> Optional[str]:
     """
     Heuristic check for screen-recorded footage.
     Returns a warning string if suspicious, else None.
