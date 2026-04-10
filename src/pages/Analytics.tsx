@@ -334,34 +334,58 @@ function TheftSection({ jobs }: { jobs: VenueScopeJob[] }) {
 
 // ── Night Log ─────────────────────────────────────────────────────────────────
 
+function modeTag(job: VenueScopeJob): string {
+  try {
+    if (job.activeModes) {
+      const modes = JSON.parse(job.activeModes) as string[];
+      const labels: Record<string, string> = {
+        drink_count: '🍺',
+        people_count: '👥',
+        bottle_count: '🍾',
+        staff_activity: '👤',
+        table_turns: '🔄',
+      };
+      return modes.map(m => labels[m] ?? m).join(' ');
+    }
+  } catch { /* fall through */ }
+  const labels: Record<string, string> = {
+    drink_count: '🍺',
+    people_count: '👥',
+    bottle_count: '🍾',
+    staff_activity: '👤',
+    table_turns: '🔄',
+  };
+  return labels[job.analysisMode] ?? job.analysisMode ?? '📹';
+}
+
 function NightLog({ jobs }: { jobs: VenueScopeJob[] }) {
   const [expanded, setExpanded] = useState(false);
 
-  // Dedupe: one row per job, sorted newest first
+  // Show ALL completed sessions, newest first
   const sorted = useMemo(
     () => [...jobs]
-      .filter(j => (j.totalDrinks ?? 0) > 0 || j.hasTheftFlag || (j.totalEntries ?? 0) > 0)
-      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
+      .sort((a, b) => jobTs(b) - jobTs(a)),
     [jobs]
   );
 
   if (sorted.length === 0) return null;
 
-  const visible = expanded ? sorted : sorted.slice(0, 8);
+  const visible = expanded ? sorted : sorted.slice(0, 10);
 
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
         <Video className="w-4 h-4 text-teal" />
-        <span className="text-sm font-semibold text-white">Night Log</span>
-        <span className="ml-auto text-[10px] text-text-muted">{sorted.length} sessions</span>
+        <span className="text-sm font-semibold text-white">Session Log</span>
+        <span className="ml-auto text-[10px] text-text-muted">{sorted.length} session{sorted.length !== 1 ? 's' : ''}</span>
       </div>
 
       {/* Column headers */}
       <div className="grid gap-2 px-4 py-2 border-b border-whoop-divider/40 text-[9px] text-text-muted uppercase tracking-wider font-semibold"
-        style={{ gridTemplateColumns: '5rem 1fr 3.5rem 2.5rem 3.5rem' }}>
+        style={{ gridTemplateColumns: '5rem 1fr 2rem 3.5rem 2.5rem 3.5rem' }}>
         <span>Date</span>
         <span>Camera</span>
+        <span className="text-center">Mode</span>
         <span className="text-center">Drinks</span>
         <span className="text-center">/hr</span>
         <span className="text-center">Status</span>
@@ -369,19 +393,24 @@ function NightLog({ jobs }: { jobs: VenueScopeJob[] }) {
 
       <div className="divide-y divide-whoop-divider/50">
         {visible.map(job => {
-          const dph = job.drinksPerHour != null ? job.drinksPerHour.toFixed(0) : '—';
+          const ts = jobTs(job);
+          const dph = job.drinksPerHour != null && job.drinksPerHour > 0 ? job.drinksPerHour.toFixed(0) : '—';
+          const drinks = job.totalDrinks ?? 0;
           return (
             <div
               key={job.jobId}
               className="grid items-center gap-2 px-4 py-2.5 hover:bg-whoop-bg/40 transition-colors"
-              style={{ gridTemplateColumns: '5rem 1fr 3.5rem 2.5rem 3.5rem' }}
+              style={{ gridTemplateColumns: '5rem 1fr 2rem 3.5rem 2.5rem 3.5rem' }}
             >
               <div>
-                <div className="text-xs font-medium text-white">{fmtDate(job.createdAt ?? 0)}</div>
-                <div className="text-[9px] text-text-muted">{fmtTime(job.createdAt ?? 0)}</div>
+                <div className="text-xs font-medium text-white">{fmtDate(ts)}</div>
+                <div className="text-[9px] text-text-muted">{fmtTime(ts)}</div>
               </div>
               <div className="text-xs text-text-secondary truncate">{cameraName(job)}</div>
-              <div className="text-sm font-bold text-teal text-center tabular-nums">{job.totalDrinks ?? 0}</div>
+              <div className="text-center text-xs">{modeTag(job)}</div>
+              <div className={`text-sm font-bold text-center tabular-nums ${drinks > 0 ? 'text-teal' : 'text-text-muted'}`}>
+                {drinks > 0 ? drinks : '—'}
+              </div>
               <div className="text-[10px] text-text-muted text-center tabular-nums">{dph}</div>
               <div className="text-center">
                 {job.hasTheftFlag ? (
@@ -398,7 +427,7 @@ function NightLog({ jobs }: { jobs: VenueScopeJob[] }) {
         })}
       </div>
 
-      {sorted.length > 8 && (
+      {sorted.length > 10 && (
         <button
           onClick={() => setExpanded(e => !e)}
           className="w-full py-2.5 text-xs text-text-muted hover:text-white border-t border-whoop-divider transition-colors flex items-center justify-center gap-1"
@@ -441,7 +470,7 @@ function RevenueBanner({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrin
 export function Analytics() {
   const venueId     = authService.getStoredUser()?.venueId ?? '';
   const isDemo      = isDemoAccount(venueId);
-  const [period, setPeriod]           = useState<Period>('today');
+  const [period, setPeriod]           = useState<Period>('all');
   const [allJobs, setAllJobs]         = useState<VenueScopeJob[]>([]);
   const [loading, setLoading]         = useState(true);
   const [avgDrinkPrice, setAvgDrinkPrice] = useState(0);
@@ -503,10 +532,14 @@ export function Analytics() {
         <div className="bg-whoop-panel border border-whoop-divider rounded-2xl px-4 py-12 text-center">
           <Video className="w-8 h-8 text-text-muted mx-auto mb-3" />
           <p className="text-sm text-white font-medium">No sessions for this period</p>
-          <p className="text-xs text-text-muted mt-1">Try a wider time range</p>
+          <p className="text-xs text-text-muted mt-1">
+            {allJobs.length > 0
+              ? `${allJobs.length} session${allJobs.length !== 1 ? 's' : ''} exist outside this range`
+              : 'No analysis sessions found'}
+          </p>
           {period !== 'all' && (
             <button onClick={() => setPeriod('all')} className="mt-4 text-xs text-teal hover:underline">
-              Show all time →
+              Show all {allJobs.length} sessions →
             </button>
           )}
         </div>
