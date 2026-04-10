@@ -414,10 +414,9 @@ function ZoneEditorModal({
           </div>
         </div>
 
-        {/* Canvas */}
+        {/* Canvas — flex-1 so it fills remaining space; footer is always visible */}
         <div
-          className="relative bg-black select-none"
-          style={{ aspectRatio: '16/9', maxHeight: 'calc(95vh - 230px)' }}
+          className="relative bg-black select-none flex-1 min-h-0 overflow-hidden"
         >
           <video
             ref={videoRef}
