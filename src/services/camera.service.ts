@@ -53,6 +53,7 @@ export interface Camera {
   createdAt: number;
   notes?: string;
   barConfigJson?: string; // JSON: {stations: [{zone_id, label, polygon, bar_line_p1, bar_line_p2, customer_side}]}
+  nextOccupancyAt?: number; // Unix epoch seconds — when the worker will next run people_count
 }
 
 function _itemToCamera(item: Record<string, Record<string, unknown>>): Camera {
@@ -77,6 +78,7 @@ function _itemToCamera(item: Record<string, Record<string, unknown>>): Camera {
     createdAt:       n('createdAt'),
     notes:           s('notes') || undefined,
     barConfigJson:   s('barConfigJson') || undefined,
+    nextOccupancyAt: n('nextOccupancyAt') || undefined,
   };
 }
 

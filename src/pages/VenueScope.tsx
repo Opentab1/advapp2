@@ -1027,13 +1027,14 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   React.useEffect(() => {
     if (!isPeople || room.isLive) return;
     const tick = () => {
-      const nextAt = (room.updatedAt ?? 0) + 1200;
+      // Prefer the exact time written by the worker; fall back to estimate
+      const nextAt = camera?.nextOccupancyAt ?? ((room.updatedAt ?? 0) + 1200);
       setSecondsLeft(Math.max(0, Math.round(nextAt - Date.now() / 1000)));
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [isPeople, room.isLive, room.updatedAt]);
+  }, [isPeople, room.isLive, room.updatedAt, camera?.nextOccupancyAt]);
 
   return (
     <motion.div

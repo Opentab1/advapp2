@@ -184,6 +184,14 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                 last_occupancy_t = time.time()
                 log.info(f"[camera_loop] '{camera_name}' — people_count snapshot "
                          f"(next in {OCCUPANCY_INTERVAL//60}m)")
+                try:
+                    from core.ddb_cameras import update_camera_next_occupancy
+                    venue_id = current.get("venue", "")
+                    if venue_id:
+                        update_camera_next_occupancy(venue_id, camera_id,
+                                                     last_occupancy_t + OCCUPANCY_INTERVAL)
+                except Exception:
+                    pass
 
             # Apply mixed-mode occupancy throttle (drink_count + people_count cameras)
             effective = _effective_cam(current, last_occupancy_t)
@@ -192,6 +200,14 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                 last_occupancy_t = time.time()
                 log.info(f"[camera_loop] '{camera_name}' — mixed occupancy run "
                          f"(next in {OCCUPANCY_INTERVAL//60}m)")
+                try:
+                    from core.ddb_cameras import update_camera_next_occupancy
+                    venue_id = current.get("venue", "")
+                    if venue_id:
+                        update_camera_next_occupancy(venue_id, camera_id,
+                                                     last_occupancy_t + OCCUPANCY_INTERVAL)
+                except Exception:
+                    pass
             elif any(m in _PEOPLE_MODES for m in (current.get("mode","") or "").split(",")) \
                     and not _is_people_only(current):
                 remaining = int((OCCUPANCY_INTERVAL - (time.time() - last_occupancy_t)) / 60)

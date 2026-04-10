@@ -181,6 +181,30 @@ def update_camera_bar_config_json(venue_id: str, camera_id: str,
         return False
 
 
+def update_camera_next_occupancy(venue_id: str, camera_id: str, next_at: float) -> bool:
+    """
+    Write nextOccupancyAt (Unix epoch seconds) to the camera's DDB record.
+    Called by camera_loop immediately after launching a people_count segment
+    so the UI can show an accurate countdown to the next run.
+    """
+    from decimal import Decimal
+    ddb = _get_ddb()
+    if not ddb:
+        return False
+    try:
+        table = ddb.Table(TABLE)
+        table.update_item(
+            Key={"venueId": venue_id, "cameraId": camera_id},
+            UpdateExpression="SET nextOccupancyAt = :v",
+            ExpressionAttributeValues={":v": Decimal(str(int(next_at)))},
+        )
+        log.debug(f"[ddb_cameras] nextOccupancyAt={int(next_at)} saved for {venue_id}/{camera_id}")
+        return True
+    except Exception as e:
+        log.debug(f"[ddb_cameras] update_camera_next_occupancy failed: {e}")
+        return False
+
+
 def get_camera_ddb(camera_id: str) -> Optional[dict]:
     """Get a single camera from DynamoDB by camera_id (scans by SK — use sparingly)."""
     ddb = _get_ddb()
