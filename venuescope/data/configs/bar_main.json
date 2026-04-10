@@ -3,20 +3,33 @@
   "display_name": "Main Bar",
   "stations": [
     {
-      "zone_id": "well_a",
-      "label": "Well A",
+      "zone_id": "bar_left",
+      "label": "Bar Left",
       "polygon": [
         [0.05, 0.22],
-        [0.95, 0.22],
-        [0.95, 0.68],
+        [0.52, 0.22],
+        [0.52, 0.68],
         [0.05, 0.68]
       ],
-      "bar_line_p1": [0.05, 0.44],
-      "bar_line_p2": [0.95, 0.44],
+      "bar_line_p1": [0.05, 0.42],
+      "bar_line_p2": [0.52, 0.42],
+      "customer_side": 1
+    },
+    {
+      "zone_id": "bar_right",
+      "label": "Bar Right",
+      "polygon": [
+        [0.52, 0.22],
+        [0.95, 0.22],
+        [0.95, 0.68],
+        [0.52, 0.68]
+      ],
+      "bar_line_p1": [0.52, 0.42],
+      "bar_line_p2": [0.95, 0.42],
       "customer_side": 1
     }
   ],
   "frame_width": 2622,
   "frame_height": 1206,
-  "notes": "Overhead fisheye CH9. Bartender normal cy~0.37. Serving cy~0.44+. Bar line separates working from serving reach."
+  "notes": "CH7 overhead. Two zones split at x=0.52. Bartender normal cy~0.37. Serving cy~0.44+. Bar line separates working from serving reach."
 }
