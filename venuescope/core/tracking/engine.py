@@ -1077,11 +1077,7 @@ class VenueProcessor:
             )
         elif mode == "people_count":
             lines = ec.get("lines", [])
-            if not lines:
-                lines = [{"line_id":"entrance_1","label":"Entrance 1",
-                          "p1":ec.get("line_p1",[0.5,0.0]),
-                          "p2":ec.get("line_p2",[0.5,1.0]),
-                          "entry_side":ec.get("entry_side",-1)}]
+            # No lines = pure headcount mode (count people in frame, no entry/exit)
             return PeopleCounter(lines_config=lines,
                                  confirm_frames=DEFAULT_PEOPLE_RULES.entry_line_confirm,
                                  W=W, H=H)

@@ -114,7 +114,10 @@ class PeopleCounter:
         if frame_idx % 10 == 0:
             self.occupancy_log.append((round(t_sec, 1), self._current_occupancy))
 
-        # Per-line crossing detection
+        # Per-line crossing detection (skipped when no lines configured)
+        if not self.lines:
+            return events
+
         for i, tid in enumerate(track_ids):
             if i >= len(centroids):
                 continue
@@ -220,7 +223,9 @@ class PeopleCounter:
         peak_hour = (max(self.hourly_entries, key=self.hourly_entries.get)
                      if self.hourly_entries else 0)
 
+        headcount_mode = not self.lines
         return {
+            "headcount_mode":     headcount_mode,
             "total_entries":      self.total_entries,
             "total_exits":        self.total_exits,
             "net_occupancy":      max(0, self.total_entries - self.total_exits),
