@@ -128,14 +128,27 @@ function ZoneEditorModal({
   proxyBase: string;
   onClose: () => void;
 }) {
-  const [config, setConfig]     = useState<BarConfig>(() => parseBarConfig(camera.barConfigJson) ?? { stations: [] });
+  // Default suggested zone — full bar width, bar line at 44% (overhead fisheye default)
+  const suggestedConfig: BarConfig = {
+    stations: [{
+      zone_id:       'bar',
+      label:         'Bar',
+      polygon:       [[0.02, 0.06], [0.98, 0.06], [0.98, 0.76], [0.02, 0.76]],
+      bar_line_p1:   [0.0, 0.44],
+      bar_line_p2:   [1.0, 0.44],
+      customer_side: 1,
+    }],
+  };
+  const existing = parseBarConfig(camera.barConfigJson);
+  const [config, setConfig]     = useState<BarConfig>(() => existing ?? suggestedConfig);
   // rect draw state: null = idle, [x,y] = anchor corner placed
   const [rectAnchor, setRectAnchor] = useState<[number, number] | null>(null);
   const [cursor, setCursor]         = useState<[number, number] | null>(null);
   const [dragTarget, setDragTarget] = useState<DragTarget>(null);
   const [saving, setSaving]         = useState(false);
   const [saveOk, setSaveOk]         = useState(false);
-  const [step, setStep]             = useState<'draw' | 'done'>('draw');
+  // Start in 'done' if we have a zone (existing or suggested), 'draw' only if truly empty
+  const [step, setStep]             = useState<'draw' | 'done'>(existing ? 'done' : 'done');
   const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const editorHlsRef = useRef<Hls | null>(null);
@@ -153,17 +166,22 @@ function ZoneEditorModal({
     if (!streamUrl || !videoRef.current) return;
     const v = videoRef.current;
     if (editorHlsRef.current) { editorHlsRef.current.destroy(); editorHlsRef.current = null; }
-    if (Hls.isSupported()) {
+    if (streamUrl.includes('.m3u8') && Hls.isSupported()) {
       const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true });
       editorHlsRef.current = hls;
       hls.loadSource(streamUrl);
       hls.attachMedia(v);
       hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
-    } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+    } else {
+      // fMP4 direct stream — native video element handles this fine
       v.src = streamUrl;
       v.load();
+      v.play().catch(() => {});
     }
-    return () => { if (editorHlsRef.current) { editorHlsRef.current.destroy(); editorHlsRef.current = null; } };
+    return () => {
+      if (editorHlsRef.current) { editorHlsRef.current.destroy(); editorHlsRef.current = null; }
+      v.src = '';
+    };
   }, [streamUrl]);
 
   function getRelPt(e: React.MouseEvent<SVGSVGElement>): [number, number] {
@@ -313,7 +331,7 @@ function ZoneEditorModal({
             </div>
             <div>
               <p className="text-sm font-semibold text-white">Zone Setup — {camera.name}</p>
-              <p className="text-[10px] text-text-muted">Mark your bar area so the AI knows where to watch for drink service</p>
+              <p className="text-[10px] text-text-muted">{existing ? 'Edit your bar zone and bar line' : 'Suggested zone pre-loaded — adjust the bar line, then save'}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-text-muted hover:text-white transition-colors p-1">
@@ -472,7 +490,7 @@ function ZoneEditorModal({
         {/* Zone list + controls */}
         <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 space-y-2 overflow-y-auto" style={{ maxHeight: '28vh' }}>
           {config.stations.length === 0 ? (
-            <p className="text-[11px] text-text-muted text-center py-1">No zones yet — drag a box on the camera image above</p>
+            <p className="text-[11px] text-text-muted text-center py-1">Drag a box on the camera image to draw your bar zone</p>
           ) : (
             <>
               {config.stations.map((s, i) => (
