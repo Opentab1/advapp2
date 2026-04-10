@@ -396,6 +396,12 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
             update_expr += ", tableVisitsByStaff = :tvs"
             expr_vals[":tvs"] = {"S": json.dumps(live_visits)}
 
+    # table_service mode live leaderboard
+    svc_leaderboard = summary.get("tableVisitsByStaff", [])
+    if svc_leaderboard and isinstance(svc_leaderboard, list):
+        update_expr += ", tableVisitsByStaff = :tvs2"
+        expr_vals[":tvs2"] = {"S": json.dumps(svc_leaderboard)}
+
     ddb_key = _ddb_sort_key(job_id)
     try:
         ddb = _get_client("dynamodb")
@@ -563,7 +569,7 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
         if pos_data.get("variance_pct", 0) > 15:
             item["hasTheftFlag"] = {"BOOL": True}
 
-    # ── Table visits by staff ──────────────────────────────────────────────────
+    # ── Table visits by staff (table_turns mode) ──────────────────────────────
     tables = summary.get("tables", {})
     if tables:
         visits_by_staff: Dict[str, Dict[str, int]] = {}
@@ -573,6 +579,17 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
                 visits_by_staff[tid] = {str(k): v for k, v in attr.items()}
         if visits_by_staff:
             item["tableVisitsByStaff"] = {"S": json.dumps(visits_by_staff)}
+
+    # ── Table service tracker (table_service mode) ────────────────────────────
+    svc = summary.get("table_service", {})
+    if svc:
+        leaderboard = summary.get("tableVisitsByStaff", [])
+        if leaderboard:
+            item["tableVisitsByStaff"] = {"S": json.dumps(leaderboard)}
+        # Per-table visit counts
+        per_table = {tid: v for tid, v in svc.items() if tid != "__leaderboard__"}
+        if per_table:
+            item["tableServiceDetail"] = {"S": json.dumps(per_table)}
 
     # Circuit breaker check
     if not _cb.allow():

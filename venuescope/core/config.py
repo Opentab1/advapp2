@@ -26,6 +26,7 @@ ANALYSIS_MODES = {
     "bottle_count":   "🍾 Bottle Count",
     "people_count":   "🚶 People Count",
     "table_turns":    "🪑 Table Turns",
+    "table_service":  "🛎 Table Service",
     "staff_activity": "👷 Staff Activity",
     "after_hours":    "🔒 After Hours Motion",
 }
@@ -35,6 +36,7 @@ ANALYSIS_DESCRIPTIONS = {
     "bottle_count":   "Back bar or shelf camera. Counts bottles and glasses — tracks inventory usage and pours per bottle.",
     "people_count":   "Entrance or dining room camera. Counts people in/out, tracks occupancy curve and peak hours.",
     "table_turns":    "Dining floor camera. Detects table occupancy, measures turn times and customer dwell time.",
+    "table_service":  "Dining floor camera. Tracks every server visit per table — including pass-by greetings. Alerts on unvisited tables.",
     "staff_activity": "Any camera. Measures staff headcount, idle time, and activity levels across the shift.",
     "after_hours":    "Storage, back bar, or walk-in camera. Detects motion outside service hours and logs access.",
 }

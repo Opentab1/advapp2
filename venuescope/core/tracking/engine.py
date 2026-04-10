@@ -29,8 +29,9 @@ from core.shift      import ShiftManager
 from core.analytics.drink_counter  import DrinkCounter
 from core.analytics.bottle_counter import BottleCounter
 from core.analytics.people_counter import PeopleCounter
-from core.analytics.table_tracker  import TableTurnTracker, TableZone
-from core.analytics.staff_tracker  import StaffActivityTracker, AfterHoursDetector
+from core.analytics.table_tracker         import TableTurnTracker, TableZone
+from core.analytics.table_service_tracker import TableServiceTracker, ServiceTableZone
+from core.analytics.staff_tracker         import StaffActivityTracker, AfterHoursDetector
 from core.output.writer            import ResultWriter
 
 ProgressCB = Callable[[float, str], None]
@@ -1092,6 +1093,22 @@ class VenueProcessor:
             r = DEFAULT_TABLE_RULES
             return TableTurnTracker(zones, r.occupied_conf_frames,
                                     r.empty_conf_frames, r.min_dwell_seconds)
+        elif mode == "table_service":
+            zones = [ServiceTableZone(table_id=t["table_id"],
+                                      label=t.get("label", t["table_id"]),
+                                      polygon_px=[(p[0]*W, p[1]*H) for p in t["polygon"]])
+                     for t in ec.get("tables", [])]
+            server_names = {}
+            if self.shift:
+                for b in self.shift.bartenders:
+                    if hasattr(b, "track_id") and b.track_id is not None:
+                        server_names[b.track_id] = b.name
+            return TableServiceTracker(
+                tables=zones,
+                fps=fps,
+                server_names=server_names,
+                unvisited_alert_min=float(ec.get("unvisited_alert_min", 15.0)),
+            )
         elif mode == "staff_activity":
             return StaffActivityTracker(idle_threshold_sec=ec.get(
                 "idle_threshold_seconds", DEFAULT_STAFF_RULES.idle_threshold_seconds))
@@ -1108,7 +1125,7 @@ class VenueProcessor:
                                    boxes=boxes_px if len(boxes_px) else None)
         elif mode == "bottle_count":
             return analyzer.update(frame_idx, t_sec, boxes_px, class_ids or [], confs)
-        elif mode in ("people_count", "table_turns", "staff_activity"):
+        elif mode in ("people_count", "table_turns", "table_service", "staff_activity"):
             return analyzer.update(frame_idx, t_sec, centroids, track_ids)
         elif mode == "after_hours":
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -1172,6 +1189,11 @@ class VenueProcessor:
                           "occupancy_log": analyzer.occupancy_log})
             elif mode == "table_turns":
                 b["tables"] = analyzer.summary()
+            elif mode == "table_service":
+                analyzer.flush(total_sec)   # close any open visits at end of video
+                full = analyzer.summary()
+                b["table_service"] = full
+                b["tableVisitsByStaff"] = full.get("__leaderboard__", [])
             elif mode == "staff_activity":
                 b.update({"staff":         analyzer.summary(total_sec),
                           "headcount_log": analyzer.headcount_log})
