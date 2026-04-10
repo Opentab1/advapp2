@@ -162,8 +162,8 @@ function HeroNumbers({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
   const peakOccupancy = jobs.reduce((max, j) => Math.max(max, j.peakOccupancy ?? 0), 0);
   const uniqueTracked = jobs.reduce((s, j) => s + (j.uniqueTracked ?? 0), 0);
   const hasPeople     = totalEntries > 0 || peakOccupancy > 0 || uniqueTracked > 0;
-  // headcount mode: no entry lines, just unique tracks
-  const headcountMode = uniqueTracked > 0 && totalEntries === 0;
+  // headcount mode: cameras running people_count with no counting lines
+  const headcountMode = totalEntries === 0 && (peakOccupancy > 0 || uniqueTracked > 0);
 
   // Unique camera-days
   const days = new Set(jobs.map(j => fmtDate(jobTs(j)))).size;
@@ -177,10 +177,10 @@ function HeroNumbers({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
     },
     hasPeople
       ? {
-          label: headcountMode ? 'People Tracked' : 'Guests Counted',
-          value: (headcountMode ? uniqueTracked : totalEntries).toLocaleString(),
+          label: uniqueTracked > 0 ? 'People Tracked' : 'Peak Occupancy',
+          value: (uniqueTracked > 0 ? uniqueTracked : peakOccupancy).toLocaleString(),
           color: 'text-blue-400',
-          sub: peakOccupancy > 0 ? `Peak: ${peakOccupancy}` : null,
+          sub: uniqueTracked > 0 && peakOccupancy > 0 ? `Peak: ${peakOccupancy}` : `across ${jobs.filter(j => (j.peakOccupancy ?? 0) > 0).length} sessions`,
         }
       : {
           label: 'Revenue Protected',
@@ -513,6 +513,64 @@ function NightLog({ jobs }: { jobs: VenueScopeJob[] }) {
           {expanded ? <><ChevronUp className="w-3 h-3" /> Show less</> : <><ChevronDown className="w-3 h-3" /> Show all {sorted.length} sessions</>}
         </button>
       )}
+    </div>
+  );
+}
+
+// ── People Count Detail ────────────────────────────────────────────────────────
+
+function PeopleSection({ jobs }: { jobs: VenueScopeJob[] }) {
+  const peopleJobs = useMemo(
+    () => jobs.filter(j => (j.peakOccupancy ?? 0) > 0 || (j.uniqueTracked ?? 0) > 0)
+              .sort((a, b) => jobTs(b) - jobTs(a)),
+    [jobs]
+  );
+  if (peopleJobs.length === 0) return null;
+
+  const overallPeak    = peopleJobs.reduce((max, j) => Math.max(max, j.peakOccupancy ?? 0), 0);
+  const totalUnique    = peopleJobs.reduce((s, j) => s + (j.uniqueTracked ?? 0), 0);
+  const totalEntries   = peopleJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+
+  return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+        <Users className="w-4 h-4 text-blue-400" />
+        <span className="text-sm font-semibold text-white">People Count</span>
+        <span className="ml-auto text-[10px] text-text-muted">{peopleJobs.length} session{peopleJobs.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+            <div className="text-sm font-bold text-blue-400 tabular-nums">{overallPeak}</div>
+            <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Peak Occupancy</div>
+          </div>
+          <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+            <div className="text-sm font-bold text-white tabular-nums">{totalUnique > 0 ? totalUnique : '—'}</div>
+            <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">People Tracked</div>
+          </div>
+          <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+            <div className="text-sm font-bold text-white tabular-nums">{totalEntries > 0 ? totalEntries : '—'}</div>
+            <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Total Entries</div>
+          </div>
+        </div>
+        {/* Per-session peak breakdown */}
+        <div className="space-y-1">
+          {peopleJobs.slice(0, 8).map(job => {
+            const peak = job.peakOccupancy ?? 0;
+            const barPct = overallPeak > 0 ? (peak / overallPeak) * 100 : 0;
+            return (
+              <div key={job.jobId} className="flex items-center gap-2">
+                <span className="text-[10px] text-text-muted w-20 flex-shrink-0 truncate">{cameraName(job)}</span>
+                <div className="flex-1 h-1.5 bg-whoop-divider rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-400/60 rounded-full" style={{ width: `${barPct}%` }} />
+                </div>
+                <span className="text-[10px] font-semibold text-white w-6 text-right tabular-nums">{peak}</span>
+                <span className="text-[9px] text-text-muted w-12 flex-shrink-0">{fmtTime(jobTs(job))}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -909,6 +967,7 @@ export function Analytics() {
             <HeroNumbers jobs={jobs} avgDrinkPrice={avgDrinkPrice} />
             {avgDrinkPrice > 0 && <RevenueBanner jobs={jobs} avgDrinkPrice={avgDrinkPrice} />}
             <StaffSection jobs={jobs} />
+            <PeopleSection jobs={jobs} />
             <DrinkTypeSection jobs={jobs} />
             <BottleSection jobs={jobs} />
             <TableTurnsSection jobs={jobs} />
