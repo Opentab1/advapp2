@@ -986,8 +986,16 @@ function CameraLiveView({
         onCanPlay={() => { if (timerRef.current) clearTimeout(timerRef.current); setState('playing'); }}
         onError={() => { setErrorMsg('Stream unavailable'); setState('error'); }}
       />
-      {/* Zone overlay */}
+      {/* Zone overlay — show whenever feed is playing */}
       {barConfig && state === 'playing' && <ZoneOverlay config={barConfig} />}
+      {/* No-config hint — show on playing feed when no zones set */}
+      {!barConfig && state === 'playing' && onConfigureZones && (
+        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+          <div className="px-2 py-1 rounded bg-black/50 text-[9px] text-amber-400/80">
+            No bar zones configured
+          </div>
+        </div>
+      )}
       {state === 'playing' && (
         <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm">
           <span className="relative flex h-1.5 w-1.5">
@@ -1979,10 +1987,14 @@ export function VenueScope() {
     return () => clearTimeout(t);
   }, [isDemo]);
 
-  // Auto-poll
+  // Auto-poll — refresh jobs AND camera configs (picks up auto-detected barConfigJson)
   useEffect(() => {
     pollTimer.current = setInterval(() => {
-      if (document.visibilityState === 'visible') { load(true); setNextPollIn(POLL_INTERVAL_MS / 1000); }
+      if (document.visibilityState === 'visible') {
+        load(true);
+        setNextPollIn(POLL_INTERVAL_MS / 1000);
+        if (!isDemo) cameraService.listCameras(venueId).then(setCameras).catch(() => {});
+      }
     }, POLL_INTERVAL_MS);
     countdownTimer.current = setInterval(() => {
       if (document.visibilityState === 'visible') setNextPollIn(n => n <= 1 ? POLL_INTERVAL_MS / 1000 : n - 1);
