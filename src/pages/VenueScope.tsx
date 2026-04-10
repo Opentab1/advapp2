@@ -778,10 +778,20 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
     )
   );
 
-  // Use highest single-camera peakOccupancy (not sum — cameras overlap)
-  const currentOccupancy = peopleRecent.length > 0
-    ? Math.max(...peopleRecent.map(j => j.peakOccupancy ?? 0))
+  // For each distinct camera zone, keep the most recent job.
+  // Then SUM across zones — cameras cover non-overlapping areas of the venue.
+  const camLatest = new Map<string, VenueScopeJob>();
+  for (const j of peopleRecent) {
+    const key = j.cameraLabel || friendlyClipLabel(j.clipLabel) || j.roomLabel || j.jobId.slice(0, 12);
+    const existing = camLatest.get(key);
+    const jTime = j.updatedAt ?? j.finishedAt ?? j.createdAt ?? 0;
+    const eTime = existing ? (existing.updatedAt ?? existing.finishedAt ?? existing.createdAt ?? 0) : -1;
+    if (!existing || jTime > eTime) camLatest.set(key, j);
+  }
+  const currentOccupancy = camLatest.size > 0
+    ? Array.from(camLatest.values()).reduce((s, j) => s + (j.peakOccupancy ?? 0), 0)
     : 0;
+  const cameraZoneCount = camLatest.size;
   const occupancyIsEntrance = false;
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
@@ -818,7 +828,7 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
       bg: 'bg-whoop-panel border-whoop-divider',
       iconColor: 'text-text-muted',
       sub: currentOccupancy > 0
-        ? (occupancyIsEntrance ? 'door count · live' : 'in-frame count · live')
+        ? `${cameraZoneCount} camera zone${cameraZoneCount !== 1 ? 's' : ''}`
         : liveJobs.length > 0 ? 'cameras live · no activity' : 'no cameras active',
     },
     theftCount > 0
