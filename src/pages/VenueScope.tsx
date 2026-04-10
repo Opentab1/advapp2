@@ -116,8 +116,17 @@ function ZoneOverlay({ config }: { config: BarConfig }) {
 
 // ── Zone editor modal ─────────────────────────────────────────────────────────
 
-// Drag state for bar line handle dragging
-type DragTarget = { stationIdx: number; handle: 'p1' | 'p2' } | null;
+type DragTarget =
+  | { kind: 'barHandle'; stationIdx: number; handle: 'p1' | 'p2' }
+  | { kind: 'corner';    stationIdx: number; cornerIdx: number }
+  | { kind: 'zone';      stationIdx: number; startPt: [number, number]; startPolygon: [number, number][]; startP1: [number, number]; startP2: [number, number] }
+  | null;
+
+function _ptInRect(pt: [number,number], poly: [number,number][]): boolean {
+  const xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);
+  return pt[0] >= Math.min(...xs) && pt[0] <= Math.max(...xs) &&
+         pt[1] >= Math.min(...ys) && pt[1] <= Math.max(...ys);
+}
 
 function ZoneEditorModal({
   camera,
@@ -133,7 +142,7 @@ function ZoneEditorModal({
     stations: [{
       zone_id:       'bar',
       label:         'Bar',
-      polygon:       [[0.02, 0.06], [0.98, 0.06], [0.98, 0.58], [0.02, 0.58]],
+      polygon:       [[0.02, 0.06], [0.98, 0.06], [0.98, 0.49], [0.02, 0.49]],
       bar_line_p1:   [0.0, 0.44],
       bar_line_p2:   [1.0, 0.44],
       customer_side: 1,
@@ -192,26 +201,46 @@ function ZoneEditorModal({
   }
 
   function handleSvgMouseDown(e: React.MouseEvent<SVGSVGElement>) {
-    if (dragTarget) return; // already dragging a handle
+    if (dragTarget) return;
     if (e.button !== 0) return;
     const pt = getRelPt(e);
+    const HIT = 0.035; // normalized hit radius
 
-    // Check if clicking near a bar line handle (drag to reposition)
     for (let i = 0; i < config.stations.length; i++) {
       const s = config.stations[i];
-      if (Math.hypot(pt[0] - s.bar_line_p1[0], pt[1] - s.bar_line_p1[1]) < 0.03) {
-        setDragTarget({ stationIdx: i, handle: 'p1' });
-        e.preventDefault();
-        return;
+
+      // 1. Bar line handles — highest priority
+      if (Math.hypot(pt[0] - s.bar_line_p1[0], pt[1] - s.bar_line_p1[1]) < HIT) {
+        setDragTarget({ kind: 'barHandle', stationIdx: i, handle: 'p1' });
+        e.preventDefault(); return;
       }
-      if (Math.hypot(pt[0] - s.bar_line_p2[0], pt[1] - s.bar_line_p2[1]) < 0.03) {
-        setDragTarget({ stationIdx: i, handle: 'p2' });
-        e.preventDefault();
-        return;
+      if (Math.hypot(pt[0] - s.bar_line_p2[0], pt[1] - s.bar_line_p2[1]) < HIT) {
+        setDragTarget({ kind: 'barHandle', stationIdx: i, handle: 'p2' });
+        e.preventDefault(); return;
+      }
+
+      // 2. Polygon corner handles
+      for (let ci = 0; ci < s.polygon.length; ci++) {
+        const [cx, cy] = s.polygon[ci];
+        if (Math.hypot(pt[0] - cx, pt[1] - cy) < HIT) {
+          setDragTarget({ kind: 'corner', stationIdx: i, cornerIdx: ci });
+          e.preventDefault(); return;
+        }
+      }
+
+      // 3. Polygon body — drag whole zone
+      if (_ptInRect(pt, s.polygon)) {
+        setDragTarget({
+          kind: 'zone', stationIdx: i, startPt: pt,
+          startPolygon: s.polygon.map(p => [...p] as [number, number]),
+          startP1: [...s.bar_line_p1] as [number, number],
+          startP2: [...s.bar_line_p2] as [number, number],
+        });
+        e.preventDefault(); return;
       }
     }
 
-    // Start rectangle draw
+    // 4. Empty area — start rectangle draw
     setRectAnchor(pt);
     setCursor(pt);
   }
@@ -219,23 +248,45 @@ function ZoneEditorModal({
   function handleSvgMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     const pt = getRelPt(e);
     setCursor(pt);
+    if (!dragTarget) return;
 
-    if (dragTarget) {
-      setConfig(c => ({
-        stations: c.stations.map((s, i) =>
-          i === dragTarget.stationIdx
-            ? { ...s, [dragTarget.handle === 'p1' ? 'bar_line_p1' : 'bar_line_p2']: pt }
-            : s
-        ),
-      }));
-    }
+    setConfig(c => ({
+      stations: c.stations.map((s, i) => {
+        if (i !== dragTarget.stationIdx) return s;
+
+        if (dragTarget.kind === 'barHandle') {
+          return { ...s, [dragTarget.handle === 'p1' ? 'bar_line_p1' : 'bar_line_p2']: pt };
+        }
+
+        if (dragTarget.kind === 'corner') {
+          const poly = s.polygon.map((p, ci) =>
+            ci === dragTarget.cornerIdx ? pt : p
+          ) as [number, number][];
+          return { ...s, polygon: poly };
+        }
+
+        if (dragTarget.kind === 'zone') {
+          const dx = pt[0] - dragTarget.startPt[0];
+          const dy = pt[1] - dragTarget.startPt[1];
+          const clamp = (v: number) => Math.max(0, Math.min(1, v));
+          const poly = dragTarget.startPolygon.map(([px, py]) =>
+            [clamp(px + dx), clamp(py + dy)] as [number, number]
+          );
+          return {
+            ...s,
+            polygon: poly,
+            bar_line_p1: [clamp(dragTarget.startP1[0] + dx), clamp(dragTarget.startP1[1] + dy)] as [number, number],
+            bar_line_p2: [clamp(dragTarget.startP2[0] + dx), clamp(dragTarget.startP2[1] + dy)] as [number, number],
+          };
+        }
+
+        return s;
+      }),
+    }));
   }
 
   function handleSvgMouseUp(e: React.MouseEvent<SVGSVGElement>) {
-    if (dragTarget) {
-      setDragTarget(null);
-      return;
-    }
+    if (dragTarget) { setDragTarget(null); return; }
 
     if (!rectAnchor) return;
     const pt = getRelPt(e);
@@ -243,11 +294,7 @@ function ZoneEditorModal({
     const x1 = Math.min(ax, pt[0]), x2 = Math.max(ax, pt[0]);
     const y1 = Math.min(ay, pt[1]), y2 = Math.max(ay, pt[1]);
 
-    // Require a minimum size
-    if (x2 - x1 < 0.05 || y2 - y1 < 0.05) {
-      setRectAnchor(null);
-      return;
-    }
+    if (x2 - x1 < 0.05 || y2 - y1 < 0.05) { setRectAnchor(null); return; }
 
     const midY = (y1 + y2) / 2;
     const newStation: BarStation = {
@@ -311,7 +358,10 @@ function ZoneEditorModal({
     };
   })() : null;
 
-  const cursorClass = dragTarget ? 'cursor-grabbing' : isDrawing ? 'cursor-crosshair' : 'cursor-crosshair';
+  const cursorClass = dragTarget
+    ? (dragTarget.kind === 'zone' ? 'cursor-grabbing' : 'cursor-grabbing')
+    : isDrawing ? 'cursor-crosshair'
+    : (cursor && config.stations.some(s => _ptInRect(cursor, s.polygon)) ? 'cursor-grab' : 'cursor-crosshair');
 
   return (
     <motion.div
@@ -393,12 +443,13 @@ function ZoneEditorModal({
             {/* Saved zones — shapes only (no SVG text — labels are HTML overlays below) */}
             {config.stations.map((s, i) => (
               <g key={i}>
-                {/* Zone polygon */}
+                {/* Zone polygon — clickable body for drag-to-move */}
                 <polygon
                   points={s.polygon.map(([px, py]) => `${px},${py}`).join(' ')}
                   fill="rgba(0,200,160,0.08)"
                   stroke="rgba(0,200,160,0.65)"
                   strokeWidth="0.003"
+                  style={{ cursor: 'grab' }}
                 />
                 {/* Bar line */}
                 <line
@@ -408,7 +459,7 @@ function ZoneEditorModal({
                   strokeWidth="0.005"
                   strokeDasharray="0.022 0.011"
                 />
-                {/* Draggable handles */}
+                {/* Bar line handles */}
                 <circle cx={s.bar_line_p1[0]} cy={s.bar_line_p1[1]} r="0.022"
                   fill="rgba(255,140,0,0.25)" stroke="rgba(255,140,0,0.9)" strokeWidth="0.004"
                   style={{ cursor: 'grab' }}
@@ -417,6 +468,13 @@ function ZoneEditorModal({
                   fill="rgba(255,140,0,0.25)" stroke="rgba(255,140,0,0.9)" strokeWidth="0.004"
                   style={{ cursor: 'grab' }}
                 />
+                {/* Corner handles — drag to resize zone */}
+                {s.polygon.map(([cx, cy], ci) => (
+                  <circle key={ci} cx={cx} cy={cy} r="0.018"
+                    fill="rgba(0,200,160,0.3)" stroke="rgba(0,200,160,0.9)" strokeWidth="0.004"
+                    style={{ cursor: 'nwse-resize' }}
+                  />
+                ))}
               </g>
             ))}
 
@@ -523,10 +581,14 @@ function ZoneEditorModal({
             );
           })}
 
-          {/* Bar line drag hint after first zone placed */}
+          {/* Drag hint after first zone placed */}
           {config.stations.length > 0 && !isDrawing && !dragTarget && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[11px] text-amber-400/80 pointer-events-none whitespace-nowrap">
-              Drag the orange ● handles to reposition the bar line
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-3 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm pointer-events-none whitespace-nowrap">
+              <span className="text-[11px] text-teal/80">Drag inside zone to move it</span>
+              <span className="text-text-muted/40 text-[10px]">|</span>
+              <span className="text-[11px] text-teal/60">● corners to resize</span>
+              <span className="text-text-muted/40 text-[10px]">|</span>
+              <span className="text-[11px] text-amber-400/80">● orange handles = bar line</span>
             </div>
           )}
         </div>
