@@ -893,8 +893,7 @@ function CameraLiveView({
 
     // Detect mixed-content before attempting load — saves 10s timeout
     const isHttps = window.location.protocol === 'https:';
-    const isHttpStream = url.startsWith('http://');
-    if (isHttps && isHttpStream) {
+    if (isHttps && url.startsWith('http://')) {
       setState('mixed_content');
       return;
     }
@@ -903,7 +902,7 @@ function CameraLiveView({
 
     // Destroy any previous HLS instance before creating a new one
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-    if (timerRef.current) clearTimeout(timerRef.current);
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
 
     // 10-second timeout — if nothing plays, show error
     timerRef.current = setTimeout(() => {
@@ -914,34 +913,24 @@ function CameraLiveView({
     const cleanup = () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      v.src = '';
     };
 
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        liveSyncDurationCount: 1,
-        liveMaxLatencyDurationCount: 3,
-        enableWorker: true,
-        lowLatencyMode: true,
-      });
+    if (url.includes('.m3u8') && Hls.isSupported()) {
+      // HLS manifest → hls.js
+      const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
       hlsRef.current = hls;
       hls.loadSource(url);
       hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        v.play().catch(() => {});
-      });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
       hls.on(Hls.Events.ERROR, (_evt, data) => {
-        if (data.fatal) {
-          setErrorMsg('Stream error — check camera/proxy');
-          setState('error');
-        }
+        if (data.fatal) { setErrorMsg('Stream error — check camera/proxy'); setState('error'); }
       });
-    } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari native HLS
+    } else {
+      // fMP4 direct stream (livetop.mp4) — native video element handles this fine
       v.src = url;
       v.load();
-    } else {
-      setErrorMsg('Browser does not support HLS streams');
-      setState('error');
+      v.play().catch(() => {});
     }
 
     return cleanup;
