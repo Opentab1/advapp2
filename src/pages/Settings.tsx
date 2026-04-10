@@ -10,7 +10,7 @@ import {
 import connectService, { ConnectStatus, VenueOS, detectOS } from '../services/connect.service';
 import alertsService, { AlertPreferences } from '../services/alerts.service';
 import authService from '../services/auth.service';
-import venueSettingsService, { VenueAddress } from '../services/venue-settings.service';
+import venueSettingsService, { VenueAddress, DEFAULT_BIZ_DAYS } from '../services/venue-settings.service';
 import weatherService from '../services/weather.service';
 import { getUserRoleDisplay } from '../utils/userRoles';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
@@ -40,9 +40,11 @@ export function Settings() {
   const [avgDrinkPrice, setAvgDrinkPrice] = useState<number | ''>('');
   const [drinkPriceSaving, setDrinkPriceSaving] = useState(false);
   const [drinkPriceSaved, setDrinkPriceSaved] = useState(false);
-  // Business hours
-  const [bizOpen, setBizOpen] = useState('17:00');
-  const [bizClose, setBizClose] = useState('02:00');
+  // Business hours — per-day + timezone
+  const [bizTimezone, setBizTimezone] = useState('America/New_York');
+  const [bizDays, setBizDays] = useState<Record<string, { open: string; close: string; closed: boolean }>>(
+    DEFAULT_BIZ_DAYS
+  );
   const [bizHoursSaved, setBizHoursSaved] = useState(false);
   // Camera proxy
   const [camProxy, setCamProxy] = useState('');
@@ -369,13 +371,20 @@ export function Settings() {
         if (s?.avgDrinkPrice) setAvgDrinkPrice(s.avgDrinkPrice);
         else setAvgDrinkPrice(12);
         if (s?.camProxyUrl) setCamProxy(s.camProxyUrl);
-        const hours = s?.businessHours ?? venueSettingsService.getBusinessHours(user.venueId);
-        if (hours?.open) setBizOpen(hours.open);
-        if (hours?.close) setBizClose(hours.close);
+        const hours = s?.businessHours ?? venueSettingsService.getBusinessHours(user.venueId ?? '');
+        if (hours?.timezone) setBizTimezone(hours.timezone);
+        if (hours?.days) setBizDays(hours.days);
+        // Migrate legacy single open/close
+        else if (hours?.open && hours?.close) {
+          const o = hours.open, c = hours.close;
+          setBizDays(Object.fromEntries(
+            Object.keys(DEFAULT_BIZ_DAYS).map(d => [d, { open: o, close: c, closed: false }])
+          ));
+        }
       }).catch(() => {
-        const hours = venueSettingsService.getBusinessHours(user.venueId);
-        if (hours?.open) setBizOpen(hours.open);
-        if (hours?.close) setBizClose(hours.close);
+        const hours = venueSettingsService.getBusinessHours(user.venueId ?? '');
+        if (hours?.timezone) setBizTimezone(hours.timezone);
+        if (hours?.days) setBizDays(hours.days);
       });
     }
   }, [user?.venueId]);
@@ -727,40 +736,97 @@ export function Settings() {
 
               {/* Business Hours */}
               <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
-                <div className="flex items-center gap-3 mb-4">
+                <div className="flex items-center gap-3 mb-2">
                   <Clock className="w-5 h-5 text-teal" />
                   <h3 className="text-xl font-semibold text-white">Business Hours</h3>
                 </div>
-                <p className="text-sm text-warm-400 mb-6">
-                  Set your opening and closing times. Pulse uses this to determine when your bar is open and filter drink counts to your active shift only.
+                <p className="text-sm text-warm-400 mb-5">
+                  Set hours per day and your timezone. Pulse uses this to determine when your bar is open and filter drink counts to the active shift.
                 </p>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <label className="block text-sm font-medium text-warm-300 mb-2">Opens at</label>
-                    <input
-                      type="time"
-                      value={bizOpen}
-                      onChange={e => setBizOpen(e.target.value)}
-                      className="w-full px-4 py-3 bg-warm-900 border border-warm-700 rounded-lg text-white focus:border-teal focus:ring-1 focus:ring-teal transition-colors"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-warm-300 mb-2">Closes at</label>
-                    <input
-                      type="time"
-                      value={bizClose}
-                      onChange={e => setBizClose(e.target.value)}
-                      className="w-full px-4 py-3 bg-warm-900 border border-warm-700 rounded-lg text-white focus:border-teal focus:ring-1 focus:ring-teal transition-colors"
-                    />
-                    <p className="text-xs text-warm-500 mt-1.5">Can be after midnight (e.g. 2:00 AM)</p>
-                  </div>
+
+                {/* Timezone */}
+                <div className="mb-5">
+                  <label className="block text-sm font-medium text-warm-300 mb-2">Timezone</label>
+                  <select
+                    value={bizTimezone}
+                    onChange={e => setBizTimezone(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-warm-900 border border-warm-700 rounded-lg text-white text-sm focus:border-teal focus:ring-1 focus:ring-teal transition-colors"
+                  >
+                    <optgroup label="United States">
+                      <option value="America/New_York">Eastern (ET) — New York, Miami, Atlanta</option>
+                      <option value="America/Chicago">Central (CT) — Chicago, Dallas, Houston</option>
+                      <option value="America/Denver">Mountain (MT) — Denver, Phoenix</option>
+                      <option value="America/Los_Angeles">Pacific (PT) — Los Angeles, Las Vegas, Seattle</option>
+                      <option value="America/Anchorage">Alaska (AKT)</option>
+                      <option value="Pacific/Honolulu">Hawaii (HT)</option>
+                    </optgroup>
+                    <optgroup label="Canada">
+                      <option value="America/Toronto">Eastern — Toronto</option>
+                      <option value="America/Vancouver">Pacific — Vancouver</option>
+                    </optgroup>
+                    <optgroup label="Europe">
+                      <option value="Europe/London">London (GMT/BST)</option>
+                      <option value="Europe/Paris">Central European (CET) — Paris, Berlin, Amsterdam</option>
+                      <option value="Europe/Athens">Eastern European (EET) — Athens, Kyiv</option>
+                    </optgroup>
+                    <optgroup label="Australia / Pacific">
+                      <option value="Australia/Sydney">Sydney (AEST)</option>
+                      <option value="Australia/Melbourne">Melbourne (AEST)</option>
+                      <option value="Australia/Perth">Perth (AWST)</option>
+                      <option value="Pacific/Auckland">Auckland (NZST)</option>
+                    </optgroup>
+                  </select>
                 </div>
+
+                {/* Per-day schedule */}
+                <div className="space-y-2 mb-5">
+                  {(['mon','tue','wed','thu','fri','sat','sun'] as const).map(day => {
+                    const labels: Record<string, string> = { mon:'Monday', tue:'Tuesday', wed:'Wednesday', thu:'Thursday', fri:'Friday', sat:'Saturday', sun:'Sunday' };
+                    const d = bizDays[day] ?? { open: '12:00', close: '02:00', closed: false };
+                    return (
+                      <div key={day} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors ${d.closed ? 'bg-warm-900/40 border-warm-700/50 opacity-60' : 'bg-warm-900 border-warm-700'}`}>
+                        {/* Closed toggle */}
+                        <button
+                          onClick={() => setBizDays(prev => ({ ...prev, [day]: { ...d, closed: !d.closed } }))}
+                          className={`flex-shrink-0 w-10 h-5 rounded-full transition-colors relative ${d.closed ? 'bg-warm-600' : 'bg-teal'}`}
+                          title={d.closed ? 'Click to open' : 'Click to mark closed'}
+                        >
+                          <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${d.closed ? 'left-0.5' : 'left-5'}`} />
+                        </button>
+                        {/* Day label */}
+                        <span className="w-24 text-sm font-medium text-warm-300 flex-shrink-0">{labels[day]}</span>
+                        {d.closed ? (
+                          <span className="text-xs text-warm-500 italic">Closed</span>
+                        ) : (
+                          <div className="flex items-center gap-2 flex-1">
+                            <input
+                              type="time"
+                              value={d.open}
+                              onChange={e => setBizDays(prev => ({ ...prev, [day]: { ...d, open: e.target.value } }))}
+                              className="flex-1 px-2 py-1 bg-warm-800 border border-warm-600 rounded-lg text-white text-sm focus:border-teal focus:outline-none"
+                            />
+                            <span className="text-warm-500 text-xs flex-shrink-0">to</span>
+                            <input
+                              type="time"
+                              value={d.close}
+                              onChange={e => setBizDays(prev => ({ ...prev, [day]: { ...d, close: e.target.value } }))}
+                              className="flex-1 px-2 py-1 bg-warm-800 border border-warm-600 rounded-lg text-white text-sm focus:border-teal focus:outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-warm-500 mb-4">Close time can be after midnight (e.g. 02:00 = 2 AM next day)</p>
+
                 <button
                   onClick={() => {
+                    const hours = { timezone: bizTimezone, days: bizDays };
                     if (user?.venueId) {
-                      venueSettingsService.saveBusinessHours(user.venueId, { open: bizOpen, close: bizClose });
+                      venueSettingsService.saveBusinessHours(user.venueId, hours);
                     } else {
-                      localStorage.setItem('pulse_biz_hours', JSON.stringify({ open: bizOpen, close: bizClose }));
+                      localStorage.setItem('pulse_biz_hours', JSON.stringify(hours));
                     }
                     haptic('success');
                     setBizHoursSaved(true);

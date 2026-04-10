@@ -33,7 +33,14 @@ export interface VenueSettings {
   address?: VenueAddress;
   capacity?: number;  // Max capacity of the venue
   avgDrinkPrice?: number;  // Average drink price in dollars (for theft loss estimates)
-  businessHours?: { open: string; close: string };
+  businessHours?: {
+    // Legacy single-time format (migrated on read)
+    open?: string;
+    close?: string;
+    // V2: per-day hours + timezone
+    timezone?: string;
+    days?: Record<string, { open: string; close: string; closed: boolean }>;
+  };
   camProxyUrl?: string;  // HTTPS proxy base URL for live camera streams, e.g. https://droplet.sslip.io/cam
   lastUpdated?: string;
 }
@@ -48,6 +55,16 @@ const DEMO_ADDRESS: VenueAddress = {
   state: 'FL',
   zipCode: '33606',
   country: 'USA',
+};
+
+export const DEFAULT_BIZ_DAYS: Record<string, { open: string; close: string; closed: boolean }> = {
+  mon: { open: '12:00', close: '02:00', closed: false },
+  tue: { open: '12:00', close: '02:00', closed: false },
+  wed: { open: '12:00', close: '02:00', closed: false },
+  thu: { open: '12:00', close: '02:00', closed: false },
+  fri: { open: '12:00', close: '03:00', closed: false },
+  sat: { open: '12:00', close: '03:00', closed: false },
+  sun: { open: '12:00', close: '02:00', closed: false },
 };
 
 class VenueSettingsService {
@@ -384,13 +401,10 @@ class VenueSettingsService {
 
   // ============ BUSINESS HOURS METHODS ============
 
-  /**
-   * Get business hours (sync - uses cache, then localStorage fallback)
-   */
-  getBusinessHours(venueId: string): { open: string; close: string } | null {
+
+  getBusinessHours(venueId: string): VenueSettings['businessHours'] | null {
     const settings = this.getSettings(venueId);
     if (settings?.businessHours) return settings.businessHours;
-    // Legacy localStorage fallback
     try {
       const saved = localStorage.getItem('pulse_biz_hours');
       if (saved) return JSON.parse(saved);
@@ -398,11 +412,7 @@ class VenueSettingsService {
     return null;
   }
 
-  /**
-   * Save business hours to AWS (and mirror to localStorage for Live page compatibility)
-   */
-  async saveBusinessHours(venueId: string, hours: { open: string; close: string }): Promise<boolean> {
-    // Mirror to localStorage so Live page pulse calculations work offline
+  async saveBusinessHours(venueId: string, hours: VenueSettings['businessHours']): Promise<boolean> {
     try {
       localStorage.setItem('pulse_biz_hours', JSON.stringify(hours));
     } catch { /* ignore */ }
