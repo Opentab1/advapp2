@@ -144,9 +144,9 @@ function ZoneEditorModal({
 
   const streamUrl = (() => {
     if (!proxyBase) return null;
-    const m = (camera.name || '').match(/ch(\d+)/i);
-    if (!m) return null;
-    return `${proxyBase.replace(/\/$/, '')}/hls/live/ch${m[1]}/0/livetop.mp4`;
+    const ch = channelFromSources(camera.name || '', camera.rtspUrl);
+    if (!ch) return null;
+    return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/0/livetop.mp4`;
   })();
 
   useEffect(() => {
@@ -870,24 +870,35 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
 
 // ── Camera live view ──────────────────────────────────────────────────────────
 
-/** Extract channel number from label like "CH7 — Bar (Main)" → "ch7" (lowercase, matches NVR path) */
-function channelFromLabel(label: string): string | null {
+/**
+ * Extract channel number from a camera name or RTSP URL.
+ * Tries rtspUrl first (authoritative), then falls back to label text.
+ * Returns lowercase e.g. "ch9" to match NVR path format.
+ */
+function channelFromSources(label: string, rtspUrl?: string | null): string | null {
+  // RTSP URL is most reliable: rtsp://ip/ch9/0 or rtsp://ip:port/Streaming/Channels/901 etc.
+  if (rtspUrl) {
+    const m = rtspUrl.match(/\/ch(\d+)\//i) ?? rtspUrl.match(/[Cc]hannel[s]?\/(\d+)/);
+    if (m) return `ch${m[1]}`;
+  }
+  // Fall back to label text: "CH9 — Bar" or "Blind Goalie CH9"
   const m = label.match(/CH(\d+)/i);
   return m ? `ch${m[1]}` : null;
 }
 
-function liveStreamUrl(label: string, proxyBase: string): string | null {
-  const ch = channelFromLabel(label);
+function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null): string | null {
+  const ch = channelFromSources(label, rtspUrl);
   if (!ch || !proxyBase) return null;
   const base = proxyBase.replace(/\/$/, '');
   return `${base}/hls/live/${ch}/0/livetop.mp4`;
 }
 
 function CameraLiveView({
-  label, proxyBase, barConfig, onConfigureZones,
+  label, proxyBase, rtspUrl, barConfig, onConfigureZones,
 }: {
   label: string;
   proxyBase: string;
+  rtspUrl?: string | null;
   barConfig?: BarConfig | null;
   onConfigureZones?: () => void;
 }) {
@@ -896,7 +907,7 @@ function CameraLiveView({
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [state, setState] = React.useState<'loading' | 'playing' | 'error' | 'mixed_content'>('loading');
   const [errorMsg, setErrorMsg] = React.useState('Stream unavailable');
-  const url = liveStreamUrl(label, proxyBase);
+  const url = liveStreamUrl(label, proxyBase, rtspUrl);
 
   React.useEffect(() => {
     if (!url || !videoRef.current) return;
@@ -1084,6 +1095,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
             <CameraLiveView
               label={room.label}
               proxyBase={camProxyUrl}
+              rtspUrl={camera?.rtspUrl}
               barConfig={barConfig}
               onConfigureZones={camera && onConfigureZones ? () => onConfigureZones(camera) : undefined}
             />
