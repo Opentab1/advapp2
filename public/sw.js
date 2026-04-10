@@ -1,5 +1,5 @@
 // Service Worker for PWA
-const CACHE_NAME = 'pulse-dashboard-v1';
+const CACHE_NAME = 'pulse-dashboard-v3';
 const urlsToCache = [
   '/',
   '/index.html',
