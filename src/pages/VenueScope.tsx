@@ -576,55 +576,54 @@ function ZoneEditorModal({
           )}
         </div>
 
-        {/* Zone list + controls */}
-        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 space-y-2 overflow-y-auto" style={{ maxHeight: '28vh' }}>
+        {/* Zone list — scrollable */}
+        <div className="px-5 pt-3 pb-1 border-t border-whoop-divider flex-shrink-0 space-y-2 overflow-y-auto" style={{ maxHeight: '20vh' }}>
           {config.stations.length === 0 ? (
             <p className="text-[11px] text-text-muted text-center py-1">Drag a box on the camera image to draw your bar zone</p>
           ) : (
-            <>
-              {config.stations.map((s, i) => (
-                <div key={i} className="flex items-center gap-2 bg-whoop-bg rounded-xl px-3 py-2.5">
-                  <div className="w-2 h-2 rounded-full bg-teal/60 flex-shrink-0" />
-                  <input
-                    value={s.label}
-                    onChange={e => updateLabel(i, e.target.value)}
-                    className="flex-1 bg-transparent text-xs text-white outline-none min-w-0"
-                    placeholder="Zone label (e.g. Main Bar)"
-                  />
-                  {/* Customer side toggle */}
-                  <div className="flex flex-col items-center flex-shrink-0">
-                    <p className="text-[9px] text-text-muted mb-0.5">Customers are</p>
-                    <button
-                      onClick={() => toggleCustomerSide(i)}
-                      className="text-[10px] px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/25 hover:bg-purple-500/25 transition-colors whitespace-nowrap"
-                    >
-                      {s.customer_side === 1 ? '▼ below bar line' : '▲ above bar line'}
-                    </button>
-                  </div>
+            config.stations.map((s, i) => (
+              <div key={i} className="flex items-center gap-2 bg-whoop-bg rounded-xl px-3 py-2.5">
+                <div className="w-2 h-2 rounded-full bg-teal/60 flex-shrink-0" />
+                <input
+                  value={s.label}
+                  onChange={e => updateLabel(i, e.target.value)}
+                  className="flex-1 bg-transparent text-xs text-white outline-none min-w-0"
+                  placeholder="Zone label (e.g. Main Bar)"
+                />
+                <div className="flex flex-col items-center flex-shrink-0">
+                  <p className="text-[9px] text-text-muted mb-0.5">Customers are</p>
                   <button
-                    onClick={() => deleteZone(i)}
-                    className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0 ml-1"
-                    title="Delete zone"
+                    onClick={() => toggleCustomerSide(i)}
+                    className="text-[10px] px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/25 hover:bg-purple-500/25 transition-colors whitespace-nowrap"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    {s.customer_side === 1 ? '▼ below bar line' : '▲ above bar line'}
                   </button>
                 </div>
-              ))}
-              <div className="flex items-center gap-2 pt-1">
-                <p className="text-[10px] text-text-muted flex-1">
-                  Tip: you can add multiple zones for different bar sections
-                </p>
                 <button
-                  onClick={save}
-                  disabled={saving || config.stations.length === 0}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold bg-teal text-black hover:bg-teal/90 disabled:opacity-40 transition-colors"
+                  onClick={() => deleteZone(i)}
+                  className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0 ml-1"
+                  title="Delete zone"
                 >
-                  {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                  {saveOk ? 'Saved!' : 'Save Zones'}
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
-            </>
+            ))
           )}
+        </div>
+
+        {/* Footer — always visible Save button */}
+        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 flex items-center justify-between">
+          <p className="text-[10px] text-text-muted">
+            {config.stations.length > 0 ? 'Tip: add multiple zones for different bar sections' : ''}
+          </p>
+          <button
+            onClick={save}
+            disabled={saving || config.stations.length === 0}
+            className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold bg-teal text-black hover:bg-teal/90 disabled:opacity-40 transition-colors"
+          >
+            {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+            {saveOk ? 'Saved!' : 'Save Zones'}
+          </button>
         </div>
       </motion.div>
     </motion.div>
