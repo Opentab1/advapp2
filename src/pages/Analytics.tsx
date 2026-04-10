@@ -138,19 +138,61 @@ function PeriodToggle({ value, onChange }: { value: Period; onChange: (p: Period
 // ── Hero numbers ──────────────────────────────────────────────────────────────
 
 function HeroNumbers({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkPrice: number }) {
-  const totalDrinks  = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
-  const theftCount   = jobs.filter(j => j.hasTheftFlag).length;
-  const totalUnrung  = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
-  const recovered    = avgDrinkPrice > 0 ? totalUnrung * avgDrinkPrice : 0;
-  const drinkJobs    = jobs.filter(j => j.totalDrinks != null && j.totalDrinks > 0);
-  const nights       = new Set(drinkJobs.map(j => fmtDate(j.createdAt ?? 0))).size;
-  const avgPerNight  = nights > 0 ? Math.round(totalDrinks / nights) : 0;
+  const totalDrinks   = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
+  const theftCount    = jobs.filter(j => j.hasTheftFlag).length;
+  const totalUnrung   = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
+  const recovered     = avgDrinkPrice > 0 ? totalUnrung * avgDrinkPrice : 0;
+  const drinkJobs     = jobs.filter(j => (j.totalDrinks ?? 0) > 0);
+  const nights        = new Set(drinkJobs.map(j => fmtDate(jobTs(j)))).size;
+  const avgPerNight   = nights > 0 ? Math.round(totalDrinks / nights) : 0;
+
+  // People count metrics
+  const totalEntries  = jobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+  const peakOccupancy = jobs.reduce((max, j) => Math.max(max, j.peakOccupancy ?? 0), 0);
+  const hasPeople     = totalEntries > 0 || peakOccupancy > 0;
+
+  // Unique camera-days
+  const days = new Set(jobs.map(j => fmtDate(jobTs(j)))).size;
 
   const tiles = [
-    { label: 'Drinks Detected', value: totalDrinks > 0 ? totalDrinks.toLocaleString() : '—', color: 'text-teal', sub: nights > 1 ? `${nights} nights` : null },
-    { label: 'Revenue Protected', value: recovered > 0 ? `$${recovered.toLocaleString()}` : totalUnrung > 0 ? `${totalUnrung} unrung` : '—', color: recovered > 0 ? 'text-emerald-400' : 'text-amber-400', sub: recovered > 0 ? `${totalUnrung} unrung drinks` : null },
-    { label: 'Theft Flags', value: theftCount > 0 ? String(theftCount) : '0', color: theftCount > 0 ? 'text-red-400' : 'text-emerald-400', sub: theftCount === 0 ? 'All clean' : `${theftCount} shift${theftCount !== 1 ? 's' : ''}` },
-    { label: 'Avg / Night', value: avgPerNight > 0 ? String(avgPerNight) : '—', color: 'text-white', sub: 'drinks' },
+    {
+      label: 'Drinks Detected',
+      value: totalDrinks > 0 ? totalDrinks.toLocaleString() : jobs.length > 0 ? '0' : '—',
+      color: totalDrinks > 0 ? 'text-teal' : 'text-text-muted',
+      sub: nights > 0 ? `${nights} night${nights !== 1 ? 's' : ''}` : null,
+    },
+    hasPeople
+      ? {
+          label: 'Guests Counted',
+          value: totalEntries.toLocaleString(),
+          color: 'text-blue-400',
+          sub: peakOccupancy > 0 ? `Peak: ${peakOccupancy}` : null,
+        }
+      : {
+          label: 'Revenue Protected',
+          value: recovered > 0 ? `$${recovered.toLocaleString()}` : totalUnrung > 0 ? `${totalUnrung} unrung` : '—',
+          color: recovered > 0 ? 'text-emerald-400' : 'text-amber-400',
+          sub: recovered > 0 ? `${totalUnrung} unrung drinks` : null,
+        },
+    {
+      label: 'Theft Flags',
+      value: theftCount > 0 ? String(theftCount) : '0',
+      color: theftCount > 0 ? 'text-red-400' : 'text-emerald-400',
+      sub: theftCount === 0 ? 'All clean' : `${theftCount} shift${theftCount !== 1 ? 's' : ''}`,
+    },
+    totalDrinks > 0
+      ? {
+          label: 'Avg / Night',
+          value: avgPerNight > 0 ? String(avgPerNight) : '—',
+          color: 'text-white',
+          sub: 'drinks',
+        }
+      : {
+          label: 'Sessions',
+          value: jobs.length.toLocaleString(),
+          color: 'text-white',
+          sub: days > 0 ? `${days} day${days !== 1 ? 's' : ''}` : null,
+        },
   ];
 
   return (
