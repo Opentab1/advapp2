@@ -4,11 +4,12 @@
  * Period toggle → hero numbers → bar staff → theft → night log
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   RefreshCw, AlertTriangle, ShieldCheck, TrendingUp,
   ChevronDown, ChevronUp, User, Video, DollarSign,
+  Wine, Users, Activity,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
@@ -25,6 +26,9 @@ interface StaffStat {
   shifts: number;
   perHour: number;
   theftFlags: number;
+  overPours: number;
+  totalOz: number;
+  drinkTypes: Record<string, number>;
   shiftDrinks: { date: number; drinks: number; flag: boolean }[];
 }
 
@@ -74,15 +78,22 @@ function buildStaff(jobs: VenueScopeJob[]): StaffStat[] {
   for (const job of jobs) {
     if (job.bartenderBreakdown) {
       try {
-        const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks: number; per_hour?: number }>;
+        const bd = JSON.parse(job.bartenderBreakdown) as Record<string, {
+          drinks: number; per_hour?: number; over_pours?: number; total_oz?: number; drink_types?: Record<string, number>;
+        }>;
         for (const [name, d] of Object.entries(bd)) {
           if (!name || name === 'unknown') continue;
-          if (!map.has(name)) map.set(name, { name, drinks: 0, shifts: 0, perHour: 0, theftFlags: 0, shiftDrinks: [] });
+          if (!map.has(name)) map.set(name, { name, drinks: 0, shifts: 0, perHour: 0, theftFlags: 0, overPours: 0, totalOz: 0, drinkTypes: {}, shiftDrinks: [] });
           const s = map.get(name)!;
-          s.drinks    += d.drinks ?? 0;
-          s.shifts    += 1;
-          s.perHour   += d.per_hour ?? 0;
+          s.drinks     += d.drinks ?? 0;
+          s.shifts     += 1;
+          s.perHour    += d.per_hour ?? 0;
           s.theftFlags += job.hasTheftFlag ? 1 : 0;
+          s.overPours  += d.over_pours ?? 0;
+          s.totalOz    += d.total_oz ?? 0;
+          for (const [type, cnt] of Object.entries(d.drink_types ?? {})) {
+            s.drinkTypes[type] = (s.drinkTypes[type] ?? 0) + cnt;
+          }
           s.shiftDrinks.push({ date: job.createdAt ?? 0, drinks: d.drinks ?? 0, flag: job.hasTheftFlag });
         }
         continue;
@@ -91,7 +102,7 @@ function buildStaff(jobs: VenueScopeJob[]): StaffStat[] {
     // Fallback: topBartender
     if (job.topBartender) {
       const name = job.topBartender;
-      if (!map.has(name)) map.set(name, { name, drinks: 0, shifts: 0, perHour: 0, theftFlags: 0, shiftDrinks: [] });
+      if (!map.has(name)) map.set(name, { name, drinks: 0, shifts: 0, perHour: 0, theftFlags: 0, overPours: 0, totalOz: 0, drinkTypes: {}, shiftDrinks: [] });
       const s = map.get(name)!;
       s.drinks    += job.totalDrinks ?? 0;
       s.shifts    += 1;
@@ -149,7 +160,10 @@ function HeroNumbers({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
   // People count metrics
   const totalEntries  = jobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
   const peakOccupancy = jobs.reduce((max, j) => Math.max(max, j.peakOccupancy ?? 0), 0);
-  const hasPeople     = totalEntries > 0 || peakOccupancy > 0;
+  const uniqueTracked = jobs.reduce((s, j) => s + (j.uniqueTracked ?? 0), 0);
+  const hasPeople     = totalEntries > 0 || peakOccupancy > 0 || uniqueTracked > 0;
+  // headcount mode: no entry lines, just unique tracks
+  const headcountMode = uniqueTracked > 0 && totalEntries === 0;
 
   // Unique camera-days
   const days = new Set(jobs.map(j => fmtDate(jobTs(j)))).size;
@@ -163,8 +177,8 @@ function HeroNumbers({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
     },
     hasPeople
       ? {
-          label: 'Guests Counted',
-          value: totalEntries.toLocaleString(),
+          label: headcountMode ? 'People Tracked' : 'Guests Counted',
+          value: (headcountMode ? uniqueTracked : totalEntries).toLocaleString(),
           color: 'text-blue-400',
           sub: peakOccupancy > 0 ? `Peak: ${peakOccupancy}` : null,
         }
@@ -257,30 +271,52 @@ function StaffRow({ person, rank, maxDrinks }: { person: StaffStat; rank: number
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="px-4 pb-3 grid grid-cols-3 gap-2 bg-whoop-bg/30">
-              <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
-                <div className="text-base font-bold text-white">{person.shifts}</div>
-                <div className="text-[9px] text-text-muted uppercase tracking-wide">Shifts</div>
+            <div className="px-4 pb-3 space-y-2 bg-whoop-bg/30">
+              <div className="grid grid-cols-3 gap-2 pt-2">
+                <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+                  <div className="text-base font-bold text-white">{person.shifts}</div>
+                  <div className="text-[9px] text-text-muted uppercase tracking-wide">Shifts</div>
+                </div>
+                <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+                  <div className="text-base font-bold text-white">{person.shifts > 0 ? Math.round(person.drinks / person.shifts) : '—'}</div>
+                  <div className="text-[9px] text-text-muted uppercase tracking-wide">Avg / Shift</div>
+                </div>
+                <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+                  <div className={`text-base font-bold ${person.theftFlags > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{person.theftFlags}</div>
+                  <div className="text-[9px] text-text-muted uppercase tracking-wide">Flags</div>
+                </div>
               </div>
-              <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
-                <div className="text-base font-bold text-white">{person.shifts > 0 ? Math.round(person.drinks / person.shifts) : '—'}</div>
-                <div className="text-[9px] text-text-muted uppercase tracking-wide">Avg / Shift</div>
-              </div>
-              <div className={`bg-whoop-bg rounded-xl p-2.5 text-center`}>
-                <div className={`text-base font-bold ${person.theftFlags > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{person.theftFlags}</div>
-                <div className="text-[9px] text-text-muted uppercase tracking-wide">Flags</div>
-              </div>
+              {/* Oz + over-pours row */}
+              {(person.totalOz > 0 || person.overPours > 0) && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+                    <div className="text-base font-bold text-white">{person.totalOz.toFixed(1)}</div>
+                    <div className="text-[9px] text-text-muted uppercase tracking-wide">Oz Poured</div>
+                  </div>
+                  <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
+                    <div className={`text-base font-bold ${person.overPours > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>{person.overPours}</div>
+                    <div className="text-[9px] text-text-muted uppercase tracking-wide">Over-Pours</div>
+                  </div>
+                </div>
+              )}
+              {/* Drink type pills */}
+              {Object.keys(person.drinkTypes).length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(person.drinkTypes).sort((a,b) => b[1]-a[1]).map(([type, cnt]) => (
+                    <span key={type} className="text-[10px] bg-whoop-bg border border-whoop-divider rounded-lg px-2 py-1 text-white">
+                      {cnt} <span className="text-text-muted capitalize">{type}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
               {/* Per-shift mini log */}
-              <div className="col-span-3 space-y-1 pt-1">
+              <div className="space-y-1 pt-0.5">
                 {person.shiftDrinks.sort((a, b) => b.date - a.date).slice(0, 6).map((s, i) => (
                   <div key={i} className="flex items-center justify-between text-[10px]">
                     <span className="text-text-muted">{fmtDate(s.date)} · {fmtTime(s.date)}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-white font-semibold tabular-nums">{s.drinks} drinks</span>
-                      {s.flag
-                        ? <span className="text-red-400">⚠</span>
-                        : <span className="text-emerald-400">✓</span>
-                      }
+                      {s.flag ? <span className="text-red-400">⚠</span> : <span className="text-emerald-400">✓</span>}
                     </div>
                   </div>
                 ))}
@@ -481,6 +517,282 @@ function NightLog({ jobs }: { jobs: VenueScopeJob[] }) {
   );
 }
 
+// ── Drink Type Breakdown (gap #4) ─────────────────────────────────────────────
+
+const DRINK_EMOJI: Record<string, string> = {
+  shot: '🥃', spirit: '🍸', cocktail: '🍹', wine: '🍷', beer: '🍺', unknown: '❓',
+};
+
+function DrinkTypeSection({ jobs }: { jobs: VenueScopeJob[] }) {
+  const types: Record<string, number> = {};
+  let totalOz = 0, overPours = 0;
+
+  for (const job of jobs) {
+    if (!job.drinkTypeBreakdown) continue;
+    try {
+      const d = JSON.parse(job.drinkTypeBreakdown);
+      for (const [k, v] of Object.entries(d.drink_types ?? {})) {
+        types[k] = (types[k] ?? 0) + (v as number);
+      }
+      totalOz   += d.total_oz ?? 0;
+      overPours += d.over_pours ?? 0;
+    } catch { /* skip */ }
+  }
+
+  if (Object.keys(types).length === 0) return null;
+
+  return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+        <Wine className="w-4 h-4 text-purple-400" />
+        <span className="text-sm font-semibold text-white">Drink Types</span>
+        {overPours > 0 && (
+          <span className="ml-auto text-[10px] font-bold text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-full px-2 py-0.5">
+            {overPours} over-pour{overPours !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(types).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
+            <div key={type} className="flex items-center gap-2 bg-whoop-bg border border-whoop-divider rounded-xl px-3 py-2">
+              <span className="text-lg">{DRINK_EMOJI[type] ?? '🍶'}</span>
+              <div>
+                <div className="text-sm font-bold text-white tabular-nums">{count}</div>
+                <div className="text-[9px] text-text-muted capitalize">{type}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {totalOz > 0 && (
+          <div className="text-[11px] text-text-muted">
+            Total poured: <span className="text-white font-semibold">{totalOz.toFixed(1)} oz</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Bottle Count Detail (gap #7) ───────────────────────────────────────────────
+
+function BottleSection({ jobs }: { jobs: VenueScopeJob[] }) {
+  const hasBottle = jobs.some(j => (j.bottleCount ?? 0) > 0);
+  if (!hasBottle) return null;
+
+  const totalBottles = jobs.reduce((s, j) => s + (j.bottleCount ?? 0), 0);
+  const totalPours   = jobs.reduce((s, j) => s + (j.pourCount ?? 0), 0);
+  const totalOz      = jobs.reduce((s, j) => s + (j.totalPouredOz ?? 0), 0);
+  const overPours    = jobs.reduce((s, j) => s + (j.overPours ?? 0), 0);
+  const walkOuts     = jobs.reduce((s, j) => s + (j.walkOutAlerts ?? 0), 0);
+
+  const byClass: Record<string, number> = {};
+  for (const job of jobs) {
+    if (!job.bottleByClass) continue;
+    try {
+      const d = JSON.parse(job.bottleByClass) as Record<string, number>;
+      for (const [k, v] of Object.entries(d)) byClass[k] = (byClass[k] ?? 0) + v;
+    } catch { /* skip */ }
+  }
+
+  const classEmoji: Record<string, string> = { bottle: '🍾', wine_glass: '🍷', cup: '🍺' };
+
+  return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+        <span className="text-base">🍾</span>
+        <span className="text-sm font-semibold text-white">Bottle Count</span>
+        {walkOuts > 0 && (
+          <span className="ml-auto text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-full px-2 py-0.5">
+            {walkOuts} walk-out{walkOuts !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="grid grid-cols-4 gap-2">
+          {[
+            { label: 'Bottles', value: totalBottles, color: 'text-white' },
+            { label: 'Pours', value: totalPours, color: 'text-white' },
+            { label: 'Oz Poured', value: totalOz.toFixed(1), color: 'text-white' },
+            { label: 'Over-pours', value: overPours, color: overPours > 0 ? 'text-amber-400' : 'text-emerald-400' },
+          ].map(tile => (
+            <div key={tile.label} className="bg-whoop-bg rounded-xl p-2.5 text-center">
+              <div className={`text-sm font-bold tabular-nums ${tile.color}`}>{tile.value}</div>
+              <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">{tile.label}</div>
+            </div>
+          ))}
+        </div>
+        {Object.keys(byClass).length > 0 && (
+          <div className="flex gap-2 flex-wrap">
+            {Object.entries(byClass).map(([cls, cnt]) => (
+              <div key={cls} className="flex items-center gap-1.5 bg-whoop-bg border border-whoop-divider rounded-xl px-3 py-2">
+                <span className="text-base">{classEmoji[cls] ?? '🍶'}</span>
+                <div>
+                  <div className="text-sm font-bold text-white">{cnt}</div>
+                  <div className="text-[9px] text-text-muted capitalize">{cls.replace('_', ' ')}</div>
+                </div>
+              </div>
+            ))}
+            {totalPours > 0 && totalOz > 0 && (
+              <div className="flex items-center gap-1.5 bg-whoop-bg border border-whoop-divider rounded-xl px-3 py-2">
+                <div>
+                  <div className="text-sm font-bold text-white">{(totalOz / totalPours).toFixed(2)}</div>
+                  <div className="text-[9px] text-text-muted">Avg oz/pour</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Table Turns Detail (gap #6) ────────────────────────────────────────────────
+
+function TableTurnsSection({ jobs }: { jobs: VenueScopeJob[] }) {
+  const turnJobs = useMemo(
+    () => jobs.filter(j => (j.totalTurns ?? 0) > 0).sort((a, b) => jobTs(b) - jobTs(a)),
+    [jobs]
+  );
+  if (turnJobs.length === 0) return null;
+
+  const totalTurns = turnJobs.reduce((s, j) => s + (j.totalTurns ?? 0), 0);
+
+  return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+        <span className="text-base">🪑</span>
+        <span className="text-sm font-semibold text-white">Table Turns</span>
+        <span className="ml-auto text-xs font-bold text-white tabular-nums">{totalTurns} total turns</span>
+      </div>
+      <div className="divide-y divide-whoop-divider/50">
+        {turnJobs.slice(0, 8).map(job => {
+          let tableRows: React.ReactNode = null;
+          if (job.tableDetail) {
+            try {
+              const detail = JSON.parse(job.tableDetail) as Record<string, {
+                label: string; turn_count: number; avg_dwell_min: number;
+                avg_response_sec?: number; staff_attribution?: Record<string, number>;
+              }>;
+              const entries = Object.entries(detail).filter(([, t]) => t.turn_count > 0);
+              if (entries.length > 0) {
+                tableRows = (
+                  <div className="mt-2 space-y-1">
+                    {entries.map(([tid, t]) => (
+                      <div key={tid} className="flex items-center justify-between text-[10px] px-1">
+                        <span className="text-text-muted font-medium">{t.label}</span>
+                        <div className="flex gap-3 text-right">
+                          <span className="text-white font-semibold">{t.turn_count} turn{t.turn_count !== 1 ? 's' : ''}</span>
+                          {t.avg_dwell_min > 0 && <span className="text-text-muted">{t.avg_dwell_min.toFixed(1)}min</span>}
+                          {t.avg_response_sec != null && <span className="text-text-muted">{t.avg_response_sec.toFixed(0)}s resp</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
+            } catch { /* skip */ }
+          }
+          return (
+            <div key={job.jobId} className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs font-semibold text-white truncate">{cameraName(job)}</span>
+                <span className="text-[10px] text-text-muted flex-shrink-0">{fmtDate(jobTs(job))}</span>
+                <span className="ml-auto text-xs font-bold text-white flex-shrink-0">{job.totalTurns} turns</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'Avg Dwell', value: job.avgDwellMin != null ? `${job.avgDwellMin.toFixed(1)}min` : '—' },
+                  { label: 'Avg Response', value: job.avgResponseSec != null ? `${job.avgResponseSec.toFixed(0)}s` : '—' },
+                  { label: 'Turns', value: String(job.totalTurns) },
+                ].map(stat => (
+                  <div key={stat.label} className="bg-whoop-bg rounded-xl p-2 text-center">
+                    <div className="text-xs font-bold text-white">{stat.value}</div>
+                    <div className="text-[9px] text-text-muted">{stat.label}</div>
+                  </div>
+                ))}
+              </div>
+              {tableRows}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Staff Activity Detail (gap #8) ─────────────────────────────────────────────
+
+function StaffActivitySection({ jobs }: { jobs: VenueScopeJob[] }) {
+  const staffJobs = useMemo(
+    () => jobs.filter(j => (j.uniqueStaff ?? 0) > 0).sort((a, b) => jobTs(b) - jobTs(a)),
+    [jobs]
+  );
+  if (staffJobs.length === 0) return null;
+
+  const peakStaff   = staffJobs.reduce((max, j) => Math.max(max, j.uniqueStaff ?? 0), 0);
+  const peakHead    = staffJobs.reduce((max, j) => Math.max(max, j.peakHeadcount ?? 0), 0);
+  const avgIdle     = staffJobs.filter(j => j.avgIdlePct != null);
+  const avgIdlePct  = avgIdle.length > 0
+    ? avgIdle.reduce((s, j) => s + (j.avgIdlePct ?? 0), 0) / avgIdle.length
+    : 0;
+
+  return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+        <Activity className="w-4 h-4 text-cyan-400" />
+        <span className="text-sm font-semibold text-white">Staff Activity</span>
+        <span className={`ml-auto text-[10px] font-bold ${avgIdlePct > 30 ? 'text-amber-400' : 'text-emerald-400'}`}>
+          {avgIdlePct.toFixed(1)}% avg idle
+        </span>
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { label: 'Unique Staff', value: peakStaff, color: 'text-white' },
+            { label: 'Peak Count', value: peakHead, color: 'text-white' },
+            { label: 'Avg Idle', value: `${avgIdlePct.toFixed(1)}%`, color: avgIdlePct > 30 ? 'text-amber-400' : 'text-emerald-400' },
+          ].map(tile => (
+            <div key={tile.label} className="bg-whoop-bg rounded-xl p-2.5 text-center">
+              <div className={`text-sm font-bold ${tile.color}`}>{tile.value}</div>
+              <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">{tile.label}</div>
+            </div>
+          ))}
+        </div>
+        {/* Per-session staff breakdown */}
+        {staffJobs.slice(0, 3).map(job => {
+          if (!job.staffDetail) return null;
+          try {
+            const d = JSON.parse(job.staffDetail) as { staff_details: { track_id: number; idle_pct: number; active_seconds: number; idle_seconds: number }[] };
+            if (!d.staff_details?.length) return null;
+            return (
+              <div key={job.jobId} className="space-y-1.5">
+                <div className="text-[9px] text-text-muted uppercase tracking-wide">{fmtDate(jobTs(job))} · {cameraName(job)}</div>
+                {d.staff_details.slice(0, 6).map(s => (
+                  <div key={s.track_id} className="flex items-center gap-2">
+                    <Users className="w-3 h-3 text-text-muted flex-shrink-0" />
+                    <span className="text-[10px] text-text-muted w-16 flex-shrink-0">Staff #{s.track_id}</span>
+                    <div className="flex-1 h-1.5 bg-whoop-divider rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${s.idle_pct > 30 ? 'bg-amber-400/70' : 'bg-emerald-400/70'}`}
+                        style={{ width: `${Math.min(s.idle_pct, 100)}%` }}
+                      />
+                    </div>
+                    <span className={`text-[10px] font-semibold w-9 text-right tabular-nums ${s.idle_pct > 30 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {s.idle_pct?.toFixed(0)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          } catch { return null; }
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Revenue banner ────────────────────────────────────────────────────────────
 
 function RevenueBanner({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkPrice: number }) {
@@ -597,6 +909,10 @@ export function Analytics() {
             <HeroNumbers jobs={jobs} avgDrinkPrice={avgDrinkPrice} />
             {avgDrinkPrice > 0 && <RevenueBanner jobs={jobs} avgDrinkPrice={avgDrinkPrice} />}
             <StaffSection jobs={jobs} />
+            <DrinkTypeSection jobs={jobs} />
+            <BottleSection jobs={jobs} />
+            <TableTurnsSection jobs={jobs} />
+            <StaffActivitySection jobs={jobs} />
             <TheftSection jobs={jobs} />
             <NightLog jobs={jobs} />
           </motion.div>

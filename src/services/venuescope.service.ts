@@ -66,12 +66,18 @@ function _itemToJob(item: Record<string, Record<string, unknown>>): VenueScopeJo
     totalEntries:    n('totalEntries'),
     totalExits:      n('totalExits'),
     peakOccupancy:   n('peakOccupancy'),
+    uniqueTracked:   n('uniqueTracked'),
     totalTurns:      n('totalTurns'),
     avgResponseSec:  n('avgResponseSec'),
     avgDwellMin:     n('avgDwellMin'),
+    tableDetail:     s('tableDetail'),
     uniqueStaff:     n('uniqueStaff'),
     peakHeadcount:   n('peakHeadcount'),
     avgIdlePct:      n('avgIdlePct'),
+    staffDetail:     s('staffDetail'),
+    drinkTypeBreakdown: s('drinkTypeBreakdown'),
+    bottleByClass:   s('bottleByClass'),
+    avgPourOz:       n('avgPourOz'),
     isLive:          b('isLive'),
     roomLabel:       s('roomLabel'),
     bartenderBreakdown: s('bartenderBreakdown') ?? s('bartenderSummary'),
@@ -176,14 +182,22 @@ export interface VenueScopeJob {
   totalEntries?: number;
   totalExits?: number;
   peakOccupancy?: number;
+  uniqueTracked?: number;
   // Table turns
   totalTurns?: number;
   avgResponseSec?: number;
   avgDwellMin?: number;
+  tableDetail?: string; // JSON: {tableId: {label, turn_count, avg_dwell_min, ...}}
   // Staff activity
   uniqueStaff?: number;
   peakHeadcount?: number;
   avgIdlePct?: number;
+  staffDetail?: string; // JSON: {staff_details: [{track_id, idle_pct, ...}]}
+  // Drink correlation
+  drinkTypeBreakdown?: string; // JSON: {drink_types, total_oz, avg_oz, over_pours}
+  // Bottle count extras
+  bottleByClass?: string; // JSON: {bottle: N, wine_glass: N, cup: N}
+  avgPourOz?: number;
   // Live camera stream fields (pushed every ~30s from continuous RTSP streams)
   isLive?: boolean;
   roomLabel?: string;

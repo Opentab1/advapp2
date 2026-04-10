@@ -497,7 +497,24 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
             }
             for name, d in bts.items()
         }
+        # Enrich bartenderBreakdown with oz/over-pours from correlator
+        corr_by_bar = summary.get("drink_correlation", {}).get("by_bartender", {})
+        for name, bar_data in corr_by_bar.items():
+            if name in bt_breakdown:
+                bt_breakdown[name]["over_pours"]  = bar_data.get("over_pours", 0)
+                bt_breakdown[name]["total_oz"]    = round(bar_data.get("total_oz", 0.0), 2)
+                bt_breakdown[name]["drink_types"] = dict(bar_data.get("drink_types", {}))
         item["bartenderBreakdown"] = {"S": json.dumps(bt_breakdown)}
+
+    # ── Drink type breakdown (correlator) ──────────────────────────────────────
+    corr = summary.get("drink_correlation", {})
+    if corr and (corr.get("correlated", 0) > 0 or corr.get("over_pours", 0) > 0):
+        item["drinkTypeBreakdown"] = {"S": json.dumps({
+            "drink_types": dict(corr.get("drink_types", {})),
+            "total_oz":    round(float(corr.get("total_oz", 0.0)), 2),
+            "avg_oz":      round(float(corr.get("avg_oz", 0.0)), 2),
+            "over_pours":  int(corr.get("over_pours", 0)),
+        })}
 
     camera = summary.get("camera_label") or summary.get("venue_id", "")
     if camera:
@@ -524,6 +541,12 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
         item["walkOutAlerts"]       = {"N": str(int(bottles.get("walk_out_alerts", 0)))}
         item["unknownBottleAlerts"] = {"N": str(int(bottles.get("unknown_bottle_alerts", 0)))}
         item["parLowEvents"]        = {"N": str(int(bottles.get("par_low_events", 0)))}
+        by_class = bottles.get("by_class", {})
+        if by_class:
+            item["bottleByClass"] = {"S": json.dumps({k: int(v) for k, v in by_class.items()})}
+        avg_oz = bottles.get("avg_pour_oz", 0.0)
+        if avg_oz:
+            item["avgPourOz"] = {"N": str(round(float(avg_oz), 2))}
         if bottles.get("walk_out_alerts", 0) > 0 or bottles.get("unknown_bottle_alerts", 0) > 0:
             item["hasTheftFlag"] = {"BOOL": True}   # escalate flag if bottle theft detected
 
@@ -533,6 +556,9 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
         item["totalEntries"]   = {"N": str(int(people.get("total_entries", 0)))}
         item["totalExits"]     = {"N": str(int(people.get("total_exits", 0)))}
         item["peakOccupancy"]  = {"N": str(int(people.get("peak_occupancy", 0)))}
+        unique = people.get("unique_tracks_seen", 0)
+        if unique > 0:
+            item["uniqueTracked"] = {"N": str(int(unique))}
 
     # ── Table turns metrics ────────────────────────────────────────────────────
     tables = summary.get("tables", {})
@@ -547,6 +573,20 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
                   if v.get("avg_dwell_min") is not None]
         if dwells:
             item["avgDwellMin"] = {"N": str(round(sum(dwells) / len(dwells), 1))}
+        # Per-table detail for UI breakdown
+        table_detail = {
+            tid: {
+                "label":            tdata.get("label", tid),
+                "turn_count":       tdata.get("turn_count", 0),
+                "avg_dwell_min":    tdata.get("avg_dwell_min", 0),
+                "min_dwell_min":    tdata.get("min_dwell_min", 0),
+                "max_dwell_min":    tdata.get("max_dwell_min", 0),
+                "avg_response_sec": tdata.get("avg_response_sec"),
+                "staff_attribution": tdata.get("staff_attribution", {}),
+            }
+            for tid, tdata in tables.items()
+        }
+        item["tableDetail"] = {"S": json.dumps(table_detail)}
 
     # ── Staff activity metrics ─────────────────────────────────────────────────
     staff = summary.get("staff", {})
@@ -554,6 +594,9 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
         item["uniqueStaff"]  = {"N": str(int(staff.get("total_unique_staff", 0)))}
         item["peakHeadcount"]= {"N": str(int(staff.get("peak_headcount", 0)))}
         item["avgIdlePct"]   = {"N": str(float(staff.get("avg_idle_pct", 0.0)))}
+        staff_details = staff.get("staff_details", [])
+        if staff_details:
+            item["staffDetail"] = {"S": json.dumps({"staff_details": staff_details})}
 
     # ── POS reconciliation ─────────────────────────────────────────────────────
     pos_data = summary.get("pos_reconciliation")
