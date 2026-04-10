@@ -133,7 +133,7 @@ function ZoneEditorModal({
     stations: [{
       zone_id:       'bar',
       label:         'Bar',
-      polygon:       [[0.02, 0.06], [0.98, 0.06], [0.98, 0.76], [0.02, 0.76]],
+      polygon:       [[0.02, 0.06], [0.98, 0.06], [0.98, 0.58], [0.02, 0.58]],
       bar_line_p1:   [0.0, 0.44],
       bar_line_p2:   [1.0, 0.44],
       customer_side: 1,
@@ -390,63 +390,35 @@ function ZoneEditorModal({
             onMouseUp={handleSvgMouseUp}
             onMouseLeave={handleSvgLeave}
           >
-            {/* Saved zones */}
-            {config.stations.map((s, i) => {
-              const [x1,y1] = s.polygon[0], [x2,,y2] = [s.polygon[1][0], 0, s.polygon[2][1]];
-              const midX = (s.bar_line_p1[0] + s.bar_line_p2[0]) / 2;
-              const custY = s.customer_side === 1
-                ? s.bar_line_p2[1] + 0.055
-                : s.bar_line_p1[1] - 0.045;
-              return (
-                <g key={i}>
-                  {/* Zone rectangle fill */}
-                  <polygon
-                    points={s.polygon.map(([px, py]) => `${px},${py}`).join(' ')}
-                    fill="rgba(0,200,160,0.08)"
-                    stroke="rgba(0,200,160,0.6)"
-                    strokeWidth="0.003"
-                  />
-                  {/* Zone label */}
-                  <text
-                    x={(x1 + x2) / 2} y={y1 + 0.04}
-                    fontSize="0.038" fill="rgba(255,255,255,0.9)" textAnchor="middle"
-                    style={{ pointerEvents: 'none', fontWeight: 600 }}
-                  >{s.label}</text>
-
-                  {/* Bar line */}
-                  <line
-                    x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
-                    x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
-                    stroke="rgba(255,140,0,0.95)"
-                    strokeWidth="0.005"
-                    strokeDasharray="0.022 0.011"
-                  />
-                  {/* Bar line label */}
-                  <text
-                    x={midX} y={s.bar_line_p1[1] - 0.02}
-                    fontSize="0.028" fill="rgba(255,160,40,0.85)" textAnchor="middle"
-                    style={{ pointerEvents: 'none' }}
-                  >← bar counter edge →</text>
-
-                  {/* Draggable handles on bar line endpoints */}
-                  <circle cx={s.bar_line_p1[0]} cy={s.bar_line_p1[1]} r="0.022"
-                    fill="rgba(255,140,0,0.25)" stroke="rgba(255,140,0,0.9)" strokeWidth="0.004"
-                    style={{ cursor: 'grab' }}
-                  />
-                  <circle cx={s.bar_line_p2[0]} cy={s.bar_line_p2[1]} r="0.022"
-                    fill="rgba(255,140,0,0.25)" stroke="rgba(255,140,0,0.9)" strokeWidth="0.004"
-                    style={{ cursor: 'grab' }}
-                  />
-
-                  {/* Customer side arrow */}
-                  <text
-                    x={midX} y={custY}
-                    fontSize="0.032" fill="rgba(200,160,255,0.85)" textAnchor="middle"
-                    style={{ pointerEvents: 'none' }}
-                  >{s.customer_side === 1 ? '▼ customers' : '▲ customers'}</text>
-                </g>
-              );
-            })}
+            {/* Saved zones — shapes only (no SVG text — labels are HTML overlays below) */}
+            {config.stations.map((s, i) => (
+              <g key={i}>
+                {/* Zone polygon */}
+                <polygon
+                  points={s.polygon.map(([px, py]) => `${px},${py}`).join(' ')}
+                  fill="rgba(0,200,160,0.08)"
+                  stroke="rgba(0,200,160,0.65)"
+                  strokeWidth="0.003"
+                />
+                {/* Bar line */}
+                <line
+                  x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
+                  x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
+                  stroke="rgba(255,140,0,0.95)"
+                  strokeWidth="0.005"
+                  strokeDasharray="0.022 0.011"
+                />
+                {/* Draggable handles */}
+                <circle cx={s.bar_line_p1[0]} cy={s.bar_line_p1[1]} r="0.022"
+                  fill="rgba(255,140,0,0.25)" stroke="rgba(255,140,0,0.9)" strokeWidth="0.004"
+                  style={{ cursor: 'grab' }}
+                />
+                <circle cx={s.bar_line_p2[0]} cy={s.bar_line_p2[1]} r="0.022"
+                  fill="rgba(255,140,0,0.25)" stroke="rgba(255,140,0,0.9)" strokeWidth="0.004"
+                  style={{ cursor: 'grab' }}
+                />
+              </g>
+            ))}
 
             {/* Preview rectangle while dragging */}
             {previewRect && previewRect.w > 0.01 && previewRect.h > 0.01 && (
@@ -478,6 +450,78 @@ function ZoneEditorModal({
               Release to place zone
             </div>
           )}
+
+          {/* HTML overlay labels for zone annotations (avoid SVG text artifacts) */}
+          {config.stations.map((s, i) => {
+            // Polygon bounds
+            const xs = s.polygon.map(p => p[0]);
+            const ys = s.polygon.map(p => p[1]);
+            const pxMin = Math.min(...xs), pxMax = Math.max(...xs);
+            const pyMin = Math.min(...ys);
+            // Bar line midpoint (for label anchor)
+            const barMidX = (s.bar_line_p1[0] + s.bar_line_p2[0]) / 2;
+            const barMidY = (s.bar_line_p1[1] + s.bar_line_p2[1]) / 2;
+            const labelGap = 0.045; // normalized units above/below bar line
+            return (
+              <React.Fragment key={i}>
+                {/* "Bar Zone" label — centred inside the teal polygon */}
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: `${(pxMin + pxMax) / 2 * 100}%`,
+                    top:  `${pyMin * 100 + 2}%`,
+                    transform: 'translateX(-50%)',
+                  }}
+                >
+                  <span className="text-[10px] font-semibold text-teal/90 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded">
+                    {s.label || 'Bar Zone'}
+                  </span>
+                </div>
+
+                {/* "Staff ↑" — above bar line */}
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: `${barMidX * 100}%`,
+                    top:  `${Math.max(0.01, barMidY - labelGap) * 100}%`,
+                    transform: 'translate(-50%, -100%)',
+                  }}
+                >
+                  <span className="text-[9px] font-semibold text-amber-300/90 bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap">
+                    ↑ Staff side
+                  </span>
+                </div>
+
+                {/* Bar line label — on the bar line */}
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: `${(pxMin + 0.02) * 100}%`,
+                    top:  `${barMidY * 100}%`,
+                    transform: 'translateY(-50%)',
+                  }}
+                >
+                  <span className="text-[9px] font-medium text-amber-400/90 bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap">
+                    — Bar Line (drag handles)
+                  </span>
+                </div>
+
+                {/* "Customers ↓" — below bar line */}
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: `${barMidX * 100}%`,
+                    top:  `${Math.min(0.99, barMidY + labelGap) * 100}%`,
+                    transform: 'translate(-50%, 0%)',
+                  }}
+                >
+                  <span className="text-[9px] font-semibold text-purple-300/90 bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap">
+                    Customer side ↓
+                  </span>
+                </div>
+              </React.Fragment>
+            );
+          })}
 
           {/* Bar line drag hint after first zone placed */}
           {config.stations.length > 0 && !isDrawing && !dragTarget && (
