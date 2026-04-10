@@ -17,7 +17,7 @@ import { isDemoAccount, generateDemoVenueScopeJobs } from '../utils/demoData';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Period = 'yesterday' | '7days' | '30days' | 'all';
+type Period = 'today' | 'yesterday' | '7days' | '30days' | 'all';
 
 interface StaffStat {
   name: string;
@@ -44,29 +44,28 @@ function cameraName(job: VenueScopeJob): string {
   return job.roomLabel || job.cameraLabel || job.clipLabel?.replace(/^📡\s*/, '').replace(/\s*—\s*🔴\s*LIVE\s*$/i, '').trim() || 'Camera';
 }
 
-function periodStart(period: Period): number {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  if (period === 'yesterday') { now.setDate(now.getDate() - 1); return now.getTime() / 1000; }
-  if (period === '7days')     { now.setDate(now.getDate() - 7); return now.getTime() / 1000; }
-  if (period === '30days')    { now.setDate(now.getDate() - 30); return now.getTime() / 1000; }
-  return 0;
+function todayMidnight(): number {
+  const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000;
 }
 
-function periodEnd(period: Period): number {
-  if (period === 'yesterday') {
-    const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000;
-  }
-  return Date.now() / 1000;
+function periodBounds(period: Period): { start: number; end: number } {
+  const midnight = todayMidnight();
+  if (period === 'today')     return { start: midnight, end: Date.now() / 1000 };
+  if (period === 'yesterday') return { start: midnight - 86400, end: midnight };
+  if (period === '7days')     return { start: midnight - 7 * 86400, end: Date.now() / 1000 };
+  if (period === '30days')    return { start: midnight - 30 * 86400, end: Date.now() / 1000 };
+  return { start: 0, end: Date.now() / 1000 };
+}
+
+function jobTs(j: VenueScopeJob): number {
+  // finishedAt is always written for completed jobs; fall back to createdAt
+  return j.finishedAt || j.updatedAt || j.createdAt || 0;
 }
 
 function filterJobs(jobs: VenueScopeJob[], period: Period): VenueScopeJob[] {
-  const start = periodStart(period);
-  const end   = periodEnd(period);
-  return jobs.filter(j => {
-    const t = j.createdAt ?? 0;
-    return t >= start && (period === 'all' || t < end);
-  });
+  if (period === 'all') return jobs;
+  const { start, end } = periodBounds(period);
+  return jobs.filter(j => { const t = jobTs(j); return t >= start && t < end; });
 }
 
 function buildStaff(jobs: VenueScopeJob[]): StaffStat[] {
@@ -111,6 +110,7 @@ function buildStaff(jobs: VenueScopeJob[]): StaffStat[] {
 
 function PeriodToggle({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
   const opts: { id: Period; label: string }[] = [
+    { id: 'today',     label: 'Today' },
     { id: 'yesterday', label: 'Yesterday' },
     { id: '7days',     label: '7 Days' },
     { id: '30days',    label: '30 Days' },
@@ -441,7 +441,7 @@ function RevenueBanner({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrin
 export function Analytics() {
   const venueId     = authService.getStoredUser()?.venueId ?? '';
   const isDemo      = isDemoAccount(venueId);
-  const [period, setPeriod]           = useState<Period>('7days');
+  const [period, setPeriod]           = useState<Period>('today');
   const [allJobs, setAllJobs]         = useState<VenueScopeJob[]>([]);
   const [loading, setLoading]         = useState(true);
   const [avgDrinkPrice, setAvgDrinkPrice] = useState(0);
@@ -450,12 +450,17 @@ export function Analytics() {
     if (!venueId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const raw = isDemo ? generateDemoVenueScopeJobs() : await venueScopeService.listJobs(venueId, 300);
+      const { start, end } = periodBounds(period);
+      const startEpoch = period === 'all' ? undefined : start;
+      const endEpoch   = period === 'all' ? undefined : end + 3600; // small buffer
+      const raw = isDemo
+        ? generateDemoVenueScopeJobs()
+        : await venueScopeService.listJobs(venueId, 500, startEpoch, endEpoch);
       setAllJobs(raw.filter(j => !j.isLive && j.status !== 'running'));
     } finally {
       setLoading(false);
     }
-  }, [venueId, isDemo]);
+  }, [venueId, isDemo, period]);
 
   useEffect(() => { load(); }, [load]);
 

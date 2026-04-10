@@ -82,17 +82,53 @@ function _itemToJob(item: Record<string, Record<string, unknown>>): VenueScopeJo
   } as VenueScopeJob;
 }
 
-async function _listJobsDirect(venueId: string): Promise<VenueScopeJob[]> {
+/**
+ * Sort key format (aws_sync.py): !{9999999999 - int(createdAt):010d}_{jobId}
+ * Ascending DDB scan → newest items (smaller inverted ts) first.
+ * We compute sort key bounds to query ONLY items in the desired epoch range.
+ */
+function _sortKey(epochSec: number): string {
+  const inv = 9999999999 - Math.floor(epochSec);
+  return `!${String(inv).padStart(10, '0')}`;
+}
+
+async function _listJobsDirect(
+  venueId: string,
+  startEpoch?: number, // inclusive lower bound (epoch sec)
+  endEpoch?: number,   // exclusive upper bound (epoch sec)
+): Promise<VenueScopeJob[]> {
   if (!_directDDB) return [];
   try {
-    const r = await _directDDB.send(new QueryCommand({
-      TableName: 'VenueScopeJobs',
-      KeyConditionExpression: 'venueId = :v',
-      ExpressionAttributeValues: { ':v': { S: venueId } },
-      Limit: 500,
-      // Ascending sort (default): '!'-prefixed new items sort first (ASCII 33 < all hex chars)
-    }));
-    return (r.Items ?? []).map(item => _itemToJob(item as Record<string, Record<string, unknown>>));
+    // Sort key bounds: newer ts → smaller inverted value → lower sort key
+    // For range [startEpoch, endEpoch): query sort keys BETWEEN skEnd and skStart
+    const exprVals: Record<string, unknown> = { ':v': { S: venueId } };
+    let keyExpr = 'venueId = :v';
+    if (startEpoch !== undefined && endEpoch !== undefined) {
+      const skLow  = _sortKey(endEpoch);    // inverted: most recent items (endEpoch)
+      const skHigh = _sortKey(startEpoch) + '_\uffff'; // inverted: oldest items (startEpoch)
+      keyExpr += ' AND jobId BETWEEN :skLow AND :skHigh';
+      exprVals[':skLow']  = { S: skLow };
+      exprVals[':skHigh'] = { S: skHigh };
+    }
+
+    // Paginate until we have enough items or run out
+    const MAX_ITEMS = 3000;
+    const allItems: VenueScopeJob[] = [];
+    let lastKey: Record<string, unknown> | undefined;
+    do {
+      const cmd: Record<string, unknown> = {
+        TableName: 'VenueScopeJobs',
+        KeyConditionExpression: keyExpr,
+        ExpressionAttributeValues: exprVals,
+        Limit: 500,
+      };
+      if (lastKey) cmd.ExclusiveStartKey = lastKey;
+      const r = await _directDDB.send(new QueryCommand(cmd as any));
+      allItems.push(...(r.Items ?? []).map(item => _itemToJob(item as Record<string, Record<string, unknown>>)));
+      lastKey = r.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (lastKey && allItems.length < MAX_ITEMS);
+
+    return allItems;
   } catch (err) {
     console.warn('[venuescope] direct DynamoDB fallback failed:', err);
     return [];
@@ -210,21 +246,21 @@ const venueScopeService = {
    * one record per camera — no accumulation. A single fetch of 500 items is
    * always sufficient to capture all live cameras + recent history.
    */
-  async listJobs(venueId: string, limit = 50): Promise<VenueScopeJob[]> {
-    // Helper: ghost records use legacy '~' prefix jobIds (static IDs from old live-camera format).
-    // Filter them out — they're stale DynamoDB entries with status=running that never get cleaned up.
+  async listJobs(
+    venueId: string,
+    limit = 50,
+    startEpoch?: number,
+    endEpoch?: number,
+  ): Promise<VenueScopeJob[]> {
     const isGhost = (j: VenueScopeJob) => j.jobId.startsWith('~');
-
-    // Live detection: isLive=true (set by push_live_metrics every 30s) OR status=running
-    // for non-ghost jobs. AppSync schema omits isLive/updatedAt so we rely on status
-    // for non-ghost records; direct DDB path gets the real isLive field.
-    const isLive = (j: VenueScopeJob) => !isGhost(j) && (j.isLive === true || j.status === 'running');
+    const isLive  = (j: VenueScopeJob) => !isGhost(j) && (j.isLive === true || j.status === 'running');
 
     const dedupeAndSort = (items: VenueScopeJob[]) => {
+      const ts = (j: VenueScopeJob) => j.finishedAt || j.updatedAt || j.createdAt || 0;
       const live = items.filter(j => isLive(j));
       const liveDeduped = Array.from(
         live
-          .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+          .sort((a, b) => ts(b) - ts(a))
           .reduce((map, j) => {
             const key = j.cameraLabel || j.clipLabel || j.jobId;
             if (!map.has(key)) map.set(key, j);
@@ -233,16 +269,14 @@ const venueScopeService = {
           .values()
       );
       const nonLive = items.filter(j => !isLive(j) && !isGhost(j))
-        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+        .sort((a, b) => ts(b) - ts(a))
         .slice(0, Math.max(limit, 50));
-      return [...liveDeduped, ...nonLive].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      return [...liveDeduped, ...nonLive].sort((a, b) => ts(b) - ts(a));
     };
 
-    // Direct DynamoDB is primary — AppSync resolver omits live fields (isLive, updatedAt,
-    // createdAt) from its DDB mapping, causing live cameras to not appear.
-    // Direct DDB reads all attributes correctly via _itemToJob.
+    // Direct DynamoDB is primary — passes date range for efficient sort key queries.
     if (_directDDB) {
-      const items = await _listJobsDirect(venueId);
+      const items = await _listJobsDirect(venueId, startEpoch, endEpoch);
       if (items.length > 0) return dedupeAndSort(items);
     }
     // AppSync fallback (when direct DDB credentials not configured)
