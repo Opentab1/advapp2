@@ -511,70 +511,53 @@ function ZoneEditorModal({
 
           {/* HTML overlay labels for zone annotations (avoid SVG text artifacts) */}
           {config.stations.map((s, i) => {
-            // Polygon bounds
             const xs = s.polygon.map(p => p[0]);
             const ys = s.polygon.map(p => p[1]);
             const pxMin = Math.min(...xs), pxMax = Math.max(...xs);
             const pyMin = Math.min(...ys);
-            // Bar line midpoint (for label anchor)
             const barMidX = (s.bar_line_p1[0] + s.bar_line_p2[0]) / 2;
             const barMidY = (s.bar_line_p1[1] + s.bar_line_p2[1]) / 2;
-            const labelGap = 0.045; // normalized units above/below bar line
+            const gap = 0.045;
+            // customer_side: 1 = customers below bar line, -1 = customers above
+            const staffAbove = s.customer_side === 1;
+            const aboveLabel = staffAbove ? '↑ Staff side' : '↑ Customer side';
+            const belowLabel = staffAbove ? 'Customer side ↓' : 'Staff side ↓';
+            const aboveColor = staffAbove ? 'text-amber-300/90' : 'text-purple-300/90';
+            const belowColor = staffAbove ? 'text-purple-300/90' : 'text-amber-300/90';
             return (
               <React.Fragment key={i}>
-                {/* "Bar Zone" label — centred inside the teal polygon */}
-                <div
-                  className="absolute pointer-events-none"
-                  style={{
-                    left: `${(pxMin + pxMax) / 2 * 100}%`,
-                    top:  `${pyMin * 100 + 2}%`,
-                    transform: 'translateX(-50%)',
-                  }}
-                >
+                {/* Zone name label */}
+                <div className="absolute pointer-events-none" style={{ left: `${(pxMin + pxMax) / 2 * 100}%`, top: `${pyMin * 100 + 2}%`, transform: 'translateX(-50%)' }}>
                   <span className="text-[10px] font-semibold text-teal/90 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded">
                     {s.label || 'Bar Zone'}
                   </span>
                 </div>
 
-                {/* "Staff ↑" — above bar line */}
-                <div
-                  className="absolute pointer-events-none"
-                  style={{
-                    left: `${barMidX * 100}%`,
-                    top:  `${Math.max(0.01, barMidY - labelGap) * 100}%`,
-                    transform: 'translate(-50%, -100%)',
-                  }}
-                >
-                  <span className="text-[9px] font-semibold text-amber-300/90 bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap">
-                    ↑ Staff side
+                {/* Label above bar line */}
+                <div className="absolute pointer-events-none" style={{ left: `${barMidX * 100}%`, top: `${Math.max(0.01, barMidY - gap) * 100}%`, transform: 'translate(-50%, -100%)' }}>
+                  <span className={`text-[9px] font-semibold ${aboveColor} bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap`}>
+                    {aboveLabel}
                   </span>
                 </div>
 
-                {/* Bar line label — on the bar line */}
+                {/* Flip sides button — centred on bar line */}
                 <div
-                  className="absolute pointer-events-none"
-                  style={{
-                    left: `${(pxMin + 0.02) * 100}%`,
-                    top:  `${barMidY * 100}%`,
-                    transform: 'translateY(-50%)',
-                  }}
+                  className="absolute"
+                  style={{ left: `${barMidX * 100}%`, top: `${barMidY * 100}%`, transform: 'translate(-50%, -50%)' }}
                 >
-                  <span className="text-[9px] font-medium text-amber-400/90 bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap">
-                    — Bar Line (drag handles)
-                  </span>
+                  <button
+                    onClick={e => { e.stopPropagation(); toggleCustomerSide(i); }}
+                    className="flex items-center gap-1 px-2 py-1 rounded-full bg-amber-500/20 border border-amber-500/60 text-amber-300 text-[9px] font-semibold hover:bg-amber-500/40 transition-colors whitespace-nowrap backdrop-blur-sm"
+                    title="Flip staff / customer sides"
+                  >
+                    ⇅ Flip sides
+                  </button>
                 </div>
 
-                {/* "Customers ↓" — below bar line */}
-                <div
-                  className="absolute pointer-events-none"
-                  style={{
-                    left: `${barMidX * 100}%`,
-                    top:  `${Math.min(0.99, barMidY + labelGap) * 100}%`,
-                    transform: 'translate(-50%, 0%)',
-                  }}
-                >
-                  <span className="text-[9px] font-semibold text-purple-300/90 bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap">
-                    Customer side ↓
+                {/* Label below bar line */}
+                <div className="absolute pointer-events-none" style={{ left: `${barMidX * 100}%`, top: `${Math.min(0.99, barMidY + gap) * 100}%`, transform: 'translate(-50%, 0%)' }}>
+                  <span className={`text-[9px] font-semibold ${belowColor} bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap`}>
+                    {belowLabel}
                   </span>
                 </div>
               </React.Fragment>
