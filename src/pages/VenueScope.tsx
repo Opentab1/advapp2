@@ -138,6 +138,7 @@ function ZoneEditorModal({
   const [step, setStep]             = useState<'draw' | 'done'>('draw');
   const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const editorHlsRef = useRef<Hls | null>(null);
 
   const isDrawing = rectAnchor !== null;
 
@@ -149,10 +150,20 @@ function ZoneEditorModal({
   })();
 
   useEffect(() => {
-    if (streamUrl && videoRef.current) {
-      videoRef.current.src = streamUrl;
-      videoRef.current.load();
+    if (!streamUrl || !videoRef.current) return;
+    const v = videoRef.current;
+    if (editorHlsRef.current) { editorHlsRef.current.destroy(); editorHlsRef.current = null; }
+    if (Hls.isSupported()) {
+      const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true });
+      editorHlsRef.current = hls;
+      hls.loadSource(streamUrl);
+      hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+    } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      v.src = streamUrl;
+      v.load();
     }
+    return () => { if (editorHlsRef.current) { editorHlsRef.current.destroy(); editorHlsRef.current = null; } };
   }, [streamUrl]);
 
   function getRelPt(e: React.MouseEvent<SVGSVGElement>): [number, number] {
@@ -849,10 +860,10 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
 
 // ── Camera live view ──────────────────────────────────────────────────────────
 
-/** Extract channel number from label like "CH7 — Bar (Main)" → "CH7" */
+/** Extract channel number from label like "CH7 — Bar (Main)" → "ch7" (lowercase, matches NVR path) */
 function channelFromLabel(label: string): string | null {
   const m = label.match(/CH(\d+)/i);
-  return m ? `CH${m[1]}` : null;
+  return m ? `ch${m[1]}` : null;
 }
 
 function liveStreamUrl(label: string, proxyBase: string): string | null {
@@ -890,21 +901,22 @@ function CameraLiveView({
 
     const v = videoRef.current;
 
+    // Destroy any previous HLS instance before creating a new one
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    if (timerRef.current) clearTimeout(timerRef.current);
+
     // 10-second timeout — if nothing plays, show error
     timerRef.current = setTimeout(() => {
-      if (state !== 'playing') {
-        setErrorMsg('Stream timed out — check proxy URL');
-        setState('error');
-      }
+      setState(prev => prev === 'loading' ? 'error' : prev);
+      setErrorMsg('Stream timed out — check proxy URL');
     }, 10_000);
 
     const cleanup = () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     };
 
     if (Hls.isSupported()) {
-      cleanup(); // reset any previous instance
       const hls = new Hls({
         liveSyncDurationCount: 1,
         liveMaxLatencyDurationCount: 3,
