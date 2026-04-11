@@ -54,14 +54,16 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     from core.database import create_job, _raw_update
     jid   = str(uuid.uuid4())[:8]
     label = f"📡 {cam['name']}"
-    seg_secs = float(cam.get("segment_seconds", 15))
+    primary_mode, extra_modes = _parse_modes(cam.get("mode", "drink_count"))
+    # drink_count runs continuously by default — segmented clips drop gestures at boundaries.
+    # All other modes default to 15s segments.
+    default_seg = 0 if primary_mode == "drink_count" else 15
+    seg_secs = float(cam.get("segment_seconds", default_seg))
     continuous = (seg_secs == 0)
     if seg_num > 0 and not continuous:
         label += f" — seg {seg_num}"
     if continuous:
         label += " — 🔴 LIVE"
-
-    primary_mode, extra_modes = _parse_modes(cam.get("mode", "drink_count"))
 
     # Drink detection needs at least 'balanced' (yolov8s) — 'fast' (yolov8n) misses
     # bartenders on overhead fisheye IR cameras. Upgrade silently if set to fast.
