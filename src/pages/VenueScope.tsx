@@ -870,10 +870,38 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
 
 // ── Tonight hero numbers ──────────────────────────────────────────────────────
 
-function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScopeJob[]; avgDrinkPrice: number; barOpen?: boolean }) {
+function TonightHero({ jobs, avgDrinkPrice, barOpen = true, cameras = [] }: { jobs: VenueScopeJob[]; avgDrinkPrice: number; barOpen?: boolean; cameras?: CameraConfig[] }) {
   const totalDrinks    = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const liveJobs       = jobs.filter(j => j.isLive);
   const nowSec         = Date.now() / 1000;
+
+  // Countdown to next people_count snapshot — use earliest nextOccupancyAt across cameras,
+  // falling back to the global 20-min wall-clock schedule (floor(now/1200)*1200 + 1200).
+  const OCCUPANCY_INTERVAL = 1200;
+  const [nextCountSec, setNextCountSec] = React.useState(0);
+  React.useEffect(() => {
+    const tick = () => {
+      const now = Date.now() / 1000;
+      const peopleCams = cameras.filter(c => c.modes?.includes('people_count' as any));
+      const earliest = peopleCams.reduce((min, c) => {
+        const t = (c as any).nextOccupancyAt;
+        return (t && t > now && t < min) ? t : min;
+      }, Infinity);
+      const nextAt = isFinite(earliest)
+        ? earliest
+        : Math.floor(now / OCCUPANCY_INTERVAL) * OCCUPANCY_INTERVAL + OCCUPANCY_INTERVAL;
+      setNextCountSec(Math.max(0, Math.round(nextAt - now)));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [cameras]);
+
+  const fmtCountdown = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  };
 
   // Include live jobs AND recent snapshot jobs (done within 25 min) for people_count
   const peopleRecent = jobs.filter(j =>
@@ -935,6 +963,7 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
       sub: currentOccupancy > 0
         ? `${cameraZoneCount} camera zone${cameraZoneCount !== 1 ? 's' : ''}`
         : liveJobs.length > 0 ? 'cameras live · no activity' : 'no cameras active',
+      countdown: nextCountSec > 0 ? `Next count in ${fmtCountdown(nextCountSec)}` : null,
     },
     theftCount > 0
       ? {
@@ -957,7 +986,7 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      {stats.map(({ icon, value, label, color, bg, iconColor, sub }) => (
+      {stats.map(({ icon, value, label, color, bg, iconColor, sub, countdown }: any) => (
         <div key={label} className={`border rounded-2xl p-4 ${bg}`}>
           <div className={`w-7 h-7 rounded-lg bg-black/20 flex items-center justify-center mb-3 ${iconColor}`}>
             {icon}
@@ -965,6 +994,7 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true }: { jobs: VenueScope
           <div className={`text-3xl font-bold ${color} leading-none`}>{value}</div>
           <div className="text-[10px] text-text-muted uppercase tracking-wide mt-1.5">{label}</div>
           {sub && <div className="text-[10px] text-text-muted mt-0.5">{sub}</div>}
+          {countdown && <div className="text-[10px] text-teal/70 mt-1.5 tabular-nums">{countdown}</div>}
         </div>
       ))}
     </div>
@@ -2275,7 +2305,7 @@ export function VenueScope() {
 
           {/* 1. Today's hero numbers */}
           {tonightJobs.length > 0 && (
-            <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} />
+            <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} cameras={cameras} />
           )}
 
           {/* POS Reconciliation */}

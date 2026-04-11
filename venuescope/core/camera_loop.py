@@ -147,7 +147,10 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
     camera_id   = cam["camera_id"]
     camera_name = cam["name"]
     seg_num     = 0
-    last_occupancy_t = 0.0  # epoch of last people_count segment launch
+    # Snap to the global schedule boundary so all cameras fire in unison.
+    # e.g. OCCUPANCY_INTERVAL=1200 → floors to the last :00, :20, or :40 past the hour.
+    now = time.time()
+    last_occupancy_t = now - (now % OCCUPANCY_INTERVAL)
     log.info(f"[camera_loop] Starting loop for '{camera_name}' ({camera_id})")
 
     while not stop_event.is_set():
@@ -183,15 +186,17 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                              f"in {wait_secs/60:.0f}m, sleeping")
                     stop_event.wait(wait_secs)
                     continue
-                last_occupancy_t = time.time()
+                # Snap to global boundary after running so next wake-up stays in sync
+                now = time.time()
+                last_occupancy_t = now - (now % OCCUPANCY_INTERVAL)
+                next_at = last_occupancy_t + OCCUPANCY_INTERVAL
                 log.info(f"[camera_loop] '{camera_name}' — people_count snapshot "
                          f"(next in {OCCUPANCY_INTERVAL//60}m)")
                 try:
                     from core.ddb_cameras import update_camera_next_occupancy
                     venue_id = current.get("venue", "")
                     if venue_id:
-                        update_camera_next_occupancy(venue_id, camera_id,
-                                                     last_occupancy_t + OCCUPANCY_INTERVAL)
+                        update_camera_next_occupancy(venue_id, camera_id, next_at)
                 except Exception:
                     pass
 
@@ -199,15 +204,16 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             effective = _effective_cam(current, last_occupancy_t)
             all_effective_modes = [m.strip() for m in effective.get("mode","").split(",") if m.strip()]
             if any(m in _PEOPLE_MODES for m in all_effective_modes) and not _is_people_only(current):
-                last_occupancy_t = time.time()
+                now = time.time()
+                last_occupancy_t = now - (now % OCCUPANCY_INTERVAL)
+                next_at = last_occupancy_t + OCCUPANCY_INTERVAL
                 log.info(f"[camera_loop] '{camera_name}' — mixed occupancy run "
                          f"(next in {OCCUPANCY_INTERVAL//60}m)")
                 try:
                     from core.ddb_cameras import update_camera_next_occupancy
                     venue_id = current.get("venue", "")
                     if venue_id:
-                        update_camera_next_occupancy(venue_id, camera_id,
-                                                     last_occupancy_t + OCCUPANCY_INTERVAL)
+                        update_camera_next_occupancy(venue_id, camera_id, next_at)
                 except Exception:
                     pass
             elif any(m in _PEOPLE_MODES for m in (current.get("mode","") or "").split(",")) \
