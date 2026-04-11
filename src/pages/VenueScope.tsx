@@ -1162,7 +1162,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   const [secondsLeft, setSecondsLeft] = React.useState(0);
 
   React.useEffect(() => {
-    if (!isPeople || room.isLive) return;
+    if (!isPeople) return;
     // Use the global wall-clock schedule — all cameras fire in unison every 20 min from epoch.
     const OCCUPANCY_INTERVAL = 1200;
     const tick = () => {
@@ -1173,7 +1173,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [isPeople, room.isLive]);
+  }, [isPeople]);
 
   return (
     <motion.div
