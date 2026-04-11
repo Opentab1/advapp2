@@ -1040,6 +1040,12 @@ class VenueProcessor:
             # Grace period: keep track state for 90s of video time so bartenders returning
             # from a back-room trip or long conversation still get re-assigned by zone
             rules.reappear_grace_frames   = max(100, int(effective_fps * 90))
+            # Low-fps adaptation: NVR streams often deliver 2fps. Relax frame-count
+            # thresholds so a serve spanning only 2-4 frames can still be detected.
+            if effective_fps < 4.0:
+                rules.min_prep_frames    = max(2, int(rules.min_prep_frames * effective_fps / 10))
+                rules.serve_dwell_frames = 1   # 1 frame on customer side is enough at low fps
+                rules.serve_confirm_frames = 1
             shift = self.shift
             if shift is None:
                 # Auto-create one bartender per station from bar config
