@@ -1293,7 +1293,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
               <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Peak</div>
             </div>
           </div>
-          {!room.isLive && (
+          {isPeople && (
             <div className="text-center text-[10px] text-text-muted">
               {secondsLeft > 0
                 ? `Next count in ${Math.floor(secondsLeft / 60)}m ${String(secondsLeft % 60).padStart(2, '0')}s`
