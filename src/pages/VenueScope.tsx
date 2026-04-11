@@ -875,27 +875,21 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true, cameras = [] }: { jo
   const liveJobs       = jobs.filter(j => j.isLive);
   const nowSec         = Date.now() / 1000;
 
-  // Countdown to next people_count snapshot — use earliest nextOccupancyAt across cameras,
-  // falling back to the global 20-min wall-clock schedule (floor(now/1200)*1200 + 1200).
+  // Countdown to next people_count snapshot.
+  // All cameras fire on the same global wall-clock schedule (every 20 min from epoch),
+  // so we compute it directly — no per-camera DDB value needed, always perfectly in sync.
   const OCCUPANCY_INTERVAL = 1200;
   const [nextCountSec, setNextCountSec] = React.useState(0);
   React.useEffect(() => {
     const tick = () => {
       const now = Date.now() / 1000;
-      const peopleCams = cameras.filter(c => c.modes?.includes('people_count' as any));
-      const earliest = peopleCams.reduce((min, c) => {
-        const t = (c as any).nextOccupancyAt;
-        return (t && t > now && t < min) ? t : min;
-      }, Infinity);
-      const nextAt = isFinite(earliest)
-        ? earliest
-        : Math.floor(now / OCCUPANCY_INTERVAL) * OCCUPANCY_INTERVAL + OCCUPANCY_INTERVAL;
+      const nextAt = Math.floor(now / OCCUPANCY_INTERVAL) * OCCUPANCY_INTERVAL + OCCUPANCY_INTERVAL;
       setNextCountSec(Math.max(0, Math.round(nextAt - now)));
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [cameras]);
+  }, []);
 
   const fmtCountdown = (s: number) => {
     const m = Math.floor(s / 60);
@@ -1169,15 +1163,17 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
 
   React.useEffect(() => {
     if (!isPeople || room.isLive) return;
+    // Use the global wall-clock schedule — all cameras fire in unison every 20 min from epoch.
+    const OCCUPANCY_INTERVAL = 1200;
     const tick = () => {
-      // Prefer the exact time written by the worker; fall back to estimate
-      const nextAt = camera?.nextOccupancyAt ?? ((room.updatedAt ?? 0) + 1200);
-      setSecondsLeft(Math.max(0, Math.round(nextAt - Date.now() / 1000)));
+      const now = Date.now() / 1000;
+      const nextAt = Math.floor(now / OCCUPANCY_INTERVAL) * OCCUPANCY_INTERVAL + OCCUPANCY_INTERVAL;
+      setSecondsLeft(Math.max(0, Math.round(nextAt - now)));
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [isPeople, room.isLive, room.updatedAt, camera?.nextOccupancyAt]);
+  }, [isPeople, room.isLive]);
 
   return (
     <motion.div
