@@ -297,6 +297,13 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
         expr_vals[":ca"] = {"N": str(created_at_val or time.time())}
         expr_vals[":ij"] = {"S": job_id}
         expr_vals[":il"] = {"BOOL": is_live_cam}
+        # Derive camera name from clip label for room grouping in React UI
+        cam_name = ""
+        if clip_label.startswith("📡 "):
+            cam_name = clip_label[len("📡 "):].split(" — ")[0].strip()
+        if cam_name:
+            update_expr += ", cameraLabel = :cnl"
+            expr_vals[":cnl"] = {"S": cam_name}
 
     ddb_key = _ddb_sort_key(job_id, created_at_val)
     try:
@@ -372,6 +379,19 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     _ca = created_at or time.time()
     update_expr += ", createdAt = if_not_exists(createdAt, :ca)"
     expr_vals[":ca"] = {"N": str(_ca)}
+
+    # Write clipLabel + cameraLabel on first push so React can display the camera name
+    # immediately — these are immutable for the job's lifetime, so if_not_exists is safe.
+    clip = summary.get("clip_label", "")
+    if clip:
+        update_expr += ", clipLabel = if_not_exists(clipLabel, :cl)"
+        expr_vals[":cl"] = {"S": clip}
+        cam_name = summary.get("camera_label", "")
+        if not cam_name and clip.startswith("📡 "):
+            cam_name = clip[len("📡 "):].split(" — ")[0].strip()
+        if cam_name:
+            update_expr += ", cameraLabel = if_not_exists(cameraLabel, :cnl)"
+            expr_vals[":cnl"] = {"S": cam_name}
 
     # Include per-bartender breakdown if available
     if bts:
@@ -521,7 +541,12 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
             "over_pours":  int(corr.get("over_pours", 0)),
         })}
 
-    camera = summary.get("camera_label") or summary.get("venue_id", "")
+    camera = summary.get("camera_label") or ""
+    if not camera:
+        # Derive camera name from clip_label: "📡 CH10 Back Entrance — seg 5" → "CH10 Back Entrance"
+        clip = summary.get("clip_label", "")
+        if clip.startswith("📡 "):
+            camera = clip[len("📡 "):].split(" — ")[0].strip()
     if camera:
         item["cameraLabel"] = {"S": str(camera)}
 
