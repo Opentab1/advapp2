@@ -870,10 +870,9 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
 
 // ── Tonight hero numbers ──────────────────────────────────────────────────────
 
-function TonightHero({ jobs, avgDrinkPrice, barOpen = true, cameras = [] }: { jobs: VenueScopeJob[]; avgDrinkPrice: number; barOpen?: boolean; cameras?: CameraConfig[] }) {
+function TonightHero({ jobs, avgDrinkPrice, barOpen = true, peopleRooms = [] }: { jobs: VenueScopeJob[]; avgDrinkPrice: number; barOpen?: boolean; peopleRooms?: RoomSummary[] }) {
   const totalDrinks    = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const liveJobs       = jobs.filter(j => j.isLive);
-  const nowSec         = Date.now() / 1000;
 
   // Countdown to next people_count snapshot.
   // All cameras fire on the same global wall-clock schedule (every 20 min from epoch),
@@ -897,28 +896,10 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true, cameras = [] }: { jo
     return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
   };
 
-  // Include live jobs AND recent snapshot jobs (done within 25 min) for people_count
-  const peopleRecent = jobs.filter(j =>
-    j.analysisMode === 'people_count' && (
-      j.isLive ||
-      (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 1500
-    )
-  );
-
-  // For each distinct camera zone, keep the most recent job.
-  // Then SUM across zones — cameras cover non-overlapping areas of the venue.
-  const camLatest = new Map<string, VenueScopeJob>();
-  for (const j of peopleRecent) {
-    const key = j.cameraLabel || friendlyClipLabel(j.clipLabel) || j.roomLabel || j.jobId.slice(0, 12);
-    const existing = camLatest.get(key);
-    const jTime = j.updatedAt ?? j.finishedAt ?? j.createdAt ?? 0;
-    const eTime = existing ? (existing.updatedAt ?? existing.finishedAt ?? existing.createdAt ?? 0) : -1;
-    if (!existing || jTime > eTime) camLatest.set(key, j);
-  }
-  const currentOccupancy = camLatest.size > 0
-    ? Array.from(camLatest.values()).reduce((s, j) => s + (j.peakOccupancy ?? 0), 0)
-    : 0;
-  const cameraZoneCount = camLatest.size;
+  // Sum exactly what each camera card shows (room.currentOccupancy) — guaranteed consistent.
+  // peopleRooms is already deduped and computed by buildRooms with the same logic.
+  const currentOccupancy = peopleRooms.reduce((s, r) => s + (r.currentOccupancy ?? 0), 0);
+  const cameraZoneCount  = peopleRooms.length;
   const occupancyIsEntrance = false;
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
@@ -2301,7 +2282,7 @@ export function VenueScope() {
 
           {/* 1. Today's hero numbers */}
           {tonightJobs.length > 0 && (
-            <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} cameras={cameras} />
+            <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} peopleRooms={allRooms.filter(r => r.mode === 'people_count')} />
           )}
 
           {/* POS Reconciliation */}
