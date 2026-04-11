@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles, BarChart3, TrendingUp, Minus,
@@ -309,7 +309,7 @@ function IdeaCard({ idea, capacity }: { idea: CalendarEventIdea; capacity: numbe
   const cardBorder = idea.daysUntil <= 7 ? 'border-teal/40 bg-teal/5' : 'border-warm-700 bg-whoop-panel';
 
   return (
-    <motion.div className={`rounded-2xl border ${cardBorder} overflow-hidden`} layout>
+    <motion.div layoutId={`idea-${idea.id}`} className={`rounded-2xl border ${cardBorder} overflow-hidden`} layout>
       <button className="w-full text-left p-4" onClick={() => setExpanded(!expanded)}>
         <div className="flex items-start gap-3">
           <span className="text-2xl flex-shrink-0">{idea.emoji}</span>
@@ -435,7 +435,8 @@ function IdeaCard({ idea, capacity }: { idea: CalendarEventIdea; capacity: numbe
 
 function IdeasTab({ capacity }: { capacity: number }) {
   const [filter, setFilter] = useState<'All' | 'Easy' | 'Medium' | 'Hard'>('All');
-  const ideas = generateCalendarEvents(new Date(), 3);
+  // Memoize so the list is generated once — prevents framer-motion ghost cards on re-render
+  const ideas = useMemo(() => generateCalendarEvents(new Date(), 3), []);
   const filtered = filter === 'All' ? ideas : ideas.filter(i => i.difficulty === filter);
 
   return (

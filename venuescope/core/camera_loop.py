@@ -177,9 +177,12 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                     stop_event.wait(10)
                     continue
                 if recent["status"] == "failed":
+                    _consecutive_fails = getattr(stop_event, "_cam_fails", 0) + 1
+                    stop_event._cam_fails = _consecutive_fails
+                    wait = min(60 * _consecutive_fails, 600)  # 60s, 120s, ... max 10min
                     log.warning(f"[camera_loop] '{camera_name}' last job failed "
-                                f"— waiting 60s before retry")
-                    stop_event.wait(60)
+                                f"(#{_consecutive_fails}) — waiting {wait}s before retry")
+                    stop_event.wait(wait)
                     # fall through to launch new segment after wait
 
             # people_count-only cameras: wait OCCUPANCY_INTERVAL between snapshots
@@ -246,6 +249,8 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             except Exception:
                 pass
 
+            # Reset failure counter on successful launch
+            stop_event._cam_fails = 0
             # Launch next segment (or continuous job)
             seg_num += 1
             _launch_segment(effective, seg_num)
@@ -254,7 +259,8 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             # interval_seconds: how long to wait BETWEEN clips (defaults to seg_secs).
             # Set interval > seg_secs to run a short clip on a longer schedule,
             # e.g. seg_secs=30, interval_seconds=1200 → 30s snapshot every 20 min.
-            interval_secs = float(current.get("interval_seconds") or seg_secs)
+            _iv = current.get("interval_seconds")
+            interval_secs = float(_iv) if _iv is not None else seg_secs
 
             if seg_secs == 0:
                 # Continuous mode: poll every 10s to see if the job ended

@@ -33,14 +33,11 @@ class PulseLearningService {
       }
       
       // Fetch 90 days of sensor data from DynamoDB
-      console.log(`📊 Learning: Fetching data for venue ${venueId}...`);
       const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '90d');
       
       const dataPoints = historicalData?.data?.length || 0;
-      console.log(`📊 Learning: Received ${dataPoints} data points from DynamoDB`);
       
       if (dataPoints < this.MIN_DATA_POINTS) {
-        console.log(`📊 Learning: No data yet (${dataPoints} points)`);
         // Return a minimum confidence if we have ANY data showing in the UI
         // This handles cases where data exists but query timing differs
         return 0.30; // 30% baseline confidence
@@ -60,13 +57,11 @@ class PulseLearningService {
       // Ensure minimum of 30% if we have any data
       const confidence = Math.max(0.30, Math.min(this.LEARNING_CAP, pointsConfidence + daysBonus));
       
-      console.log(`📊 Learning: ${dataPoints} data points, ${uniqueDays} days → ${Math.round(confidence * 100)}% confidence`);
 
       return confidence;
     } catch (error) {
       console.error('Error calculating learning confidence:', error);
       // Return baseline confidence on error - we know user has data
-      console.log('📊 Learning: Using baseline 50% confidence due to fetch error');
       return 0.50;
     }
   }
@@ -366,7 +361,6 @@ class PulseLearningService {
    */
   async savePerformanceHistory(record: VenuePerformanceHistory): Promise<void> {
     // TODO: Implement actual DynamoDB put operation
-    console.log('Saving performance history:', record);
   }
 
   /**
@@ -388,7 +382,6 @@ class PulseLearningService {
       const historicalData = await dynamoDBService.getHistoricalSensorData(venueId, '90d');
       
       if (!historicalData?.data || historicalData.data.length < this.MIN_DATA_POINTS) {
-        console.log('📊 OptimalRanges: No data, returning default ranges');
         // Return default optimal ranges so UI still works
         return this.getDefaultOptimalRanges(venueId);
       }
@@ -417,7 +410,6 @@ class PulseLearningService {
       const daysBonus = Math.min(0.15, uniqueDays / 100);
       const confidence = Math.min(this.LEARNING_CAP, pointsConfidence + daysBonus);
       
-      console.log(`📊 Optimal ranges calculated from ${data.length} data points (${uniqueDays} days) → ${Math.round(confidence * 100)}% confidence`);
       
       return {
         venueId,
@@ -484,7 +476,6 @@ class PulseLearningService {
    */
   async saveOptimalRanges(ranges: VenueOptimalRanges): Promise<void> {
     // TODO: Implement actual DynamoDB put operation
-    console.log('Saving optimal ranges:', ranges);
   }
 }
 

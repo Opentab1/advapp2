@@ -172,7 +172,6 @@ class VenueLearningService {
    * Analyze historical data and learn optimal conditions for a venue
    */
   analyzeVenue(venueId: string, historicalData: SensorData[]): VenueLearning {
-    console.log(`🧠 Analyzing ${historicalData.length} data points for venue ${venueId}`);
     
     if (historicalData.length === 0) {
       return this.createEmptyLearning(venueId);
@@ -235,7 +234,6 @@ class VenueLearningService {
       status = 'learning';
     }
     
-    console.log(`🧠 Learning status: ${status}`, {
       weeksOfData,
       dataPoints: historicalData.length,
       timeSlots: timeSlotsWithData,
@@ -263,7 +261,6 @@ class VenueLearningService {
     this.cache.set(venueId, learning);
     this.persistLearning(venueId, learning);
     
-    console.log(`🧠 Learning complete: ${learningProgress}% confident, ${patterns.length} patterns found`);
     
     return learning;
   }
@@ -887,7 +884,6 @@ class VenueLearningService {
       };
     }
     
-    console.log(`🏆 Found best nights for ${Object.keys(bestNights).length} time slots`);
     
     return bestNights;
   }

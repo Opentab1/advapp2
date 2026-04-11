@@ -30,6 +30,9 @@ export function LearningProgress({
 }: LearningProgressProps) {
   const [showModal, setShowModal] = useState(false);
   
+  // Don't show until we have enough data to learn from
+  if (status === 'insufficient_data') return null;
+
   // Don't show if fully confident
   if (status === 'highly_confident') {
     return (

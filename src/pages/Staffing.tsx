@@ -236,7 +236,7 @@ function CameraPerformanceView({
                   <div className="text-[10px] text-warm-500">Shifts</div>
                 </div>
                 <div>
-                  <div className="text-lg font-bold text-teal">{perf.drinksPerShift.toFixed(1)}</div>
+                  <div className={`text-lg font-bold ${perf.drinksPerShift > 0 ? 'text-teal' : 'text-text-muted'}`}>{perf.drinksPerShift.toFixed(1)}</div>
                   <div className="text-[10px] text-warm-500">Avg/Shift</div>
                 </div>
               </div>
