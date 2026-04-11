@@ -875,20 +875,28 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true, peopleRooms = [] }: 
   const liveJobs       = jobs.filter(j => j.isLive);
 
   // Countdown to next people_count snapshot.
-  // All cameras fire on the same global wall-clock schedule (every 20 min from epoch),
-  // so we compute it directly — no per-camera DDB value needed, always perfectly in sync.
+  // Cameras fire on per-camera hash-offset schedules — find the soonest nextAt.
+  // Per-room estimate: updatedAt + 1200. Falls back to global floor when unknown.
   const OCCUPANCY_INTERVAL = 1200;
   const [nextCountSec, setNextCountSec] = React.useState(0);
   React.useEffect(() => {
     const tick = () => {
       const now = Date.now() / 1000;
-      const nextAt = Math.floor(now / OCCUPANCY_INTERVAL) * OCCUPANCY_INTERVAL + OCCUPANCY_INTERVAL;
-      setNextCountSec(Math.max(0, Math.round(nextAt - now)));
+      const globalNext = Math.floor(now / OCCUPANCY_INTERVAL) * OCCUPANCY_INTERVAL + OCCUPANCY_INTERVAL;
+      // Per-room nextAt from last snapshot time
+      const roomNextAts = peopleRooms.map(r => {
+        const lastAt = r.updatedAt && r.updatedAt > 0 ? r.updatedAt : 0;
+        return lastAt > 0 && lastAt + OCCUPANCY_INTERVAL > now
+          ? lastAt + OCCUPANCY_INTERVAL
+          : globalNext;
+      });
+      const soonest = roomNextAts.length > 0 ? Math.min(...roomNextAts) : globalNext;
+      setNextCountSec(Math.max(0, Math.round(soonest - now)));
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [peopleRooms]);
 
   const fmtCountdown = (s: number) => {
     const m = Math.floor(s / 60);
@@ -1144,17 +1152,21 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
 
   React.useEffect(() => {
     if (!isPeople) return;
-    // Use the global wall-clock schedule — all cameras fire in unison every 20 min from epoch.
+    // Each camera fires on its own hash-offset schedule.
+    // Best estimate: last snapshot updatedAt + 1200s. Falls back to global floor if unknown.
     const OCCUPANCY_INTERVAL = 1200;
     const tick = () => {
       const now = Date.now() / 1000;
-      const nextAt = Math.floor(now / OCCUPANCY_INTERVAL) * OCCUPANCY_INTERVAL + OCCUPANCY_INTERVAL;
+      const lastAt = room.updatedAt && room.updatedAt > 0 ? room.updatedAt : 0;
+      const nextAt = lastAt > 0 && lastAt + OCCUPANCY_INTERVAL > now
+        ? lastAt + OCCUPANCY_INTERVAL
+        : Math.floor(now / OCCUPANCY_INTERVAL) * OCCUPANCY_INTERVAL + OCCUPANCY_INTERVAL;
       setSecondsLeft(Math.max(0, Math.round(nextAt - now)));
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [isPeople]);
+  }, [isPeople, room.updatedAt]);
 
   return (
     <motion.div
