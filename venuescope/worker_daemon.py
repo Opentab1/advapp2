@@ -136,17 +136,21 @@ def run_job(job_id: str):
                 log.warning(f"Bar config failed: {e}")
 
         # Fallback: bar config stored in DDB camera record (from React zone editor)
+        # The React zone editor omits venue_id/display_name — inject defaults.
         if bar_config is None and extra_config.get("bar_config_json"):
             try:
                 d        = json.loads(extra_config["bar_config_json"])
                 stations = [BarStation(**s) for s in d.pop("stations", [])]
+                d.setdefault("venue_id",     extra_config.get("camera_id", "camera"))
+                d.setdefault("display_name", extra_config.get("camera_id", "Camera"))
                 cfg      = BarConfig(**d); cfg.stations = stations
                 bar_config = cfg
-                log.info("Bar config loaded from DDB camera record")
+                log.info(f"Bar config loaded from DDB camera record ({len(stations)} stations)")
             except Exception as e:
                 log.warning(f"DDB bar config parse failed: {e}")
 
         # Auto-detect bar layout from stream frames when drink_count has no config
+        camera_id = extra_config.get("camera_id", "")
         if (bar_config is None
                 and mode == "drink_count"
                 and job.get("source_type") == "rtsp"):
