@@ -342,25 +342,30 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
 
     mode         = summary.get("analysis_mode", summary.get("mode", "drink_count"))
 
+    # For people_count mode, total_entries/exits are always 0 (lightweight runner
+    # doesn't count door crossings). Use peak_occupancy from the blob estimator instead.
+    peak_occ = int(people.get("peak_occupancy", headcount)) if mode == "people_count" else headcount
+
     update_expr = (
         "SET #st = :s, updatedAt = :u, isLive = :il, "
         "elapsedSec = :es, analysisMode = :am, "
         "totalDrinks = :td, unrungDrinks = :ud, "
         "peopleIn = :pi, peopleOut = :po, currentHeadcount = :hc, "
-        "peakOccupancy = :hc"   # frontend reads peakOccupancy for live headcount
+        "peakOccupancy = :po2"   # frontend reads peakOccupancy for live headcount
     )
     expr_names = {"#st": "status"}
     expr_vals: Dict[str, Any] = {
-        ":s":  {"S": "running"},
-        ":u":  {"N": now},
-        ":il": {"BOOL": True},
-        ":es": {"N": str(round(elapsed_sec, 1))},
-        ":am": {"S": mode},
-        ":td": {"N": str(total_drinks)},
-        ":ud": {"N": str(unrung)},
-        ":pi": {"N": str(people_in)},
-        ":po": {"N": str(people_out)},
-        ":hc": {"N": str(headcount)},
+        ":s":   {"S": "running"},
+        ":u":   {"N": now},
+        ":il":  {"BOOL": True},
+        ":es":  {"N": str(round(elapsed_sec, 1))},
+        ":am":  {"S": mode},
+        ":td":  {"N": str(total_drinks)},
+        ":ud":  {"N": str(unrung)},
+        ":pi":  {"N": str(people_in)},
+        ":po":  {"N": str(people_out)},
+        ":hc":  {"N": str(headcount)},
+        ":po2": {"N": str(peak_occ)},
     }
 
     # Always write createdAt so the React dashboard can filter "tonight's" jobs

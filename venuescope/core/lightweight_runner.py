@@ -22,14 +22,14 @@ from typing import Callable
 log = logging.getLogger("lightweight_runner")
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
-MIN_BLOB_AREA    = 800     # px² — ignore small noise blobs
+MIN_BLOB_AREA    = 2000    # px² — ignore small noise blobs (AC, IR flicker, shadows)
 MAX_BLOB_AREA    = 60000   # px² — ignore large lighting/shadow blobs
-LEARN_RATE       = 0.003   # MOG2 learning rate (slow = stable background)
+LEARN_RATE       = 0.005   # MOG2 learning rate — slightly faster convergence
 DILATE_ITERS     = 1       # minimal dilation to avoid merging nearby people
 BLOBS_PER_PERSON = 4       # empirical: one person ≈ 4 foreground blobs
 OCCUPANCY_EVERY  = 15      # log one occupancy sample every N frames
 LIVE_CB_EVERY    = 30      # seconds between live_cb calls (continuous mode)
-WARMUP_SECS      = 5       # seconds to let background model stabilise
+WARMUP_SECS      = 8       # seconds to let background model stabilise
 
 
 def run_lightweight(
@@ -63,8 +63,8 @@ def run_lightweight(
     fps = max(1.0, min(fps, 60.0))
 
     fgbg   = cv2.createBackgroundSubtractorMOG2(
-        history=int(fps * 60),  # 60s background history
-        varThreshold=50,        # higher = less sensitive to slow changes
+        history=int(fps * 8),   # match warmup window — model converges within warmup period
+        varThreshold=160,       # high threshold: only count significant foreground objects
         detectShadows=False,
     )
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -178,10 +178,11 @@ def _build_summary(
     if frame_estimates:
         sorted_est = sorted(frame_estimates)
         n = len(sorted_est)
-        # 90th percentile as "peak" — filters top 10% noise spikes
-        p90_idx   = min(n - 1, int(n * 0.90))
-        peak_occ  = sorted_est[p90_idx]
-        avg_occ   = _median(frame_estimates)
+        avg_occ  = _median(frame_estimates)
+        # Use 75th percentile as "peak" — more conservative than 90th, still
+        # captures busy moments while rejecting transient noise spikes.
+        p75_idx  = min(n - 1, int(n * 0.75))
+        peak_occ = sorted_est[p75_idx]
     else:
         peak_occ = avg_occ = 0
 
