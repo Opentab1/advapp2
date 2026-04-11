@@ -147,11 +147,16 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
     camera_id   = cam["camera_id"]
     camera_name = cam["name"]
     seg_num     = 0
-    # Snap to the global schedule boundary so all cameras fire in unison.
-    # e.g. OCCUPANCY_INTERVAL=1200 → floors to the last :00, :20, or :40 past the hour.
+    # Each camera gets a deterministic offset (0 to OCCUPANCY_INTERVAL-1 seconds)
+    # based on a hash of its ID, so cameras spread evenly across the 20-min window
+    # rather than all firing at once. E.g. 15 cameras → one every ~80s across 20 min.
+    _cam_offset = hash(camera_id) % OCCUPANCY_INTERVAL
     now = time.time()
-    last_occupancy_t = now - (now % OCCUPANCY_INTERVAL)
-    log.info(f"[camera_loop] Starting loop for '{camera_name}' ({camera_id})")
+    # Find the most recent boundary for THIS camera's schedule
+    last_occupancy_t = now - ((now - _cam_offset) % OCCUPANCY_INTERVAL)
+    log.info(f"[camera_loop] Starting loop for '{camera_name}' ({camera_id}) "
+             f"(schedule offset: {_cam_offset}s within {OCCUPANCY_INTERVAL//60}min window)")
+
 
     while not stop_event.is_set():
         try:
@@ -186,12 +191,12 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                              f"in {wait_secs/60:.0f}m, sleeping")
                     stop_event.wait(wait_secs)
                     continue
-                # Snap to global boundary after running so next wake-up stays in sync
+                # Snap to this camera's schedule slot after running
                 now = time.time()
-                last_occupancy_t = now - (now % OCCUPANCY_INTERVAL)
+                last_occupancy_t = now - ((now - _cam_offset) % OCCUPANCY_INTERVAL)
                 next_at = last_occupancy_t + OCCUPANCY_INTERVAL
                 log.info(f"[camera_loop] '{camera_name}' — people_count snapshot "
-                         f"(next in {OCCUPANCY_INTERVAL//60}m)")
+                         f"(next in {int((next_at - now) / 60)}m)")
                 try:
                     from core.ddb_cameras import update_camera_next_occupancy
                     venue_id = current.get("venue", "")
@@ -205,7 +210,7 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             all_effective_modes = [m.strip() for m in effective.get("mode","").split(",") if m.strip()]
             if any(m in _PEOPLE_MODES for m in all_effective_modes) and not _is_people_only(current):
                 now = time.time()
-                last_occupancy_t = now - (now % OCCUPANCY_INTERVAL)
+                last_occupancy_t = now - ((now - _cam_offset) % OCCUPANCY_INTERVAL)
                 next_at = last_occupancy_t + OCCUPANCY_INTERVAL
                 log.info(f"[camera_loop] '{camera_name}' — mixed occupancy run "
                          f"(next in {OCCUPANCY_INTERVAL//60}m)")
