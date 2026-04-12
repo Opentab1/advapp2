@@ -156,7 +156,7 @@ class _HLSCapture:
 
     _QUEUE_MAXSIZE = 60
 
-    def __init__(self, url: str, w: int, h: int):
+    def __init__(self, url: str, w: int, h: int, dup_factor: int = 1):
         import av as _av, requests as _req, logging, queue, threading, io
         logging.getLogger("libav").setLevel(logging.CRITICAL)
         self._url    = url
@@ -169,6 +169,11 @@ class _HLSCapture:
         self._q: queue.Queue = queue.Queue(maxsize=self._QUEUE_MAXSIZE)
         self._opened = False
         self._stop   = threading.Event()
+        # Frame duplication: repeat each unique frame dup_factor times so the
+        # detection pipeline sees a higher effective fps (fixes 2fps NVR streams)
+        self._dup_factor    = max(1, dup_factor)
+        self._dup_remaining = 0
+        self._last_frame    = None
         self._thread = threading.Thread(target=self._bg, daemon=True)
         self._thread.start()
         # Wait up to 20 s for first frame
@@ -276,8 +281,14 @@ class _HLSCapture:
         import queue
         if not self._opened:
             return False, None
+        # Return cached frame for remaining duplicates before fetching a new one
+        if self._dup_remaining > 0 and self._last_frame is not None:
+            self._dup_remaining -= 1
+            return True, self._last_frame
         try:
             frame = self._q.get(timeout=30.0)
+            self._last_frame    = frame
+            self._dup_remaining = self._dup_factor - 1
             return True, frame
         except queue.Empty:
             self._opened = False
@@ -525,14 +536,20 @@ class VenueProcessor:
         total_f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or -1
         W       = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         H       = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # HLS low-fps fix: NVR delivers 2fps — duplicate each frame to reach ~14fps
+        # so frame-count thresholds (prep_frames, dwell_frames, cooldowns) work correctly.
+        _hls_dup_factor = 1
+        if _is_hls and fps < 5.0:
+            _hls_dup_factor = max(1, round(14.0 / max(fps, 0.5)))
+            _raw_fps = fps
+            fps = _raw_fps * _hls_dup_factor
+            self.cb(2, f"HLS: stream is {_raw_fps:.1f}fps — enabling {_hls_dup_factor}x frame "
+                       f"duplication → effective {fps:.0f}fps for detection pipeline")
         self._clip_fps = fps / max(self.profile.get("stride", 2), 1)
         self._clip_H   = int(H * self._clip_W / W)
         self.cb(2, f"Video: {W}x{H} @ {fps:.1f}fps  ({total_f} frames, {total_f/fps/60:.1f} min)")
         if self._overhead:
             self.cb(2, "Overhead camera mode: conf=0.15, imgsz=1280, stride=1")
-        if fps < 5.0 and self.source_type == "rtsp" and self.mode == "drink_count":
-            self.cb(2, f"WARNING: Stream fps={fps:.1f} — drink gesture detection needs ≥10fps. "
-                       "Check NVR stream settings or use the /hls/ stream URL.")
         if _save_local:
             (self.result_dir / "clips").mkdir(exist_ok=True)
 
@@ -586,8 +603,9 @@ class VenueProcessor:
         # because the NVR serves a continuously-written MP4 buffer.
         if _is_hls:
             cap.release()
-            cap = _HLSCapture(self.source, W, H)
-            self.cb(0, "HLS live stream: switched to ffmpeg pipe reader")
+            cap = _HLSCapture(self.source, W, H, dup_factor=_hls_dup_factor)
+            self.cb(0, f"HLS live stream: switched to ffmpeg pipe reader "
+                       f"(dup_factor={_hls_dup_factor})")
 
         _rtsp_consecutive_errors = 0
         _MAX_RTSP_ERRORS         = 60   # ~2 min of consecutive failures before giving up
