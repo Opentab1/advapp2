@@ -1043,9 +1043,10 @@ class VenueProcessor:
             # Low-fps adaptation: NVR streams often deliver 2fps. Relax frame-count
             # thresholds so a serve spanning only 2-4 frames can still be detected.
             if effective_fps < 4.0:
-                rules.min_prep_frames    = max(2, int(rules.min_prep_frames * effective_fps / 10))
-                rules.serve_dwell_frames = 1   # 1 frame on customer side is enough at low fps
+                rules.min_prep_frames      = max(2, int(rules.min_prep_frames * effective_fps / 10))
+                rules.serve_dwell_frames   = 1     # 1 frame on customer side is enough at low fps
                 rules.serve_confirm_frames = 1
+                rules.min_serve_score      = 0.20  # overhead/IR cameras have lower detection conf
             shift = self.shift
             if shift is None:
                 # Auto-create one bartender per station from bar config
