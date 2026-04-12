@@ -42,6 +42,7 @@ export interface VenueSettings {
     days?: Record<string, { open: string; close: string; closed: boolean }>;
   };
   camProxyUrl?: string;  // HTTPS proxy base URL for live camera streams, e.g. https://droplet.sslip.io/cam
+  nvrPlaybackUrl?: string;  // NVR playback URL template — use {channel} and {starttime} as placeholders
   lastUpdated?: string;
 }
 
@@ -425,6 +426,10 @@ class VenueSettingsService {
 
   getCamProxyUrl(venueId: string): string | null {
     return this.getSettings(venueId)?.camProxyUrl ?? null;
+  }
+
+  getNvrPlaybackUrl(venueId: string): string | null {
+    return this.getSettings(venueId)?.nvrPlaybackUrl ?? null;
   }
 
   async saveCamProxyUrl(venueId: string, url: string): Promise<boolean> {

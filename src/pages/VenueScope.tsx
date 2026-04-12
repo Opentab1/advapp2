@@ -15,6 +15,7 @@ import {
   ChevronDown, ChevronUp, FileText,
   Activity, Users, Zap, DollarSign, Calendar, TrendingUp,
   CreditCard, Edit2, Crosshair, Trash2, Check,
+  ExternalLink, GlassWater, Filter,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
@@ -1906,6 +1907,230 @@ function DrinkLogSection({ job }: { job: VenueScopeJob }) {
   );
 }
 
+// ── Detection event log ───────────────────────────────────────────────────────
+
+type EventKind = 'drink' | 'theft';
+
+interface DetectionEvent {
+  wallTime: number;
+  kind: EventKind;
+  camera: string;
+  channel: string | null;
+  bartender?: string;
+  jobId: string;
+}
+
+function buildDetectionEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
+  const events: DetectionEvent[] = [];
+  for (const job of jobs) {
+    const camera = job.roomLabel || job.cameraLabel || friendlyClipLabel(job.clipLabel) || '';
+    const channel = channelFromSources(camera, null);
+
+    if (job.bartenderBreakdown) {
+      try {
+        const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { timestamps?: number[] }>;
+        for (const [bartender, d] of Object.entries(bd)) {
+          for (const t of d.timestamps ?? []) {
+            events.push({
+              wallTime: (job.createdAt ?? 0) + t,
+              kind: 'drink',
+              camera,
+              channel,
+              bartender: bartender !== 'Unknown' ? bartender : undefined,
+              jobId: job.jobId,
+            });
+          }
+        }
+      } catch { /* no-op */ }
+    }
+
+    if (job.hasTheftFlag && job.createdAt) {
+      events.push({
+        wallTime: job.createdAt,
+        kind: 'theft',
+        camera,
+        channel,
+        bartender: job.topBartender || undefined,
+        jobId: job.jobId,
+      });
+    }
+  }
+  return events.sort((a, b) => b.wallTime - a.wallTime);
+}
+
+function buildNvrUrl(template: string, channel: string | null, wallTime: number): string {
+  const dt = new Date(wallTime * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const starttime = `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}${pad(dt.getSeconds())}`;
+  return template
+    .replace('{channel}', channel ?? 'ch1')
+    .replace('{starttime}', starttime);
+}
+
+function DetectionEventsPanel({
+  jobs,
+  nvrUrlTemplate,
+  onSaveNvrUrl,
+}: {
+  jobs: VenueScopeJob[];
+  nvrUrlTemplate: string;
+  onSaveNvrUrl: (url: string) => void;
+}) {
+  const [filter, setFilter] = useState<'all' | 'drink' | 'theft'>('all');
+  const [editingUrl, setEditingUrl] = useState(false);
+  const [urlDraft, setUrlDraft] = useState(nvrUrlTemplate);
+  const [open, setOpen] = useState(false);
+
+  const allEvents = useMemo(() => buildDetectionEvents(jobs), [jobs]);
+  const filtered  = useMemo(() => filter === 'all' ? allEvents : allEvents.filter(e => e.kind === filter), [allEvents, filter]);
+
+  const drinkCount = allEvents.filter(e => e.kind === 'drink').length;
+  const theftCount = allEvents.filter(e => e.kind === 'theft').length;
+
+  if (allEvents.length === 0) return null;
+
+  return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 text-sm text-text-secondary hover:text-white transition-colors"
+      >
+        <span className="flex items-center gap-2">
+          <GlassWater className="w-3.5 h-3.5 text-teal" />
+          Detection Log
+          <span className="text-[10px] text-teal bg-teal/10 border border-teal/20 px-1.5 py-0.5 rounded-full">
+            {drinkCount} drink{drinkCount !== 1 ? 's' : ''}
+          </span>
+          {theftCount > 0 && (
+            <span className="text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded-full">
+              {theftCount} theft
+            </span>
+          )}
+        </span>
+        {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0 }}
+            animate={{ height: 'auto' }}
+            exit={{ height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-whoop-divider">
+              {/* Filter + NVR URL bar */}
+              <div className="px-4 py-2.5 flex flex-wrap items-center gap-2 border-b border-whoop-divider/60">
+                <div className="flex items-center gap-1">
+                  <Filter className="w-3 h-3 text-text-muted" />
+                  {(['all', 'drink', 'theft'] as const).map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setFilter(f)}
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold transition-colors ${
+                        filter === f
+                          ? f === 'theft'
+                            ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                            : 'bg-teal/20 text-teal border border-teal/30'
+                          : 'text-text-muted hover:text-white border border-transparent'
+                      }`}
+                    >
+                      {f === 'all' ? `All (${allEvents.length})` : f === 'drink' ? `Drinks (${drinkCount})` : `Theft (${theftCount})`}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="ml-auto flex items-center gap-1.5">
+                  {!editingUrl ? (
+                    <button
+                      onClick={() => { setUrlDraft(nvrUrlTemplate); setEditingUrl(true); }}
+                      className="text-[10px] text-text-muted hover:text-teal transition-colors flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-2.5 h-2.5" />
+                      {nvrUrlTemplate ? 'NVR URL ✓' : 'Set NVR URL'}
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={urlDraft}
+                        onChange={e => setUrlDraft(e.target.value)}
+                        placeholder="http://nvr/playback/{channel}/{starttime}"
+                        className="text-[10px] bg-whoop-bg border border-whoop-divider rounded px-2 py-1 text-white w-64 focus:outline-none focus:border-teal/50"
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => { onSaveNvrUrl(urlDraft.trim()); setEditingUrl(false); }}
+                        className="text-[10px] text-teal hover:text-teal/80 font-semibold"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setEditingUrl(false)}
+                        className="text-[10px] text-text-muted hover:text-white"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Event rows */}
+              <div className="divide-y divide-whoop-divider/40 max-h-96 overflow-y-auto">
+                {filtered.length === 0 ? (
+                  <p className="text-[11px] text-text-muted px-4 py-6 text-center">No events match filter</p>
+                ) : (
+                  filtered.slice(0, 200).map((evt, i) => {
+                    const timeStr = new Date(evt.wallTime * 1000).toLocaleString(undefined, {
+                      month: 'short', day: 'numeric',
+                      hour: 'numeric', minute: '2-digit', second: '2-digit',
+                    });
+                    const nvrHref = nvrUrlTemplate
+                      ? buildNvrUrl(nvrUrlTemplate, evt.channel, evt.wallTime)
+                      : null;
+
+                    return (
+                      <div key={`${evt.jobId}-${evt.wallTime}-${i}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-whoop-bg/50 transition-colors">
+                        {evt.kind === 'theft' ? (
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-red-500/20 flex items-center justify-center">
+                            <AlertTriangle className="w-2.5 h-2.5 text-red-400" />
+                          </span>
+                        ) : (
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-teal/15 flex items-center justify-center">
+                            <GlassWater className="w-2.5 h-2.5 text-teal" />
+                          </span>
+                        )}
+                        <span className="text-[11px] font-mono text-text-muted flex-shrink-0 w-36 tabular-nums">{timeStr}</span>
+                        <span className="text-[11px] text-text-secondary truncate flex-1 min-w-0">{evt.camera || '—'}</span>
+                        {evt.bartender && (
+                          <span className="text-[11px] text-text-muted truncate max-w-[80px] flex-shrink-0 hidden sm:block">{evt.bartender}</span>
+                        )}
+                        {nvrHref ? (
+                          <a
+                            href={nvrHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-shrink-0 flex items-center gap-1 text-[10px] font-semibold text-teal hover:text-teal/80 transition-colors px-2 py-1 rounded-lg bg-teal/10 border border-teal/20 hover:bg-teal/15"
+                          >
+                            Watch <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        ) : (
+                          <span className="flex-shrink-0 text-[9px] text-text-muted/40 hidden sm:block">set NVR URL →</span>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 function EmptyState({ venueId }: { venueId: string }) {
@@ -2050,6 +2275,7 @@ export function VenueScope() {
   const [loading, setLoading]         = useState(true);
   const [avgDrinkPrice, setAvgDrinkPrice] = useState(() => venueSettingsService.getAvgDrinkPrice(venueId));
   const [camProxyUrl, setCamProxyUrl] = useState(() => venueSettingsService.getCamProxyUrl(venueId) ?? '');
+  const [nvrPlaybackUrl, setNvrPlaybackUrl] = useState(() => venueSettingsService.getNvrPlaybackUrl(venueId) ?? '');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [newToast, setNewToast]       = useState<string | null>(null);
   const [investigating, setInvestigating] = useState<VenueScopeJob | null>(null);
@@ -2090,6 +2316,7 @@ export function VenueScope() {
     venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
       if (s?.avgDrinkPrice) setAvgDrinkPrice(s.avgDrinkPrice);
       if (s?.camProxyUrl) setCamProxyUrl(s.camProxyUrl);
+      if (s?.nvrPlaybackUrl) setNvrPlaybackUrl(s.nvrPlaybackUrl);
     });
   }, [venueId]);
 
@@ -2372,6 +2599,19 @@ export function VenueScope() {
               onInvestigate={setInvestigating}
             />
           )}
+
+          {/* 5. Detection event log — all drinks + theft flags with NVR links */}
+          <DetectionEventsPanel
+            jobs={safeJobs}
+            nvrUrlTemplate={nvrPlaybackUrl}
+            onSaveNvrUrl={url => {
+              setNvrPlaybackUrl(url);
+              venueSettingsService.saveSettingsToCloud(venueId, {
+                ...venueSettingsService.getSettings(venueId),
+                nvrPlaybackUrl: url,
+              });
+            }}
+          />
 
         </>
       )}

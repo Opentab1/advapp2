@@ -234,14 +234,6 @@ class VenueLearningService {
       status = 'learning';
     }
     
-      weeksOfData,
-      dataPoints: historicalData.length,
-      timeSlots: timeSlotsWithData,
-      meetsLearning: hasMinimumData,
-      meetsConfident: hasConfidentData,
-      meetsHighlyConfident: hasHighlyConfidentData,
-    });
-    
     const learning: VenueLearning = {
       venueId,
       learningProgress,
