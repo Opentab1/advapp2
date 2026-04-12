@@ -434,6 +434,7 @@ def main():
     _poll_count        = 0
     _active: Dict[str, multiprocessing.Process] = {}
     _active_start: Dict[str, float] = {}  # job_id → launch timestamp
+    _active_continuous: set = set()       # job_ids that are continuous (no timeout)
     JOB_TIMEOUT = 600  # 10 minutes max per job — kills stuck YOLO/RTSP jobs
 
     # Start camera loop manager in its OWN process (not as threads in this
@@ -499,14 +500,17 @@ def main():
             _now = time.time()
 
             # 1. Reap finished processes; kill any that exceed JOB_TIMEOUT
+            #    Continuous jobs (max_seconds=0) are exempt — they run until stopped.
             for job_id, proc in list(_active.items()):
                 elapsed = _now - _active_start.get(job_id, _now)
-                if elapsed > JOB_TIMEOUT and proc.is_alive():
+                is_continuous = job_id in _active_continuous
+                if elapsed > JOB_TIMEOUT and proc.is_alive() and not is_continuous:
                     log.warning(f"Job {job_id} exceeded {JOB_TIMEOUT}s timeout — killing (pid={proc.pid})")
                     proc.kill()
                     proc.join(timeout=5)
                     del _active[job_id]
                     _active_start.pop(job_id, None)
+                    _active_continuous.discard(job_id)
                     try:
                         from core.database import _raw_update
                         _raw_update(job_id, status="failed", error_message="Job timeout — exceeded 10 minutes")
@@ -517,6 +521,7 @@ def main():
                     proc.join()
                     del _active[job_id]
                     _active_start.pop(job_id, None)
+                    _active_continuous.discard(job_id)
                     log.info(f"Reaped process for job {job_id}")
 
             # Retention cleanup (every 6 hours)
@@ -574,6 +579,13 @@ def main():
                     p.start()
                     _active[job_id] = p
                     _active_start[job_id] = time.time()
+                    # Mark continuous jobs (max_seconds=0) so timeout reaper skips them
+                    try:
+                        _ec = json.loads(job.get("summary_json") or "{}").get("extra_config", {})
+                        if float(_ec.get("max_seconds", 1)) == 0:
+                            _active_continuous.add(job_id)
+                    except Exception:
+                        pass
                     log.info(f"Launched job {job_id} (pid={p.pid})")
                     launched += 1
 
