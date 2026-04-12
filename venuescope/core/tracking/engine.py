@@ -174,6 +174,7 @@ class _HLSCapture:
         self._dup_factor    = max(1, dup_factor)
         self._dup_remaining = 0
         self._last_frame    = None
+        self._queue_drops   = 0   # frames dropped due to full queue
         self._thread = threading.Thread(target=self._bg, daemon=True)
         self._thread.start()
         # Wait up to 20 s for first frame
@@ -259,8 +260,15 @@ class _HLSCapture:
                 try:
                     self._q.put(arr, timeout=5.0)
                     last_pts = pts
+                    if self._queue_drops > 0:
+                        # Log recovery after a run of drops
+                        print(f"[HLS] Queue recovered after {self._queue_drops} dropped frames", flush=True)
+                        self._queue_drops = 0
                 except Exception:
-                    pass   # queue full — drop frame
+                    self._queue_drops += 1
+                    if self._queue_drops % 30 == 1:  # log first drop and every 30th after
+                        print(f"[HLS] WARNING: frame queue full — {self._queue_drops} dropped "
+                              f"(processing {self._dup_factor}x slower than stream)", flush=True)
             container.close()
         except Exception:
             pass
@@ -596,14 +604,28 @@ class VenueProcessor:
                 ck = json.loads(self._checkpoint_file.read_text())
                 resume_frame = int(ck.get("frame_idx", 0))
                 if resume_frame > 0 and self.source_type != "rtsp":
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, resume_frame)
-                    frame_idx          = resume_frame
-                    self._total        = resume_frame
-                    self._processed    = ck.get("processed", 0)
-                    self._dropped      = ck.get("dropped", 0)
-                    self._resumed_from = resume_frame
-                    self.cb(0, f"Resuming from frame {resume_frame} "
-                               f"(checkpoint found — {resume_frame/fps/60:.1f} min in)")
+                    # Sanity check: checkpoint must not exceed video length
+                    if total_f > 0 and resume_frame >= total_f:
+                        self.cb(0, f"Checkpoint frame {resume_frame} >= total {total_f} "
+                                   f"— ignoring (video may have changed)")
+                        resume_frame = 0
+                    if resume_frame > 0:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, resume_frame)
+                        # Verify the seek actually worked (some codecs don't support it)
+                        actual_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+                        if resume_frame > 10 and actual_frame < resume_frame - 10:
+                            self.cb(0, f"Checkpoint seek to {resume_frame} failed "
+                                       f"(codec limitation, got {actual_frame}) — starting fresh")
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            resume_frame = 0
+                        else:
+                            frame_idx          = resume_frame
+                            self._total        = resume_frame
+                            self._processed    = ck.get("processed", 0)
+                            self._dropped      = ck.get("dropped", 0)
+                            self._resumed_from = resume_frame
+                            self.cb(0, f"Resuming from frame {resume_frame} "
+                                       f"(checkpoint found — {resume_frame/fps/60:.1f} min in)")
             except Exception as _ce:
                 self.cb(0, f"Checkpoint load failed (starting fresh): {_ce}")
 
@@ -617,8 +639,11 @@ class VenueProcessor:
                        f"(dup_factor={_hls_dup_factor})")
 
         _rtsp_consecutive_errors = 0
+        _rtsp_reconnect_count    = 0    # how many reconnects have been attempted
         _MAX_RTSP_ERRORS         = 60   # ~2 min of consecutive failures before giving up
-        _RTSP_RECONNECT_AFTER    = 5    # reconnect after 5 consecutive failures
+        _RTSP_RECONNECT_AFTER    = 15   # reconnect after 15 consecutive failures (was 5)
+        # NVR streams can have >10s buffering latency — 5 failures = 2.5s at 2fps was
+        # too aggressive, causing flapping that resets ByteTrack track IDs mid-shift.
 
         while True:
             _ft_start = time.perf_counter()
@@ -635,13 +660,17 @@ class VenueProcessor:
                         break
                     # Try to reopen the connection after a few consecutive timeouts
                     if _rtsp_consecutive_errors % _RTSP_RECONNECT_AFTER == 0:
-                        self.cb(0, f"RTSP: reconnecting (attempt {_rtsp_consecutive_errors // _RTSP_RECONNECT_AFTER})...")
+                        _rtsp_reconnect_count += 1
+                        _backoff = min(2.0 * (2 ** min(_rtsp_reconnect_count - 1, 4)), 30.0)
+                        self.cb(0, f"RTSP: reconnecting (attempt {_rtsp_reconnect_count}, "
+                                   f"backoff={_backoff:.0f}s)...")
                         try:
                             cap.release()
-                            time.sleep(2.0)
+                            time.sleep(_backoff)
                             cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
                             if cap.isOpened():
                                 self.cb(0, "RTSP: reconnected successfully")
+                                _rtsp_reconnect_count = 0  # reset on successful reconnect
                         except Exception as _re:
                             self.cb(0, f"RTSP: reconnect failed: {_re}")
                     continue
@@ -657,18 +686,23 @@ class VenueProcessor:
                         break
                     # Try to reopen after a few consecutive failures
                     if _rtsp_consecutive_errors % _RTSP_RECONNECT_AFTER == 0:
-                        self.cb(0, f"RTSP: reconnecting after {_rtsp_consecutive_errors} read failures...")
+                        _rtsp_reconnect_count += 1
+                        _backoff = min(2.0 * (2 ** min(_rtsp_reconnect_count - 1, 4)), 30.0)
+                        self.cb(0, f"RTSP: reconnecting after {_rtsp_consecutive_errors} "
+                                   f"failures (attempt {_rtsp_reconnect_count}, "
+                                   f"backoff={_backoff:.0f}s)...")
                         try:
                             cap.release()
-                            time.sleep(2.0)
+                            time.sleep(_backoff)
                             if _is_hls:
-                                cap = _HLSCapture(self.source, W, H)
+                                cap = _HLSCapture(self.source, W, H, dup_factor=_hls_dup_factor)
                             elif _use_ffmpeg:
                                 cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
                             else:
                                 cap = cv2.VideoCapture(self.source)
                             if cap.isOpened():
                                 self.cb(0, "RTSP: reconnected")
+                                _rtsp_reconnect_count = 0
                         except Exception as _re:
                             self.cb(0, f"RTSP: reconnect failed: {_re}")
                     else:
@@ -758,6 +792,15 @@ class VenueProcessor:
                     self.cb(0, "Auto-configured for overhead camera: "
                                f"conf={self.profile['conf']}, "
                                f"imgsz={self.profile['imgsz']}, stride=1")
+                    # Relax drink counter gates for this auto-detected overhead camera
+                    # (rules were built before frame 1 — patch the live analyzer directly)
+                    if "drink_count" in analyzers:
+                        _dc = analyzers["drink_count"]
+                        _dc.rules.max_cross_velocity_px = 150.0
+                        _dc.rules.min_prep_frames       = max(2, int(_dc.rules.min_prep_frames * 0.7))
+                        _dc.rules.serve_dwell_frames    = max(1, int(_dc.rules.serve_dwell_frames * 0.7))
+                        _dc.rules.serve_confirm_frames  = max(1, int(_dc.rules.serve_confirm_frames * 0.7))
+                        self.cb(0, "Drink counter: overhead gate scaling applied")
 
             # Improvement 4: Auto-upscale low-res cameras (< 720p shorter side) before YOLO
             _fh, _fw = frame.shape[:2]
@@ -884,7 +927,9 @@ class VenueProcessor:
                     self._id_switches += min(len(self._prev_ids-cur), len(cur-self._prev_ids))
                     self._prev_ids = cur
 
-                    # Improvement 2: Adaptive confidence — lower threshold if detections are poor
+                    # Improvement 2: Adaptive confidence — lower threshold if detections are poor,
+                    # slowly raise it back when quality recovers (prevents false positives persisting
+                    # after a transient bad window like a lighting change or occlusion).
                     if self._adaptive_conf and len(confs) > 0:
                         self._running_conf_sum += sum(confs)
                         self._running_conf_n   += len(confs)
@@ -893,7 +938,12 @@ class VenueProcessor:
                             rolling_avg = self._running_conf_sum / self._running_conf_n
                             if rolling_avg < 0.30 and self._conf_threshold > 0.15:
                                 self._conf_threshold = max(0.15, self._conf_threshold - 0.03)
-                                self.cb(0, f"Auto-adjusting confidence threshold to {self._conf_threshold:.2f} (low detection quality)")
+                                self.cb(0, f"Confidence threshold lowered to {self._conf_threshold:.2f} (poor detection quality)")
+                            elif rolling_avg > 0.50 and self._conf_threshold < self.profile["conf"]:
+                                # Slowly recover — one step per 50-detection window, max back to profile default
+                                self._conf_threshold = min(self.profile["conf"], self._conf_threshold + 0.01)
+                                if self._running_conf_n % 500 == 0:
+                                    self.cb(0, f"Confidence threshold recovered to {self._conf_threshold:.2f}")
 
             t_sec     = frame_idx / fps
             # For live streams (rtsp/http sources), use wall-clock time for the
@@ -1074,6 +1124,17 @@ class VenueProcessor:
                 rules.serve_dwell_frames   = 1     # 1 frame on customer side is enough at low fps
                 rules.serve_confirm_frames = 1
                 rules.min_serve_score      = 0.20  # overhead/IR cameras have lower detection conf
+                # NVR velocity: centroid history is populated at duplicated rate so real
+                # movement per dup-frame is lower — scale threshold down proportionally.
+                if effective_fps < 2.5:
+                    rules.max_cross_velocity_px = max(30.0, rules.max_cross_velocity_px * 0.5)
+            # Overhead camera adaptation: fisheye perspective compresses vertical motion
+            # and arm-only reaches look "fast" from top-down — relax velocity and gate counts.
+            if self._overhead:
+                rules.max_cross_velocity_px = 150.0   # fisheye perspective inflates movement
+                rules.min_prep_frames       = max(2, int(rules.min_prep_frames * 0.7))
+                rules.serve_dwell_frames    = max(1, int(rules.serve_dwell_frames * 0.7))
+                rules.serve_confirm_frames  = max(1, int(rules.serve_confirm_frames * 0.7))
             shift = self.shift
             if shift is None:
                 # Auto-create one bartender per station from bar config

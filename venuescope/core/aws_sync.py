@@ -397,10 +397,12 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     if bts:
         bt_compact = {
             name: {
-                "drinks":     int(d.get("total_drinks", 0)),
-                "per_hour":   round(float(d.get("drinks_per_hour", 0.0)), 1),
-                # Last 20 timestamps (secs-into-video) so React can show drink log
-                "timestamps": [round(t, 1) for t in d.get("drink_timestamps", [])[-20:]],
+                "drinks":        int(d.get("total_drinks", 0)),
+                "per_hour":      round(float(d.get("drinks_per_hour", 0.0)), 1),
+                # Last 50 timestamps (secs-into-video) so React can show drink log
+                "timestamps":    [round(t, 1) for t in d.get("drink_timestamps", [])[-50:]],
+                # Hourly breakdown so dashboard can show "drinks per hour" curve
+                "hourly_counts": {str(k): int(v) for k, v in d.get("hourly_counts", {}).items()},
             }
             for name, d in bts.items()
         }
@@ -515,10 +517,12 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
     if bts:
         bt_breakdown = {
             name: {
-                "drinks":     int(d.get("total_drinks", 0)),
-                "per_hour":   round(float(d.get("drinks_per_hour", 0.0)), 1),
-                # Last 20 drink timestamps as seconds-into-video (wall_time = createdAt + t)
-                "timestamps": [round(t, 1) for t in d.get("drink_timestamps", [])[-20:]],
+                "drinks":        int(d.get("total_drinks", 0)),
+                "per_hour":      round(float(d.get("drinks_per_hour", 0.0)), 1),
+                # Last 50 drink timestamps as seconds-into-video (wall_time = createdAt + t)
+                "timestamps":    [round(t, 1) for t in d.get("drink_timestamps", [])[-50:]],
+                # Hourly breakdown so dashboard can show "drinks per hour" curve per bartender
+                "hourly_counts": {str(k): int(v) for k, v in d.get("hourly_counts", {}).items()},
             }
             for name, d in bts.items()
         }

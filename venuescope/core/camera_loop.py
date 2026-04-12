@@ -179,9 +179,14 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                 if recent["status"] == "failed":
                     _consecutive_fails = getattr(stop_event, "_cam_fails", 0) + 1
                     stop_event._cam_fails = _consecutive_fails
-                    wait = min(60 * _consecutive_fails, 600)  # 60s, 120s, ... max 10min
+                    # Exponential backoff: 15s, 30s, 60s, 120s, 240s — capped at 300s.
+                    # Linear backoff (was 60×n) reached 10 min after 10 failures,
+                    # leaving a 5-min gap if the camera recovered at failure #8.
+                    import random as _rng
+                    wait = min(15 * (2 ** min(_consecutive_fails - 1, 4)), 300)
+                    wait += _rng.uniform(0, 10)  # jitter to avoid thundering herd
                     log.warning(f"[camera_loop] '{camera_name}' last job failed "
-                                f"(#{_consecutive_fails}) — waiting {wait}s before retry")
+                                f"(#{_consecutive_fails}) — waiting {wait:.0f}s before retry")
                     stop_event.wait(wait)
                     # fall through to launch new segment after wait
 

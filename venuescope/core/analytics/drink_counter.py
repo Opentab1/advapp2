@@ -176,6 +176,10 @@ class DrinkCounter:
                     return True
             # Fallback: if only one unassigned bartender total, assign them
             # (handles station_id mismatch between shift config and bar config zone_id)
+            # Spatial guard: only auto-assign if the track is actually inside THIS zone
+            # polygon, not just drifting through a zone boundary from the customer area.
+            if not _point_in_polygon(cx, cy, poly):
+                continue
             unassigned = [(n, r) for n, r in self.shift.records.items()
                           if r.track_id is None]
             if len(unassigned) == 1:
@@ -195,6 +199,7 @@ class DrinkCounter:
         conf_map   = {tid:confs[i] if i<len(confs) else 0.0
                       for i,tid in enumerate(track_ids)}
         active_set = set(track_ids)
+        _just_served: set = set()  # tracks that confirmed a serve this frame
 
         # Decrement station-level cooldowns
         for sid in list(self._station_cooldown.keys()):
@@ -305,14 +310,22 @@ class DrinkCounter:
             if t_sec - self._station_last_serve_tsec.get(station_id, -9999.0) < self.rules.serve_cooldown_seconds:
                 continue
 
-            # PER-EVENT CONFIDENCE: score based on dwell duration + detection quality
+            # PER-EVENT CONFIDENCE: score based on detection quality + dwell duration
             avg_cross_conf = (sum(state.crossing_confs) / len(state.crossing_confs)
                               if state.crossing_confs else conf_map.get(tid, 0.0))
-            dwell_score    = min(state.customer_dwell_frames / 15.0, 1.0)  # saturates at 15 frames
-            serve_score    = round(0.6 * avg_cross_conf + 0.4 * dwell_score, 3)
+            dwell_score    = min(state.customer_dwell_frames / 15.0, 1.0)
+            # High-conf bypass: fast but confident serves (quick hand-off, slide across bar)
+            # don't need long dwell — detection quality is the ground truth.
+            if avg_cross_conf >= 0.85 and state.customer_dwell_frames >= 2:
+                serve_score = round(0.85 + 0.1 * dwell_score, 3)  # 0.85–0.95
+            else:
+                # Weight detection confidence 70%, dwell 30% (previously 60/40)
+                # Fast high-confidence pours were being penalised by the dwell term.
+                serve_score = round(0.7 * avg_cross_conf + 0.3 * dwell_score, 3)
             is_high_conf   = avg_cross_conf >= self.rules.min_serve_conf
 
             # CONFIRMED SERVE ─────────────────────────────────────────────
+            _just_served.add(tid)
             state.last_confirmed_side  = customer_side
             state.cooldown_remaining   = self.rules.serve_cooldown_frames
             self._station_cooldown[station_id] = self.rules.serve_cooldown_frames
@@ -366,9 +379,14 @@ class DrinkCounter:
                 self.events.append(ev)
                 events.append(ev)
 
-        # Reset confirmed side when bartender returns to their own side
+        # Reset confirmed side when bartender returns to their own side.
+        # IMPORTANT: skip any track that just confirmed a serve this frame —
+        # _reach_probe uses bbox corners so the centroid may already be on the
+        # bartender side (arm-only crossing), which would immediately re-arm the
+        # gate and allow the same gesture to count twice on the next frame.
         for i,tid in enumerate(track_ids):
             if i>=len(centroids): continue
+            if tid in _just_served: continue  # don't re-arm in the same frame
             cx,cy=float(centroids[i][0]),float(centroids[i][1])
             sid=self._resolve_station(cx,cy,tid)
             if sid and sid in self._bar_lines:

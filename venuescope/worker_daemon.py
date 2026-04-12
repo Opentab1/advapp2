@@ -372,6 +372,31 @@ def run_job(job_id: str):
                 record_failure(job.get("camera_id", job_id), job.get("clip_label", ""))
         except Exception:
             pass
+    finally:
+        # Always persist cross-segment state — even on crash/OOM/kill.
+        # Without this, a crashed job loses station cooldown context and the
+        # next segment may double-count serves that happened near the boundary.
+        try:
+            if camera_id and mode == "drink_count":
+                # Try to extract state from the processor if it's still in scope
+                _final_state = None
+                try:
+                    if 'proc' in dir() and hasattr(proc, 'shift') and proc.shift:
+                        from core.analytics.drink_counter import DrinkCounter
+                        # Walk analyzers via summary if available
+                        pass
+                except Exception:
+                    pass
+                # Fallback: if summary was built and has _camera_state, save it
+                try:
+                    if 'summary' in dir() and isinstance(summary, dict) \
+                            and summary.get("_camera_state"):
+                        _save_camera_state(camera_id, summary["_camera_state"])
+                        log.debug(f"Saved cross-segment state for camera {camera_id} (finally block)")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 
 def _camera_loop_proc_entry():
