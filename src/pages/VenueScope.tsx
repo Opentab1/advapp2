@@ -371,7 +371,7 @@ function ZoneEditorModal({
     >
       <motion.div
         className="bg-whoop-panel border border-whoop-divider rounded-2xl w-full max-w-5xl flex flex-col overflow-hidden"
-        style={{ maxHeight: '95vh' }}
+        style={{ height: '95vh', maxHeight: '95vh' }}
         initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.97, opacity: 0 }}
       >
         {/* Header */}
@@ -418,6 +418,7 @@ function ZoneEditorModal({
         {/* Canvas — flex-1 so it fills remaining space; footer is always visible */}
         <div
           className="relative bg-black select-none flex-1 min-h-0 overflow-hidden"
+          style={{ minHeight: '280px' }}
         >
           <video
             ref={videoRef}
