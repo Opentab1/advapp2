@@ -545,6 +545,15 @@ class VenueProcessor:
             fps = _raw_fps * _hls_dup_factor
             self.cb(2, f"HLS: stream is {_raw_fps:.1f}fps — enabling {_hls_dup_factor}x frame "
                        f"duplication → effective {fps:.0f}fps for detection pipeline")
+            # Reduce min_track_age: ByteTrack may reset track IDs on each new NVR frame
+            # (0.5s gap, person can move enough that IoU drops below match threshold).
+            # With dup_factor frames per NVR frame and stride, we get dup_factor/stride
+            # processed frames per real frame — use that as the new min_track_age.
+            stride = self.profile.get("stride", 2)
+            _hls_min_age = max(2, _hls_dup_factor // max(stride, 1))
+            self._min_track_age = _hls_min_age
+            self.cb(2, f"HLS: min_track_age reduced to {_hls_min_age} "
+                       f"(was {self.ec.get('min_track_age_frames', 8)})")
         self._clip_fps = fps / max(self.profile.get("stride", 2), 1)
         self._clip_H   = int(H * self._clip_W / W)
         self.cb(2, f"Video: {W}x{H} @ {fps:.1f}fps  ({total_f} frames, {total_f/fps/60:.1f} min)")
