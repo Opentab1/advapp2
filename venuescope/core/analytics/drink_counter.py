@@ -187,11 +187,12 @@ class DrinkCounter:
                centroids: np.ndarray, track_ids: List[int],
                confs: List[float],
                boxes: Optional[np.ndarray] = None) -> List[Dict]:
-        import logging as _lg
-        _log = _lg.getLogger("drink_counter")
+        import sys as _sys
+        def _dbg(msg):
+            print(f"[DC] {msg}", flush=True)
         if not self._bar_lines:
             if frame_idx % 50 == 0:
-                _log.warning(f"[DC] frame {frame_idx}: NO BAR LINES configured — detection impossible")
+                _dbg(f"frame {frame_idx}: NO BAR LINES configured")
             return []
 
         self._total_frames += 1
@@ -220,7 +221,7 @@ class DrinkCounter:
 
         _do_debug = (frame_idx % 14 == 0)  # log every ~1 real NVR frame (14fps effective)
         if _do_debug:
-            _log.info(f"[DC] frame={frame_idx} t={t_sec:.1f}s tracks={track_ids} "
+            _dbg(f"[DC] frame={frame_idx} t={t_sec:.1f}s tracks={track_ids} "
                       f"station_cooldowns={dict(self._station_cooldown)}")
 
         for i, tid in enumerate(track_ids):
@@ -239,19 +240,19 @@ class DrinkCounter:
 
             station_id = self._resolve_station(cx, cy, tid)
             if _do_debug:
-                _log.info(f"[DC]   tid={tid} cx={cx:.3f} cy={cy:.3f} station={station_id} "
+                _dbg(f"[DC]   tid={tid} cx={cx:.3f} cy={cy:.3f} station={station_id} "
                           f"prep={state.prep_frames} dwell={state.customer_dwell_frames} "
                           f"cooldown={state.cooldown_remaining} "
                           f"last_side={state.last_confirmed_side} buf={state.serve_side_buffer[-5:]}")
             if station_id is None:
                 if _do_debug:
-                    _log.warning(f"[DC]   tid={tid} → NO STATION (cx={cx:.3f} cy={cy:.3f} not in any zone)")
+                    _dbg(f"[DC]   tid={tid} → NO STATION (cx={cx:.3f} cy={cy:.3f} not in any zone)")
                 continue
 
             # Station-level cooldown (survives track ID switches)
             if self._station_cooldown.get(station_id, 0) > 0:
                 if _do_debug:
-                    _log.info(f"[DC]   tid={tid} STATION COOLDOWN {self._station_cooldown[station_id]}")
+                    _dbg(f"[DC]   tid={tid} STATION COOLDOWN {self._station_cooldown[station_id]}")
                 continue
             if state.cooldown_remaining > 0:
                 state.cooldown_remaining -= 1
@@ -265,7 +266,7 @@ class DrinkCounter:
                 else:
                     state.prep_frames = max(0, state.prep_frames-1)
                     if _do_debug:
-                        _log.warning(f"[DC]   tid={tid} centroid NOT in polygon (cx={cx:.3f} cy={cy:.3f})")
+                        _dbg(f"[DC]   tid={tid} centroid NOT in polygon (cx={cx:.3f} cy={cy:.3f})")
 
             if state.prep_frames < self.rules.min_prep_frames:
                 continue
@@ -281,13 +282,13 @@ class DrinkCounter:
                                      float(bx[2]), float(bx[3]),
                                      p1, p2, customer_side)
                 if _do_debug:
-                    _log.info(f"[DC]   tid={tid} bbox=({bx[0]:.0f},{bx[1]:.0f},{bx[2]:.0f},{bx[3]:.0f}) "
+                    _dbg(f"[DC]   tid={tid} bbox=({bx[0]:.0f},{bx[1]:.0f},{bx[2]:.0f},{bx[3]:.0f}) "
                               f"probe=({probe[0]:.3f},{probe[1]:.3f}) customer_side={customer_side}")
             else:
                 probe = (cx, cy)
             side = _side_of_line(probe, p1, p2)
             if _do_debug:
-                _log.info(f"[DC]   tid={tid} side={side} (customer_side={customer_side}) "
+                _dbg(f"[DC]   tid={tid} side={side} (customer_side={customer_side}) "
                           f"bar_line=({p1[0]:.2f},{p1[1]:.2f})->({p2[0]:.2f},{p2[1]:.2f})")
             state.serve_side_buffer.append(side)
 
