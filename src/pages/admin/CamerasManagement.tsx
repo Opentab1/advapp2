@@ -26,9 +26,9 @@ import {
   Search,
   Radio,
 } from 'lucide-react';
-import adminService from '../../services/admin.service';
-import cameraService, { Camera as Cam, CameraMode } from '../../services/camera.service';
-import { adminFetch } from '../../services/admin.service';
+import adminService, { AdminCamera, adminFetch } from '../../services/admin.service';
+
+type CameraMode = 'drink_count' | 'bottle_count' | 'people_count' | 'table_turns' | 'staff_activity' | 'after_hours';
 
 const MODE_LABELS: Record<CameraMode, string> = {
   drink_count:    'Drink Count',
@@ -106,10 +106,11 @@ function DiscoverModal({
       const chData = discovered.find(d => d.channel === ch);
       if (!chData) continue;
       try {
-        await cameraService.addCamera(venueId, {
+        await adminService.createCamera({
+          venueId,
           name: `${namePrefix} — CH${ch}`,
           rtspUrl: chData.url,
-          modes: ['drink_count'],
+          modes: 'drink_count',
           enabled: true,
           modelProfile: 'balanced',
           segmentSeconds: 0,
@@ -268,15 +269,18 @@ function CameraModal({
   onSaved,
 }: {
   venueId: string;
-  camera?: Cam;
+  camera?: AdminCamera;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const isEdit = !!camera;
   const [name, setName] = useState(camera?.name ?? '');
   const [rtspUrl, setRtspUrl] = useState(camera?.rtspUrl ?? '');
-  const [modes, setModes] = useState<CameraMode[]>(camera?.modes ?? ['drink_count']);
-  const [modelProfile, setModelProfile] = useState<Cam['modelProfile']>(camera?.modelProfile ?? 'balanced');
+  const cameraModes: CameraMode[] = camera?.modes
+    ? (camera.modes.split(',').filter(Boolean) as CameraMode[])
+    : ['drink_count'];
+  const [modes, setModes] = useState<CameraMode[]>(cameraModes);
+  const [modelProfile, setModelProfile] = useState<'fast' | 'balanced' | 'accurate'>(camera?.modelProfile as 'fast' | 'balanced' | 'accurate' ?? 'balanced');
   const [segmentSeconds, setSegmentSeconds] = useState(camera?.segmentSeconds ?? 0);
   const [segmentInterval, setSegmentInterval] = useState(camera?.segmentInterval ?? 0);
   const [notes, setNotes] = useState(camera?.notes ?? '');
@@ -312,26 +316,29 @@ function CameraModal({
     setError('');
     try {
       if (isEdit && camera) {
-        await cameraService.updateCamera(venueId, camera.cameraId, {
+        const ok = await adminService.updateCamera(camera.cameraId, venueId, {
           name: name.trim(),
           rtspUrl: effectiveUrl.trim(),
-          modes,
+          modes: modes.join(','),
           modelProfile,
           segmentSeconds,
           segmentInterval: segmentSeconds > 0 ? segmentInterval : 0,
-          notes: notes.trim() || undefined,
+          notes: notes.trim() || '',
         });
+        if (!ok) throw new Error('Update failed');
       } else {
-        await cameraService.addCamera(venueId, {
+        const res = await adminService.createCamera({
+          venueId,
           name: name.trim(),
           rtspUrl: effectiveUrl.trim(),
-          modes,
+          modes: modes.join(','),
           enabled: true,
           modelProfile,
           segmentSeconds,
-          segmentInterval: segmentSeconds > 0 ? segmentInterval : undefined,
-          notes: notes.trim() || undefined,
+          segmentInterval: segmentSeconds > 0 ? segmentInterval : 0,
+          notes: notes.trim() || '',
         });
+        if (!res.success) throw new Error(res.message);
       }
       onSaved();
       onClose();
@@ -506,7 +513,7 @@ function CameraModal({
             <label className="block text-sm text-gray-400 mb-1">Model Profile</label>
             <select
               value={modelProfile}
-              onChange={e => setModelProfile(e.target.value as Cam['modelProfile'])}
+              onChange={e => setModelProfile(e.target.value as 'fast' | 'balanced' | 'accurate')}
               className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
             >
               <option value="fast">Fast (lower accuracy, less CPU)</option>
@@ -607,18 +614,18 @@ function VenueCameraSection({
   venueName: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [cameras, setCameras] = useState<Cam[]>([]);
+  const [cameras, setCameras] = useState<AdminCamera[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [showDiscover, setShowDiscover] = useState(false);
-  const [editCamera, setEditCamera] = useState<Cam | null>(null);
+  const [editCamera, setEditCamera] = useState<AdminCamera | null>(null);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const cams = await cameraService.listCameras(venueId);
+      const cams = await adminService.listCameras(venueId);
       setCameras(cams);
     } catch (e: any) {
       setError(e.message ?? 'Failed to load cameras');
@@ -631,9 +638,9 @@ function VenueCameraSection({
     if (expanded) load();
   }, [expanded, load]);
 
-  const handleToggle = async (cam: Cam) => {
+  const handleToggle = async (cam: AdminCamera) => {
     try {
-      await cameraService.toggleCamera(venueId, cam.cameraId, !cam.enabled);
+      await adminService.updateCamera(cam.cameraId, venueId, { enabled: !cam.enabled });
       setCameras(prev => prev.map(c =>
         c.cameraId === cam.cameraId ? { ...c, enabled: !c.enabled } : c
       ));
@@ -642,10 +649,10 @@ function VenueCameraSection({
     }
   };
 
-  const handleDelete = async (cam: Cam) => {
+  const handleDelete = async (cam: AdminCamera) => {
     if (!confirm(`Delete "${cam.name}"? The worker will stop processing this camera within 60 seconds.`)) return;
     try {
-      await cameraService.deleteCamera(venueId, cam.cameraId);
+      await adminService.deleteCamera(cam.cameraId, venueId);
       setCameras(prev => prev.filter(c => c.cameraId !== cam.cameraId));
     } catch (e: any) {
       alert(`Failed to delete camera: ${e.message}`);
@@ -732,9 +739,9 @@ function VenueCameraSection({
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1 mb-1">
-                      {cam.modes.map(m => (
+                      {(cam.modes || 'drink_count').split(',').filter(Boolean).map(m => (
                         <span key={m} className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                          {MODE_LABELS[m]}
+                          {MODE_LABELS[m as CameraMode] ?? m}
                         </span>
                       ))}
                     </div>

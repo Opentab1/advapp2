@@ -106,6 +106,7 @@ export interface AdminCamera {
   modelProfile: string;
   enabled: boolean;
   segmentSeconds: number;
+  segmentInterval?: number;
   barConfigJson?: string;
   createdAt?: string;
   notes?: string;
@@ -308,6 +309,29 @@ class AdminService {
     }
   }
 
+  async createCamera(camera: {
+    venueId: string;
+    name: string;
+    rtspUrl: string;
+    modes: string;
+    modelProfile: string;
+    enabled: boolean;
+    segmentSeconds: number;
+    segmentInterval?: number;
+    notes?: string;
+  }): Promise<{ success: boolean; cameraId?: string; message: string }> {
+    try {
+      const data = await adminFetch('/admin/cameras', {
+        method: 'POST',
+        body: JSON.stringify(camera),
+      });
+      return { success: true, cameraId: data.cameraId, message: 'Camera added' };
+    } catch (error: any) {
+      console.error('createCamera failed:', error);
+      return { success: false, message: error.message || 'Failed to add camera' };
+    }
+  }
+
   async updateCamera(
     cameraId: string,
     venueId: string,
@@ -322,6 +346,18 @@ class AdminService {
       return true;
     } catch (error) {
       console.error('updateCamera failed:', error);
+      return false;
+    }
+  }
+
+  async deleteCamera(cameraId: string, venueId: string): Promise<boolean> {
+    try {
+      await adminFetch(`/admin/cameras/${encodeURIComponent(cameraId)}?venueId=${encodeURIComponent(venueId)}`, {
+        method: 'DELETE',
+      });
+      return true;
+    } catch (error) {
+      console.error('deleteCamera failed:', error);
       return false;
     }
   }

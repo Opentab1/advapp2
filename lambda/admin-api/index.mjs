@@ -274,6 +274,32 @@ async function resetUserPassword(email, body) {
 
 // ─── Cameras ──────────────────────────────────────────────────────────────────
 
+async function createCamera(body) {
+  const { venueId, name, rtspUrl, modes = 'drink_count', modelProfile = 'balanced',
+          segmentSeconds = 0, segmentInterval = 0, notes = '', enabled = true } = body;
+  if (!venueId || !name || !rtspUrl)
+    return err(400, 'Missing: venueId, name, rtspUrl');
+
+  const cameraId = `cam_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  await ddb.send(new PutItemCommand({
+    TableName: CAMERAS_TABLE,
+    Item: {
+      venueId:         { S: venueId },
+      cameraId:        { S: cameraId },
+      name:            { S: name },
+      rtspUrl:         { S: rtspUrl },
+      modes:           { S: Array.isArray(modes) ? modes.join(',') : modes },
+      modelProfile:    { S: modelProfile },
+      enabled:         { BOOL: Boolean(enabled) },
+      segmentSeconds:  { N: String(segmentSeconds) },
+      segmentInterval: { N: String(segmentInterval) },
+      notes:           { S: notes },
+      createdAt:       { S: new Date().toISOString() },
+    },
+  }));
+  return ok({ success: true, cameraId });
+}
+
 async function listCameras(venueId) {
   let result;
   if (venueId) {
@@ -509,6 +535,7 @@ export const handler = async (event) => {
 
     // Cameras
     if (method === 'GET'   && rawPath === '/admin/cameras')            return listCameras(qs.venueId);
+    if (method === 'POST'  && rawPath === '/admin/cameras')            return createCamera(body);
     const cameraMatch = rawPath.match(/^\/admin\/cameras\/([^/]+)$/);
     if (method === 'PATCH' && cameraMatch)                             return updateCamera(cameraMatch[1], body);
     if (method === 'DELETE'&& cameraMatch)                             return deleteCamera(cameraMatch[1], qs.venueId);
