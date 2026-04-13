@@ -417,10 +417,15 @@ async function getStats() {
   return ok({
     totalVenues:      venues.length,
     activeVenues,
-    totalCameras,
-    totalDrinksToday,
-    theftFlagsToday,
+    activeCameras:    totalCameras,
+    drinksToday:      totalDrinksToday,
+    theftAlertsToday: theftFlagsToday,
     liveVenues:       activeVenueSet.size,
+    totalUsers:       0,
+    activeUsers:      0,
+    totalDevices:     totalCameras,
+    onlineDevices:    0,
+    offlineDevices:   0,
   });
 }
 
