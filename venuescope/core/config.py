@@ -87,7 +87,7 @@ class DrinkCountRules:
     min_prep_frames:         int   = 8    # frames in zone before counting (prevents cold-start false positives)
     serve_confirm_frames:    int   = 2    # consecutive frames on customer side to confirm
     serve_dwell_frames:      int   = 2    # min frames bartender must dwell on customer side (bilateral crossing)
-    serve_cooldown_seconds:  float = 8.0  # min seconds between serves per station — 30s was too aggressive for busy bars
+    serve_cooldown_seconds:  float = 4.0  # min seconds between serves per station — 8s was too long for busy bars doing back-to-back pours
     serve_cooldown_frames:   int   = 48   # computed by engine from serve_cooldown_seconds × effective_fps
     max_track_jump_px:       float = 150.0
     occlusion_iou_threshold: float = 0.25

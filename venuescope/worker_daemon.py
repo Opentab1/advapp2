@@ -65,6 +65,19 @@ from core.bar_config import BarConfig, BarStation
 from core.shift      import ShiftManager
 from core.tracking.engine import VenueProcessor
 
+
+def _mask_url(url: str) -> str:
+    """Replace credentials in rtsp://user:pass@host with rtsp://***@host for safe logging."""
+    try:
+        if "://" in url and "@" in url:
+            proto, rest = url.split("://", 1)
+            if "@" in rest:
+                _, hostpath = rest.split("@", 1)
+                return f"{proto}://***@{hostpath}"
+    except Exception:
+        pass
+    return url
+
 POLL_INTERVAL     = 2
 MAX_PARALLEL      = int(os.environ.get("VENUESCOPE_WORKERS", "4"))
 STALE_JOB_SECONDS = 7200   # 2 hours
@@ -113,7 +126,10 @@ def run_job(job_id: str):
 
         mode = job.get("analysis_mode", "drink_count")
         set_progress(job_id, 2)
-        log.info(f"Mode: {mode}  Source: {Path(job['source_path']).name}")
+        _src_display = (_mask_url(job["source_path"])
+                        if job.get("source_type") == "rtsp"
+                        else Path(job["source_path"]).name)
+        log.info(f"Mode: {mode}  Source: {_src_display}")
 
         extra_config = {}
         if job.get("summary_json"):
@@ -179,6 +195,23 @@ def run_job(job_id: str):
                         log.warning(f"[auto_bar_config] DDB save failed: {_de}")
             except Exception as _ace:
                 log.warning(f"[auto_bar_config] Failed (non-fatal): {_ace}")
+
+        # ── Bar config pre-flight validation ────────────────────────────────
+        # Zero drinks will be detected if there's no config — warn loudly so
+        # the operator knows immediately rather than discovering it at shift-end.
+        if mode == "drink_count" and bar_config is None:
+            _warn = (
+                f"[BAR_CONFIG_MISSING] job={job_id} camera={camera_id} — "
+                f"No bar configuration found. Drink counting requires a bar config "
+                f"(zone polygon + bar-front line). ZERO drinks will be detected. "
+                f"Configure bar zones in the camera settings before going live."
+            )
+            log.error(_warn)
+            # Mark job with a visible warning so React UI can surface it
+            try:
+                _raw_update(job_id, error_message=_warn[:500])
+            except Exception:
+                pass
 
         shift = None
         if job.get("shift_json"):
@@ -361,7 +394,7 @@ def run_job(job_id: str):
         set_failed(job_id, msg)
         log.error(f"OOM on job {job_id}: {msg}")
     except Exception as e:
-        short = str(e).split("\n")[0][:200]
+        short = _mask_url(str(e).split("\n")[0][:300])[:200]
         set_failed(job_id, short)
         log.error(f"Job {job_id} FAILED: {short}")
         log.debug(traceback.format_exc())
@@ -460,7 +493,10 @@ def main():
     _active: Dict[str, multiprocessing.Process] = {}
     _active_start: Dict[str, float] = {}  # job_id → launch timestamp
     _active_continuous: set = set()       # job_ids that are continuous (no timeout)
+    _active_venue: Dict[str, str] = {}    # job_id → venue_id (for fair scheduling)
     JOB_TIMEOUT = 600  # 10 minutes max per job — kills stuck YOLO/RTSP jobs
+    # Max concurrent jobs per venue — prevents one venue from starving 9 others
+    MAX_JOBS_PER_VENUE = max(1, MAX_PARALLEL // 2)
 
     # Start camera loop manager in its OWN process (not as threads in this
     # process). This prevents background threads from holding SQLite mutexes
@@ -486,6 +522,60 @@ def main():
             log.info(f"Folder watcher started for: {_watch_env}")
     except Exception as _fwe:
         log.warning(f"Folder watcher failed to start: {_fwe}")
+
+    # ── Health endpoint ──────────────────────────────────────────────────────
+    # Lightweight HTTP server on port 8765 (or VENUESCOPE_HEALTH_PORT env var).
+    # Returns JSON: {"status":"ok","active_jobs":N,"queue_depth":N,"venues":["v1","v2"]}
+    # Used by monitoring, watchdogs, and the React ops dashboard.
+    _health_port = int(os.environ.get("VENUESCOPE_HEALTH_PORT", "8765"))
+
+    def _health_server():
+        import http.server, json as _json
+        _outer_active      = _active
+        _outer_active_venue = _active_venue
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                pass  # suppress per-request access logs
+
+            def do_GET(self):
+                if self.path not in ("/health", "/health/"):
+                    self.send_response(404); self.end_headers(); return
+                try:
+                    from core.database import list_jobs_by_status as _lbs
+                    _q = len(_lbs("pending", limit=200))
+                except Exception:
+                    _q = -1
+                try:
+                    from core.aws_sync import _offline_queue_depth
+                    _oq = _offline_queue_depth()
+                except Exception:
+                    _oq = 0
+                body = _json.dumps({
+                    "status":           "ok",
+                    "active_jobs":      len(_outer_active),
+                    "queue_depth":      _q,
+                    "offline_queue":    _oq,
+                    "venues":           list(set(_outer_active_venue.values())),
+                    "max_parallel":     MAX_PARALLEL,
+                    "max_per_venue":    MAX_JOBS_PER_VENUE,
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        try:
+            srv = http.server.HTTPServer(("0.0.0.0", _health_port), _Handler)
+            log.info(f"Health endpoint: http://0.0.0.0:{_health_port}/health")
+            srv.serve_forever()
+        except Exception as _he:
+            log.warning(f"Health server failed to start on port {_health_port}: {_he}")
+
+    import threading as _threading
+    _health_thread = _threading.Thread(target=_health_server, daemon=True)
+    _health_thread.start()
 
     def handle_signal(sig, frame):
         global _shutdown_requested
@@ -536,6 +626,7 @@ def main():
                     del _active[job_id]
                     _active_start.pop(job_id, None)
                     _active_continuous.discard(job_id)
+                    _active_venue.pop(job_id, None)
                     try:
                         from core.database import _raw_update
                         _raw_update(job_id, status="failed", error_message="Job timeout — exceeded 10 minutes")
@@ -547,6 +638,7 @@ def main():
                     del _active[job_id]
                     _active_start.pop(job_id, None)
                     _active_continuous.discard(job_id)
+                    _active_venue.pop(job_id, None)
                     log.info(f"Reaped process for job {job_id}")
 
             # Retention cleanup (every 6 hours)
@@ -587,31 +679,59 @@ def main():
                     log.warning(f"Camera health check error: {_che}")
                 _last_health_check = _now
 
-            # 2. Fill empty slots using efficient DB-level status filter
+            # 2. Fill empty slots — fair round-robin across venues.
+            #    Each venue gets at most MAX_JOBS_PER_VENUE concurrent slots so
+            #    one busy venue can't starve 9 others during peak hours.
             slots = MAX_PARALLEL - len(_active)
             if slots > 0:
-                pending = list_jobs_by_status("pending", limit=slots + 10)
+                pending = list_jobs_by_status("pending", limit=slots + 30)
                 launched = 0
-                for job in pending:
-                    if launched >= slots:
-                        break
-                    job_id = job["job_id"]
-                    if job_id in _active:
+
+                # Count active jobs per venue
+                _venue_active_count: Dict[str, int] = {}
+                for _vid in _active_venue.values():
+                    _venue_active_count[_vid] = _venue_active_count.get(_vid, 0) + 1
+
+                # Build per-venue FIFO queues from pending list
+                _venue_pending: Dict[str, list] = {}
+                for _pjob in pending:
+                    if _pjob["job_id"] in _active:
                         continue
+                    try:
+                        _pec = json.loads(_pjob.get("summary_json") or "{}").get("extra_config", {})
+                    except Exception:
+                        _pec = {}
+                    _pvid = _pec.get("venue_id", "_default") or "_default"
+                    _venue_pending.setdefault(_pvid, []).append((_pjob, _pec))
+
+                # Round-robin: take one job per venue per pass until slots filled
+                _venues_rr = list(_venue_pending.keys())
+                _rr_idx    = 0
+                while _rr_idx < len(_venues_rr) * slots and launched < slots:
+                    _vid = _venues_rr[_rr_idx % len(_venues_rr)]
+                    _rr_idx += 1
+                    if not _venue_pending.get(_vid):
+                        continue
+                    # Enforce per-venue cap
+                    if _venue_active_count.get(_vid, 0) >= MAX_JOBS_PER_VENUE:
+                        continue
+                    _pjob, _pec = _venue_pending[_vid].pop(0)
+                    job_id = _pjob["job_id"]
                     p = multiprocessing.Process(
                         target=run_job, args=(job_id,), daemon=True
                     )
                     p.start()
-                    _active[job_id] = p
+                    _active[job_id]       = p
                     _active_start[job_id] = time.time()
-                    # Mark continuous jobs (max_seconds=0) so timeout reaper skips them
+                    _active_venue[job_id] = _vid
+                    _venue_active_count[_vid] = _venue_active_count.get(_vid, 0) + 1
+                    # Mark continuous jobs so timeout reaper skips them
                     try:
-                        _ec = json.loads(job.get("summary_json") or "{}").get("extra_config", {})
-                        if float(_ec.get("max_seconds", 1)) == 0:
+                        if float(_pec.get("max_seconds", 1)) == 0:
                             _active_continuous.add(job_id)
                     except Exception:
                         pass
-                    log.info(f"Launched job {job_id} (pid={p.pid})")
+                    log.info(f"Launched job {job_id} venue={_vid} (pid={p.pid})")
                     launched += 1
 
                 if launched == 0:

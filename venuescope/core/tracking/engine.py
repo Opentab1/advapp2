@@ -540,6 +540,28 @@ class VenueProcessor:
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open: {self.source}")
 
+        # H.265/HEVC codec check — OpenCV may silently decode H.265 to black frames
+        # if libx265 or the relevant FFMPEG decoder is not available on this system.
+        # Check the first readable frame; if it's a valid-size all-black image, warn.
+        # (Non-HLS file sources only — HLS uses PyAV which handles codecs differently.)
+        if not _is_hls and self.source_type in ("file", "rtsp"):
+            _codec_ok, _test_frame = cap.read()
+            if not _codec_ok or _test_frame is None:
+                raise RuntimeError(
+                    f"Cannot read first frame from source. "
+                    f"If this is an H.265/HEVC stream, ensure ffmpeg with HEVC support is installed: "
+                    f"ffmpeg -codecs | grep hevc"
+                )
+            if _codec_ok and _test_frame is not None and _test_frame.size > 0:
+                _brightness = float(np.mean(_test_frame))
+                if _brightness < 1.5:
+                    self.cb(0, f"WARNING: First frame is nearly black (mean={_brightness:.2f}). "
+                               f"H.265/HEVC cameras may require ffmpeg with HEVC support. "
+                               f"If all frames are black, the stream codec is unsupported.")
+            # Reset to start — for RTSP we can't seek back, so just continue from frame 2
+            if self.source_type == "file":
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
         fps     = cap.get(cv2.CAP_PROP_FPS) or 25.0
         total_f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or -1
         W       = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

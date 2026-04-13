@@ -1,0 +1,36 @@
+[Unit]
+Description=VenueScope Worker Daemon
+Documentation=https://github.com/BringThemBack/wedid
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/venuescope/venuescope
+EnvironmentFile=/opt/venuescope/venuescope/.env
+ExecStart=/usr/bin/python3 worker_daemon.py
+
+# Restart policy — critical for 24/7 venue monitoring
+# Always restart: catches crashes, OOM kills, and YOLO segfaults.
+Restart=always
+RestartSec=10
+# Cap restart attempts — avoid tight loops on persistent config errors
+StartLimitInterval=300
+StartLimitBurst=10
+
+# Resource limits
+OOMScoreAdjust=500
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=venuescope-worker
+
+# Health check — systemd kills and restarts if /health stops responding
+# Requires systemd 253+ (Ubuntu 24.04). Remove if on older systems.
+# WatchdogSec=120
+
+[Install]
+WantedBy=multi-user.target

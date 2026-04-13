@@ -65,12 +65,13 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     if continuous:
         label += " — 🔴 LIVE"
 
-    # Drink detection needs at least 'balanced' (yolov8s) — 'fast' (yolov8n) misses
-    # bartenders on overhead fisheye IR cameras. Upgrade silently if set to fast.
+    # Drink detection requires 'accurate' (yolov8m) for production accuracy.
+    # 'fast' and 'balanced' both miss subtle gestures on overhead/IR cameras.
+    # Upgrade silently — accuracy is non-negotiable for billing/theft detection.
     model_profile = cam.get("model_profile", "balanced")
-    if primary_mode == "drink_count" and model_profile == "fast":
-        model_profile = "balanced"
-        log.info(f"[camera_loop] '{cam['name']}' upgraded to balanced profile for drink_count")
+    if primary_mode == "drink_count" and model_profile in ("fast", "balanced"):
+        model_profile = "accurate"
+        log.info(f"[camera_loop] '{cam['name']}' upgraded to accurate profile for drink_count")
 
     extra = {
         "max_seconds":     0 if continuous else seg_secs,

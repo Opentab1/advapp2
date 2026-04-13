@@ -143,6 +143,16 @@ def _enqueue_offline(job_id: str, item: Dict[str, Any]):
         print(f"[aws_sync] Failed to write offline queue: {e}", flush=True)
 
 
+def _offline_queue_depth() -> int:
+    """Return number of items waiting in the offline sync queue."""
+    try:
+        if not _QUEUE_FILE.exists():
+            return 0
+        return len(json.loads(_QUEUE_FILE.read_text()))
+    except Exception:
+        return 0
+
+
 def drain_sync_queue() -> int:
     """Retry all locally-queued sync items. Returns count successfully synced."""
     if not _QUEUE_FILE.exists():
