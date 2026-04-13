@@ -395,7 +395,8 @@ async function getStats() {
       TableName: JOBS_TABLE,
       FilterExpression: 'createdAt > :cutoff',
       ExpressionAttributeValues: { ':cutoff': { N: String(Date.now() / 1000 - 86400) } },
-      ProjectionExpression: 'totalDrinks, hasTheftFlag, venueId, status',
+      ProjectionExpression: 'totalDrinks, hasTheftFlag, venueId, #st',
+      ExpressionAttributeNames: { '#st': 'status' },
     })),
   ]);
 
