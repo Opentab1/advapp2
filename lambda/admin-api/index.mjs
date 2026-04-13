@@ -442,7 +442,7 @@ async function listAlerts(venueId, limit = 50) {
     result = await ddb.send(new ScanCommand({
       TableName: JOBS_TABLE,
       FilterExpression: 'createdAt > :cutoff',
-      ExpressionAttributeValues: { ':cutoff': { N: String(Date.now() / 1000 - 7 * 86400) } },
+      ExpressionAttributeValues: { ':cutoff': { N: String(Date.now() / 1000 - 30 * 86400) } },
     }));
   }
 
@@ -555,10 +555,12 @@ export const handler = async (event) => {
 
     return err(404, `No route: ${method} ${rawPath}`);
   } catch (e) {
-    console.error('Admin API error:', e);
-    if (e.name === 'UsernameExistsException')         return err(409, 'User with that email already exists.');
-    if (e.name === 'ConditionalCheckFailedException') return err(409, 'Venue ID already exists.');
-    if (e.name === 'UserNotFoundException')           return err(404, 'User not found.');
+    console.error('Admin API error:', e.name, e.message);
+    if (e.name === 'UsernameExistsException'  || e.__type === 'UsernameExistsException')  return err(409, 'User with that email already exists.');
+    if (e.name === 'ConditionalCheckFailedException')                                      return err(409, 'Venue ID already exists.');
+    if (e.name === 'UserNotFoundException'    || e.__type === 'UserNotFoundException')    return err(404, 'User not found.');
+    if (e.name === 'NotAuthorizedException'   || e.__type === 'NotAuthorizedException')   return err(403, 'Not authorized.');
+    if (e.name === 'InvalidPasswordException' || e.__type === 'InvalidPasswordException') return err(400, e.message ?? 'Invalid password.');
     return err(500, e.message ?? 'Internal error');
   }
 };
