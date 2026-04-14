@@ -1344,9 +1344,12 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   onInvestigate: (job: VenueScopeJob) => void;
   onConfigureZones?: (camera: CameraConfig) => void;
 }) {
-  const isDrink      = room.mode === 'drink_count';
-  const isPeople     = room.mode === 'people_count';
-  const isTableTurns = room.mode === 'table_turns';
+  // Use all active modes from the job (not just primary) so a camera running
+  // e.g. table_turns + people_count shows both stat blocks simultaneously.
+  const activeModes  = room.job ? parseModes(room.job) : [room.mode];
+  const isDrink      = activeModes.includes('drink_count');
+  const isPeople     = activeModes.includes('people_count');
+  const isTableTurns = activeModes.includes('table_turns');
   const barConfig = camera ? parseBarConfig(camera.barConfigJson) : null;
   // Show feed when camProxyUrl is configured OR camera has a direct HTTPS rtspUrl
   const hasFeed  = !!camProxyUrl || !!camera?.rtspUrl?.startsWith('https://');
@@ -1390,7 +1393,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
           <div className="min-w-0">
             <p className="text-sm font-semibold text-white truncate">{room.label || 'Camera'}</p>
             <p className="text-[10px] text-text-muted capitalize">
-              {room.mode.replace(/_/g, ' ')}
+              {activeModes.map(m => m.replace(/_/g, ' ')).join(' · ')}
               {room.cameraAngle && (
                 <span className="ml-1.5 inline-flex items-center gap-0.5 opacity-60">
                   · {room.cameraAngle}
