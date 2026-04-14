@@ -349,15 +349,27 @@ class AdminService {
     segmentInterval?: number;
     notes?: string;
   }): Promise<{ success: boolean; cameraId?: string; message: string }> {
+    // Try Lambda first
+    if (ADMIN_API) {
+      try {
+        const data = await adminFetch('/admin/cameras', { method: 'POST', body: JSON.stringify(camera) });
+        return { success: true, cameraId: data.cameraId, message: 'Camera added' };
+      } catch (e: any) {
+        if (!e.message?.includes('No route')) return { success: false, message: e.message || 'Failed to add camera' };
+      }
+    }
+    // Fallback: direct DynamoDB
     try {
-      const data = await adminFetch('/admin/cameras', {
-        method: 'POST',
-        body: JSON.stringify(camera),
+      const modes = camera.modes.split(',').filter(Boolean) as any[];
+      const cam = await cameraService.addCamera(camera.venueId, {
+        name: camera.name, rtspUrl: camera.rtspUrl, modes,
+        enabled: camera.enabled, modelProfile: camera.modelProfile as any,
+        segmentSeconds: camera.segmentSeconds, segmentInterval: camera.segmentInterval,
+        notes: camera.notes,
       });
-      return { success: true, cameraId: data.cameraId, message: 'Camera added' };
-    } catch (error: any) {
-      console.error('createCamera failed:', error);
-      return { success: false, message: error.message || 'Failed to add camera' };
+      return { success: true, cameraId: cam.cameraId, message: 'Camera added' };
+    } catch (e: any) {
+      return { success: false, message: e.message || 'Failed to add camera' };
     }
   }
 
@@ -367,26 +379,53 @@ class AdminService {
     fields: Partial<AdminCamera>,
   ): Promise<boolean> {
     console.log('Updating camera:', cameraId);
+    // Try Lambda first
+    if (ADMIN_API) {
+      try {
+        await adminFetch(`/admin/cameras/${encodeURIComponent(cameraId)}`, {
+          method: 'PATCH', body: JSON.stringify({ venueId, ...fields }),
+        });
+        return true;
+      } catch (e: any) {
+        if (!e.message?.includes('No route')) { console.error('updateCamera failed:', e); return false; }
+      }
+    }
+    // Fallback: direct DynamoDB
     try {
-      await adminFetch(`/admin/cameras/${encodeURIComponent(cameraId)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ venueId, ...fields }),
-      });
+      const updates: Parameters<typeof cameraService.updateCamera>[2] = {};
+      if (fields.name      !== undefined) updates.name           = fields.name;
+      if (fields.rtspUrl   !== undefined) updates.rtspUrl        = fields.rtspUrl;
+      if (fields.modes     !== undefined) updates.modes          = fields.modes.split(',').filter(Boolean) as any[];
+      if (fields.enabled   !== undefined) updates.enabled        = fields.enabled;
+      if (fields.modelProfile  !== undefined) updates.modelProfile  = fields.modelProfile as any;
+      if (fields.segmentSeconds!== undefined) updates.segmentSeconds = fields.segmentSeconds;
+      if (fields.segmentInterval!== undefined) updates.segmentInterval = fields.segmentInterval;
+      if (fields.notes     !== undefined) updates.notes          = fields.notes;
+      if (fields.barConfigJson !== undefined) updates.barConfigJson = fields.barConfigJson;
+      await cameraService.updateCamera(venueId, cameraId, updates);
       return true;
-    } catch (error) {
-      console.error('updateCamera failed:', error);
+    } catch (e: any) {
+      console.error('updateCamera DDB fallback failed:', e);
       return false;
     }
   }
 
   async deleteCamera(cameraId: string, venueId: string): Promise<boolean> {
+    // Try Lambda first
+    if (ADMIN_API) {
+      try {
+        await adminFetch(`/admin/cameras/${encodeURIComponent(cameraId)}?venueId=${encodeURIComponent(venueId)}`, { method: 'DELETE' });
+        return true;
+      } catch (e: any) {
+        if (!e.message?.includes('No route')) { console.error('deleteCamera failed:', e); return false; }
+      }
+    }
+    // Fallback: direct DynamoDB
     try {
-      await adminFetch(`/admin/cameras/${encodeURIComponent(cameraId)}?venueId=${encodeURIComponent(venueId)}`, {
-        method: 'DELETE',
-      });
+      await cameraService.deleteCamera(venueId, cameraId);
       return true;
-    } catch (error) {
-      console.error('deleteCamera failed:', error);
+    } catch (e: any) {
+      console.error('deleteCamera DDB fallback failed:', e);
       return false;
     }
   }
