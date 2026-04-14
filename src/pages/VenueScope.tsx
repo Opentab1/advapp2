@@ -2849,10 +2849,8 @@ export function VenueScope() {
             );
           })()}
 
-          {/* 1. Today's hero numbers */}
-          {tonightJobs.length > 0 && (
-            <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} peopleRooms={allRooms.filter(r => r.mode === 'people_count')} />
-          )}
+          {/* 1. Today's hero numbers — always shown; handles empty/closed state internally */}
+          <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} peopleRooms={allRooms.filter(r => r.mode === 'people_count')} />
 
           {/* POS Reconciliation */}
           <POSReconciliationPanel jobs={tonightJobs} />
