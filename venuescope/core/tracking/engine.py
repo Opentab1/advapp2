@@ -1249,11 +1249,22 @@ class VenueProcessor:
                 for b in self.shift.bartenders:
                     if hasattr(b, "track_id") and b.track_id is not None:
                         server_names[b.track_id] = b.name
+            # Build bar-zone polygon in pixels so the classifier can exclude
+            # bartenders (tracks that spend most of their time behind the bar).
+            bar_zone_px = None
+            if self.bar_config and self.bar_config.stations:
+                bar_pts = []
+                for st in self.bar_config.stations:
+                    for p in st.polygon:
+                        bar_pts.append((float(p[0]) * W, float(p[1]) * H))
+                if bar_pts:
+                    bar_zone_px = bar_pts
             return TableServiceTracker(
                 tables=zones,
                 fps=fps,
                 server_names=server_names,
                 unvisited_alert_min=float(ec.get("unvisited_alert_min", 15.0)),
+                bar_zone_px=bar_zone_px,
             )
         elif mode == "staff_activity":
             return StaffActivityTracker(idle_threshold_sec=ec.get(
