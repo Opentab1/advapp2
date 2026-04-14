@@ -8,6 +8,7 @@ frontend:
         - echo "VITE_COGNITO_USER_POOL_ID = $VITE_COGNITO_USER_POOL_ID"
         - echo "VITE_COGNITO_CLIENT_ID = $VITE_COGNITO_CLIENT_ID"
         - echo "VITE_GRAPHQL_ENDPOINT = $VITE_GRAPHQL_ENDPOINT"
+        - echo "VITE_ADMIN_API_URL = $VITE_ADMIN_API_URL"
         - echo "==================================="
         - npm install
     build:
