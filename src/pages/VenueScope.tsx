@@ -636,6 +636,312 @@ function ZoneEditorModal({
   );
 }
 
+// ── Table zone editor modal ───────────────────────────────────────────────────
+
+interface TableZone {
+  table_id: string;
+  label: string;
+  polygon: [number, number][];
+}
+
+function parseTableZones(json: string | undefined): TableZone[] {
+  if (!json) return [];
+  try { return JSON.parse(json) as TableZone[]; } catch { return []; }
+}
+
+function TableZoneOverlay({ zones }: { zones: TableZone[] }) {
+  return (
+    <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 1 1" preserveAspectRatio="none">
+      {zones.map((z, i) => (
+        <polygon key={i}
+          points={z.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
+          fill="rgba(168,85,247,0.08)"
+          stroke="rgba(168,85,247,0.65)"
+          strokeWidth="0.003"
+        />
+      ))}
+    </svg>
+  );
+}
+
+type TableDragTarget =
+  | { kind: 'corner'; zoneIdx: number; cornerIdx: number }
+  | { kind: 'zone';   zoneIdx: number; startPt: [number, number]; startPolygon: [number, number][] }
+  | null;
+
+function TableZoneEditorModal({
+  camera,
+  proxyBase,
+  onClose,
+}: {
+  camera: CameraConfig;
+  proxyBase: string;
+  onClose: () => void;
+}) {
+  const existing = parseTableZones(camera.tableZonesJson);
+  const [zones, setZones]           = useState<TableZone[]>(existing);
+  const [rectAnchor, setRectAnchor] = useState<[number, number] | null>(null);
+  const [cursor, setCursor]         = useState<[number, number] | null>(null);
+  const [dragTarget, setDragTarget] = useState<TableDragTarget>(null);
+  const [saving, setSaving]         = useState(false);
+  const [saveOk, setSaveOk]         = useState(false);
+  const svgRef   = useRef<SVGSVGElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef   = useRef<Hls | null>(null);
+
+  const streamUrl = (() => {
+    if (proxyBase) {
+      const ch = channelFromSources(camera.name || '', camera.rtspUrl);
+      if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/0/livetop.mp4`;
+    }
+    if (camera.rtspUrl?.startsWith('https://')) return camera.rtspUrl;
+    return null;
+  })();
+
+  useEffect(() => {
+    if (!streamUrl || !videoRef.current) return;
+    const v = videoRef.current;
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    if (streamUrl.includes('.m3u8') && Hls.isSupported()) {
+      const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true });
+      hlsRef.current = hls;
+      hls.loadSource(streamUrl);
+      hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+    } else {
+      v.src = streamUrl; v.load(); v.play().catch(() => {});
+    }
+    return () => { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } v.src = ''; };
+  }, [streamUrl]);
+
+  function getRelPt(e: React.MouseEvent<SVGSVGElement>): [number, number] {
+    const r = svgRef.current!.getBoundingClientRect();
+    return [
+      Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+      Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
+    ];
+  }
+
+  function handleMouseDown(e: React.MouseEvent<SVGSVGElement>) {
+    if (dragTarget || e.button !== 0) return;
+    const pt = getRelPt(e);
+    const HIT = 0.035;
+    for (let i = 0; i < zones.length; i++) {
+      const z = zones[i];
+      for (let ci = 0; ci < z.polygon.length; ci++) {
+        const [cx, cy] = z.polygon[ci];
+        if (Math.hypot(pt[0] - cx, pt[1] - cy) < HIT) {
+          setDragTarget({ kind: 'corner', zoneIdx: i, cornerIdx: ci });
+          e.preventDefault(); return;
+        }
+      }
+      if (_ptInRect(pt, z.polygon)) {
+        setDragTarget({ kind: 'zone', zoneIdx: i, startPt: pt, startPolygon: z.polygon.map(p => [...p] as [number, number]) });
+        e.preventDefault(); return;
+      }
+    }
+    setRectAnchor(pt); setCursor(pt);
+  }
+
+  function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    const pt = getRelPt(e);
+    setCursor(pt);
+    if (!dragTarget) return;
+    setZones(zs => zs.map((z, i) => {
+      if (i !== dragTarget.zoneIdx) return z;
+      if (dragTarget.kind === 'corner') {
+        return { ...z, polygon: z.polygon.map((p, ci) => ci === dragTarget.cornerIdx ? pt : p) as [number,number][] };
+      }
+      if (dragTarget.kind === 'zone') {
+        const dx = pt[0] - dragTarget.startPt[0], dy = pt[1] - dragTarget.startPt[1];
+        const clamp = (v: number) => Math.max(0, Math.min(1, v));
+        return { ...z, polygon: dragTarget.startPolygon.map(([px, py]) => [clamp(px+dx), clamp(py+dy)] as [number,number]) };
+      }
+      return z;
+    }));
+  }
+
+  function handleMouseUp(e: React.MouseEvent<SVGSVGElement>) {
+    if (dragTarget) { setDragTarget(null); return; }
+    if (!rectAnchor) return;
+    const pt = getRelPt(e);
+    const [ax, ay] = rectAnchor;
+    const x1 = Math.min(ax, pt[0]), x2 = Math.max(ax, pt[0]);
+    const y1 = Math.min(ay, pt[1]), y2 = Math.max(ay, pt[1]);
+    if (x2 - x1 < 0.04 || y2 - y1 < 0.04) { setRectAnchor(null); return; }
+    const newZone: TableZone = {
+      table_id: `t_${Date.now()}`,
+      label: `Table ${zones.length + 1}`,
+      polygon: [[x1,y1],[x2,y1],[x2,y2],[x1,y2]],
+    };
+    setZones(zs => [...zs, newZone]);
+    setRectAnchor(null);
+  }
+
+  const previewRect = rectAnchor && cursor ? (() => {
+    const [ax, ay] = rectAnchor;
+    return { x: Math.min(ax, cursor[0]), y: Math.min(ay, cursor[1]), w: Math.abs(cursor[0]-ax), h: Math.abs(cursor[1]-ay) };
+  })() : null;
+
+  const cursorClass = dragTarget ? 'cursor-grabbing' : rectAnchor ? 'cursor-crosshair'
+    : (cursor && zones.some(z => _ptInRect(cursor, z.polygon)) ? 'cursor-grab' : 'cursor-crosshair');
+
+  async function save() {
+    setSaving(true);
+    try {
+      await cameraService.updateCamera(camera.venueId, camera.cameraId, {
+        tableZonesJson: JSON.stringify(zones),
+      });
+      setSaveOk(true);
+      setTimeout(onClose, 800);
+    } catch (err) {
+      console.error(err);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <motion.div className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-2"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.div className="bg-whoop-panel border border-whoop-divider rounded-2xl w-full max-w-5xl flex flex-col overflow-hidden"
+        style={{ height: '95vh', maxHeight: '95vh' }}
+        initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.97, opacity: 0 }}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-whoop-divider flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+              <Crosshair className="w-3.5 h-3.5 text-purple-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">Table Zones — {camera.name}</p>
+              <p className="text-[10px] text-text-muted">Draw a box around each table seating area</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-text-muted hover:text-white transition-colors p-1"><X className="w-4 h-4" /></button>
+        </div>
+
+        {/* Instructions */}
+        <div className="flex items-stretch gap-0 border-b border-whoop-divider flex-shrink-0 bg-whoop-bg/60">
+          <div className="flex items-start gap-2 px-4 py-2.5 flex-1 border-r border-whoop-divider/50">
+            <div className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</div>
+            <div>
+              <p className="text-[11px] font-semibold text-white">Draw Table Zones</p>
+              <p className="text-[10px] text-text-muted leading-snug">Click and drag a box around each table seating area on the camera image</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2 px-4 py-2.5 flex-1 border-r border-whoop-divider/50">
+            <div className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</div>
+            <div>
+              <p className="text-[11px] font-semibold text-white">Name Each Table</p>
+              <p className="text-[10px] text-text-muted leading-snug">Give each table a clear name — e.g. "Table 4" or "Booth A" — so reports are easy to read</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2 px-4 py-2.5 flex-1">
+            <div className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">3</div>
+            <div>
+              <p className="text-[11px] font-semibold text-white">Save & Go Live</p>
+              <p className="text-[10px] text-text-muted leading-snug">The worker picks up the zone config automatically — no restart needed</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Canvas */}
+        <div className="relative bg-black select-none flex-1 min-h-0 overflow-hidden" style={{ minHeight: '280px' }}>
+          <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover opacity-70" autoPlay muted playsInline />
+          {!streamUrl && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <p className="text-text-muted text-xs bg-black/40 px-3 py-1.5 rounded-lg">No live feed — drawing on blank canvas</p>
+            </div>
+          )}
+          <svg ref={svgRef} className={`absolute inset-0 w-full h-full ${cursorClass}`}
+            viewBox="0 0 1 1" preserveAspectRatio="none"
+            onMouseDown={handleMouseDown} onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp} onMouseLeave={() => { if (!dragTarget) setCursor(null); }}>
+            {zones.map((z, i) => (
+              <g key={i}>
+                <polygon points={z.polygon.map(([x,y]) => `${x},${y}`).join(' ')}
+                  fill="rgba(168,85,247,0.1)" stroke="rgba(168,85,247,0.7)" strokeWidth="0.003" style={{ cursor: 'grab' }} />
+                {z.polygon.map(([cx,cy], ci) => (
+                  <circle key={ci} cx={cx} cy={cy} r="0.018"
+                    fill="rgba(168,85,247,0.3)" stroke="rgba(168,85,247,0.9)" strokeWidth="0.004" style={{ cursor: 'nwse-resize' }} />
+                ))}
+              </g>
+            ))}
+            {previewRect && previewRect.w > 0.01 && previewRect.h > 0.01 && (
+              <rect x={previewRect.x} y={previewRect.y} width={previewRect.w} height={previewRect.h}
+                fill="rgba(168,85,247,0.12)" stroke="rgba(168,85,247,0.8)" strokeWidth="0.003" strokeDasharray="0.015 0.008" />
+            )}
+          </svg>
+
+          {/* Zone labels */}
+          {zones.map((z, i) => {
+            const xs = z.polygon.map(p => p[0]), ys = z.polygon.map(p => p[1]);
+            const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+            const cy = Math.min(...ys);
+            return (
+              <div key={i} className="absolute pointer-events-none" style={{ left: `${cx*100}%`, top: `${cy*100+1}%`, transform: 'translateX(-50%)' }}>
+                <span className="text-[10px] font-semibold text-purple-300/90 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded">{z.label}</span>
+              </div>
+            );
+          })}
+
+          {zones.length === 0 && !rectAnchor && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="bg-black/60 backdrop-blur-sm rounded-2xl px-5 py-4 text-center">
+                <Crosshair className="w-6 h-6 text-purple-400 mx-auto mb-2" />
+                <p className="text-white text-sm font-semibold">Click and drag to draw a table zone</p>
+                <p className="text-text-muted text-xs mt-1">Draw a box around each table seating area</p>
+              </div>
+            </div>
+          )}
+          {rectAnchor && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-sm text-[11px] text-purple-300 pointer-events-none">
+              Release to place table zone
+            </div>
+          )}
+          {zones.length > 0 && !rectAnchor && !dragTarget && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-3 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm pointer-events-none whitespace-nowrap">
+              <span className="text-[11px] text-purple-300/80">Drag inside zone to move it</span>
+              <span className="text-text-muted/40 text-[10px]">|</span>
+              <span className="text-[11px] text-purple-300/60">● corners to resize</span>
+            </div>
+          )}
+        </div>
+
+        {/* Zone list */}
+        <div className="px-5 pt-3 pb-1 border-t border-whoop-divider flex-shrink-0 space-y-2 overflow-y-auto" style={{ maxHeight: '20vh' }}>
+          {zones.length === 0 ? (
+            <p className="text-[11px] text-text-muted text-center py-1">Drag boxes on the camera image to define your table zones</p>
+          ) : (
+            zones.map((z, i) => (
+              <div key={i} className="flex items-center gap-2 bg-whoop-bg rounded-xl px-3 py-2.5">
+                <div className="w-2 h-2 rounded-full bg-purple-400/60 flex-shrink-0" />
+                <input value={z.label} onChange={e => setZones(zs => zs.map((t, ti) => ti === i ? { ...t, label: e.target.value } : t))}
+                  className="flex-1 bg-transparent text-xs text-white outline-none min-w-0" placeholder="Table name (e.g. Table 4)" />
+                <button onClick={() => setZones(zs => zs.filter((_, ti) => ti !== i))}
+                  className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0 ml-1">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 flex items-center justify-between">
+          <p className="text-[10px] text-text-muted">{zones.length > 0 ? `${zones.length} table${zones.length !== 1 ? 's' : ''} configured — draw more to add` : ''}</p>
+          <button onClick={save} disabled={saving || zones.length === 0}
+            className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold bg-purple-500 text-white hover:bg-purple-400 disabled:opacity-40 transition-colors">
+            {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+            {saveOk ? 'Saved!' : 'Save Table Zones'}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ── CSV export ────────────────────────────────────────────────────────────────
 
 function exportCsv(jobs: VenueScopeJob[]) {
@@ -1316,19 +1622,22 @@ function CameraLiveView({
           className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm text-[9px] text-white/60 hover:text-white transition-colors"
         >
           <Edit2 className="w-2.5 h-2.5" />
-          {barConfig ? 'Edit Zones' : 'Configure Zones'}
+          {cameraModes?.includes('table_turns') && !cameraModes?.includes('drink_count')
+            ? 'Set Up Tables'
+            : (barConfig ? 'Edit Zones' : 'Configure Zones')}
         </button>
       )}
     </div>
   );
 }
 
-function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }: {
+function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, onConfigureTableZones }: {
   room: RoomSummary;
   camProxyUrl: string;
   camera?: CameraConfig | null;
   onInvestigate: (job: VenueScopeJob) => void;
   onConfigureZones?: (camera: CameraConfig) => void;
+  onConfigureTableZones?: (camera: CameraConfig) => void;
 }) {
   // configuredModes is stamped on the room during allDisplayRooms from the camera admin config —
   // it's the definitive list of what this camera does, independent of which modes appeared in
@@ -1435,7 +1744,11 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
               proxyBase={camProxyUrl}
               rtspUrl={camera?.rtspUrl}
               barConfig={barConfig}
-              onConfigureZones={camera && onConfigureZones ? () => onConfigureZones(camera) : undefined}
+              onConfigureZones={
+                isTableTurns && !isDrink
+                  ? (camera && onConfigureTableZones ? () => onConfigureTableZones(camera) : undefined)
+                  : (camera && onConfigureZones ? () => onConfigureZones(camera) : undefined)
+              }
               cameraModes={activeModes}
             />
           </motion.div>
@@ -2599,6 +2912,7 @@ export function VenueScope() {
   const [nextPollIn, setNextPollIn]   = useState(POLL_INTERVAL_MS / 1000);
   const [cameras, setCameras]         = useState<CameraConfig[]>([]);
   const [configuringCamera, setConfiguringCamera] = useState<CameraConfig | null>(null);
+  const [configuringTableZonesCamera, setConfiguringTableZonesCamera] = useState<CameraConfig | null>(null);
   const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null);
   const [billingBannerDismissed, setBillingBannerDismissed] = useState(false);
   const knownIds    = useRef<Set<string>>(new Set());
@@ -2959,6 +3273,20 @@ export function VenueScope() {
         )}
       </AnimatePresence>
 
+      {/* Table zone editor modal */}
+      <AnimatePresence>
+        {configuringTableZonesCamera && (
+          <TableZoneEditorModal
+            camera={configuringTableZonesCamera}
+            proxyBase={camProxyUrl}
+            onClose={() => {
+              cameraService.listCameras(venueId).then(setCameras).catch(() => {});
+              setConfiguringTableZonesCamera(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* New-job toast */}
       <AnimatePresence>
         {newToast && (
@@ -3069,7 +3397,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {barCams.map(room => (
-                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} onConfigureTableZones={setConfiguringTableZonesCamera} />
                       ))}
                     </div>
                   </div>
@@ -3085,7 +3413,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {tableTurnsCams.map(room => (
-                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} onConfigureTableZones={setConfiguringTableZonesCamera} />
                       ))}
                     </div>
                   </div>
@@ -3101,7 +3429,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {peopleCams.map(room => (
-                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} onConfigureTableZones={setConfiguringTableZonesCamera} />
                       ))}
                     </div>
                   </div>
@@ -3114,7 +3442,7 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {otherCams.map(room => (
-                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} />
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} onConfigureTableZones={setConfiguringTableZonesCamera} />
                       ))}
                     </div>
                   </div>

@@ -53,6 +53,7 @@ export interface Camera {
   createdAt: number;
   notes?: string;
   barConfigJson?: string; // JSON: {stations: [{zone_id, label, polygon, bar_line_p1, bar_line_p2, customer_side}]}
+  tableZonesJson?: string; // JSON array: [{table_id, label, polygon: [[x,y],...]}]
   nextOccupancyAt?: number; // Unix epoch seconds — when the worker will next run people_count
 }
 
@@ -78,6 +79,7 @@ function _itemToCamera(item: Record<string, Record<string, unknown>>): Camera {
     createdAt:       n('createdAt'),
     notes:           s('notes') || undefined,
     barConfigJson:   s('barConfigJson') || undefined,
+    tableZonesJson:  s('tableZonesJson') || undefined,
     nextOccupancyAt: n('nextOccupancyAt') || undefined,
   };
 }
@@ -143,7 +145,7 @@ const cameraService = {
   async updateCamera(
     venueId: string,
     cameraId: string,
-    updates: Partial<Pick<Camera, 'name' | 'rtspUrl' | 'modes' | 'enabled' | 'modelProfile' | 'segmentSeconds' | 'segmentInterval' | 'notes' | 'barConfigJson'>>
+    updates: Partial<Pick<Camera, 'name' | 'rtspUrl' | 'modes' | 'enabled' | 'modelProfile' | 'segmentSeconds' | 'segmentInterval' | 'notes' | 'barConfigJson' | 'tableZonesJson'>>
   ): Promise<void> {
     const ddb = _requireDDB();
 
@@ -177,6 +179,9 @@ const cameraService = {
     }
     if (updates.barConfigJson !== undefined) {
       expParts.push('barConfigJson = :bcj'); values[':bcj'] = { S: updates.barConfigJson };
+    }
+    if (updates.tableZonesJson !== undefined) {
+      expParts.push('tableZonesJson = :tzj'); values[':tzj'] = { S: updates.tableZonesJson };
     }
 
     if (expParts.length === 0) return;

@@ -86,6 +86,8 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
         "blobs_per_person": cam.get("blobs_per_person", 0),  # 0 = use default
         # Bar config from DDB zone editor (JSON string); used if no file-based config_path
         "bar_config_json": cam.get("bar_config_json", ""),
+        # Table zone config from DDB zone editor (JSON array of {table_id, label, polygon})
+        "tables": json.loads(cam.get("table_zones_json") or "[]"),
     }
     create_job(
         job_id        = jid,

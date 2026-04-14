@@ -55,6 +55,8 @@ def _item_to_camera(item: dict) -> dict:
         "blobs_per_person": int(item.get("blobsPerPerson", 0)),
         # Bar zone/line config saved by the React zone editor (JSON string)
         "bar_config_json":  item.get("barConfigJson", ""),
+        # Table zone config saved by the React table zone editor (JSON array string)
+        "table_zones_json": item.get("tableZonesJson", ""),
         # Source flag so camera_loop knows this came from DDB
         "_source":          "dynamodb",
     }
