@@ -727,6 +727,10 @@ interface RoomSummary {
   currentOccupancy: number;
   peakOccupancy: number;
   totalEntries: number;
+  // table_turns
+  totalTurns: number;
+  avgDwellMin: number;
+  avgResponseSec: number;
   // meta
   elapsedSec: number;
   updatedAt: number;
@@ -758,8 +762,9 @@ function buildRooms(jobs: VenueScopeJob[], enabledPeopleCamNames: Set<string> = 
     // Prefer live jobs, then most recent
     const best = roomJobs.find(j => j.isLive) ?? roomJobs[0];
     const modes = parseModes(best);
-    const isDrink  = modes.includes('drink_count');
-    const isPeople = modes.includes('people_count');
+    const isDrink      = modes.includes('drink_count');
+    const isPeople     = modes.includes('people_count');
+    const isTableTurns = modes.includes('table_turns');
 
     // Aggregate across all done+live jobs for this room
     const totalDrinks   = roomJobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
@@ -785,7 +790,7 @@ function buildRooms(jobs: VenueScopeJob[], enabledPeopleCamNames: Set<string> = 
       label,
       isLive: best.isLive === true || (best.isLive !== false && best.status === 'running' &&
         ((best.updatedAt ?? 0) === 0 || (best.updatedAt ?? 0) > Date.now() / 1000 - 300)),
-      mode: isDrink ? 'drink_count' : isPeople ? 'people_count' : (best.analysisMode ?? 'unknown'),
+      mode: isDrink ? 'drink_count' : isTableTurns ? 'table_turns' : isPeople ? 'people_count' : (best.analysisMode ?? 'unknown'),
       totalDrinks,
       drinksPerHour: best.drinksPerHour ?? 0,
       topBartender: best.topBartender ?? '',
@@ -794,6 +799,9 @@ function buildRooms(jobs: VenueScopeJob[], enabledPeopleCamNames: Set<string> = 
       currentOccupancy: currentOcc,
       peakOccupancy,
       totalEntries,
+      totalTurns:     best.totalTurns     ?? 0,
+      avgDwellMin:    best.avgDwellMin    ?? 0,
+      avgResponseSec: best.avgResponseSec ?? 0,
       elapsedSec: best.elapsedSec ?? 0,
       updatedAt: best.updatedAt ?? best.createdAt ?? 0,
       cameraAngle: best.cameraAngle ?? '',
@@ -1336,8 +1344,9 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   onInvestigate: (job: VenueScopeJob) => void;
   onConfigureZones?: (camera: CameraConfig) => void;
 }) {
-  const isDrink  = room.mode === 'drink_count';
-  const isPeople = room.mode === 'people_count';
+  const isDrink      = room.mode === 'drink_count';
+  const isPeople     = room.mode === 'people_count';
+  const isTableTurns = room.mode === 'table_turns';
   const barConfig = camera ? parseBarConfig(camera.barConfigJson) : null;
   // Show feed when camProxyUrl is configured OR camera has a direct HTTPS rtspUrl
   const hasFeed  = !!camProxyUrl || !!camera?.rtspUrl?.startsWith('https://');
@@ -1491,7 +1500,30 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
         </div>
       )}
 
-      {!isDrink && !isPeople && (
+      {isTableTurns && (
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-whoop-bg rounded-xl p-3 text-center">
+            <div className="text-xl font-bold text-white">
+              {room.totalTurns > 0 ? room.totalTurns : '—'}
+            </div>
+            <div className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wide">Turns</div>
+          </div>
+          <div className="bg-whoop-bg rounded-xl p-3 text-center">
+            <div className="text-xl font-bold text-white">
+              {room.avgDwellMin > 0 ? `${Math.round(room.avgDwellMin)}m` : '—'}
+            </div>
+            <div className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wide">Avg Dwell</div>
+          </div>
+          <div className="bg-whoop-bg rounded-xl p-3 text-center">
+            <div className="text-xl font-bold text-white">
+              {room.avgResponseSec > 0 ? `${Math.round(room.avgResponseSec)}s` : '—'}
+            </div>
+            <div className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wide">Response</div>
+          </div>
+        </div>
+      )}
+
+      {!isDrink && !isPeople && !isTableTurns && (
         <div className="bg-whoop-bg rounded-xl p-3 text-center">
           <div className="text-xs text-text-muted capitalize">{room.mode.replace(/_/g, ' ')}</div>
           {room.elapsedSec > 0 && (
@@ -2824,6 +2856,7 @@ export function VenueScope() {
         coveredCamIds.add(cam.cameraId);
         const camModes: string[] = Array.isArray(cam.modes) && cam.modes.length ? cam.modes : [];
         const camMode = camModes.includes('drink_count') ? 'drink_count'
+                      : camModes.includes('table_turns') ? 'table_turns'
                       : camModes.includes('people_count') ? 'people_count'
                       : null;
         // Override mode from camera config when it differs from the job
@@ -2839,15 +2872,17 @@ export function VenueScope() {
     for (const cam of enabledCams) {
       if (coveredCamIds.has(cam.cameraId)) continue;
       const modesRaw: string[] = Array.isArray(cam.modes) && cam.modes.length ? cam.modes : ['drink_count'];
-      const mode = (modesRaw as string[]).includes('drink_count') ? 'drink_count'
-                 : (modesRaw as string[]).includes('people_count') ? 'people_count'
-                 : 'drink_count';
+      const mode = modesRaw.includes('drink_count')  ? 'drink_count'
+                 : modesRaw.includes('table_turns')  ? 'table_turns'
+                 : modesRaw.includes('people_count') ? 'people_count'
+                 : modesRaw[0] ?? 'drink_count';
       result.push({
         label: cam.name,   // exact camera name → cameraForRoom finds it via direct substring match
         isLive: false,
         mode,
         totalDrinks: 0, drinksPerHour: 0, topBartender: '', hasTheftFlag: false,
         unrungDrinks: 0, currentOccupancy: 0, peakOccupancy: 0, totalEntries: 0,
+        totalTurns: 0, avgDwellMin: 0, avgResponseSec: 0,
         elapsedSec: 0, updatedAt: 0, cameraAngle: '',
         job: null,
       });
@@ -2996,9 +3031,10 @@ export function VenueScope() {
           {/* 2. Camera grid — driven by DynamoDB camera configs (permanent fix).
                 allDisplayRooms = job-based rooms + stub rooms for cameras with no job data */}
           {allDisplayRooms.length > 0 && (() => {
-            const barCams    = allDisplayRooms.filter(r => r.mode === 'drink_count');
-            const peopleCams = allDisplayRooms.filter(r => r.mode === 'people_count');
-            const otherCams  = allDisplayRooms.filter(r => r.mode !== 'drink_count' && r.mode !== 'people_count');
+            const barCams       = allDisplayRooms.filter(r => r.mode === 'drink_count');
+            const tableTurnsCams = allDisplayRooms.filter(r => r.mode === 'table_turns');
+            const peopleCams    = allDisplayRooms.filter(r => r.mode === 'people_count');
+            const otherCams     = allDisplayRooms.filter(r => !['drink_count', 'table_turns', 'people_count'].includes(r.mode));
             return (
               <div className="space-y-5">
                 {barCams.length > 0 && (
@@ -3012,6 +3048,22 @@ export function VenueScope() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {barCams.map(room => (
+                        <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {tableTurnsCams.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider">Floor Cameras — Table Turns</span>
+                      <span className="text-[10px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded-full">
+                        {tableTurnsCams.filter(r => r.isLive).length} live
+                      </span>
+                      <div className="h-px flex-1 bg-purple-500/20" />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {tableTurnsCams.map(room => (
                         <RoomCard key={room.label} room={room} camProxyUrl={camProxyUrl} camera={cameraForRoom(room)} onInvestigate={setInvestigating} onConfigureZones={setConfiguringCamera} />
                       ))}
                     </div>
