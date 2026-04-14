@@ -10,11 +10,14 @@ Fixes:
 from __future__ import annotations
 from collections import defaultdict
 from typing import List, Dict, Any, Optional, Tuple
+import logging
 import numpy as np
 
 from core.bar_config import BarConfig, station_polygon_px, bar_line_px
 from core.shift      import ShiftManager
 from core.config     import DrinkCountRules
+
+_log = logging.getLogger("drink_counter")
 
 
 def _point_in_polygon(px: float, py: float, poly: List[Tuple]) -> bool:
@@ -239,9 +242,13 @@ class DrinkCounter:
 
             # Station-level cooldown (survives track ID switches)
             if self._station_cooldown.get(station_id, 0) > 0:
+                _log.debug("[reject] t=%.1f tid=%s station=%s reason=station_cooldown remaining=%d",
+                           t_sec, tid, station_id, self._station_cooldown[station_id])
                 continue
             if state.cooldown_remaining > 0:
                 state.cooldown_remaining -= 1
+                _log.debug("[reject] t=%.1f tid=%s station=%s reason=track_cooldown remaining=%d",
+                           t_sec, tid, station_id, state.cooldown_remaining)
                 continue
 
             # PREP: centroid must be in station zone
@@ -252,6 +259,8 @@ class DrinkCounter:
                     state.prep_frames = max(0, state.prep_frames-1)
 
             if state.prep_frames < self.rules.min_prep_frames:
+                _log.debug("[reject] t=%.1f tid=%s station=%s reason=prep_frames have=%d need=%d",
+                           t_sec, tid, station_id, state.prep_frames, self.rules.min_prep_frames)
                 continue
 
             if station_id not in self._bar_lines:
@@ -295,6 +304,8 @@ class DrinkCounter:
             # BILATERAL CROSSING: must have dwelled on customer side long enough
             # (filters out fast sweeping gestures — reaching for glass, handing change)
             if state.customer_dwell_frames < self.rules.serve_dwell_frames:
+                _log.info("[reject] t=%.1f tid=%s station=%s reason=dwell_frames have=%d need=%d",
+                          t_sec, tid, station_id, state.customer_dwell_frames, self.rules.serve_dwell_frames)
                 continue
 
             # A1: velocity filter — reject fast sweeps (reaching, cleaning, handing change)
@@ -304,10 +315,15 @@ class DrinkCounter:
                 _dy = cy - state.centroid_history[-_vel_n][1]
                 _vel = (_dx*_dx + _dy*_dy) ** 0.5 / _vel_n
                 if _vel >= self.rules.max_cross_velocity_px:
+                    _log.info("[reject] t=%.1f tid=%s station=%s reason=velocity_too_high vel=%.1fpx max=%.1fpx",
+                              t_sec, tid, station_id, _vel, self.rules.max_cross_velocity_px)
                     continue  # too fast — not a serve gesture
 
             # A4: time-based hard floor — guards against variable-rate video fps drift
-            if t_sec - self._station_last_serve_tsec.get(station_id, -9999.0) < self.rules.serve_cooldown_seconds:
+            _elapsed_since_last = t_sec - self._station_last_serve_tsec.get(station_id, -9999.0)
+            if _elapsed_since_last < self.rules.serve_cooldown_seconds:
+                _log.info("[reject] t=%.1f tid=%s station=%s reason=time_cooldown elapsed=%.1fs need=%.1fs",
+                          t_sec, tid, station_id, _elapsed_since_last, self.rules.serve_cooldown_seconds)
                 continue
 
             # PER-EVENT CONFIDENCE: score based on detection quality + dwell duration
@@ -325,6 +341,9 @@ class DrinkCounter:
             is_high_conf   = avg_cross_conf >= self.rules.min_serve_conf
 
             # CONFIRMED SERVE ─────────────────────────────────────────────
+            _log.info("[serve] t=%.1f tid=%s station=%s score=%.3f dwell=%d conf=%.2f",
+                      t_sec, tid, station_id, serve_score,
+                      state.customer_dwell_frames, avg_cross_conf)
             _just_served.add(tid)
             state.last_confirmed_side  = customer_side
             state.cooldown_remaining   = self.rules.serve_cooldown_frames
@@ -338,6 +357,8 @@ class DrinkCounter:
             # A5: route low-score events to review bucket
             _is_review = serve_score < self.rules.min_serve_score
             if _is_review:
+                _log.info("[review] t=%.1f tid=%s station=%s score=%.3f < min=%.3f → review bucket",
+                          t_sec, tid, station_id, serve_score, self.rules.min_serve_score)
                 self._review_count += 1
             elif is_high_conf:
                 self._high_conf_serves += 1

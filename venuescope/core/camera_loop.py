@@ -65,9 +65,11 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     if continuous:
         label += " — 🔴 LIVE"
 
-    # Drink detection requires 'accurate' (yolov8m) for production accuracy.
-    # 'fast' and 'balanced' both miss subtle gestures on overhead/IR cameras.
-    # Upgrade silently — accuracy is non-negotiable for billing/theft detection.
+    # Drink detection: prefer 'accurate' (yolov8m) on GPU for best precision.
+    # On CPU-only hosts the engine automatically downgrades overhead cameras to
+    # yolov8n@640 so they can run in real-time (see engine.py overhead block).
+    # We still set 'accurate' here so GPU hosts get full quality; the engine
+    # handles the CPU override internally.
     model_profile = cam.get("model_profile", "balanced")
     if primary_mode == "drink_count" and model_profile in ("fast", "balanced"):
         model_profile = "accurate"

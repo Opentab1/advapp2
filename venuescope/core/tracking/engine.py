@@ -432,9 +432,20 @@ class VenueProcessor:
         self._overhead = bool(bar_config and getattr(bar_config, "overhead_camera", False))
         if self._overhead:
             self.profile = dict(self.profile)   # shallow copy so we don't mutate the global
-            self.profile["conf"]   = min(self.profile["conf"],  0.15)
-            self.profile["imgsz"]  = max(self.profile["imgsz"], 1280)
-            self.profile["stride"] = 1          # every frame — overhead cameras miss fast movements
+            self.profile["conf"] = min(self.profile["conf"], 0.15)
+            # On CPU-only hosts (droplet), yolov8m@1280 takes >1s/frame = can't keep up with live
+            # streams. Use 640px + stride=2 instead (~8x faster). GPU hosts get full 1280px + stride=1.
+            import torch as _torch
+            _has_gpu = _torch.cuda.is_available() or (
+                hasattr(_torch.backends, 'mps') and _torch.backends.mps.is_available())
+            if _has_gpu:
+                self.profile["imgsz"]  = max(self.profile["imgsz"], 1280)
+                self.profile["stride"] = 1   # every frame on GPU — can afford it
+            else:
+                # CPU: cap at 640px, stride=2; swap to nano model for ~8x total speedup
+                self.profile["imgsz"]  = min(self.profile.get("imgsz", 640), 640)
+                self.profile["stride"] = max(self.profile.get("stride", 2), 2)
+                self.profile["model"]  = "yolov8n.pt"
 
         # Bottle count: bottles in overhead/fisheye cameras need high-res inference.
         # YOLO misses them at 640px but detects reliably at 1280px.
@@ -588,7 +599,9 @@ class VenueProcessor:
         self._clip_H   = int(H * self._clip_W / W)
         self.cb(2, f"Video: {W}x{H} @ {fps:.1f}fps  ({total_f} frames, {total_f/fps/60:.1f} min)")
         if self._overhead:
-            self.cb(2, "Overhead camera mode: conf=0.15, imgsz=1280, stride=1")
+            self.cb(2, f"Overhead camera mode: conf={self.profile['conf']}, "
+                       f"imgsz={self.profile['imgsz']}, stride={self.profile.get('stride',1)}, "
+                       f"model={self.profile.get('model','yolov8m.pt')}")
         if _save_local:
             (self.result_dir / "clips").mkdir(exist_ok=True)
 
