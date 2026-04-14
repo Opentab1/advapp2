@@ -1032,9 +1032,12 @@ function CameraLiveView({
   barConfig?: BarConfig | null;
   onConfigureZones?: () => void;
 }) {
-  const videoRef  = React.useRef<HTMLVideoElement>(null);
-  const hlsRef    = React.useRef<Hls | null>(null);
-  const timerRef  = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoRef      = React.useRef<HTMLVideoElement>(null);
+  const hlsRef        = React.useRef<Hls | null>(null);
+  const timerRef      = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const watchdogRef   = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastTimeRef   = React.useRef<number>(-1);
+  const stallCountRef = React.useRef<number>(0);
   const [state, setState]   = React.useState<'loading' | 'playing' | 'error' | 'mixed_content' | 'cert'>('loading');
   const [errorMsg, setErrorMsg] = React.useState('Stream unavailable');
   const [retryKey, setRetryKey] = React.useState(0);
@@ -1073,17 +1076,68 @@ function CameraLiveView({
       setErrorMsg('Stream timed out');
     }, 12_000);
 
+    lastTimeRef.current   = -1;
+    stallCountRef.current = 0;
+
+    const stopWatchdog = () => {
+      if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
+    };
+
     const cleanup = () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      stopWatchdog();
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       v.src = '';
     };
 
     const handleError = () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      // If we upgraded HTTP→HTTPS, failure is almost certainly an untrusted self-signed cert
       setState(httpsUpgraded ? 'cert' : 'error');
       setErrorMsg(httpsUpgraded ? 'Camera certificate not trusted' : 'Stream unavailable');
+    };
+
+    // Silent reconnect — reload src without showing error UI
+    const silentReconnect = () => {
+      stopWatchdog();
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      lastTimeRef.current   = -1;
+      stallCountRef.current = 0;
+      if (url.includes('.m3u8') && Hls.isSupported()) {
+        const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
+        hlsRef.current = hls;
+        hls.loadSource(url);
+        hls.attachMedia(v);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+        hls.on(Hls.Events.ERROR, (_evt, data) => { if (data.fatal) handleError(); });
+      } else {
+        v.src = '';
+        v.load();
+        v.src = url;
+        v.load();
+        v.play().catch(() => {});
+      }
+      startWatchdog();
+    };
+
+    // Watchdog: fires every 5s. If currentTime hasn't advanced for 2 consecutive
+    // ticks (10s) while the video is supposed to be playing → silent reconnect.
+    const startWatchdog = () => {
+      stopWatchdog();
+      watchdogRef.current = setInterval(() => {
+        const vid = videoRef.current;
+        if (!vid || vid.paused || vid.ended) return;
+        const t = vid.currentTime;
+        if (t === lastTimeRef.current) {
+          stallCountRef.current += 1;
+          if (stallCountRef.current >= 2) {
+            stallCountRef.current = 0;
+            silentReconnect();
+          }
+        } else {
+          lastTimeRef.current   = t;
+          stallCountRef.current = 0;
+        }
+      }, 5_000);
     };
 
     if (url.includes('.m3u8') && Hls.isSupported()) {
@@ -1099,7 +1153,14 @@ function CameraLiveView({
       v.play().catch(() => {});
     }
 
-    return cleanup;
+    // Start watchdog once video begins playing
+    const onPlaying = () => startWatchdog();
+    v.addEventListener('playing', onPlaying);
+
+    return () => {
+      v.removeEventListener('playing', onPlaying);
+      cleanup();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, retryKey]);
 
