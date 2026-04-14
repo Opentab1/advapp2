@@ -504,23 +504,73 @@ const EVENT_META: Record<DetectionEvent['type'], { label: string; color: string;
   theft:  { label: 'Theft Flag',       color: 'text-red-400',     icon: <AlertTriangle className="w-3.5 h-3.5" /> },
 };
 
-function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
-  const [expanded, setExpanded] = useState(false);
+const FILTER_OPTIONS: Array<{ key: DetectionEvent['type'] | 'all'; label: string }> = [
+  { key: 'all',    label: 'All' },
+  { key: 'drink',  label: 'Drinks' },
+  { key: 'people', label: 'People' },
+  { key: 'bottle', label: 'Bottles' },
+  { key: 'pour',   label: 'Mispours' },
+  { key: 'theft',  label: 'Theft' },
+];
 
-  const events = useMemo(() => buildEvents(jobs), [jobs]);
+function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
+  const [expanded, setExpanded]   = useState(false);
+  const [filter, setFilter]       = useState<DetectionEvent['type'] | 'all'>('all');
+
+  const events  = useMemo(() => buildEvents(jobs), [jobs]);
+
+  // Only show filter pills for types that actually have events
+  const typesPresent = useMemo(() => new Set(events.map(e => e.type)), [events]);
+  const visibleFilters = FILTER_OPTIONS.filter(f => f.key === 'all' || typesPresent.has(f.key));
+
+  const filtered = useMemo(
+    () => filter === 'all' ? events : events.filter(e => e.type === filter),
+    [events, filter],
+  );
+
+  // Reset expanded when filter changes
+  const handleFilter = (key: typeof filter) => { setFilter(key); setExpanded(false); };
 
   if (events.length === 0) return null;
 
-  const visible = expanded ? events : events.slice(0, 12);
+  const visible = expanded ? filtered : filtered.slice(0, 12);
 
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+      {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
         <Activity className="w-4 h-4 text-teal" />
         <span className="text-sm font-semibold text-white">Detection Events</span>
-        <span className="ml-auto text-[10px] text-text-muted">{events.length} event{events.length !== 1 ? 's' : ''}</span>
+        <span className="ml-auto text-[10px] text-text-muted">
+          {filtered.length}{filter !== 'all' ? ` / ${events.length}` : ''} event{events.length !== 1 ? 's' : ''}
+        </span>
       </div>
 
+      {/* Filter pills */}
+      {visibleFilters.length > 2 && (
+        <div className="flex gap-1.5 px-4 py-2.5 border-b border-whoop-divider/40 overflow-x-auto scrollbar-none">
+          {visibleFilters.map(({ key, label }) => {
+            const active = filter === key;
+            const meta   = key !== 'all' ? EVENT_META[key] : null;
+            return (
+              <button
+                key={key}
+                onClick={() => handleFilter(key)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap transition-colors border ${
+                  active
+                    ? 'bg-teal/15 border-teal/40 text-teal'
+                    : 'bg-whoop-bg border-whoop-divider text-text-muted hover:text-white'
+                }`}
+              >
+                {meta && <span className={active ? meta.color : ''}>{meta.icon}</span>}
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Column headers */}
       <div className="grid gap-0 px-4 py-2 border-b border-whoop-divider/40 text-[9px] text-text-muted uppercase tracking-wider font-semibold"
         style={{ gridTemplateColumns: '4.5rem 1fr auto auto' }}>
         <span>Time</span>
@@ -529,55 +579,59 @@ function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
         <span className="text-right">NVR ref</span>
       </div>
 
-      <div className="divide-y divide-whoop-divider/40">
-        {visible.map((ev, i) => {
-          const meta = EVENT_META[ev.type];
-          return (
-            <div key={i} className="grid items-center gap-3 px-4 py-3 hover:bg-whoop-bg/40 transition-colors"
-              style={{ gridTemplateColumns: '4.5rem 1fr auto auto' }}>
+      {filtered.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[11px] text-text-muted">
+          No {FILTER_OPTIONS.find(f => f.key === filter)?.label.toLowerCase()} events in this period
+        </div>
+      ) : (
+        <div className="divide-y divide-whoop-divider/40">
+          {visible.map((ev, i) => {
+            const meta = EVENT_META[ev.type];
+            return (
+              <div key={i} className="grid items-center gap-3 px-4 py-3 hover:bg-whoop-bg/40 transition-colors"
+                style={{ gridTemplateColumns: '4.5rem 1fr auto auto' }}>
 
-              {/* Time */}
-              <div>
-                <div className="text-[10px] font-semibold text-white tabular-nums">{fmtTime(ev.ts)}</div>
-                <div className="text-[9px] text-text-muted">{fmtDate(ev.ts)}</div>
-              </div>
-
-              {/* Camera */}
-              <div className="min-w-0">
-                <div className="text-xs text-text-secondary truncate">{ev.camera}</div>
-                {ev.detail && <div className="text-[9px] text-text-muted/70 truncate mt-0.5">{ev.detail}</div>}
-              </div>
-
-              {/* Event type + stat */}
-              <div className="text-right pr-2">
-                <div className={`flex items-center gap-1 justify-end text-[10px] font-medium ${meta.color}`}>
-                  {meta.icon}
-                  <span>{meta.label}</span>
-                  {ev.flag && <AlertTriangle className="w-2.5 h-2.5 text-red-400 ml-0.5" />}
+                {/* Time */}
+                <div>
+                  <div className="text-[10px] font-semibold text-white tabular-nums">{fmtTime(ev.ts)}</div>
+                  <div className="text-[9px] text-text-muted">{fmtDate(ev.ts)}</div>
                 </div>
-                <div className="text-sm font-bold text-white tabular-nums mt-0.5">{ev.stat}</div>
-              </div>
 
-              {/* NVR timestamp hint */}
-              <div className="text-right">
-                <div className="text-[9px] text-text-muted/50 font-mono tabular-nums leading-tight">
-                  {fmtTime(ev.ts)}
+                {/* Camera */}
+                <div className="min-w-0">
+                  <div className="text-xs text-text-secondary truncate">{ev.camera}</div>
+                  {ev.detail && <div className="text-[9px] text-text-muted/70 truncate mt-0.5">{ev.detail}</div>}
                 </div>
-                <div className="text-[8px] text-text-muted/30 uppercase tracking-wide">NVR</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
 
-      {events.length > 12 && (
+                {/* Event type + stat */}
+                <div className="text-right pr-2">
+                  <div className={`flex items-center gap-1 justify-end text-[10px] font-medium ${meta.color}`}>
+                    {meta.icon}
+                    <span>{meta.label}</span>
+                    {ev.flag && <AlertTriangle className="w-2.5 h-2.5 text-red-400 ml-0.5" />}
+                  </div>
+                  <div className="text-sm font-bold text-white tabular-nums mt-0.5">{ev.stat}</div>
+                </div>
+
+                {/* NVR timestamp */}
+                <div className="text-right">
+                  <div className="text-[9px] text-text-muted/50 font-mono tabular-nums leading-tight">{fmtTime(ev.ts)}</div>
+                  <div className="text-[8px] text-text-muted/30 uppercase tracking-wide">NVR</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {filtered.length > 12 && (
         <button
           onClick={() => setExpanded(e => !e)}
           className="w-full py-2.5 text-xs text-text-muted hover:text-white border-t border-whoop-divider transition-colors flex items-center justify-center gap-1"
         >
           {expanded
             ? <><ChevronUp className="w-3 h-3" /> Show less</>
-            : <><ChevronDown className="w-3 h-3" /> Show all {events.length} events</>}
+            : <><ChevronDown className="w-3 h-3" /> Show all {filtered.length} events</>}
         </button>
       )}
     </div>
