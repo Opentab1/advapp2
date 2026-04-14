@@ -1227,10 +1227,11 @@ class VenueProcessor:
             )
         elif mode == "people_count":
             lines = ec.get("lines", [])
-            # No lines = pure headcount mode (count people in frame, no entry/exit)
+            snapshot_interval = float(ec.get("snapshot_interval_sec", 1200))  # default 20 min
             return PeopleCounter(lines_config=lines,
                                  confirm_frames=DEFAULT_PEOPLE_RULES.entry_line_confirm,
-                                 W=W, H=H)
+                                 W=W, H=H,
+                                 snapshot_interval_sec=snapshot_interval)
         elif mode == "table_turns":
             zones = [TableZone(table_id=t["table_id"],
                                label=t.get("label",t["table_id"]),

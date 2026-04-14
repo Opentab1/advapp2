@@ -1,42 +1,36 @@
 """
 VenueScope — People counter / occupancy tracker.
 
-Accuracy improvements over v1
-──────────────────────────────
-1. Initial-position fix
-   When a track is first detected, its side of the line is recorded
-   immediately (no warmup needed). Subsequent crossings are relative to
-   this confirmed baseline.  Fixes: people already inside at t=0, and
-   people who enter during a detection gap.
+Mode: periodic snapshot headcount
+──────────────────────────────────
+Rather than counting line crossings (which accumulate error over a shift),
+this counter takes a stable headcount snapshot every N minutes by averaging
+ByteTrack's active IDs over a short rolling window.
 
-2. Velocity direction gate
-   A crossing is only counted if the person's recent centroid trajectory
-   is pointing toward the target side of the line.  Filters false crossings
-   from people walking parallel to the line or from detection jitter.
+Why this is more accurate than line crossing:
+  - Overhead fisheye sees the entire room — no blind spots at entry/exit
+  - ByteTrack keeps IDs stable across frames; the active-ID count is a
+    reliable in-room estimate
+  - Periodic snapshots have no accumulated error — each reading is independent
+  - No line calibration required
 
-3. Occupancy floor
-   net_occupancy = max(entries - exits, visible_in_frame).
-   If line-counting misses entries (crowded door, occlusion), the frame-
-   visible count provides a lower bound, preventing impossible negatives.
+Snapshot cadence: configurable, default 1200 s (20 min).
+Smoothing: 30-frame rolling average before each snapshot to absorb
+           single-frame detection misses without distorting the count.
 
-4. Deep-inside entry detection
-   When a new track appears whose centroid is clearly on the "inside" of
-   every configured entry line (not near any of them), they were likely
-   missed at the door — count them as an entry immediately.
-
-5. Trajectory smoothing
-   Centroid is smoothed over the last 5 positions before line-side
-   computation, reducing jitter-driven false crossings from detection noise.
+Line-crossing mode is preserved as an opt-in feature for venues that want
+entry/exit events (pass lines_config). When no lines are configured (the
+default), only headcount snapshots are produced.
 """
 from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple, Deque
+from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 
 
-# ── Geometry ──────────────────────────────────────────────────────────────────
+# ── Optional line-crossing geometry (used only when lines are configured) ─────
 
 def _side_of_line(px: float, py: float,
                   lp1: Tuple[float, float], lp2: Tuple[float, float]) -> int:
@@ -45,83 +39,73 @@ def _side_of_line(px: float, py: float,
     return 1 if cross > 0 else (-1 if cross < 0 else 0)
 
 
-def _dist_to_line(px: float, py: float,
-                  lp1: Tuple[float, float], lp2: Tuple[float, float]) -> float:
-    """Perpendicular distance from point (px, py) to the infinite line through lp1, lp2."""
-    dx = lp2[0] - lp1[0]; dy = lp2[1] - lp1[1]
-    length = (dx*dx + dy*dy) ** 0.5
-    if length < 1e-6:
-        return ((px - lp1[0])**2 + (py - lp1[1])**2) ** 0.5
-    return abs(dx * (lp1[1] - py) - (lp1[0] - px) * dy) / length
-
-
-# ── Data structures ───────────────────────────────────────────────────────────
-
 @dataclass
 class CountingLine:
-    """One entrance/exit counting line."""
     line_id:    str
     label:      str
-    p1:         Tuple[float, float]   # pixel coords
-    p2:         Tuple[float, float]   # pixel coords
-    entry_side: int                   # which side (+1/-1) is "inside"
+    p1:         Tuple[float, float]
+    p2:         Tuple[float, float]
+    entry_side: int
     entries:    int = 0
     exits:      int = 0
     hourly_entries: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
     hourly_exits:   Dict[int, int] = field(default_factory=lambda: defaultdict(int))
 
-    @property
-    def length_px(self) -> float:
-        return ((self.p2[0]-self.p1[0])**2 + (self.p2[1]-self.p1[1])**2) ** 0.5
-
 
 class _TrackLineState:
-    """Per-track state for one counting line."""
     __slots__ = ("confirmed_side", "counted_entry", "counted_exit",
                  "pending_side", "pending_dwell")
-
     def __init__(self):
-        self.confirmed_side: int  = 0   # 0 = not yet established
+        self.confirmed_side: int  = 0
         self.counted_entry:  bool = False
         self.counted_exit:   bool = False
         self.pending_side:   int  = 0
         self.pending_dwell:  int  = 0
 
 
-# ── Tracker ───────────────────────────────────────────────────────────────────
+# ── Headcount counter ─────────────────────────────────────────────────────────
 
-# How close (px) a new-track centroid must be to a line before we skip the
-# deep-inside entry heuristic (they might be entering right now, not missed)
-_LINE_PROXIMITY_PX   = 80
-# Smoothing window for centroid (reduces jitter)
-_SMOOTH_WINDOW       = 5
-# Velocity history window for direction gate (in smoothed frames)
-_VELOCITY_LOOKBACK   = 4
+_DEFAULT_SNAPSHOT_INTERVAL_SEC = 1200   # 20 minutes
+_SMOOTH_FRAMES                 = 30     # rolling-average window before snapshot
 
 
 class PeopleCounter:
     """
-    Multi-line people counter for venues with multiple entrances.
+    Periodic-snapshot headcount counter.
 
-    Tracks:
-    - Entries/exits per counting line (with direction gate + initial-position fix)
-    - Total unique people seen in frame (zone headcount)
-    - Occupancy = max(net line count, visible in frame)
-    - Hourly entry/exit volumes
+    Parameters
+    ----------
+    lines_config : list of dict
+        Optional entry/exit counting lines (legacy).  Leave empty (default)
+        for pure headcount mode.
+    confirm_frames : int
+        Frames required to confirm a line crossing (line mode only).
+    W, H : int
+        Frame dimensions in pixels.
+    stabilize_frames : int
+        Additional dwell frames before committing a line crossing.
+    snapshot_interval_sec : float
+        How often to record a headcount snapshot.  Default 1200 s (20 min).
+    smooth_frames : int
+        Rolling window size for count smoothing before each snapshot.
     """
 
-    def __init__(self, lines_config: List[Dict], confirm_frames: int,
-                 W: int, H: int, stabilize_frames: int = 12):
-        """
-        lines_config: list of dicts with keys:
-            line_id, label, p1 [norm], p2 [norm], entry_side
-        """
+    def __init__(self,
+                 lines_config: List[Dict],
+                 confirm_frames: int,
+                 W: int, H: int,
+                 stabilize_frames: int = 12,
+                 snapshot_interval_sec: float = _DEFAULT_SNAPSHOT_INTERVAL_SEC,
+                 smooth_frames: int = _SMOOTH_FRAMES):
         self.W = W; self.H = H
-        self.confirm_frames   = confirm_frames
-        self.stabilize_frames = stabilize_frames
+        self.confirm_frames        = confirm_frames
+        self.stabilize_frames      = stabilize_frames
+        self._snapshot_interval    = snapshot_interval_sec
+        self._smooth_frames        = max(1, smooth_frames)
 
+        # Build counting lines if provided (optional)
         self.lines: List[CountingLine] = []
-        for lc in lines_config:
+        for lc in (lines_config or []):
             p1_px = (lc["p1"][0] * W, lc["p1"][1] * H)
             p2_px = (lc["p2"][0] * W, lc["p2"][1] * H)
             self.lines.append(CountingLine(
@@ -130,235 +114,73 @@ class PeopleCounter:
                 p1=p1_px, p2=p2_px,
                 entry_side=lc.get("entry_side", -1),
             ))
+        self._line_states: Dict[int, List[_TrackLineState]] = {}
 
-        # Per-track, per-line crossing state
-        self._states: Dict[int, List[_TrackLineState]] = {}
+        # ── Headcount state ────────────────────────────────────────────────
+        self._recent_counts: deque = deque(maxlen=self._smooth_frames)
+        self._last_snapshot_t: float = -self._snapshot_interval  # fire on first eligible frame
+        self.snapshots: List[Dict] = []   # [{t_sec, count, raw_count}]
 
-        # Centroid history per track for smoothing + velocity direction gate
-        # Stores smoothed (cx, cy) positions in frame order
-        self._centroid_hist: Dict[int, Deque[Tuple[float, float]]] = {}
+        self.current_headcount: int = 0
+        self.peak_occupancy:    int = 0
+        self._seen_tracks:      set = set()
 
-        # Occupancy
-        self._active_tracks:     set  = set()
-        self._seen_tracks:       set  = set()
-        self._current_occupancy: int  = 0
-        self.peak_occupancy:     int  = 0
-        self.occupancy_log:      List[Tuple[float, int]] = []
-
-        # Aggregate totals
+        # Legacy totals (populated only in line mode)
         self.total_entries: int = 0
         self.total_exits:   int = 0
         self.hourly_entries: Dict[int, int] = defaultdict(int)
         self.hourly_exits:   Dict[int, int] = defaultdict(int)
-
-        # Occupancy floor: tracks visible in current frame
-        self._frame_visible: int = 0
+        self.occupancy_log:  List[Tuple[float, int]] = []
 
     # ── Public ────────────────────────────────────────────────────────────────
 
     def update(self, frame_idx: int, t_sec: float,
                centroids: np.ndarray, track_ids: List[int]) -> List[Dict]:
-        events = []
-        hour   = int(t_sec // 3600)
+        events: List[Dict] = []
 
-        current_frame_tracks = set(track_ids)
-        self._active_tracks  = current_frame_tracks
-        self._frame_visible  = len(current_frame_tracks)
-        self.peak_occupancy  = max(self.peak_occupancy,
-                                   self.net_occupancy,
-                                   self._frame_visible)
-
-        for tid in current_frame_tracks:
+        for tid in track_ids:
             self._seen_tracks.add(tid)
 
+        # ── Rolling count + current headcount ─────────────────────────────
+        raw_count = len(track_ids)
+        self._recent_counts.append(raw_count)
+        smoothed = round(sum(self._recent_counts) / len(self._recent_counts))
+        self.current_headcount = smoothed
+        self.peak_occupancy    = max(self.peak_occupancy, smoothed)
+
+        # Lightweight occupancy log every 10 frames
         if frame_idx % 10 == 0:
-            self.occupancy_log.append((round(t_sec, 1), self.net_occupancy))
+            self.occupancy_log.append((round(t_sec, 1), smoothed))
 
-        if not self.lines:
-            self._current_occupancy = self._frame_visible
-            return events
+        # ── Periodic snapshot ──────────────────────────────────────────────
+        if t_sec - self._last_snapshot_t >= self._snapshot_interval:
+            snap = {
+                "t_sec":     round(t_sec, 1),
+                "count":     smoothed,
+                "raw_count": raw_count,
+            }
+            self.snapshots.append(snap)
+            self._last_snapshot_t = t_sec
+            events.append({
+                "event_type": "headcount_snapshot",
+                "t_sec":      snap["t_sec"],
+                "count":      snap["count"],
+                "frame_idx":  frame_idx,
+            })
 
-        # ── Per-track crossing detection ───────────────────────────────────
-        for i, tid in enumerate(track_ids):
-            if i >= len(centroids):
-                continue
-            raw_cx = float(centroids[i][0])
-            raw_cy = float(centroids[i][1])
-
-            # Initialise centroid history
-            if tid not in self._centroid_hist:
-                self._centroid_hist[tid] = deque(maxlen=max(_SMOOTH_WINDOW,
-                                                             _VELOCITY_LOOKBACK + 2))
-            self._centroid_hist[tid].append((raw_cx, raw_cy))
-
-            # Smoothed centroid
-            hist = list(self._centroid_hist[tid])
-            w = min(len(hist), _SMOOTH_WINDOW)
-            cx = sum(p[0] for p in hist[-w:]) / w
-            cy = sum(p[1] for p in hist[-w:]) / w
-
-            # Initialise crossing state
-            if tid not in self._states:
-                self._states[tid] = [_TrackLineState() for _ in self.lines]
-                # FIX 1: Initial-position fix — record which side each line the
-                # person is already on so their first crossing is detected correctly
-                for li, line in enumerate(self.lines):
-                    side = _side_of_line(cx, cy, line.p1, line.p2)
-                    self._states[tid][li].confirmed_side = side
-
-                # FIX 4: Deep-inside detection — if this new track is well inside
-                # the venue (far from all entry lines, on the inside), count as entry
-                if self.lines:
-                    all_inside = all(
-                        _side_of_line(cx, cy, line.p1, line.p2) == line.entry_side
-                        for line in self.lines
-                    )
-                    far_from_lines = all(
-                        _dist_to_line(cx, cy, line.p1, line.p2) > _LINE_PROXIMITY_PX
-                        for line in self.lines
-                    )
-                    if all_inside and far_from_lines and frame_idx > 30:
-                        # Person appeared deep inside — probably missed at door
-                        primary_line = self.lines[0]
-                        self.total_entries += 1
-                        primary_line.entries += 1
-                        primary_line.hourly_entries[hour] += 1
-                        self.hourly_entries[hour] += 1
-                        self._states[tid][0].counted_entry = True
-                        events.append({
-                            "event_type": "entry",
-                            "line_id":    primary_line.line_id,
-                            "line_label": primary_line.label,
-                            "track_id":   tid,
-                            "t_sec":      round(t_sec, 3),
-                            "frame_idx":  frame_idx,
-                            "method":     "deep_inside",
-                            "occupancy":  self.net_occupancy,
-                        })
-
-            for li, line in enumerate(self.lines):
-                state = self._states[tid][li]
-                side  = _side_of_line(cx, cy, line.p1, line.p2)
-
-                if side == state.confirmed_side or side == 0:
-                    # Still on confirmed side — reset pending
-                    state.pending_side  = 0
-                    state.pending_dwell = 0
-                    continue
-
-                # Accumulate dwell on the new side
-                if side != state.pending_side:
-                    state.pending_side  = side
-                    state.pending_dwell = 1
-                else:
-                    state.pending_dwell += 1
-
-                if state.pending_dwell < self.stabilize_frames:
-                    continue  # not yet stable — may be jitter
-
-                # FIX 2: Velocity direction gate — only count if movement is
-                # actually heading toward the target side
-                if not self._moving_toward(tid, side, line):
-                    # Person is on the new side but not moving toward it —
-                    # likely detection noise, not a real crossing. Reset pending.
-                    state.pending_side  = 0
-                    state.pending_dwell = 0
-                    continue
-
-                # Crossing confirmed
-                prev = state.confirmed_side
-                state.confirmed_side = side
-                state.pending_side   = 0
-                state.pending_dwell  = 0
-
-                if prev == 0:
-                    continue  # first observation, side already set in init
-
-                if side == line.entry_side:
-                    state.counted_exit = False
-                    if not state.counted_entry:
-                        state.counted_entry = True
-                        line.entries        += 1
-                        self.total_entries  += 1
-                        line.hourly_entries[hour] += 1
-                        self.hourly_entries[hour] += 1
-                        events.append({
-                            "event_type": "entry",
-                            "line_id":    line.line_id,
-                            "line_label": line.label,
-                            "track_id":   tid,
-                            "t_sec":      round(t_sec, 3),
-                            "frame_idx":  frame_idx,
-                            "method":     "line_crossing",
-                            "occupancy":  self.net_occupancy,
-                        })
-
-                elif side == -line.entry_side:
-                    state.counted_entry = False
-                    if not state.counted_exit:
-                        state.counted_exit  = True
-                        line.exits          += 1
-                        self.total_exits    += 1
-                        line.hourly_exits[hour] += 1
-                        self.hourly_exits[hour] += 1
-                        events.append({
-                            "event_type": "exit",
-                            "line_id":    line.line_id,
-                            "line_label": line.label,
-                            "track_id":   tid,
-                            "t_sec":      round(t_sec, 3),
-                            "frame_idx":  frame_idx,
-                            "method":     "line_crossing",
-                            "occupancy":  self.net_occupancy,
-                        })
-
-        # FIX 3: Occupancy floor — net count can't go below what we can actually see
-        self._current_occupancy = self.net_occupancy
+        # ── Line-crossing (opt-in, only when lines configured) ────────────
+        if self.lines:
+            events += self._update_lines(frame_idx, t_sec, centroids, track_ids)
 
         return events
-
-    # ── Internal ──────────────────────────────────────────────────────────────
-
-    def _moving_toward(self, tid: int, target_side: int, line: CountingLine) -> bool:
-        """
-        Return True if the track's recent velocity is pointing toward target_side.
-        Falls back to True when insufficient history (allows counting early crossings).
-        """
-        hist = list(self._centroid_hist.get(tid, []))
-        if len(hist) < _VELOCITY_LOOKBACK:
-            return True  # not enough history — give benefit of the doubt
-
-        # Velocity from _VELOCITY_LOOKBACK frames ago to now
-        old = hist[-_VELOCITY_LOOKBACK]
-        new = hist[-1]
-        dx = new[0] - old[0]
-        dy = new[1] - old[1]
-        if abs(dx) < 1e-3 and abs(dy) < 1e-3:
-            return True  # stationary — allow (could be a slow crosser)
-
-        # Line direction vector
-        ldx = line.p2[0] - line.p1[0]
-        ldy = line.p2[1] - line.p1[1]
-
-        # Cross product of velocity with line direction tells us which side
-        # the movement is heading toward (same sign convention as _side_of_line)
-        cross = ldx * dy - ldy * dx
-        moving_to = 1 if cross > 0 else -1
-
-        return moving_to == target_side
-
-    @property
-    def net_occupancy(self) -> int:
-        """
-        FIX 3: Occupancy = max(entries - exits, visible_in_frame).
-        Line-counting errors can't push occupancy below what YOLO actually sees.
-        """
-        net = max(0, self.total_entries - self.total_exits)
-        return max(net, self._frame_visible)
 
     # ── Summary ───────────────────────────────────────────────────────────────
 
     def summary(self, total_sec: float) -> Dict[str, Any]:
+        headcount_mode = not self.lines
+        peak_hour = (max(self.hourly_entries, key=self.hourly_entries.get)
+                     if self.hourly_entries else 0)
+
         per_line = {}
         for line in self.lines:
             per_line[line.line_id] = {
@@ -369,19 +191,101 @@ class PeopleCounter:
                 "hourly_exits":   dict(line.hourly_exits),
             }
 
-        peak_hour = (max(self.hourly_entries, key=self.hourly_entries.get)
-                     if self.hourly_entries else 0)
-
-        headcount_mode = not self.lines
         return {
-            "headcount_mode":     headcount_mode,
-            "total_entries":      self.total_entries,
-            "total_exits":        self.total_exits,
-            "net_occupancy":      self.net_occupancy,
-            "peak_occupancy":     self.peak_occupancy,
-            "unique_tracks_seen": len(self._seen_tracks),
-            "peak_entry_hour":    peak_hour,
-            "hourly_entries":     dict(self.hourly_entries),
-            "hourly_exits":       dict(self.hourly_exits),
-            "per_line":           per_line,
+            "headcount_mode":       headcount_mode,
+            "snapshot_interval_sec": self._snapshot_interval,
+            "snapshots":            self.snapshots,
+            "current_headcount":    self.current_headcount,
+            "peak_occupancy":       self.peak_occupancy,
+            "unique_tracks_seen":   len(self._seen_tracks),
+            # Legacy line-mode fields (zero in headcount mode)
+            "total_entries":        self.total_entries,
+            "total_exits":          self.total_exits,
+            "net_occupancy":        max(0, self.total_entries - self.total_exits)
+                                    if self.lines else self.current_headcount,
+            "peak_entry_hour":      peak_hour,
+            "hourly_entries":       dict(self.hourly_entries),
+            "hourly_exits":         dict(self.hourly_exits),
+            "per_line":             per_line,
         }
+
+    # ── Line-crossing internals (legacy opt-in) ───────────────────────────────
+
+    def _update_lines(self, frame_idx: int, t_sec: float,
+                      centroids: np.ndarray, track_ids: List[int]) -> List[Dict]:
+        events: List[Dict] = []
+        hour = int(t_sec // 3600)
+
+        for i, tid in enumerate(track_ids):
+            if i >= len(centroids):
+                continue
+            cx = float(centroids[i][0])
+            cy = float(centroids[i][1])
+
+            if tid not in self._line_states:
+                self._line_states[tid] = [_TrackLineState() for _ in self.lines]
+                for li, line in enumerate(self.lines):
+                    self._line_states[tid][li].confirmed_side = _side_of_line(
+                        cx, cy, line.p1, line.p2)
+
+            for li, line in enumerate(self.lines):
+                state = self._line_states[tid][li]
+                side  = _side_of_line(cx, cy, line.p1, line.p2)
+
+                if side == state.confirmed_side or side == 0:
+                    state.pending_side  = 0
+                    state.pending_dwell = 0
+                    continue
+
+                if side != state.pending_side:
+                    state.pending_side  = side
+                    state.pending_dwell = 1
+                else:
+                    state.pending_dwell += 1
+
+                if state.pending_dwell < self.stabilize_frames:
+                    continue
+
+                prev = state.confirmed_side
+                state.confirmed_side = side
+                state.pending_side   = 0
+                state.pending_dwell  = 0
+
+                if prev == 0:
+                    continue
+
+                if side == line.entry_side:
+                    state.counted_exit = False
+                    if not state.counted_entry:
+                        state.counted_entry = True
+                        line.entries       += 1
+                        self.total_entries += 1
+                        line.hourly_entries[hour] += 1
+                        self.hourly_entries[hour] += 1
+                        events.append({
+                            "event_type": "entry",
+                            "line_id":    line.line_id,
+                            "line_label": line.label,
+                            "track_id":   tid,
+                            "t_sec":      round(t_sec, 3),
+                            "frame_idx":  frame_idx,
+                            "occupancy":  self.current_headcount,
+                        })
+                elif side == -line.entry_side:
+                    state.counted_entry = False
+                    if not state.counted_exit:
+                        state.counted_exit  = True
+                        line.exits         += 1
+                        self.total_exits   += 1
+                        line.hourly_exits[hour] += 1
+                        self.hourly_exits[hour] += 1
+                        events.append({
+                            "event_type": "exit",
+                            "line_id":    line.line_id,
+                            "line_label": line.label,
+                            "track_id":   tid,
+                            "t_sec":      round(t_sec, 3),
+                            "frame_idx":  frame_idx,
+                            "occupancy":  self.current_headcount,
+                        })
+        return events
