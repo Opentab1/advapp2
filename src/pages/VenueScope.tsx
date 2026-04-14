@@ -2809,9 +2809,10 @@ export function VenueScope() {
     const result: RoomSummary[] = [];
     const coveredCamIds = new Set<string>();
 
-    // First pass: include all job-based rooms, tag which cameras they cover
+    // First pass: include all job-based rooms, tag which cameras they cover.
+    // If the admin-portal camera config specifies a mode that differs from the
+    // job's analysisMode, the camera config wins — it reflects the owner's intent.
     for (const room of liveRooms) {
-      result.push(room);
       const cam = enabledCams.find(c => {
         const label = room.label.toLowerCase();
         const cn = c.name.toLowerCase();
@@ -2819,7 +2820,19 @@ export function VenueScope() {
         const ch = channelFromSources(c.name, c.rtspUrl);
         return ch ? channelFromSources(room.label, null) === ch : false;
       });
-      if (cam) coveredCamIds.add(cam.cameraId);
+      if (cam) {
+        coveredCamIds.add(cam.cameraId);
+        const camModes: string[] = Array.isArray(cam.modes) && cam.modes.length ? cam.modes : [];
+        const camMode = camModes.includes('drink_count') ? 'drink_count'
+                      : camModes.includes('people_count') ? 'people_count'
+                      : null;
+        // Override mode from camera config when it differs from the job
+        if (camMode && camMode !== room.mode) {
+          result.push({ ...room, mode: camMode });
+          continue;
+        }
+      }
+      result.push(room);
     }
 
     // Second pass: add stub rooms for enabled cameras with no job room
