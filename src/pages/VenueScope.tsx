@@ -1162,6 +1162,8 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   const isDrink  = room.mode === 'drink_count';
   const isPeople = room.mode === 'people_count';
   const barConfig = camera ? parseBarConfig(camera.barConfigJson) : null;
+  // Show feed when there's a proxy URL OR when camera has a direct HTTP stream URL
+  const hasFeed  = !!camProxyUrl || !!(camera?.rtspUrl && (camera.rtspUrl.startsWith('http://') || camera.rtspUrl.startsWith('https://')));
   const [feedOpen, setFeedOpen] = React.useState(isDrink);
   const [secondsLeft, setSecondsLeft] = React.useState(0);
 
@@ -1228,8 +1230,8 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
           ) : (
             <span className="text-[10px] text-text-muted">{fmtTime(room.updatedAt)}</span>
           )}
-          {/* Feed toggle — only show when proxy is configured */}
-          {camProxyUrl && (
+          {/* Feed toggle — show when proxy or direct rtspUrl available */}
+          {hasFeed && (
             <button
               onClick={() => setFeedOpen(o => !o)}
               className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] text-text-muted hover:text-white hover:bg-whoop-bg transition-colors"
@@ -1244,7 +1246,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
 
       {/* Collapsible live camera feed */}
       <AnimatePresence>
-        {camProxyUrl && feedOpen && (
+        {hasFeed && feedOpen && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
@@ -2408,10 +2410,11 @@ export function VenueScope() {
   ), [safeJobs, todayStart]);
   const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !isJobLive(j)), [safeJobs, todayStart]);
 
-  // For the camera grid: only jobs with a real camera label, not failed/ghost ones
+  // For the camera grid: only jobs with a real camera label, not failed ones.
+  // Allow ~ prefix jobs when they are genuinely live (worker marks live cameras with ~ prefix).
   const gridJobs = useMemo(() => tonightJobs.filter(j =>
     j.status !== 'failed' &&
-    !j.jobId.startsWith('~') &&
+    (!j.jobId.startsWith('~') || j.isLive === true) &&
     (j.clipLabel || j.cameraLabel || j.roomLabel)  // must have a displayable name
   ), [tonightJobs]);
   const allRooms    = useMemo(() => { try { return buildRooms(gridJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [gridJobs]);
@@ -2423,21 +2426,36 @@ export function VenueScope() {
     if (!cameras.length) return allRooms;
     return allRooms.filter(room => {
       const label = room.label.toLowerCase();
-      const cam = cameras.find(c =>
+      let cam = cameras.find(c =>
         label.includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(label)
       );
+      if (!cam) {
+        const roomCh = channelFromSources(room.label, null);
+        if (roomCh) cam = cameras.find(c => channelFromSources(c.name, c.rtspUrl) === roomCh) ?? undefined;
+      }
       return !cam || cam.enabled !== false;
     });
   }, [allRooms, cameras]);
   const doneRooms   = useMemo(() => [] as RoomSummary[], []);
 
-  // Match a room label to its camera config record (for zone overlay + editor)
+  // Match a room label to its camera config record (for zone overlay + editor).
+  // Strategy: substring match first, then fall back to channel-number match.
+  // e.g. room "CH9 — Behind Bar" matches camera "Blind Goat — CH9" via CH9 extraction.
   const cameraForRoom = useCallback((room: RoomSummary): CameraConfig | null => {
     if (!cameras.length) return null;
     const label = room.label.toLowerCase();
-    return cameras.find(c =>
+    // 1. Direct substring match
+    const direct = cameras.find(c =>
       label.includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(label)
-    ) ?? null;
+    );
+    if (direct) return direct;
+    // 2. Channel-number match (handles "CH9 — Behind Bar" vs "Blind Goat — CH9")
+    const roomCh = channelFromSources(room.label, null);
+    if (roomCh) {
+      const byCh = cameras.find(c => channelFromSources(c.name, c.rtspUrl) === roomCh);
+      if (byCh) return byCh;
+    }
+    return null;
   }, [cameras]);
   const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
   // History = all older jobs (today's rooms are shown in the camera grid above)
