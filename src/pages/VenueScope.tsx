@@ -1400,12 +1400,13 @@ function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null
 }
 
 function CameraLiveView({
-  label, proxyBase, rtspUrl, barConfig, onConfigureZones, cameraModes,
+  label, proxyBase, rtspUrl, barConfig, tableZones, onConfigureZones, cameraModes,
 }: {
   label: string;
   proxyBase: string;
   rtspUrl?: string | null;
   barConfig?: BarConfig | null;
+  tableZones?: TableZone[] | null;
   onConfigureZones?: () => void;
   cameraModes?: string[];
 }) {
@@ -1596,8 +1597,9 @@ function CameraLiveView({
           handleError();
         }}
       />
-      {/* Zone overlay — show whenever feed is playing */}
+      {/* Zone overlays — show whenever feed is playing */}
       {barConfig && state === 'playing' && <ZoneOverlay config={barConfig} />}
+      {tableZones && tableZones.length > 0 && state === 'playing' && <TableZoneOverlay zones={tableZones} />}
       {/* No-config hint — only for drink_count cameras (other modes don't use bar zones) */}
       {!barConfig && state === 'playing' && onConfigureZones && (!cameraModes || cameraModes.includes('drink_count')) && (
         <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
@@ -1646,7 +1648,8 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
   const isDrink      = activeModes.includes('drink_count');
   const isPeople     = activeModes.includes('people_count');
   const isTableTurns = activeModes.includes('table_turns');
-  const barConfig = camera ? parseBarConfig(camera.barConfigJson) : null;
+  const barConfig   = camera ? parseBarConfig(camera.barConfigJson) : null;
+  const tableZones  = camera ? parseTableZones(camera.tableZonesJson) : null;
   // Show feed when camProxyUrl is configured OR camera has a direct HTTPS rtspUrl
   const hasFeed  = !!camProxyUrl || !!camera?.rtspUrl?.startsWith('https://');
   const [feedOpen, setFeedOpen] = React.useState(isDrink);
@@ -1744,6 +1747,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
               proxyBase={camProxyUrl}
               rtspUrl={camera?.rtspUrl}
               barConfig={barConfig}
+              tableZones={tableZones}
               onConfigureZones={
                 isTableTurns && !isDrink
                   ? (camera && onConfigureTableZones ? () => onConfigureTableZones(camera) : undefined)
