@@ -166,15 +166,13 @@ function ZoneEditorModal({
   const isDrawing = rectAnchor !== null;
 
   const streamUrl = (() => {
-    // If rtspUrl is already a full HTTP/HTTPS URL, use it directly
-    if (camera.rtspUrl && (camera.rtspUrl.startsWith('http://') || camera.rtspUrl.startsWith('https://'))) {
-      const isPageHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-      return isPageHttps ? camera.rtspUrl.replace(/^http:\/\//, 'https://') : camera.rtspUrl;
+    // Same routing logic as liveStreamUrl: proxy first, direct HTTPS fallback
+    if (proxyBase) {
+      const ch = channelFromSources(camera.name || '', camera.rtspUrl);
+      if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/0/livetop.mp4`;
     }
-    if (!proxyBase) return null;
-    const ch = channelFromSources(camera.name || '', camera.rtspUrl);
-    if (!ch) return null;
-    return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/0/livetop.mp4`;
+    if (camera.rtspUrl?.startsWith('https://')) return camera.rtspUrl;
+    return null;
   })();
 
   useEffect(() => {
@@ -1012,18 +1010,17 @@ function channelFromSources(label: string, rtspUrl?: string | null): string | nu
 }
 
 function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null): string | null {
-  // If rtspUrl is already a full HTTP/HTTPS stream URL, use it directly.
-  // This handles Cortex IQ NVRs where rtspUrl = http://ip:port/hls/live/CHn/0/livetop.mp4
-  if (rtspUrl && (rtspUrl.startsWith('http://') || rtspUrl.startsWith('https://'))) {
-    // Auto-upgrade to HTTPS when the page is served over HTTPS (avoids mixed-content block).
-    // Cortex IQ NVRs serve both HTTP and HTTPS on the same UPnP port.
-    const isPageHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-    return isPageHttps ? rtspUrl.replace(/^http:\/\//, 'https://') : rtspUrl;
+  // Primary path: route through the HTTPS Caddy proxy on the droplet (sslip.io cert = trusted on
+  // all devices, no per-device cert trust required). proxyBase = venue's camProxyUrl setting,
+  // e.g. https://137-184-61-178.sslip.io/cam
+  if (proxyBase) {
+    const ch = channelFromSources(label, rtspUrl);
+    if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/0/livetop.mp4`;
   }
-  const ch = channelFromSources(label, rtspUrl);
-  if (!ch || !proxyBase) return null;
-  const base = proxyBase.replace(/\/$/, '');
-  return `${base}/hls/live/${ch}/0/livetop.mp4`;
+  // Fallback: rtspUrl is already HTTPS (e.g. NVR with a proper CA cert) — use directly.
+  if (rtspUrl?.startsWith('https://')) return rtspUrl;
+  // No usable proxy and no HTTPS rtspUrl — can't stream (HTTP on HTTPS page = mixed content).
+  return null;
 }
 
 function CameraLiveView({
@@ -1222,8 +1219,8 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   const isDrink  = room.mode === 'drink_count';
   const isPeople = room.mode === 'people_count';
   const barConfig = camera ? parseBarConfig(camera.barConfigJson) : null;
-  // Show feed when there's a proxy URL OR when camera has a direct HTTP stream URL
-  const hasFeed  = !!camProxyUrl || !!(camera?.rtspUrl && (camera.rtspUrl.startsWith('http://') || camera.rtspUrl.startsWith('https://')));
+  // Show feed when camProxyUrl is configured OR camera has a direct HTTPS rtspUrl
+  const hasFeed  = !!camProxyUrl || !!camera?.rtspUrl?.startsWith('https://');
   const [feedOpen, setFeedOpen] = React.useState(isDrink);
   const [secondsLeft, setSecondsLeft] = React.useState(0);
 
