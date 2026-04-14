@@ -1489,8 +1489,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
 // ── Bartender leaderboard ─────────────────────────────────────────────────────
 
 function BartenderBoard({ bartenders }: { bartenders: BartenderStat[] }) {
-  if (bartenders.length === 0) return null;
-  const max = bartenders[0].drinks || 1;
+  const max = bartenders.length > 0 ? (bartenders[0].drinks || 1) : 1;
 
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4">
@@ -1503,6 +1502,9 @@ function BartenderBoard({ bartenders }: { bartenders: BartenderStat[] }) {
           {bartenders.length} bartender{bartenders.length !== 1 ? 's' : ''}
         </span>
       </div>
+      {bartenders.length === 0 ? (
+        <p className="text-xs text-text-muted text-center py-4">Bartender activity will appear once the shift begins.</p>
+      ) : (
       <div className="space-y-3">
         {bartenders.map((b, i) => (
           <div key={b.name} className="flex items-center gap-3">
@@ -1537,6 +1539,7 @@ function BartenderBoard({ bartenders }: { bartenders: BartenderStat[] }) {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -1829,14 +1832,15 @@ function PaceChart({ jobs }: { jobs: VenueScopeJob[] }) {
   const maxDrinks = Math.max(...buckets.map(b => b.drinks), 1);
   const hasData = buckets.some(b => b.drinks > 0);
 
-  if (!hasData) return null;
-
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4">
       <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
         <TrendingUp className="w-4 h-4 text-teal" />
         Drink Pace — Last Hour
       </h2>
+      {!hasData ? (
+        <p className="text-xs text-text-muted text-center py-4">Drink pace will populate once the shift starts.</p>
+      ) : (
       <div className="flex items-end gap-2 h-16">
         {buckets.map(({ label, drinks }) => (
           <div key={label} className="flex-1 flex flex-col items-center gap-1">
@@ -1851,6 +1855,7 @@ function PaceChart({ jobs }: { jobs: VenueScopeJob[] }) {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -2162,7 +2167,14 @@ function DetectionEventsPanel({
   const drinkCount = allEvents.filter(e => e.kind === 'drink').length;
   const theftCount = allEvents.filter(e => e.kind === 'theft').length;
 
-  if (allEvents.length === 0) return null;
+  if (allEvents.length === 0) return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl px-4 py-3 flex items-center gap-2">
+      <GlassWater className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+      <span className="text-sm text-text-muted">Detection Log</span>
+      <span className="text-[10px] text-text-muted bg-whoop-bg border border-whoop-divider px-1.5 py-0.5 rounded-full ml-1">0 drinks</span>
+      <span className="text-xs text-text-muted ml-auto">Detections will appear once the shift starts.</span>
+    </div>
+  );
 
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
@@ -2856,9 +2868,7 @@ export function VenueScope() {
           <POSReconciliationPanel jobs={tonightJobs} />
 
           {/* Behind the Bar — bartender performance */}
-          {bartenders.length > 0 && (
-            <BartenderBoard bartenders={bartenders} />
-          )}
+          <BartenderBoard bartenders={bartenders} />
 
           {/* Drink pace chart */}
           <PaceChart jobs={tonightJobs} />
