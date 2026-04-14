@@ -305,15 +305,20 @@ class AdminService {
 
     // Try the Admin Lambda API first
     if (ADMIN_API) {
-      const data = await adminFetch(`/admin/cameras${qs}`);
-      return data.items ?? [];
+      try {
+        const data = await adminFetch(`/admin/cameras${qs}`);
+        return data.items ?? [];
+      } catch (e: any) {
+        // If the Lambda doesn't have the cameras route (older deployment),
+        // fall through to the DynamoDB fallback below
+        if (!venueId || !e.message?.includes('No route')) throw e;
+        console.warn('Lambda cameras route unavailable, falling back to direct DynamoDB:', e.message);
+      }
     }
 
     // Fallback: query VenueScopeCameras directly via DynamoDB credentials
     if (venueId) {
-      console.log('VITE_ADMIN_API_URL not set — falling back to direct DynamoDB for cameras');
       const cams = await cameraService.listCameras(venueId);
-      // Map Camera → AdminCamera shape
       return cams.map(c => ({
         cameraId:        c.cameraId,
         venueId:         c.venueId,
