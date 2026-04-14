@@ -259,7 +259,7 @@ def run_job(job_id: str):
                 _last_partial_sync[0] = time.time()
 
         def live_cb(partial_summary, elapsed_sec):
-            """Called every ~30s for continuous live streams."""
+            """Called every ~10s for continuous live streams."""
             # Write to local file so Streamlit dashboard can read it
             try:
                 live_file = result_dir / "live.json"
@@ -277,6 +277,25 @@ def run_job(job_id: str):
                                   created_at=job.get("created_at"))
             except Exception as _le:
                 log.debug(f"Live metrics push error (non-fatal): {_le}")
+            # Real-time theft alert — fire immediately on walk-out/unknown bottle
+            # during live streams so owners are notified mid-shift, not after.
+            try:
+                bottles = partial_summary.get("bottles", {})
+                _live_has_theft = (
+                    bottles.get("walk_out_alerts", 0) > 0
+                    or bottles.get("unknown_bottle_alerts", 0) > 0
+                    or bottles.get("over_pours", 0) > 0
+                )
+                _live_unrung = int(partial_summary.get("unrung_drinks", 0) or 0)
+                if _live_has_theft or _live_unrung >= 3:  # lower threshold for live
+                    from core.alerts import send_theft_alert
+                    _live_summary = {**partial_summary,
+                                     "has_theft_flag": _live_has_theft,
+                                     "clip_label": job.get("clip_label", ""),
+                                     "unrung_drinks": _live_unrung}
+                    send_theft_alert(f"{job_id}_live", _live_summary)
+            except Exception as _ae:
+                log.debug(f"Live theft alert error (non-fatal): {_ae}")
 
         # Route people_count to lightweight OpenCV runner (no YOLO, ~15MB RAM)
         if mode == "people_count" and not extra_config.get("force_yolo"):

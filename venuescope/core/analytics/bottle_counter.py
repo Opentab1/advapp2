@@ -38,8 +38,16 @@ _POUR_TILT_WINDOW = 4   # rolling frames used to smooth ratio
 
 # Pour yield constants (free-pour)
 _FLOW_RATE_OZ_PER_SEC = 0.75   # ~0.75 oz/sec for a standard free pour
-_STANDARD_POUR_OZ     = 1.25   # standard measure (adjust per venue)
+_STANDARD_POUR_OZ     = 1.25   # standard measure for spirits (1 jigger)
 _OVER_POUR_FACTOR     = 1.4    # pours > factor × standard = over-pour flag
+
+# Per-class standard pour sizes (oz) — prevents false over-pour alerts for wine/beer
+# class 39=bottle (spirit), 40=wine_glass, 41=cup/pint
+_CLASS_STANDARD_OZ: dict = {
+    39: 1.25,   # spirit bottle → 1 jigger
+    40: 5.0,    # wine glass → standard 5oz pour
+    41: 16.0,   # cup/pint → 16oz (beer pint, not over-pour)
+}
 
 _SAMPLE_INTERVAL_SEC  = 5.0    # timeline resolution
 
@@ -118,6 +126,9 @@ class _BottleTrack:
         smoothed = sum(self._ratio_window) / len(self._ratio_window)
 
         event = None
+        # Per-class standard oz (spirits vs wine vs pint)
+        _std_oz = _CLASS_STANDARD_OZ.get(self.class_id, _STANDARD_POUR_OZ)
+
         if not self.is_pouring:
             if smoothed < _POUR_RATIO:
                 self._pour_tilt_frames += 1
@@ -131,7 +142,7 @@ class _BottleTrack:
                 # Pour ended
                 duration = max(0.1, t_sec - (self._pour_start_t or t_sec))
                 est_oz   = round(duration * _FLOW_RATE_OZ_PER_SEC, 2)
-                over     = est_oz > _STANDARD_POUR_OZ * _OVER_POUR_FACTOR
+                over     = est_oz > _std_oz * _OVER_POUR_FACTOR
                 event = {
                     "event_type":    "pour_end",
                     "bottle_uid":    self.uid,
@@ -140,6 +151,7 @@ class _BottleTrack:
                     "pour_start_t":  round(self._pour_start_t or t_sec, 3),
                     "duration_sec":  round(duration, 2),
                     "estimated_oz":  est_oz,
+                    "standard_oz":   _std_oz,
                     "is_over_pour":  over,
                     "is_unknown_bottle": self.is_unknown,
                 }

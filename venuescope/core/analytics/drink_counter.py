@@ -44,15 +44,21 @@ def _reach_probe(x1: float, y1: float, x2: float, y2: float,
     Catches arm-reach serves where only the bartender's arm/torso crosses the
     bar line but the body centroid stays on the bartender side.
 
-    Checks 8 points (4 corners + midpoint of each edge) so leaning-arm serves
-    are caught even when the arm doesn't reach a corner position.
+    Checks 20 points: 4 corners + midpoints + quarter-points on each edge so
+    leaning-arm serves are caught even for partial arm extensions that don't
+    reach a corner or midpoint.
     """
     dx = p2[0] - p1[0]; dy = p2[1] - p1[1]
     mx = (x1 + x2) / 2; my = (y1 + y2) / 2
+    qx1 = x1 + (x2 - x1) * 0.25; qx3 = x1 + (x2 - x1) * 0.75
+    qy1 = y1 + (y2 - y1) * 0.25; qy3 = y1 + (y2 - y1) * 0.75
     candidates = (
-        (x1, y1), (x2, y1), (x1, y2), (x2, y2),  # corners
-        (mx, y1), (mx, y2),                         # top/bottom edge midpoints
-        (x1, my), (x2, my),                         # left/right edge midpoints
+        (x1, y1), (x2, y1), (x1, y2), (x2, y2),   # corners
+        (mx, y1), (mx, y2), (x1, my), (x2, my),     # edge midpoints
+        (qx1, y1), (qx3, y1), (qx1, y2), (qx3, y2), # top/bottom quarters
+        (x1, qy1), (x1, qy3), (x2, qy1), (x2, qy3), # left/right quarters
+        (qx1, my), (qx3, my),                         # middle horizontal band
+        (mx, qy1), (mx, qy3),                         # middle vertical band
     )
     best_pt = candidates[0]; best_val = float('-inf')
     for (px, py) in candidates:
@@ -62,10 +68,24 @@ def _reach_probe(x1: float, y1: float, x2: float, y2: float,
     return best_pt
 
 
+def _lean_bonus(box_w: float, box_h: float,
+                prev_w_history: List[float]) -> bool:
+    """Return True if the bounding box has widened significantly vs. recent
+    history — indicates the person is leaning forward over the bar.
+    A leaning pose reduces effective arm-reach distance so we grant a
+    1-frame dwell bonus (caller can reduce serve_dwell_frames by 1).
+    """
+    if len(prev_w_history) < 5:
+        return False
+    avg_prev_w = sum(prev_w_history[-5:]) / 5
+    return avg_prev_w > 0 and (box_w / avg_prev_w) >= 1.20  # 20% wider = leaning
+
+
 class _TrackState:
     __slots__=("prep_frames","serve_side_buffer","cooldown_remaining",
                "last_confirmed_side","missing_frames","station_id_cache",
-               "customer_dwell_frames","crossing_confs","centroid_history")
+               "customer_dwell_frames","crossing_confs","centroid_history",
+               "box_width_history")
     def __init__(self):
         self.prep_frames           = 0
         self.serve_side_buffer:    List[int] = []
@@ -76,6 +96,7 @@ class _TrackState:
         self.customer_dwell_frames = 0   # consecutive frames on customer side
         self.crossing_confs:       List[float] = []  # detection confs during crossing
         self.centroid_history: List[tuple] = []   # (cx, cy) per frame for velocity
+        self.box_width_history: List[float] = []  # bounding box widths for lean detection
 
 
 class DrinkCounter:
@@ -227,11 +248,16 @@ class DrinkCounter:
             cx,cy = float(centroids[i][0]), float(centroids[i][1])
             state  = self._states[tid]
 
-            # A1: maintain centroid history for velocity check
+            # A1: maintain centroid + box-width history for velocity / lean detection
             _vel_n = self.rules.velocity_window_frames
             state.centroid_history.append((cx, cy))
             if len(state.centroid_history) > _vel_n + 5:
                 state.centroid_history = state.centroid_history[-(_vel_n + 5):]
+            if boxes is not None and i < len(boxes):
+                bx = boxes[i]
+                state.box_width_history.append(float(bx[2]) - float(bx[0]))
+                if len(state.box_width_history) > 20:
+                    state.box_width_history = state.box_width_history[-20:]
 
             # Try auto re-ID if unassigned
             self._try_reid_by_zone(cx, cy, tid, active_set)
@@ -303,7 +329,15 @@ class DrinkCounter:
 
             # BILATERAL CROSSING: must have dwelled on customer side long enough
             # (filters out fast sweeping gestures — reaching for glass, handing change)
-            if state.customer_dwell_frames < self.rules.serve_dwell_frames:
+            # Lean bonus: if person is leaning forward (box widened 20%+) reduce
+            # dwell requirement by 1 frame — leaning pose confirms intentional reach.
+            _dwell_req = self.rules.serve_dwell_frames
+            if boxes is not None and i < len(boxes):
+                bx = boxes[i]
+                _bw = float(bx[2]) - float(bx[0])
+                if _lean_bonus(_bw, float(bx[3]) - float(bx[1]), state.box_width_history):
+                    _dwell_req = max(1, _dwell_req - 1)
+            if state.customer_dwell_frames < _dwell_req:
                 _log.info("[reject] t=%.1f tid=%s station=%s reason=dwell_frames have=%d need=%d",
                           t_sec, tid, station_id, state.customer_dwell_frames, self.rules.serve_dwell_frames)
                 continue
@@ -501,11 +535,19 @@ class DrinkCounter:
             warnings.append(
                 f"LOW_CONF_SERVES: {self._low_conf_serves} of {total_detected} detected serves "
                 f"({low_pct:.0f}%) had low crossing confidence — review verification clips.")
+        # High-confidence review events (score just below threshold but detection
+        # confidence was good) are likely real serves that weren't rung — count
+        # them as potential unrung drinks for theft flagging purposes.
+        _high_conf_review = sum(
+            1 for ev in self._review_events
+            if ev.get("confidence", 0.0) >= self.rules.min_serve_conf
+        )
         if self._review_count > 0:
             warnings.append(
                 f"REVIEW_BUCKET: {self._review_count} serve gesture(s) had serve_score "
                 f"< {self.rules.min_serve_score:.2f} and were NOT counted — "
-                f"check verification clips to confirm or dismiss.")
+                f"check verification clips to confirm or dismiss. "
+                f"{_high_conf_review} had high detection confidence (potential unrung).")
         return {
             "total_serves_detected": total,
             "high_conf_serves":      self._high_conf_serves,
@@ -513,5 +555,6 @@ class DrinkCounter:
             "unassigned_serves":     self._unassigned_serves,
             "frames_processed":      self._total_frames,
             "review_count":          self._review_count,
+            "potential_unrung":      _high_conf_review,  # for theft flag escalation
             "warnings":              warnings,
         }

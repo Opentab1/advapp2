@@ -1,0 +1,36 @@
+[Unit]
+Description=VenueScope Worker Daemon
+Documentation=https://github.com/Opentab1/advapp2
+After=network-online.target
+Wants=network-online.target
+# Restart automatically if the process dies for any reason
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/wedid/venuescope
+ExecStart=/usr/bin/python3 /root/wedid/venuescope/worker_daemon.py
+Restart=always
+RestartSec=5
+
+# Environment — add AWS credentials and venue config here
+# Copy from your .env file or set inline:
+EnvironmentFile=-/root/wedid/venuescope/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=YOLO_TELEMETRY=False
+Environment=ULTRALYTICS_AUTOINSTALL=False
+
+# Resource limits
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Logging — view with: journalctl -u venuescope-worker -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=venuescope-worker
+
+[Install]
+WantedBy=multi-user.target

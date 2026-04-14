@@ -512,11 +512,12 @@ class VenueProcessor:
         # Per-frame timing for performance monitoring
         self._frame_times: List[float] = []   # ms per processed frame
 
-        # Live push — called every ~30s for rtsp streams with max_seconds=0
+        # Live push — called every ~10s for rtsp streams with max_seconds=0
+        # (was 30s; reduced so dashboards refresh faster during live shifts)
         self._live_event_cb:    Optional[Callable] = live_event_cb
         self._last_live_push:   float = 0.0
         self._live_push_interval: float = float(
-            self.ec.get("live_push_interval", 30.0))
+            self.ec.get("live_push_interval", 10.0))
 
         # Checkpoint / resume
         self._checkpoint_file   = self.result_dir / "checkpoint.json"

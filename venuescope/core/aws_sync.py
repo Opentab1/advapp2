@@ -403,6 +403,36 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
             update_expr += ", cameraLabel = if_not_exists(cameraLabel, :cnl)"
             expr_vals[":cnl"] = {"S": cam_name}
 
+    # ── Live theft events (real-time) ─────────────────────────────────────────
+    # Push the last 20 theft-relevant events so React shows alerts immediately
+    # rather than waiting for end-of-shift sync.
+    live_theft: list = []
+    bottles = summary.get("bottles", {})
+    for ev in bottles.get("walk_out_details", []):
+        live_theft.append({"type": "walk_out", "t_sec": ev.get("t_sec") or ev.get("last_seen_t", 0), "detail": ev.get("reason", "")})
+    for ev in bottles.get("unknown_bottle_details", []):
+        live_theft.append({"type": "unknown_bottle", "t_sec": ev.get("t_sec", 0), "detail": ev.get("reason", "")})
+    for ev in bottles.get("pour_events", []):
+        if ev.get("is_over_pour"):
+            live_theft.append({"type": "over_pour", "t_sec": ev.get("t_sec", 0),
+                                "oz": ev.get("estimated_oz"), "std": ev.get("standard_oz")})
+    # Sort by time, keep last 20
+    live_theft.sort(key=lambda e: e.get("t_sec", 0))
+    live_theft = live_theft[-20:]
+    if live_theft:
+        update_expr += ", liveTheftEvents = :lte"
+        expr_vals[":lte"] = {"S": json.dumps(live_theft)}
+
+    # ── Shrinkage estimate (oz poured - oz expected from drink count) ──────────
+    pours_detected = len(bottles.get("pour_events", []))
+    total_poured_oz = float(bottles.get("total_poured_oz", 0.0))
+    expected_oz = total_drinks * 1.25  # standard spirit pour baseline
+    shrinkage_oz = round(max(0.0, total_poured_oz - expected_oz), 2)
+    if total_poured_oz > 0:
+        update_expr += ", shrinkageOz = :soz, pourCount = :pc"
+        expr_vals[":soz"] = {"N": str(shrinkage_oz)}
+        expr_vals[":pc"]  = {"N": str(pours_detected)}
+
     # Include per-bartender breakdown if available
     if bts:
         bt_compact = {
