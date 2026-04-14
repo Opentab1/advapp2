@@ -1047,7 +1047,26 @@ class VenueProcessor:
             for ev in evs: writer.add_event(ev)
             writer.add_frame(t_sec, self.shift)
 
-            # Real-time live push — fires every _live_push_interval seconds
+            # Event-driven push — fires immediately on drink/pour detections.
+            # Debounced to 2s so back-to-back detections merge into one DDB write.
+            # This replaces the 30s wait with sub-second latency for each serve.
+            _PUSH_NOW_TYPES = {"drink_serve", "pour_end", "walk_out_alert",
+                               "unknown_bottle_alert", "over_pour"}
+            if (self._live_event_cb is not None
+                    and self._max_seconds == 0
+                    and self.source_type == "rtsp"
+                    and any(e.get("event_type") in _PUSH_NOW_TYPES for e in evs)
+                    and (time.time() - self._last_live_push) >= 2.0):
+                try:
+                    partial = self._build_summary(analyzers, t_sec, fps)
+                    partial["_elapsed_sec"] = t_sec
+                    self._live_event_cb(partial, t_sec)
+                except Exception:
+                    pass
+                self._last_live_push = time.time()
+
+            # Periodic heartbeat push — fires every _live_push_interval seconds
+            # even when nothing is detected (keeps headcount, elapsed time fresh).
             # Only for rtsp/http sources running continuously (max_seconds == 0)
             if (self._live_event_cb is not None
                     and self._max_seconds == 0
