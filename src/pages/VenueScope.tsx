@@ -653,12 +653,26 @@ function TableZoneOverlay({ zones }: { zones: TableZone[] }) {
   return (
     <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 1 1" preserveAspectRatio="none">
       {zones.map((z, i) => (
-        <polygon key={i}
-          points={z.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
-          fill="rgba(168,85,247,0.08)"
-          stroke="rgba(168,85,247,0.65)"
-          strokeWidth="0.003"
-        />
+        <g key={i}>
+          <polygon
+            points={z.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
+            fill="rgba(168,85,247,0.12)"
+            stroke="rgba(168,85,247,0.9)"
+            strokeWidth="0.004"
+          />
+          {/* Label at centroid */}
+          {(() => {
+            const cx = z.polygon.reduce((s, [px]) => s + px, 0) / z.polygon.length;
+            const cy = z.polygon.reduce((s, [, py]) => s + py, 0) / z.polygon.length;
+            return (
+              <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
+                fontSize="0.035" fill="rgba(220,180,255,0.9)"
+                style={{ fontWeight: 600, fontFamily: 'sans-serif', userSelect: 'none' }}>
+                {z.label}
+              </text>
+            );
+          })()}
+        </g>
       ))}
     </svg>
   );
@@ -1625,7 +1639,7 @@ function CameraLiveView({
         >
           <Edit2 className="w-2.5 h-2.5" />
           {cameraModes?.includes('table_turns') && !cameraModes?.includes('drink_count')
-            ? 'Set Up Tables'
+            ? (tableZones && tableZones.length > 0 ? `${tableZones.length} Table${tableZones.length !== 1 ? 's' : ''} ✓` : 'Set Up Tables')
             : (barConfig ? 'Edit Zones' : 'Configure Zones')}
         </button>
       )}
@@ -1652,7 +1666,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
   const tableZones  = camera ? parseTableZones(camera.tableZonesJson) : null;
   // Show feed when camProxyUrl is configured OR camera has a direct HTTPS rtspUrl
   const hasFeed  = !!camProxyUrl || !!camera?.rtspUrl?.startsWith('https://');
-  const [feedOpen, setFeedOpen] = React.useState(isDrink);
+  const [feedOpen, setFeedOpen] = React.useState(isDrink || isTableTurns);
   const [secondsLeft, setSecondsLeft] = React.useState(0);
 
   React.useEffect(() => {
