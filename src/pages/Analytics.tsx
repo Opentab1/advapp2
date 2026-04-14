@@ -1057,7 +1057,7 @@ function RevenueBanner({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrin
 export function Analytics() {
   const venueId     = authService.getStoredUser()?.venueId ?? '';
   const isDemo      = isDemoAccount(venueId);
-  const [period, setPeriod]           = useState<Period>('all');
+  const [period, setPeriod]           = useState<Period>('today');
   const [allJobs, setAllJobs]         = useState<VenueScopeJob[]>([]);
   const [loading, setLoading]         = useState(true);
   const [avgDrinkPrice, setAvgDrinkPrice] = useState(0);
