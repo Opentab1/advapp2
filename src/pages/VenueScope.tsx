@@ -166,6 +166,10 @@ function ZoneEditorModal({
   const isDrawing = rectAnchor !== null;
 
   const streamUrl = (() => {
+    // If rtspUrl is already a full HTTP/HTTPS URL, use it directly
+    if (camera.rtspUrl && (camera.rtspUrl.startsWith('http://') || camera.rtspUrl.startsWith('https://'))) {
+      return camera.rtspUrl;
+    }
     if (!proxyBase) return null;
     const ch = channelFromSources(camera.name || '', camera.rtspUrl);
     if (!ch) return null;
@@ -1007,6 +1011,11 @@ function channelFromSources(label: string, rtspUrl?: string | null): string | nu
 }
 
 function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null): string | null {
+  // If rtspUrl is already a full HTTP/HTTPS stream URL, use it directly.
+  // This handles Cortex IQ NVRs where rtspUrl = http://ip:port/hls/live/CHn/0/livetop.mp4
+  if (rtspUrl && (rtspUrl.startsWith('http://') || rtspUrl.startsWith('https://'))) {
+    return rtspUrl;
+  }
   const ch = channelFromSources(label, rtspUrl);
   if (!ch || !proxyBase) return null;
   const base = proxyBase.replace(/\/$/, '');
@@ -2405,7 +2414,14 @@ export function VenueScope() {
   // Show ALL rooms in the camera grid (live + done snapshots). Snapshot cameras are
   // almost always "done" between their 20-min polling intervals — hiding done rooms
   // means the grid would appear empty most of the time.
-  const liveRooms   = allRooms;
+  // Filter out rooms whose camera is explicitly disabled in DynamoDB
+  const liveRooms = useMemo(() => {
+    if (!cameras.length) return allRooms;
+    return allRooms.filter(room => {
+      const cam = cameraForRoom(room);
+      return !cam || cam.enabled !== false;
+    });
+  }, [allRooms, cameras, cameraForRoom]);
   const doneRooms   = useMemo(() => [] as RoomSummary[], []);
 
   // Match a room label to its camera config record (for zone overlay + editor)
