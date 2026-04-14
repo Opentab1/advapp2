@@ -25,6 +25,7 @@ import {
   Wifi,
   Search,
   Radio,
+  Network,
 } from 'lucide-react';
 import adminService, { AdminCamera, adminFetch } from '../../services/admin.service';
 
@@ -620,6 +621,9 @@ function VenueCameraSection({
   const [showDiscover, setShowDiscover] = useState(false);
   const [editCamera, setEditCamera] = useState<AdminCamera | null>(null);
   const [error, setError] = useState('');
+  const [showPortUpdate, setShowPortUpdate] = useState(false);
+  const [newPort, setNewPort] = useState('');
+  const [portUpdating, setPortUpdating] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -646,6 +650,25 @@ function VenueCameraSection({
       ));
     } catch (e: any) {
       alert(`Failed to toggle camera: ${e.message}`);
+    }
+  };
+
+  const handlePortUpdate = async () => {
+    const port = newPort.trim();
+    if (!port || isNaN(Number(port))) return;
+    setPortUpdating(true);
+    try {
+      await adminFetch('/admin/cameras/bulk-update-port', {
+        method: 'POST',
+        body: JSON.stringify({ venueId, newPort: port }),
+      });
+      await load();
+      setShowPortUpdate(false);
+      setNewPort('');
+    } catch (e: any) {
+      alert(`Failed to update port: ${e.message}`);
+    } finally {
+      setPortUpdating(false);
     }
   };
 
@@ -795,7 +818,39 @@ function VenueCameraSection({
                   <Plus className="w-4 h-4" />
                   Manual
                 </button>
+                <button
+                  onClick={() => setShowPortUpdate(v => !v)}
+                  className="flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-colors text-sm font-medium"
+                >
+                  <Network className="w-4 h-4" />
+                  NVR Port
+                </button>
               </div>
+
+              {/* NVR Port Update inline panel */}
+              {showPortUpdate && (
+                <div className="mt-3 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center gap-3 flex-wrap">
+                  <Network className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                  <span className="text-sm text-amber-300">Update NVR port for all cameras:</span>
+                  <input
+                    type="number"
+                    placeholder="New port (e.g. 39150)"
+                    value={newPort}
+                    onChange={e => setNewPort(e.target.value)}
+                    className="flex-1 min-w-32 px-3 py-1.5 rounded-lg bg-black/30 border border-white/20 text-white text-sm"
+                  />
+                  <button
+                    onClick={handlePortUpdate}
+                    disabled={portUpdating || !newPort}
+                    className="px-4 py-1.5 rounded-lg bg-amber-500 text-black text-sm font-semibold disabled:opacity-50"
+                  >
+                    {portUpdating ? 'Updating...' : `Update All ${cameras.length} Cameras`}
+                  </button>
+                  <button onClick={() => setShowPortUpdate(false)} className="text-gray-500 hover:text-white">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
           </motion.div>
         )}

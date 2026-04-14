@@ -353,6 +353,37 @@ async function updateCamera(cameraId, body) {
   return ok({ success: true });
 }
 
+async function bulkUpdateNvrPort(body) {
+  const { venueId, oldPort, newPort } = body;
+  if (!venueId || !newPort) return err(400, 'venueId and newPort required');
+
+  // Fetch all cameras for this venue
+  const resp = await ddb.send(new QueryCommand({
+    TableName: CAMERAS_TABLE,
+    KeyConditionExpression: 'venueId = :v',
+    ExpressionAttributeValues: { ':v': { S: venueId } },
+  }));
+  const items = resp.Items || [];
+  if (!items.length) return ok({ success: true, updated: 0 });
+
+  let updated = 0;
+  for (const item of items) {
+    const url = item.rtspUrl?.S || '';
+    const newUrl = oldPort
+      ? url.replace(`:${oldPort}/`, `:${newPort}/`)
+      : url.replace(/:\d+\//, `:${newPort}/`);
+    if (newUrl === url) continue;
+    await ddb.send(new UpdateItemCommand({
+      TableName: CAMERAS_TABLE,
+      Key: { venueId: { S: venueId }, cameraId: item.cameraId },
+      UpdateExpression: 'SET rtspUrl = :u',
+      ExpressionAttributeValues: { ':u': { S: newUrl } },
+    }));
+    updated++;
+  }
+  return ok({ success: true, updated });
+}
+
 async function deleteCamera(cameraId, venueId) {
   if (!venueId) return err(400, 'venueId required');
   await ddb.send(new DeleteItemCommand({
@@ -542,6 +573,7 @@ export const handler = async (event) => {
     // Cameras
     if (method === 'GET'   && rawPath === '/admin/cameras')            return listCameras(qs.venueId);
     if (method === 'POST'  && rawPath === '/admin/cameras')            return createCamera(body);
+    if (method === 'POST'  && rawPath === '/admin/cameras/bulk-update-port') return bulkUpdateNvrPort(body);
     const cameraMatch = rawPath.match(/^\/admin\/cameras\/([^/]+)$/);
     if (method === 'PATCH' && cameraMatch)                             return updateCamera(cameraMatch[1], body);
     if (method === 'DELETE'&& cameraMatch)                             return deleteCamera(cameraMatch[1], qs.venueId);
