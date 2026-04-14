@@ -616,7 +616,7 @@ function VenueCameraSection({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [cameras, setCameras] = useState<AdminCamera[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [showDiscover, setShowDiscover] = useState(false);
   const [editCamera, setEditCamera] = useState<AdminCamera | null>(null);
