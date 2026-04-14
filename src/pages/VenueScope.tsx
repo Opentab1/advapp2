@@ -808,7 +808,25 @@ function buildRooms(jobs: VenueScopeJob[], enabledPeopleCamNames: Set<string> = 
 
 // ── Theft investigation modal ─────────────────────────────────────────────────
 
+interface LiveTheftEvent {
+  type: 'walk_out' | 'unknown_bottle' | 'over_pour';
+  ts?: number;
+  bottle_class?: string;
+  track_id?: number;
+  poured_oz?: number;
+  expected_oz?: number;
+  excess_oz?: number;
+}
+
 function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDrinkPrice: number; onClose: () => void }) {
+  const liveEvents: LiveTheftEvent[] = React.useMemo(() => {
+    if (!job.liveTheftEvents) return [];
+    try { return JSON.parse(job.liveTheftEvents); } catch { return []; }
+  }, [job.liveTheftEvents]);
+
+  const typeLabel = (t: string) => t === 'walk_out' ? 'Walk-out' : t === 'unknown_bottle' ? 'Unknown bottle' : 'Over-pour';
+  const typeColor = (t: string) => t === 'walk_out' ? 'text-red-400' : t === 'unknown_bottle' ? 'text-amber-400' : 'text-orange-400';
+
   return (
     <AnimatePresence>
       <motion.div
@@ -849,12 +867,45 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
                 </div>
               ))}
             </div>
+
+            {/* Shrinkage */}
+            {(job.shrinkageOz ?? 0) > 0 && (
+              <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl px-3 py-2 flex items-center justify-between">
+                <span className="text-xs text-text-muted flex items-center gap-1.5">
+                  <GlassWater className="w-3.5 h-3.5 text-orange-400" /> Shrinkage
+                </span>
+                <span className="text-sm font-semibold text-orange-400">{job.shrinkageOz?.toFixed(1)} oz over expected</span>
+              </div>
+            )}
+
             {job.topBartender && (
               <div className="bg-whoop-bg rounded-xl px-3 py-2 flex items-center justify-between">
                 <span className="text-xs text-text-muted flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Flagged bartender</span>
                 <span className="text-sm font-semibold text-white">{job.topBartender}</span>
               </div>
             )}
+
+            {/* Live theft event feed */}
+            {liveEvents.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold text-white mb-2 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-400" /> Live Alerts ({liveEvents.length})
+                </h3>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {liveEvents.map((ev, i) => (
+                    <div key={i} className="bg-whoop-bg rounded-lg px-3 py-1.5 flex items-center justify-between text-xs">
+                      <span className={`font-medium ${typeColor(ev.type)}`}>{typeLabel(ev.type)}</span>
+                      <span className="text-text-muted tabular-nums">
+                        {ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                        {ev.excess_oz ? ` · +${ev.excess_oz.toFixed(1)}oz` : ''}
+                        {ev.bottle_class ? ` · ${ev.bottle_class}` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
               <h3 className="text-xs font-semibold text-white mb-2 flex items-center gap-1.5">
                 <FileText className="w-3.5 h-3.5" /> Next Steps
@@ -1448,6 +1499,31 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
           )}
         </div>
       )}
+
+      {/* Live theft / shrinkage row */}
+      {room.job && (() => {
+        const job = room.job;
+        let evCount = 0;
+        try { evCount = job.liveTheftEvents ? JSON.parse(job.liveTheftEvents).length : 0; } catch { evCount = 0; }
+        const shrink = job.shrinkageOz ?? 0;
+        if (evCount === 0 && shrink === 0) return null;
+        return (
+          <div className="flex items-center gap-2 flex-wrap">
+            {evCount > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 text-red-400 border border-red-500/25">
+                <AlertTriangle className="w-2.5 h-2.5" />
+                {evCount} theft event{evCount !== 1 ? 's' : ''} detected
+              </span>
+            )}
+            {shrink > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/25">
+                <GlassWater className="w-2.5 h-2.5" />
+                {shrink.toFixed(1)} oz shrinkage
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Footer row */}
       <div className="flex items-center justify-between text-[10px] text-text-muted">

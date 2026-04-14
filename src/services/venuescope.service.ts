@@ -85,6 +85,8 @@ function _itemToJob(item: Record<string, Record<string, unknown>>): VenueScopeJo
     currentHeadcount: n('currentHeadcount'),
     peopleIn:        n('peopleIn'),
     peopleOut:       n('peopleOut'),
+    shrinkageOz:     n('shrinkageOz'),
+    liveTheftEvents: s('liveTheftEvents'),
   } as VenueScopeJob;
 }
 
@@ -206,6 +208,10 @@ export interface VenueScopeJob {
   currentHeadcount?: number;
   peopleIn?: number;
   peopleOut?: number;
+  // Live theft detection (JSON: [{type, ts, ...}])
+  liveTheftEvents?: string;
+  // Shrinkage (oz poured above expected)
+  shrinkageOz?: number;
   // POS reconciliation
   posProvider?: string;
   posRevenue?: number;
@@ -246,6 +252,7 @@ const LIST_JOBS_QUERY = `
         totalTurns avgResponseSec avgDwellMin
         uniqueStaff peakHeadcount avgIdlePct
         isLive roomLabel bartenderBreakdown elapsedSec
+        shrinkageOz liveTheftEvents
         posProvider posRevenue posItemCount posCameraCount posVariancePct posVarianceDrinks posLostRevenue tableVisitsByStaff
       }
       nextToken
