@@ -1035,17 +1035,27 @@ function CameraLiveView({
   barConfig?: BarConfig | null;
   onConfigureZones?: () => void;
 }) {
-  const videoRef = React.useRef<HTMLVideoElement>(null);
-  const hlsRef   = React.useRef<Hls | null>(null);
-  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [state, setState] = React.useState<'loading' | 'playing' | 'error' | 'mixed_content'>('loading');
+  const videoRef  = React.useRef<HTMLVideoElement>(null);
+  const hlsRef    = React.useRef<Hls | null>(null);
+  const timerRef  = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [state, setState]   = React.useState<'loading' | 'playing' | 'error' | 'mixed_content' | 'cert'>('loading');
   const [errorMsg, setErrorMsg] = React.useState('Stream unavailable');
+  const [retryKey, setRetryKey] = React.useState(0);
   const url = liveStreamUrl(label, proxyBase, rtspUrl);
+
+  // Detect if this is an HTTPS-upgraded HTTP stream — failure likely means untrusted self-signed cert.
+  // NVRs on local IPs can never have a CA-signed cert, so we need the user to accept it once.
+  const httpsUpgraded = !!(url?.startsWith('https://') && rtspUrl?.startsWith('http://'));
+  // The raw HTTPS URL the user needs to open to accept the cert
+  const certTrustUrl  = httpsUpgraded ? url : null;
 
   React.useEffect(() => {
     if (!url || !videoRef.current) return;
 
-    // Detect mixed-content before attempting load — saves 10s timeout
+    setState('loading');
+    setErrorMsg('Stream unavailable');
+
+    // Detect plain mixed-content (HTTP stream on HTTPS page, no upgrade applied)
     const isHttps = window.location.protocol === 'https:';
     if (isHttps && url.startsWith('http://')) {
       setState('mixed_content');
@@ -1054,15 +1064,17 @@ function CameraLiveView({
 
     const v = videoRef.current;
 
-    // Destroy any previous HLS instance before creating a new one
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
 
-    // 10-second timeout — if nothing plays, show error
+    // 12-second timeout
     timerRef.current = setTimeout(() => {
-      setState(prev => prev === 'loading' ? 'error' : prev);
-      setErrorMsg('Stream timed out — check proxy URL');
-    }, 10_000);
+      setState(prev => {
+        if (prev !== 'loading') return prev;
+        return httpsUpgraded ? 'cert' : 'error';
+      });
+      setErrorMsg('Stream timed out');
+    }, 12_000);
 
     const cleanup = () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
@@ -1070,18 +1082,21 @@ function CameraLiveView({
       v.src = '';
     };
 
+    const handleError = () => {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      // If we upgraded HTTP→HTTPS, failure is almost certainly an untrusted self-signed cert
+      setState(httpsUpgraded ? 'cert' : 'error');
+      setErrorMsg(httpsUpgraded ? 'Camera certificate not trusted' : 'Stream unavailable');
+    };
+
     if (url.includes('.m3u8') && Hls.isSupported()) {
-      // HLS manifest → hls.js
       const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
       hlsRef.current = hls;
       hls.loadSource(url);
       hls.attachMedia(v);
       hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
-      hls.on(Hls.Events.ERROR, (_evt, data) => {
-        if (data.fatal) { setErrorMsg('Stream error — check camera/proxy'); setState('error'); }
-      });
+      hls.on(Hls.Events.ERROR, (_evt, data) => { if (data.fatal) handleError(); });
     } else {
-      // fMP4 direct stream (livetop.mp4) — native video element handles this fine
       v.src = url;
       v.load();
       v.play().catch(() => {});
@@ -1089,13 +1104,9 @@ function CameraLiveView({
 
     return cleanup;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url]);
+  }, [url, retryKey]);
 
   if (!url) return null;
-
-  const errorDisplay = state === 'mixed_content'
-    ? { icon: <Camera className="w-5 h-5 text-yellow-400" />, msg: 'Set proxy URL to HTTPS to load stream', sub: proxyBase }
-    : { icon: <Camera className="w-5 h-5 text-text-muted" />, msg: errorMsg, sub: '' };
 
   return (
     <div className="relative w-full overflow-hidden rounded-xl bg-black aspect-video">
@@ -1105,19 +1116,68 @@ function CameraLiveView({
           <span className="text-[10px] text-text-muted">Connecting to camera…</span>
         </div>
       )}
-      {(state === 'error' || state === 'mixed_content') && (
+
+      {/* Self-signed cert — show actionable trust flow */}
+      {state === 'cert' && certTrustUrl && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-4 text-center">
+          <Camera className="w-5 h-5 text-amber-400" />
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium text-white">Camera certificate not trusted</p>
+            <p className="text-[10px] text-text-muted leading-relaxed">
+              Open the link below, click <span className="text-white">Advanced → Proceed</span> to trust the camera's certificate, then come back and retry.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <a
+              href={certTrustUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-semibold hover:bg-amber-500/30 transition-colors"
+            >
+              Open Camera →
+            </a>
+            <button
+              onClick={() => { setState('loading'); setRetryKey(k => k + 1); }}
+              className="px-3 py-1.5 rounded-lg bg-whoop-bg border border-whoop-divider text-text-muted text-[10px] hover:text-white transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Generic error */}
+      {state === 'error' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+          <Camera className="w-5 h-5 text-text-muted" />
+          <span className="text-[10px] text-text-muted">{errorMsg}</span>
+          <button
+            onClick={() => { setState('loading'); setRetryKey(k => k + 1); }}
+            className="px-3 py-1.5 rounded-lg bg-whoop-bg border border-whoop-divider text-text-muted text-[10px] hover:text-white transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Mixed content (HTTP on HTTPS page, no upgrade) */}
+      {state === 'mixed_content' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-4 text-center">
-          {errorDisplay.icon}
-          <span className="text-[10px] text-text-muted">{errorDisplay.msg}</span>
-          {errorDisplay.sub && <span className="text-[9px] text-text-muted/50 break-all">{errorDisplay.sub}</span>}
+          <Camera className="w-5 h-5 text-yellow-400" />
+          <span className="text-[10px] text-text-muted">Set proxy URL to HTTPS to load stream</span>
+          {proxyBase && <span className="text-[9px] text-text-muted/50 break-all">{proxyBase}</span>}
         </div>
       )}
       <video
         ref={videoRef}
         className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
         autoPlay muted playsInline
-        onCanPlay={() => { if (timerRef.current) clearTimeout(timerRef.current); setState('playing'); }}
-        onError={() => { setErrorMsg('Stream unavailable'); setState('error'); }}
+        onCanPlay={() => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; } setState('playing'); }}
+        onError={() => {
+          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+          setState(httpsUpgraded ? 'cert' : 'error');
+          setErrorMsg(httpsUpgraded ? 'Camera certificate not trusted' : 'Stream unavailable');
+        }}
       />
       {/* Zone overlay — show whenever feed is playing */}
       {barConfig && state === 'playing' && <ZoneOverlay config={barConfig} />}
