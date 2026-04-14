@@ -267,7 +267,9 @@ const venueScopeService = {
     endEpoch?: number,
   ): Promise<VenueScopeJob[]> {
     const isGhost = (j: VenueScopeJob) => j.jobId.startsWith('~');
-    const isLive  = (j: VenueScopeJob) => !isGhost(j) && (j.isLive === true || j.status === 'running');
+    // Ghost jobs (~ prefix) are live camera markers — include them when actually live so the
+    // camera grid shows them, but keep them out of the non-live history bucket.
+    const isLive  = (j: VenueScopeJob) => j.isLive === true || j.status === 'running';
 
     const dedupeAndSort = (items: VenueScopeJob[]) => {
       const ts = (j: VenueScopeJob) => j.finishedAt || j.updatedAt || j.createdAt || 0;
