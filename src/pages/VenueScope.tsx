@@ -2625,18 +2625,27 @@ export function VenueScope() {
     j.isLive === true ||
     (j.isLive !== false && j.status === 'running' &&
       ((j.updatedAt ?? 0) === 0 || (j.updatedAt ?? 0) > fiveMinAgo));
+  // tonightJobs: jobs used for STATS (drinks, revenue, bartenders, detection log).
+  // Live camera jobs bypass todayStart only when the bar is actually open — this prevents
+  // yesterday's accumulated drink count from appearing in "Behind the Bar" during closed hours.
   const tonightJobs = useMemo(() => safeJobs.filter(j =>
+    (j.createdAt ?? 0) >= todayStart || (isJobLive(j) && barIsOpen)
+  ), [safeJobs, todayStart, barIsOpen]);
+  const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !isJobLive(j)), [safeJobs, todayStart]);
+
+  // cameraJobs: always includes live cameras regardless of open/closed status,
+  // so the camera grid and RTSP feeds remain visible around the clock.
+  const cameraJobs = useMemo(() => safeJobs.filter(j =>
     (j.createdAt ?? 0) >= todayStart || isJobLive(j)
   ), [safeJobs, todayStart]);
-  const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !isJobLive(j)), [safeJobs, todayStart]);
 
   // For the camera grid: only jobs with a real camera label, not failed ones.
   // Allow ~ prefix jobs when they are genuinely live (worker marks live cameras with ~ prefix).
-  const gridJobs = useMemo(() => tonightJobs.filter(j =>
+  const gridJobs = useMemo(() => cameraJobs.filter(j =>
     j.status !== 'failed' &&
     (!j.jobId.startsWith('~') || j.isLive === true) &&
     (j.clipLabel || j.cameraLabel || j.roomLabel)  // must have a displayable name
-  ), [tonightJobs]);
+  ), [cameraJobs]);
   // Build set of enabled camera names that have people_count configured.
   // buildRooms uses this to avoid showing occupancy from disabled/non-people cameras.
   const enabledPeopleCamNames = useMemo(() =>
