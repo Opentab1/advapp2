@@ -2422,10 +2422,13 @@ export function VenueScope() {
   const liveRooms = useMemo(() => {
     if (!cameras.length) return allRooms;
     return allRooms.filter(room => {
-      const cam = cameraForRoom(room);
+      const label = room.label.toLowerCase();
+      const cam = cameras.find(c =>
+        label.includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(label)
+      );
       return !cam || cam.enabled !== false;
     });
-  }, [allRooms, cameras, cameraForRoom]);
+  }, [allRooms, cameras]);
   const doneRooms   = useMemo(() => [] as RoomSummary[], []);
 
   // Match a room label to its camera config record (for zone overlay + editor)
