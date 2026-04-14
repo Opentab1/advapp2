@@ -49,18 +49,21 @@ function cameraName(job: VenueScopeJob): string {
 }
 
 // ── Business-day helpers ──────────────────────────────────────────────────────
-// "Business day" starts at the venue's configured opening time (from Settings →
-// Business Hours). If the venue opens at 4 PM and it's currently 1 AM, the
-// current session belongs to yesterday's business day. This prevents "Today"
-// from showing 0 results when you're looking at the dashboard after midnight
-// during a late-night shift.
+// Period windows are anchored to the venue's configured opening time (Settings →
+// Business Hours). Each calendar day starts at that opening hour, not midnight.
 //
-// Falls back to noon (12:00) if no hours are configured, which is safe for
-// any bar — noon is well before any realistic evening open time.
+// Key design: TODAY = calendar today from open-time to now (empty before the bar
+// opens — correct). YESTERDAY = calendar yesterday from open-time to today's
+// open-time (shows last night's shift when viewed the morning after). This maps
+// to how a bar manager thinks: at 9 AM they want "Yesterday" for last night.
+//
+// Falls back to noon (12:00) when no hours are configured — safe for any bar
+// since noon is before any realistic evening open time, and the 7/30-day rolling
+// windows still capture everything across multiple days.
 
 type BizHours = VenueSettings['businessHours'];
 
-// Return [hour, minute] for the venue's opening time on a given Date.
+// Return [hour, minute] for the venue's opening time on a given calendar Date.
 function openHMForDate(bh: BizHours | null | undefined, date: Date): [number, number] {
   const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
   if (bh?.days) {
@@ -78,40 +81,37 @@ function openHMForDate(bh: BizHours | null | undefined, date: Date): [number, nu
   return [12, 0]; // safe default: noon
 }
 
-// Unix seconds at which the current business day opened.
-// If we haven't yet reached today's opening time, we're still in yesterday's session.
-function currentBizDayStart(bh: BizHours | null | undefined): number {
+// Unix seconds at which TODAY's business day opens (calendar today + open hour).
+// If we're before today's open time the bar hasn't opened yet — return future
+// timestamp so Today filter correctly shows 0 sessions.
+function todayBizStart(bh: BizHours | null | undefined): number {
   const now = new Date();
-  const [todayH, todayM] = openHMForDate(bh, now);
-  const todayOpen = new Date(now);
-  todayOpen.setHours(todayH, todayM, 0, 0);
-  if (now >= todayOpen) return todayOpen.getTime() / 1000;
-  // Before today's open — session belongs to yesterday
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const [yH, yM] = openHMForDate(bh, yesterday);
-  yesterday.setHours(yH, yM, 0, 0);
-  return yesterday.getTime() / 1000;
+  const [h, m] = openHMForDate(bh, now);
+  const d = new Date(now);
+  d.setHours(h, m, 0, 0);
+  return d.getTime() / 1000;
 }
 
-// Unix seconds at which the PREVIOUS business day opened.
-function prevBizDayStart(bh: BizHours | null | undefined): number {
-  const currentStart = new Date(currentBizDayStart(bh) * 1000);
-  const prevDay = new Date(currentStart);
-  prevDay.setDate(prevDay.getDate() - 1);
-  const [pH, pM] = openHMForDate(bh, prevDay);
-  prevDay.setHours(pH, pM, 0, 0);
-  return prevDay.getTime() / 1000;
+// Unix seconds at which YESTERDAY's business day opened (calendar yesterday + open hour).
+function yesterdayBizStart(bh: BizHours | null | undefined): number {
+  const now = new Date();
+  const d = new Date(now);
+  d.setDate(d.getDate() - 1);
+  const [h, m] = openHMForDate(bh, d);
+  d.setHours(h, m, 0, 0);
+  return d.getTime() / 1000;
 }
 
 function periodBounds(period: Period, bh: BizHours | null | undefined): { start: number; end: number } {
-  const now          = Date.now() / 1000;
-  const todayStart   = currentBizDayStart(bh);
-  const yesterdayStart = prevBizDayStart(bh);
-  if (period === 'today')     return { start: todayStart,                end: now };
-  if (period === 'yesterday') return { start: yesterdayStart,            end: todayStart };
-  if (period === '7days')     return { start: todayStart - 6 * 86400,   end: now };
-  if (period === '30days')    return { start: todayStart - 29 * 86400,  end: now };
+  const now       = Date.now() / 1000;
+  const todayOpen = todayBizStart(bh);      // today's opening time (may be future)
+  const yestOpen  = yesterdayBizStart(bh);  // yesterday's opening time
+  if (period === 'today')     return { start: todayOpen,              end: now };
+  if (period === 'yesterday') return { start: yestOpen,               end: todayOpen };
+  // 7/30-day rolling windows start from yesterday's open so the most recent
+  // complete shift is always included even before today's bar opens.
+  if (period === '7days')     return { start: yestOpen - 6 * 86400,  end: now };
+  if (period === '30days')    return { start: yestOpen - 29 * 86400, end: now };
   return { start: 0, end: now };
 }
 
