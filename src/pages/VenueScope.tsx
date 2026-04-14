@@ -2567,11 +2567,16 @@ export function VenueScope() {
     return nowMin >= win.openMin && nowMin < win.closeMin;
   }, [bizWindowForDate]);
 
-  // Unix seconds at which today's business day opened (or yesterday's if bar hasn't opened yet).
-  // Used to filter tonightJobs so we only show sessions from the current service window.
+  // Unix seconds at which the current service window opened.
+  // Logic: only slide back to yesterday if we are still WITHIN yesterday's service window
+  // (i.e. before yesterday's close time). Once the bar has closed for the night, we are in
+  // the "gap" between close and next open — return today's open (possibly future) so that
+  // tonightJobs is empty and the UI correctly shows the bar as closed / no activity.
   const todayStart = useMemo(() => {
     const now = new Date();
+    const nowSec = now.getTime() / 1000;
     const DAY_KEYS = ['sun','mon','tue','wed','thu','fri','sat'];
+
     const getOpenTs = (d: Date): number => {
       let openStr: string | undefined;
       if (businessHours?.days) openStr = businessHours.days[DAY_KEYS[d.getDay()]]?.open;
@@ -2580,12 +2585,34 @@ export function VenueScope() {
       const ts = new Date(d); ts.setHours(h, m, 0, 0);
       return ts.getTime() / 1000;
     };
+
+    const getCloseTs = (d: Date): number | null => {
+      let closeStr: string | undefined;
+      if (businessHours?.days) closeStr = businessHours.days[DAY_KEYS[d.getDay()]]?.close;
+      closeStr = closeStr ?? businessHours?.close;
+      if (!closeStr) return null;
+      const [h, m] = closeStr.split(':').map(Number);
+      const ts = new Date(d); ts.setHours(h, m, 0, 0);
+      // Past-midnight close (e.g. bar opens Mon 17:00, closes Tue 02:00):
+      // the close timestamp should be on the NEXT calendar day.
+      if (ts.getTime() / 1000 <= getOpenTs(d)) ts.setDate(ts.getDate() + 1);
+      return ts.getTime() / 1000;
+    };
+
     const todayOpenTs = getOpenTs(now);
-    // Before today's open — tonight's jobs started at yesterday's open
-    if (Date.now() / 1000 < todayOpenTs) {
-      const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
-      return getOpenTs(yesterday);
+    if (nowSec >= todayOpenTs) return todayOpenTs; // bar has already opened today
+
+    // Before today's open — check if we are still in yesterday's service window.
+    const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayOpenTs  = getOpenTs(yesterday);
+    const yesterdayCloseTs = getCloseTs(yesterday);
+    if (yesterdayCloseTs && nowSec >= yesterdayOpenTs && nowSec < yesterdayCloseTs) {
+      // Still inside last night's window (e.g. 1 AM before a 2 AM close) — use yesterday's open.
+      return yesterdayOpenTs;
     }
+
+    // Bar is closed (between yesterday's close and today's open). Return today's open so
+    // tonightJobs is empty and cards show the bar as inactive.
     return todayOpenTs;
   }, [businessHours]);
 
