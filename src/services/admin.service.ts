@@ -5,6 +5,8 @@
  * GraphQL calls have been replaced with direct REST calls via adminFetch().
  */
 
+import cameraService from './camera.service';
+
 // Admin API Lambda — set VITE_ADMIN_API_URL in Amplify environment variables
 const ADMIN_API = (import.meta.env.VITE_ADMIN_API_URL ?? '').replace(/\/$/, '');
 
@@ -300,8 +302,35 @@ class AdminService {
   async listCameras(venueId?: string): Promise<AdminCamera[]> {
     console.log('Fetching cameras...', venueId ?? 'all');
     const qs = venueId ? `?venueId=${encodeURIComponent(venueId)}` : '';
-    const data = await adminFetch(`/admin/cameras${qs}`);
-    return data.items ?? [];
+
+    // Try the Admin Lambda API first
+    if (ADMIN_API) {
+      const data = await adminFetch(`/admin/cameras${qs}`);
+      return data.items ?? [];
+    }
+
+    // Fallback: query VenueScopeCameras directly via DynamoDB credentials
+    if (venueId) {
+      console.log('VITE_ADMIN_API_URL not set — falling back to direct DynamoDB for cameras');
+      const cams = await cameraService.listCameras(venueId);
+      // Map Camera → AdminCamera shape
+      return cams.map(c => ({
+        cameraId:        c.cameraId,
+        venueId:         c.venueId,
+        name:            c.name,
+        rtspUrl:         c.rtspUrl,
+        modes:           Array.isArray(c.modes) ? c.modes.join(',') : String(c.modes),
+        modelProfile:    c.modelProfile,
+        enabled:         c.enabled,
+        segmentSeconds:  c.segmentSeconds,
+        segmentInterval: c.segmentInterval,
+        notes:           c.notes,
+        barConfigJson:   c.barConfigJson,
+        createdAt:       c.createdAt ? new Date(c.createdAt * 1000).toISOString() : '',
+      }));
+    }
+
+    throw new Error('VITE_ADMIN_API_URL is not configured — set it in Amplify → App Settings → Environment Variables');
   }
 
   async createCamera(camera: {
