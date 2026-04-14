@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
-import venueSettingsService from '../services/venue-settings.service';
+import venueSettingsService, { VenueSettings } from '../services/venue-settings.service';
 import { isDemoAccount, generateDemoVenueScopeJobs } from '../utils/demoData';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -48,29 +48,70 @@ function cameraName(job: VenueScopeJob): string {
   return job.roomLabel || job.cameraLabel || job.clipLabel?.replace(/^📡\s*/, '').replace(/\s*—\s*🔴\s*LIVE\s*$/i, '').trim() || 'Camera';
 }
 
-// Bar business day starts at 4 PM. If it's before 4 PM local time the
-// current "business today" began at 4 PM yesterday. This prevents "Today"
-// from showing 0 results at 12:13 AM when the shift started at 8 PM.
-const BAR_DAY_START_HOUR = 16; // 4 PM
+// ── Business-day helpers ──────────────────────────────────────────────────────
+// "Business day" starts at the venue's configured opening time (from Settings →
+// Business Hours). If the venue opens at 4 PM and it's currently 1 AM, the
+// current session belongs to yesterday's business day. This prevents "Today"
+// from showing 0 results when you're looking at the dashboard after midnight
+// during a late-night shift.
+//
+// Falls back to noon (12:00) if no hours are configured, which is safe for
+// any bar — noon is well before any realistic evening open time.
 
-function businessDayStart(daysAgo = 0): number {
-  const now = new Date();
-  const base = new Date(now);
-  base.setDate(base.getDate() - daysAgo);
-  base.setHours(BAR_DAY_START_HOUR, 0, 0, 0);
-  // If we haven't reached today's 4 PM yet, "today" started at 4 PM yesterday
-  if (daysAgo === 0 && now < base) base.setDate(base.getDate() - 1);
-  return base.getTime() / 1000;
+type BizHours = VenueSettings['businessHours'];
+
+// Return [hour, minute] for the venue's opening time on a given Date.
+function openHMForDate(bh: BizHours | null | undefined, date: Date): [number, number] {
+  const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  if (bh?.days) {
+    const key = DAY_KEYS[date.getDay()];
+    const day = bh.days[key];
+    if (day && !day.closed && day.open) {
+      const [h, m] = day.open.split(':').map(Number);
+      return [h || 0, m || 0];
+    }
+  }
+  if (bh?.open) {
+    const [h, m] = bh.open.split(':').map(Number);
+    return [h || 0, m || 0];
+  }
+  return [12, 0]; // safe default: noon
 }
 
-function periodBounds(period: Period): { start: number; end: number } {
-  const todayStart     = businessDayStart(0);
-  const yesterdayStart = businessDayStart(1);
-  const now = Date.now() / 1000;
-  if (period === 'today')     return { start: todayStart,                    end: now };
-  if (period === 'yesterday') return { start: yesterdayStart,                end: todayStart };
-  if (period === '7days')     return { start: todayStart - 6 * 86400,        end: now };
-  if (period === '30days')    return { start: todayStart - 29 * 86400,       end: now };
+// Unix seconds at which the current business day opened.
+// If we haven't yet reached today's opening time, we're still in yesterday's session.
+function currentBizDayStart(bh: BizHours | null | undefined): number {
+  const now = new Date();
+  const [todayH, todayM] = openHMForDate(bh, now);
+  const todayOpen = new Date(now);
+  todayOpen.setHours(todayH, todayM, 0, 0);
+  if (now >= todayOpen) return todayOpen.getTime() / 1000;
+  // Before today's open — session belongs to yesterday
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const [yH, yM] = openHMForDate(bh, yesterday);
+  yesterday.setHours(yH, yM, 0, 0);
+  return yesterday.getTime() / 1000;
+}
+
+// Unix seconds at which the PREVIOUS business day opened.
+function prevBizDayStart(bh: BizHours | null | undefined): number {
+  const currentStart = new Date(currentBizDayStart(bh) * 1000);
+  const prevDay = new Date(currentStart);
+  prevDay.setDate(prevDay.getDate() - 1);
+  const [pH, pM] = openHMForDate(bh, prevDay);
+  prevDay.setHours(pH, pM, 0, 0);
+  return prevDay.getTime() / 1000;
+}
+
+function periodBounds(period: Period, bh: BizHours | null | undefined): { start: number; end: number } {
+  const now          = Date.now() / 1000;
+  const todayStart   = currentBizDayStart(bh);
+  const yesterdayStart = prevBizDayStart(bh);
+  if (period === 'today')     return { start: todayStart,                end: now };
+  if (period === 'yesterday') return { start: yesterdayStart,            end: todayStart };
+  if (period === '7days')     return { start: todayStart - 6 * 86400,   end: now };
+  if (period === '30days')    return { start: todayStart - 29 * 86400,  end: now };
   return { start: 0, end: now };
 }
 
@@ -79,9 +120,9 @@ function jobTs(j: VenueScopeJob): number {
   return j.finishedAt || j.updatedAt || j.createdAt || 0;
 }
 
-function filterJobs(jobs: VenueScopeJob[], period: Period): VenueScopeJob[] {
+function filterJobs(jobs: VenueScopeJob[], period: Period, bh: BizHours | null | undefined): VenueScopeJob[] {
   if (period === 'all') return jobs;
-  const { start, end } = periodBounds(period);
+  const { start, end } = periodBounds(period, bh);
   return jobs.filter(j => { const t = jobTs(j); return t >= start && t < end; });
 }
 
@@ -1020,12 +1061,17 @@ export function Analytics() {
   const [allJobs, setAllJobs]         = useState<VenueScopeJob[]>([]);
   const [loading, setLoading]         = useState(true);
   const [avgDrinkPrice, setAvgDrinkPrice] = useState(0);
+  // Business hours from venue Settings — drives "Today" / "Yesterday" window boundaries.
+  // Initialise synchronously from cache so first render is instant; refreshed from cloud below.
+  const [businessHours, setBusinessHours] = useState<BizHours | null>(
+    () => venueSettingsService.getBusinessHours(venueId) ?? null
+  );
 
   const load = useCallback(async () => {
     if (!venueId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const { start, end } = periodBounds(period);
+      const { start, end } = periodBounds(period, businessHours);
       const startEpoch = period === 'all' ? undefined : start;
       const endEpoch   = period === 'all' ? undefined : end + 3600; // small buffer
       const raw = isDemo
@@ -1035,18 +1081,21 @@ export function Analytics() {
     } finally {
       setLoading(false);
     }
-  }, [venueId, isDemo, period]);
+  }, [venueId, isDemo, period, businessHours]);
 
   useEffect(() => { load(); }, [load]);
 
+  // Load venue settings from cloud once on mount — updates business hours and drink price.
+  // Any change to businessHours triggers a load() re-run via the dependency above.
   useEffect(() => {
     if (!venueId) return;
     venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
       if (s?.avgDrinkPrice && s.avgDrinkPrice > 0) setAvgDrinkPrice(s.avgDrinkPrice);
+      if (s?.businessHours) setBusinessHours(s.businessHours);
     }).catch(() => {});
   }, [venueId]);
 
-  const jobs = useMemo(() => filterJobs(allJobs, period), [allJobs, period]);
+  const jobs = useMemo(() => filterJobs(allJobs, period, businessHours), [allJobs, period, businessHours]);
 
   return (
     <div className="space-y-4 pb-24">
