@@ -731,7 +731,7 @@ interface RoomSummary {
   elapsedSec: number;
   updatedAt: number;
   cameraAngle: string;
-  job: VenueScopeJob;
+  job: VenueScopeJob | null;
 }
 
 /** Strip camera emoji prefix and LIVE/seg suffixes from clipLabel for display */
@@ -1337,9 +1337,9 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
           </span>
         ) : <span />}
 
-        {room.hasTheftFlag ? (
+        {room.hasTheftFlag && room.job ? (
           <button
-            onClick={() => onInvestigate(room.job)}
+            onClick={() => onInvestigate(room.job!)}
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors"
           >
             <AlertTriangle className="w-2.5 h-2.5" />
@@ -1824,8 +1824,8 @@ function POSReconciliationPanel({ jobs }: { jobs: VenueScopeJob[] }) {
 
 // ── Table visits by staff ─────────────────────────────────────────────────────
 
-function TableVisitsSection({ job }: { job: VenueScopeJob }) {
-  if (!job.tableVisitsByStaff) return null;
+function TableVisitsSection({ job }: { job: VenueScopeJob | null }) {
+  if (!job?.tableVisitsByStaff) return null;
   let data: Record<string, Record<string, number>>;
   try {
     data = JSON.parse(job.tableVisitsByStaff) as Record<string, Record<string, number>>;
@@ -1864,10 +1864,10 @@ interface DrinkEntry {
   bartender: string;
 }
 
-function DrinkLogSection({ job }: { job: VenueScopeJob }) {
+function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
   const [open, setOpen] = useState(false);
 
-  if (!job.bartenderBreakdown) return null;
+  if (!job?.bartenderBreakdown) return null;
 
   let entries: DrinkEntry[] = [];
   try {
@@ -2457,6 +2457,58 @@ export function VenueScope() {
     }
     return null;
   }, [cameras]);
+  // Permanent fix: camera grid is driven by DynamoDB camera configs, not jobs.
+  // For each enabled camera, ensure a room card exists. If a job room already
+  // covers it (via label or channel-number match), use that. Otherwise create a
+  // stub room showing the live feed and zeroed counters. This means the grid
+  // always shows configured cameras even when no job (or only ghost jobs) exist.
+  const allDisplayRooms = useMemo(() => {
+    if (!cameras.length) return liveRooms;  // no config → fall back to job-only list
+
+    const enabledCams = cameras.filter(c => c.enabled !== false);
+    const result: RoomSummary[] = [];
+    const coveredCamIds = new Set<string>();
+
+    // First pass: include all job-based rooms, tag which cameras they cover
+    for (const room of liveRooms) {
+      result.push(room);
+      const cam = enabledCams.find(c => {
+        const label = room.label.toLowerCase();
+        const cn = c.name.toLowerCase();
+        if (label.includes(cn) || cn.includes(label)) return true;
+        const ch = channelFromSources(c.name, c.rtspUrl);
+        return ch ? channelFromSources(room.label, null) === ch : false;
+      });
+      if (cam) coveredCamIds.add(cam.cameraId);
+    }
+
+    // Second pass: add stub rooms for enabled cameras with no job room
+    for (const cam of enabledCams) {
+      if (coveredCamIds.has(cam.cameraId)) continue;
+      const modesRaw = typeof cam.modes === 'string'
+        ? cam.modes.split(',').map((m: string) => m.trim())
+        : Array.isArray(cam.modes) ? cam.modes : ['drink_count'];
+      const mode = (modesRaw as string[]).includes('drink_count') ? 'drink_count'
+                 : (modesRaw as string[]).includes('people_count') ? 'people_count'
+                 : 'drink_count';
+      result.push({
+        label: cam.name,   // exact camera name → cameraForRoom finds it via direct substring match
+        isLive: false,
+        mode,
+        totalDrinks: 0, drinksPerHour: 0, topBartender: '', hasTheftFlag: false,
+        unrungDrinks: 0, currentOccupancy: 0, peakOccupancy: 0, totalEntries: 0,
+        elapsedSec: 0, updatedAt: 0, cameraAngle: '',
+        job: null,
+      });
+    }
+
+    // Sort: live first, then by total drinks
+    return result.sort((a, b) => {
+      if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
+      return b.totalDrinks - a.totalDrinks;
+    });
+  }, [cameras, liveRooms]);
+
   const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
   // History = all older jobs (today's rooms are shown in the camera grid above)
   const historyJobs = useMemo(() => [...olderJobs], [olderJobs]);
@@ -2577,11 +2629,12 @@ export function VenueScope() {
           {/* Drink pace chart */}
           <PaceChart jobs={tonightJobs} />
 
-          {/* 2. Live cameras — split by mode */}
-          {liveRooms.length > 0 && (() => {
-            const barCams    = liveRooms.filter(r => r.mode === 'drink_count');
-            const peopleCams = liveRooms.filter(r => r.mode === 'people_count');
-            const otherCams  = liveRooms.filter(r => r.mode !== 'drink_count' && r.mode !== 'people_count');
+          {/* 2. Camera grid — driven by DynamoDB camera configs (permanent fix).
+                allDisplayRooms = job-based rooms + stub rooms for cameras with no job data */}
+          {allDisplayRooms.length > 0 && (() => {
+            const barCams    = allDisplayRooms.filter(r => r.mode === 'drink_count');
+            const peopleCams = allDisplayRooms.filter(r => r.mode === 'people_count');
+            const otherCams  = allDisplayRooms.filter(r => r.mode !== 'drink_count' && r.mode !== 'people_count');
             return (
               <div className="space-y-5">
                 {barCams.length > 0 && (
