@@ -742,7 +742,7 @@ function friendlyClipLabel(clip: string | undefined): string {
     .trim();
 }
 
-function buildRooms(jobs: VenueScopeJob[]): RoomSummary[] {
+function buildRooms(jobs: VenueScopeJob[], enabledPeopleCamNames: Set<string> = new Set()): RoomSummary[] {
   // Group by roomLabel (fall back to cameraLabel → friendly clipLabel → jobId prefix)
   const map = new Map<string, VenueScopeJob[]>();
   for (const job of jobs) {
@@ -765,11 +765,17 @@ function buildRooms(jobs: VenueScopeJob[]): RoomSummary[] {
     const peakOccupancy = Math.max(...roomJobs.map(j => j.peakOccupancy ?? 0), 0);
     // For live cameras, peakOccupancy is repurposed as current in-frame count (see aws_sync.py)
     // Prefer entries-exits for true entrance cameras, otherwise use the live in-frame count.
-    // For snapshot cameras (done, not isLive), treat as current if completed within 25 minutes.
+    // For snapshot cameras (done, not isLive), treat as current if completed within 5 minutes.
+    // Only count occupancy when there is an ENABLED camera explicitly configured for people_count —
+    // prevents stale snapshots from disabled cameras from polluting the occupancy hero stat.
+    const camLabel = (best.cameraLabel || label).toLowerCase();
+    const hasPeopleCam = enabledPeopleCamNames.size === 0
+      ? isPeople  // no camera list → fall back to job mode
+      : Array.from(enabledPeopleCamNames).some(n => n.includes(camLabel) || camLabel.includes(n));
     const entriesExits  = Math.max(0, (best.totalEntries ?? 0) - (best.totalExits ?? 0));
     const jobAge = Date.now() / 1000 - (best.finishedAt ?? best.updatedAt ?? best.createdAt ?? 0);
-    const isRecentSnapshot = isPeople && !best.isLive && jobAge < 1500 && (best.peakOccupancy ?? 0) > 0;
-    const currentOcc    = best.isLive
+    const isRecentSnapshot = isPeople && hasPeopleCam && !best.isLive && jobAge < 300 && (best.peakOccupancy ?? 0) > 0;
+    const currentOcc    = (best.isLive && hasPeopleCam)
       ? (entriesExits > 0 ? entriesExits : (best.peakOccupancy ?? 0))
       : isRecentSnapshot ? (best.peakOccupancy ?? 0) : 0;
 
@@ -2535,7 +2541,16 @@ export function VenueScope() {
     (!j.jobId.startsWith('~') || j.isLive === true) &&
     (j.clipLabel || j.cameraLabel || j.roomLabel)  // must have a displayable name
   ), [tonightJobs]);
-  const allRooms    = useMemo(() => { try { return buildRooms(gridJobs); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [gridJobs]);
+  // Build set of enabled camera names that have people_count configured.
+  // buildRooms uses this to avoid showing occupancy from disabled/non-people cameras.
+  const enabledPeopleCamNames = useMemo(() =>
+    new Set(
+      cameras
+        .filter(c => c.enabled !== false && c.modes?.includes('people_count'))
+        .map(c => c.name.toLowerCase())
+    ),
+  [cameras]);
+  const allRooms    = useMemo(() => { try { return buildRooms(gridJobs, enabledPeopleCamNames); } catch(e) { console.error('[VenueScope] buildRooms error:', e); return []; } }, [gridJobs, enabledPeopleCamNames]);
   // Show ALL rooms in the camera grid (live + done snapshots). Snapshot cameras are
   // almost always "done" between their 20-min polling intervals — hiding done rooms
   // means the grid would appear empty most of the time.
