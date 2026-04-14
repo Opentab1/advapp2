@@ -1344,9 +1344,16 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   onInvestigate: (job: VenueScopeJob) => void;
   onConfigureZones?: (camera: CameraConfig) => void;
 }) {
-  // Use all active modes from the job (not just primary) so a camera running
-  // e.g. table_turns + people_count shows both stat blocks simultaneously.
-  const activeModes  = room.job ? parseModes(room.job) : [room.mode];
+  // Camera config is the source of truth for which stat blocks to show.
+  // Job activeModes tells us what ran most recently — but people_count is
+  // throttled to every 20 min, so most job records won't include it even
+  // when the camera is configured for both. Merge both sources: show any
+  // block configured on the camera, populated with job data when available.
+  const camConfigModes: string[] = Array.isArray(camera?.modes) && camera!.modes.length
+    ? (camera!.modes as string[])
+    : [];
+  const jobModes = room.job ? parseModes(room.job) : [];
+  const activeModes = [...new Set([...camConfigModes, ...jobModes, room.mode])];
   const isDrink      = activeModes.includes('drink_count');
   const isPeople     = activeModes.includes('people_count');
   const isTableTurns = activeModes.includes('table_turns');
@@ -1393,7 +1400,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
           <div className="min-w-0">
             <p className="text-sm font-semibold text-white truncate">{room.label || 'Camera'}</p>
             <p className="text-[10px] text-text-muted capitalize">
-              {activeModes.map(m => m.replace(/_/g, ' ')).join(' · ')}
+              {(camConfigModes.length ? camConfigModes : [room.mode]).map(m => m.replace(/_/g, ' ')).join(' · ')}
               {room.cameraAngle && (
                 <span className="ml-1.5 inline-flex items-center gap-0.5 opacity-60">
                   · {room.cameraAngle}
