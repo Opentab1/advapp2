@@ -48,17 +48,30 @@ function cameraName(job: VenueScopeJob): string {
   return job.roomLabel || job.cameraLabel || job.clipLabel?.replace(/^📡\s*/, '').replace(/\s*—\s*🔴\s*LIVE\s*$/i, '').trim() || 'Camera';
 }
 
-function todayMidnight(): number {
-  const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000;
+// Bar business day starts at 4 PM. If it's before 4 PM local time the
+// current "business today" began at 4 PM yesterday. This prevents "Today"
+// from showing 0 results at 12:13 AM when the shift started at 8 PM.
+const BAR_DAY_START_HOUR = 16; // 4 PM
+
+function businessDayStart(daysAgo = 0): number {
+  const now = new Date();
+  const base = new Date(now);
+  base.setDate(base.getDate() - daysAgo);
+  base.setHours(BAR_DAY_START_HOUR, 0, 0, 0);
+  // If we haven't reached today's 4 PM yet, "today" started at 4 PM yesterday
+  if (daysAgo === 0 && now < base) base.setDate(base.getDate() - 1);
+  return base.getTime() / 1000;
 }
 
 function periodBounds(period: Period): { start: number; end: number } {
-  const midnight = todayMidnight();
-  if (period === 'today')     return { start: midnight, end: Date.now() / 1000 };
-  if (period === 'yesterday') return { start: midnight - 86400, end: midnight };
-  if (period === '7days')     return { start: midnight - 7 * 86400, end: Date.now() / 1000 };
-  if (period === '30days')    return { start: midnight - 30 * 86400, end: Date.now() / 1000 };
-  return { start: 0, end: Date.now() / 1000 };
+  const todayStart     = businessDayStart(0);
+  const yesterdayStart = businessDayStart(1);
+  const now = Date.now() / 1000;
+  if (period === 'today')     return { start: todayStart,                    end: now };
+  if (period === 'yesterday') return { start: yesterdayStart,                end: todayStart };
+  if (period === '7days')     return { start: todayStart - 6 * 86400,        end: now };
+  if (period === '30days')    return { start: todayStart - 29 * 86400,       end: now };
+  return { start: 0, end: now };
 }
 
 function jobTs(j: VenueScopeJob): number {
