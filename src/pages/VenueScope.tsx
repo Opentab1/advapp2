@@ -1094,30 +1094,29 @@ function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null
 }
 
 function CameraLiveView({
-  label, proxyBase, rtspUrl, barConfig, onConfigureZones,
+  label, proxyBase, rtspUrl, barConfig, onConfigureZones, cameraModes,
 }: {
   label: string;
   proxyBase: string;
   rtspUrl?: string | null;
   barConfig?: BarConfig | null;
   onConfigureZones?: () => void;
+  cameraModes?: string[];
 }) {
   const videoRef      = React.useRef<HTMLVideoElement>(null);
   const hlsRef        = React.useRef<Hls | null>(null);
   const timerRef      = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchdogRef   = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectRef  = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTimeRef   = React.useRef<number>(-1);
   const stallCountRef = React.useRef<number>(0);
-  const [state, setState]   = React.useState<'loading' | 'playing' | 'error' | 'mixed_content' | 'cert'>('loading');
+  const [state, setState]   = React.useState<'loading' | 'playing' | 'reconnecting' | 'error' | 'mixed_content'>('loading');
   const [errorMsg, setErrorMsg] = React.useState('Stream unavailable');
   const [retryKey, setRetryKey] = React.useState(0);
   const url = liveStreamUrl(label, proxyBase, rtspUrl);
 
   // Detect if this is an HTTPS-upgraded HTTP stream — failure likely means untrusted self-signed cert.
-  // NVRs on local IPs can never have a CA-signed cert, so we need the user to accept it once.
-  const httpsUpgraded = !!(url?.startsWith('https://') && rtspUrl?.startsWith('http://'));
-  // The raw HTTPS URL the user needs to open to accept the cert
-  const certTrustUrl  = httpsUpgraded ? url : null;
+
 
   React.useEffect(() => {
     if (!url || !videoRef.current) return;
@@ -1137,13 +1136,17 @@ function CameraLiveView({
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
 
-    // 12-second timeout
+    // 12-second timeout → auto-reconnect
     timerRef.current = setTimeout(() => {
       setState(prev => {
         if (prev !== 'loading') return prev;
-        return httpsUpgraded ? 'cert' : 'error';
+        if (reconnectRef.current) clearTimeout(reconnectRef.current);
+        reconnectRef.current = setTimeout(() => {
+          setState('loading');
+          setRetryKey(k => k + 1);
+        }, 8_000);
+        return 'reconnecting';
       });
-      setErrorMsg('Stream timed out');
     }, 12_000);
 
     lastTimeRef.current   = -1;
@@ -1154,7 +1157,8 @@ function CameraLiveView({
     };
 
     const cleanup = () => {
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      if (timerRef.current)    { clearTimeout(timerRef.current);    timerRef.current    = null; }
+      if (reconnectRef.current){ clearTimeout(reconnectRef.current); reconnectRef.current = null; }
       stopWatchdog();
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       v.src = '';
@@ -1162,8 +1166,13 @@ function CameraLiveView({
 
     const handleError = () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      setState(httpsUpgraded ? 'cert' : 'error');
-      setErrorMsg(httpsUpgraded ? 'Camera certificate not trusted' : 'Stream unavailable');
+      // Always auto-reconnect — show "Reconnecting" and retry after 8s
+      setState('reconnecting');
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      reconnectRef.current = setTimeout(() => {
+        setState('loading');
+        setRetryKey(k => k + 1);
+      }, 8_000);
     };
 
     // Silent reconnect — reload src without showing error UI
@@ -1245,46 +1254,21 @@ function CameraLiveView({
         </div>
       )}
 
-      {/* Self-signed cert — show actionable trust flow */}
-      {state === 'cert' && certTrustUrl && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-4 text-center">
-          <Camera className="w-5 h-5 text-amber-400" />
-          <div className="space-y-1">
-            <p className="text-[11px] font-medium text-white">Camera certificate not trusted</p>
-            <p className="text-[10px] text-text-muted leading-relaxed">
-              Open the link below, click <span className="text-white">Advanced → Proceed</span> to trust the camera's certificate, then come back and retry.
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <a
-              href={certTrustUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-semibold hover:bg-amber-500/30 transition-colors"
-            >
-              Open Camera →
-            </a>
-            <button
-              onClick={() => { setState('loading'); setRetryKey(k => k + 1); }}
-              className="px-3 py-1.5 rounded-lg bg-whoop-bg border border-whoop-divider text-text-muted text-[10px] hover:text-white transition-colors"
-            >
-              Retry
-            </button>
+      {/* Reconnecting (any error — auto-retries every 8s) */}
+      {state === 'reconnecting' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-[10px] text-amber-300 font-medium">Reconnecting…</span>
           </div>
         </div>
       )}
 
-      {/* Generic error */}
+      {/* Generic unrecoverable error (mixed content etc.) */}
       {state === 'error' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
           <Camera className="w-5 h-5 text-text-muted" />
           <span className="text-[10px] text-text-muted">{errorMsg}</span>
-          <button
-            onClick={() => { setState('loading'); setRetryKey(k => k + 1); }}
-            className="px-3 py-1.5 rounded-lg bg-whoop-bg border border-whoop-divider text-text-muted text-[10px] hover:text-white transition-colors"
-          >
-            Retry
-          </button>
         </div>
       )}
 
@@ -1303,14 +1287,13 @@ function CameraLiveView({
         onCanPlay={() => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; } setState('playing'); }}
         onError={() => {
           if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-          setState(httpsUpgraded ? 'cert' : 'error');
-          setErrorMsg(httpsUpgraded ? 'Camera certificate not trusted' : 'Stream unavailable');
+          handleError();
         }}
       />
       {/* Zone overlay — show whenever feed is playing */}
       {barConfig && state === 'playing' && <ZoneOverlay config={barConfig} />}
-      {/* No-config hint — show on playing feed when no zones set */}
-      {!barConfig && state === 'playing' && onConfigureZones && (
+      {/* No-config hint — only for drink_count cameras (other modes don't use bar zones) */}
+      {!barConfig && state === 'playing' && onConfigureZones && (!cameraModes || cameraModes.includes('drink_count')) && (
         <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
           <div className="px-2 py-1 rounded bg-black/50 text-[9px] text-amber-400/80">
             No bar zones configured
@@ -1453,6 +1436,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
               rtspUrl={camera?.rtspUrl}
               barConfig={barConfig}
               onConfigureZones={camera && onConfigureZones ? () => onConfigureZones(camera) : undefined}
+              cameraModes={activeModes}
             />
           </motion.div>
         )}
@@ -1507,28 +1491,56 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
         </div>
       )}
 
-      {isTableTurns && (
-        <div className="grid grid-cols-3 gap-2">
-          <div className="bg-whoop-bg rounded-xl p-3 text-center">
-            <div className="text-xl font-bold text-white">
-              {room.totalTurns > 0 ? room.totalTurns : '—'}
+      {isTableTurns && (() => {
+        // Parse per-table detail for dwell breakdown
+        let tableRows: { label: string; turns: number; dwellMin: number }[] = [];
+        try {
+          const detail = room.job?.tableDetail ? JSON.parse(room.job.tableDetail) : null;
+          if (detail) {
+            tableRows = Object.entries(detail as Record<string, { label?: string; turn_count?: number; avg_dwell_min?: number }>)
+              .map(([id, d]) => ({ label: d.label ?? id, turns: d.turn_count ?? 0, dwellMin: d.avg_dwell_min ?? 0 }))
+              .filter(r => r.turns > 0)
+              .sort((a, b) => b.dwellMin - a.dwellMin);
+          }
+        } catch { /* ignore */ }
+        return (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-whoop-bg rounded-xl p-3 text-center">
+                <div className="text-xl font-bold text-white">
+                  {room.totalTurns > 0 ? room.totalTurns : '—'}
+                </div>
+                <div className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wide">Turns</div>
+              </div>
+              <div className="bg-whoop-bg rounded-xl p-3 text-center">
+                <div className="text-xl font-bold text-white">
+                  {room.avgDwellMin > 0 ? `${Math.round(room.avgDwellMin)}m` : '—'}
+                </div>
+                <div className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wide">Avg Dwell</div>
+              </div>
+              <div className="bg-whoop-bg rounded-xl p-3 text-center">
+                <div className="text-xl font-bold text-white">
+                  {room.avgResponseSec > 0 ? `${Math.round(room.avgResponseSec)}s` : '—'}
+                </div>
+                <div className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wide">Response</div>
+              </div>
             </div>
-            <div className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wide">Turns</div>
+            {tableRows.length > 0 && (
+              <div className="bg-whoop-bg rounded-xl px-3 py-2 space-y-1.5">
+                {tableRows.map(row => (
+                  <div key={row.label} className="flex items-center justify-between text-[10px]">
+                    <span className="text-text-muted truncate">{row.label}</span>
+                    <div className="flex items-center gap-3 flex-shrink-0 ml-2">
+                      <span className="text-white">{row.turns} turn{row.turns !== 1 ? 's' : ''}</span>
+                      <span className="text-purple-400">{row.dwellMin > 0 ? `${Math.round(row.dwellMin)}m dwell` : '—'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          <div className="bg-whoop-bg rounded-xl p-3 text-center">
-            <div className="text-xl font-bold text-white">
-              {room.avgDwellMin > 0 ? `${Math.round(room.avgDwellMin)}m` : '—'}
-            </div>
-            <div className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wide">Avg Dwell</div>
-          </div>
-          <div className="bg-whoop-bg rounded-xl p-3 text-center">
-            <div className="text-xl font-bold text-white">
-              {room.avgResponseSec > 0 ? `${Math.round(room.avgResponseSec)}s` : '—'}
-            </div>
-            <div className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wide">Response</div>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {!isDrink && !isPeople && !isTableTurns && (
         <div className="bg-whoop-bg rounded-xl p-3 text-center">
