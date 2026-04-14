@@ -670,6 +670,37 @@ async function getBillingStatus(venueId) {
   return ok({ ...billing, hasAccess, trialDaysLeft, graceDaysLeft });
 }
 
+async function extendTrial(body) {
+  const { venueId, days } = body;
+  if (!venueId) return err(400, 'venueId required');
+  const d = parseInt(days ?? 14, 10);
+  if (isNaN(d) || d < 1 || d > 365) return err(400, 'days must be 1–365');
+
+  let billing = await getBillingRecord(venueId);
+  const now = Date.now() / 1000;
+
+  if (!billing) {
+    // Auto-provision trial record first
+    const trialEndsAt = now + d * 86400;
+    await ddb.send(new PutItemCommand({
+      TableName: BILLING_TABLE,
+      Item: { venueId: { S: venueId }, subscriptionStatus: { S: 'trial' }, trialEndsAt: { N: String(trialEndsAt) }, lastSyncedAt: { N: String(now) } },
+    }));
+    return ok({ venueId, trialEndsAt, trialDaysLeft: d, extended: true });
+  }
+
+  // Extend from current expiry (or now if already expired)
+  const base = Math.max(billing.trialEndsAt ?? now, now);
+  const newTrialEndsAt = base + d * 86400;
+  await upsertBillingFields(venueId, {
+    trialEndsAt: newTrialEndsAt,
+    subscriptionStatus: 'trial', // reactivate if trial_expired
+  });
+
+  const trialDaysLeft = Math.ceil((newTrialEndsAt - now) / 86400);
+  return ok({ venueId, trialEndsAt: newTrialEndsAt, trialDaysLeft, extended: true });
+}
+
 async function createCheckoutSession(body) {
   const { venueId, successUrl, cancelUrl } = body;
   if (!venueId || !successUrl || !cancelUrl) return err(400, 'venueId, successUrl, cancelUrl required');
@@ -816,9 +847,10 @@ export const handler = async (event) => {
     if (method === 'POST'  && rawPath === '/admin/probe-cameras')      return probeCameras(body);
 
     // Billing
-    if (method === 'GET'  && rawPath === '/billing/status')          return getBillingStatus(qs.venueId);
-    if (method === 'POST' && rawPath === '/billing/create-checkout')  return createCheckoutSession(body);
-    if (method === 'POST' && rawPath === '/billing/portal')           return createPortalSession(body);
+    if (method === 'GET'  && rawPath === '/billing/status')               return getBillingStatus(qs.venueId);
+    if (method === 'POST' && rawPath === '/billing/create-checkout')       return createCheckoutSession(body);
+    if (method === 'POST' && rawPath === '/billing/portal')                return createPortalSession(body);
+    if (method === 'POST' && rawPath === '/admin/billing/extend-trial')    return extendTrial(body);
     if (method === 'POST' && rawPath === '/billing/webhook') {
       const rawBody = event.isBase64Encoded ? Buffer.from(event.body ?? '', 'base64').toString('utf8') : (event.body ?? '');
       const sig = event.headers?.['stripe-signature'] ?? event.headers?.['Stripe-Signature'] ?? '';

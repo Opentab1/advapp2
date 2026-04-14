@@ -11,10 +11,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Building2, 
-  Plus, 
-  Search, 
+import {
+  Building2,
+  Plus,
+  Search,
   MoreVertical,
   MapPin,
   Users,
@@ -37,11 +37,14 @@ import {
   MessageSquare,
   Copy,
   Smartphone,
-  Zap
+  Zap,
+  CreditCard,
+  CalendarPlus
 } from 'lucide-react';
 import { CreateVenueModal, VenueFormData } from '../../components/admin/CreateVenueModal';
 import { RPiConfigGenerator } from '../../components/admin/RPiConfigGenerator';
 import adminService, { AdminVenue, CreateVenueInput } from '../../services/admin.service';
+import billingService, { BillingStatus } from '../../services/billing.service';
 
 // Display settings stored separately from system data
 interface VenueDisplaySettings {
@@ -67,11 +70,13 @@ export function VenuesManagement() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showConfigGenerator, setShowConfigGenerator] = useState<AdminVenue | null>(null);
   const [showEditModal, setShowEditModal] = useState<AdminVenue | null>(null);
+  const [showExtendTrialModal, setShowExtendTrialModal] = useState<AdminVenue | null>(null);
   const [, setIsCreating] = useState(false);
   const [venues, setVenues] = useState<AdminVenue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [displaySettings, setDisplaySettings] = useState<Record<string, VenueDisplaySettings>>({});
+  const [billingStatuses, setBillingStatuses] = useState<Record<string, BillingStatus>>({});
 
   // Load display settings from API
   const fetchDisplaySettings = useCallback(async () => {
@@ -150,6 +155,23 @@ export function VenuesManagement() {
     fetchVenues();
   }, [fetchVenues]);
 
+  // Fetch billing status for all venues
+  const fetchBillingStatuses = useCallback(async (venueList: AdminVenue[]) => {
+    const results = await Promise.allSettled(
+      venueList.map(v => billingService.getStatus(v.venueId))
+    );
+    const map: Record<string, BillingStatus> = {};
+    venueList.forEach((v, i) => {
+      const r = results[i];
+      if (r.status === 'fulfilled' && r.value) map[v.venueId] = r.value;
+    });
+    setBillingStatuses(map);
+  }, []);
+
+  useEffect(() => {
+    if (venues.length > 0) fetchBillingStatuses(venues);
+  }, [venues, fetchBillingStatuses]);
+
   // Filter and sort venues
   const filteredVenues = venues
     .filter(venue => {
@@ -208,6 +230,26 @@ export function VenuesManagement() {
     } finally {
       setIsCreating(false);
     }
+  };
+
+  // Get billing badge for a venue
+  const getBillingBadge = (venueId: string) => {
+    const b = billingStatuses[venueId];
+    if (!b) return null;
+    const map: Record<string, { label: string; color: string }> = {
+      active:        { label: 'Subscribed',     color: 'bg-green-500/20 text-green-400' },
+      trial:         { label: `Trial — ${b.trialDaysLeft}d left`, color: 'bg-amber-500/20 text-amber-400' },
+      trial_expired: { label: 'Trial Expired',  color: 'bg-red-500/20 text-red-400' },
+      past_due:      { label: `Past Due — ${b.graceDaysLeft}d grace`, color: 'bg-red-500/20 text-red-400' },
+      cancelled:     { label: 'Cancelled',      color: 'bg-gray-500/20 text-gray-400' },
+    };
+    const s = map[b.subscriptionStatus] ?? { label: b.subscriptionStatus, color: 'bg-gray-500/20 text-gray-400' };
+    return (
+      <span className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${s.color}`}>
+        <CreditCard className="w-3 h-3" />
+        {s.label}
+      </span>
+    );
   };
 
   // Handle venue status update
@@ -403,11 +445,12 @@ export function VenuesManagement() {
               >
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
+                    <div className="flex items-center gap-3 mb-2 flex-wrap">
                       <h3 className="text-xl font-bold text-white">
                         {displaySettings[venue.venueId]?.displayName || venue.venueName}
                       </h3>
                       {getStatusBadge(venue.status)}
+                      {getBillingBadge(venue.venueId)}
                     </div>
                     <div className="text-sm text-gray-400 mb-1">
                       ID: <span className="text-purple-400 font-mono">{venue.venueId}</span>
@@ -504,8 +547,15 @@ export function VenuesManagement() {
                     <FileDown className="w-4 h-4" />
                     RPi Config
                   </button>
+                  <button
+                    onClick={() => setShowExtendTrialModal(venue)}
+                    className="btn-secondary text-sm flex items-center gap-1 text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
+                  >
+                    <CalendarPlus className="w-4 h-4" />
+                    Extend Trial
+                  </button>
                   {venue.status === 'active' ? (
-                    <button 
+                    <button
                       onClick={() => handleStatusChange(venue.venueId, 'suspended')}
                       className="btn-secondary text-sm flex items-center gap-1 text-red-400 border-red-500/30 hover:bg-red-500/10"
                     >
@@ -513,7 +563,7 @@ export function VenuesManagement() {
                       Suspend
                     </button>
                   ) : (
-                    <button 
+                    <button
                       onClick={() => handleStatusChange(venue.venueId, 'active')}
                       className="btn-secondary text-sm flex items-center gap-1 text-green-400 border-green-500/30 hover:bg-green-500/10"
                     >
@@ -548,6 +598,21 @@ export function VenuesManagement() {
           mqttTopic={showConfigGenerator.mqttTopic || `pulse/sensors/${showConfigGenerator.venueId}`}
         />
       )}
+
+      {/* Extend Trial Modal */}
+      <AnimatePresence>
+        {showExtendTrialModal && (
+          <ExtendTrialModal
+            venue={showExtendTrialModal}
+            currentBilling={billingStatuses[showExtendTrialModal.venueId] ?? null}
+            onClose={() => setShowExtendTrialModal(null)}
+            onSuccess={(venueId, status) => {
+              setBillingStatuses(prev => ({ ...prev, [venueId]: status }));
+              setShowExtendTrialModal(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Edit Display Settings Modal */}
       <AnimatePresence>
@@ -863,6 +928,146 @@ function EditDisplayModal({
                   Save Changes
                 </>
               )}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// Extend Trial Modal
+function ExtendTrialModal({
+  venue,
+  currentBilling,
+  onClose,
+  onSuccess,
+}: {
+  venue: AdminVenue;
+  currentBilling: BillingStatus | null;
+  onClose: () => void;
+  onSuccess: (venueId: string, status: BillingStatus) => void;
+}) {
+  const [days, setDays] = useState(14);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const ADMIN_API = (import.meta.env.VITE_ADMIN_API_URL ?? '').replace(/\/$/, '');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch(`${ADMIN_API}/admin/billing/extend-trial`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venueId: venue.venueId, days }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed to extend trial');
+      // Refresh billing status
+      const updated = await billingService.refresh(venue.venueId);
+      if (updated) onSuccess(venue.venueId, updated);
+      else onClose();
+    } catch (e: any) {
+      setError(e.message);
+      setSaving(false);
+    }
+  };
+
+  const currentExpiry = currentBilling?.trialEndsAt
+    ? new Date(currentBilling.trialEndsAt * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : 'N/A';
+  const newExpiry = new Date(
+    Math.max((currentBilling?.trialEndsAt ?? 0) * 1000, Date.now()) + days * 86400 * 1000
+  ).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="glass-card p-6 w-full max-w-md"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-xl font-bold text-white flex items-center gap-2">
+              <CalendarPlus className="w-5 h-5 text-amber-400" />
+              Extend Trial
+            </h3>
+            <p className="text-sm text-gray-400 mt-1 font-mono">{venue.venueId}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-6 space-y-1 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-400">Current status</span>
+            <span className="text-white capitalize">{currentBilling?.subscriptionStatus ?? 'none'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Current expiry</span>
+            <span className="text-white">{currentExpiry}</span>
+          </div>
+          <div className="flex justify-between font-semibold">
+            <span className="text-amber-400">New expiry</span>
+            <span className="text-amber-400">{newExpiry}</span>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Days to add</label>
+            <div className="flex gap-2 mb-3">
+              {[7, 14, 30, 60].map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setDays(d)}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
+                    days === d
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                      : 'bg-white/5 text-gray-400 border border-white/10 hover:text-white'
+                  }`}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={days}
+              onChange={e => setDays(parseInt(e.target.value) || 14)}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+            />
+          </div>
+
+          {error && <p className="text-sm text-red-400">{error}</p>}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} disabled={saving} className="flex-1 btn-secondary">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 py-2.5 rounded-xl bg-amber-500 text-black font-semibold text-sm hover:bg-amber-400 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CalendarPlus className="w-4 h-4" />}
+              {saving ? 'Extending…' : 'Extend Trial'}
             </button>
           </div>
         </form>
