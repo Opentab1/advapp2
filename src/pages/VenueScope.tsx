@@ -2111,17 +2111,52 @@ function DetectionEventsPanel({
   jobs,
   nvrUrlTemplate,
   onSaveNvrUrl,
+  businessHours,
 }: {
   jobs: VenueScopeJob[];
   nvrUrlTemplate: string;
   onSaveNvrUrl: (url: string) => void;
+  businessHours?: ReturnType<typeof venueSettingsService.getBusinessHours>;
 }) {
   const [filter, setFilter] = useState<'all' | 'drink' | 'theft'>('all');
   const [editingUrl, setEditingUrl] = useState(false);
   const [urlDraft, setUrlDraft] = useState(nvrUrlTemplate);
   const [open, setOpen] = useState(false);
 
-  const allEvents = useMemo(() => buildDetectionEvents(jobs), [jobs]);
+  // Returns true if a wallTime (epoch sec) falls within the venue's business hours.
+  // Excludes after-hours detections (e.g. 4 AM cleaning staff after 2 AM close).
+  const isWithinBizHours = useCallback((wallTime: number): boolean => {
+    if (!businessHours) return true; // no hours configured = show everything
+    const DAY_KEYS = ['sun','mon','tue','wed','thu','fri','sat'];
+    const dt = new Date(wallTime * 1000);
+    let openStr: string | undefined;
+    let closeStr: string | undefined;
+    if (businessHours.days) {
+      const day = businessHours.days[DAY_KEYS[dt.getDay()]];
+      if (day?.closed) return false;
+      openStr  = day?.open;
+      closeStr = day?.close;
+    }
+    openStr  = openStr  ?? businessHours.open;
+    closeStr = closeStr ?? businessHours.close;
+    if (!openStr || !closeStr) return true;
+    const [oH, oM] = openStr.split(':').map(Number);
+    const [cH, cM] = closeStr.split(':').map(Number);
+    const openMin  = oH * 60 + oM;
+    const closeMin = cH * 60 + cM;
+    const wallMin  = dt.getHours() * 60 + dt.getMinutes();
+    // Past-midnight close (e.g. open 17:00 close 02:00):
+    // in-hours = after open OR before close
+    if (closeMin <= openMin) return wallMin >= openMin || wallMin < closeMin;
+    return wallMin >= openMin && wallMin < closeMin;
+  }, [businessHours]);
+
+  const allEvents = useMemo(() => {
+    const evs = buildDetectionEvents(jobs);
+    // Filter drinks to only those that occurred during business hours.
+    // Theft events always show regardless of time.
+    return evs.filter(e => e.kind === 'theft' || isWithinBizHours(e.wallTime));
+  }, [jobs, isWithinBizHours]);
   const filtered  = useMemo(() => filter === 'all' ? allEvents : allEvents.filter(e => e.kind === filter), [allEvents, filter]);
 
   const drinkCount = allEvents.filter(e => e.kind === 'drink').length;
@@ -2416,6 +2451,7 @@ export function VenueScope() {
   const [avgDrinkPrice, setAvgDrinkPrice] = useState(() => venueSettingsService.getAvgDrinkPrice(venueId));
   const [camProxyUrl, setCamProxyUrl] = useState(() => venueSettingsService.getCamProxyUrl(venueId) ?? '');
   const [nvrPlaybackUrl, setNvrPlaybackUrl] = useState(() => venueSettingsService.getNvrPlaybackUrl(venueId) ?? '');
+  const [businessHours, setBusinessHours] = useState(() => venueSettingsService.getBusinessHours(venueId));
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [newToast, setNewToast]       = useState<string | null>(null);
   const [investigating, setInvestigating] = useState<VenueScopeJob | null>(null);
@@ -2457,6 +2493,7 @@ export function VenueScope() {
       if (s?.avgDrinkPrice) setAvgDrinkPrice(s.avgDrinkPrice);
       if (s?.camProxyUrl) setCamProxyUrl(s.camProxyUrl);
       if (s?.nvrPlaybackUrl) setNvrPlaybackUrl(s.nvrPlaybackUrl);
+      if (s?.businessHours) setBusinessHours(s.businessHours);
     });
   }, [venueId]);
 
@@ -2499,25 +2536,59 @@ export function VenueScope() {
     };
   }, [load]);
 
-  // "Tonight" = after midnight local time (bar shifts that started today)
-  const todayStart  = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime() / 1000; }, []);
-
   // Business hours — read from localStorage (set in Settings > Venue)
+  // Derive open/close minutes for a given Date from the V2 per-day or legacy format.
+  const bizWindowForDate = useCallback((date: Date): { openMin: number; closeMin: number } | null => {
+    if (!businessHours) return null;
+    const DAY_KEYS = ['sun','mon','tue','wed','thu','fri','sat'];
+    let openStr: string | undefined;
+    let closeStr: string | undefined;
+    if (businessHours.days) {
+      const day = businessHours.days[DAY_KEYS[date.getDay()]];
+      if (day?.closed) return null; // explicitly closed today
+      openStr  = day?.open;
+      closeStr = day?.close;
+    }
+    openStr  = openStr  ?? businessHours.open;
+    closeStr = closeStr ?? businessHours.close;
+    if (!openStr || !closeStr) return null;
+    const [oH, oM] = openStr.split(':').map(Number);
+    const [cH, cM] = closeStr.split(':').map(Number);
+    return { openMin: oH * 60 + oM, closeMin: cH * 60 + cM };
+  }, [businessHours]);
+
+  // Is the bar open right now?
   const barIsOpen = useMemo(() => {
-    try {
-      const saved = localStorage.getItem('pulse_biz_hours');
-      if (!saved) return true; // no hours set = always show
-      const { open, close } = JSON.parse(saved) as { open: string; close: string };
-      const now = new Date();
-      const [oH, oM] = open.split(':').map(Number);
-      const [cH, cM] = close.split(':').map(Number);
-      const nowMin = now.getHours() * 60 + now.getMinutes();
-      const openMin = oH * 60 + oM;
-      const closeMin = cH * 60 + cM;
-      if (closeMin <= openMin) return nowMin >= openMin || nowMin < closeMin;
-      return nowMin >= openMin && nowMin < closeMin;
-    } catch { return true; }
-  }, []);
+    const win = bizWindowForDate(new Date());
+    if (!win) return true; // no hours configured = always show
+    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+    // Handles past-midnight close (e.g. open 17:00 close 02:00)
+    if (win.closeMin <= win.openMin) return nowMin >= win.openMin || nowMin < win.closeMin;
+    return nowMin >= win.openMin && nowMin < win.closeMin;
+  }, [bizWindowForDate]);
+
+  // Unix seconds at which today's business day opened (or yesterday's if bar hasn't opened yet).
+  // Used to filter tonightJobs so we only show sessions from the current service window.
+  const todayStart = useMemo(() => {
+    const now = new Date();
+    const DAY_KEYS = ['sun','mon','tue','wed','thu','fri','sat'];
+    const getOpenTs = (d: Date): number => {
+      let openStr: string | undefined;
+      if (businessHours?.days) openStr = businessHours.days[DAY_KEYS[d.getDay()]]?.open;
+      openStr = openStr ?? businessHours?.open ?? '12:00';
+      const [h, m] = openStr.split(':').map(Number);
+      const ts = new Date(d); ts.setHours(h, m, 0, 0);
+      return ts.getTime() / 1000;
+    };
+    const todayOpenTs = getOpenTs(now);
+    // Before today's open — tonight's jobs started at yesterday's open
+    if (Date.now() / 1000 < todayOpenTs) {
+      const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+      return getOpenTs(yesterday);
+    }
+    return todayOpenTs;
+  }, [businessHours]);
+
   // Guard against null/undefined entries that AppSync occasionally returns
   const safeJobs    = useMemo(() => jobs.filter((j): j is VenueScopeJob => j != null && typeof j === 'object'), [jobs]);
   // isLive=true → live. isLive=false → not live (stale records).
@@ -2525,8 +2596,6 @@ export function VenueScope() {
   const fiveMinAgo = Date.now() / 1000 - 300;
   const isJobLive = (j: VenueScopeJob) =>
     j.isLive === true ||
-    // updatedAt not set (AppSync may omit it) → trust status=running
-    // updatedAt set → must be within last 5 min to avoid stale records
     (j.isLive !== false && j.status === 'running' &&
       ((j.updatedAt ?? 0) === 0 || (j.updatedAt ?? 0) > fiveMinAgo));
   const tonightJobs = useMemo(() => safeJobs.filter(j =>
@@ -2618,9 +2687,7 @@ export function VenueScope() {
     // Second pass: add stub rooms for enabled cameras with no job room
     for (const cam of enabledCams) {
       if (coveredCamIds.has(cam.cameraId)) continue;
-      const modesRaw = typeof cam.modes === 'string'
-        ? cam.modes.split(',').map((m: string) => m.trim())
-        : Array.isArray(cam.modes) ? cam.modes : ['drink_count'];
+      const modesRaw: string[] = Array.isArray(cam.modes) && cam.modes.length ? cam.modes : ['drink_count'];
       const mode = (modesRaw as string[]).includes('drink_count') ? 'drink_count'
                  : (modesRaw as string[]).includes('people_count') ? 'people_count'
                  : 'drink_count';
@@ -2830,8 +2897,9 @@ export function VenueScope() {
 
           {/* 5. Detection event log — all drinks + theft flags with NVR links */}
           <DetectionEventsPanel
-            jobs={safeJobs}
+            jobs={tonightJobs}
             nvrUrlTemplate={nvrPlaybackUrl}
+            businessHours={businessHours ?? undefined}
             onSaveNvrUrl={url => {
               setNvrPlaybackUrl(url);
               venueSettingsService.saveSettingsToCloud(venueId, {
