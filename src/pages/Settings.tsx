@@ -22,7 +22,7 @@ import { useDisplayName } from '../hooks/useDisplayName';
 import squarePosService, { SquareCredentials } from '../services/square-pos.service';
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'cameras' | 'about'>('account');
+  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'cameras' | 'billing' | 'about'>('account');
   const [connectStatus, setConnectStatus] = useState<ConnectStatus | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -58,6 +58,11 @@ export function Settings() {
   const [squareTestResult, setSquareTestResult]   = useState<{ ok: boolean; message: string } | null>(null);
   const [squareSaved, setSquareSaved]             = useState(false);
   const squareIsConfigured                        = squarePosService.isConfigured();
+
+  const [billingStatus, setBillingStatus] = useState<import('../services/billing.service').BillingStatus | null>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingError, setBillingError]   = useState('');
+  const [billingActionLoading, setBillingActionLoading] = useState(false);
 
   const user = authService.getStoredUser();
 
@@ -389,6 +394,20 @@ export function Settings() {
     }
   }, [user?.venueId]);
 
+  // Load billing status when on billing tab
+  useEffect(() => {
+    if (activeTab !== 'billing') return;
+    const venueId = user?.venueId;
+    if (!venueId) return;
+    setBillingLoading(true); setBillingError('');
+    import('../services/billing.service').then(({ default: billingService }) =>
+      billingService.refresh(venueId)
+        .then(s => setBillingStatus(s))
+        .catch(() => setBillingError('Failed to load billing info'))
+        .finally(() => setBillingLoading(false))
+    );
+  }, [activeTab, user?.venueId]);
+
   const startRename = (cam: { cameraId: string; name: string }) => {
     setRenamingId(cam.cameraId);
     setRenameValue(cam.name);
@@ -493,6 +512,7 @@ export function Settings() {
             { id: 'calibration' as const, label: 'Calibration', icon: Sliders },
             { id: 'alerts' as const, label: 'Alerts', icon: Bell },
             { id: 'cameras' as const, label: 'Cameras', icon: Camera },
+            { id: 'billing' as const, label: 'Billing', icon: CreditCard },
             { id: 'about' as const, label: 'About', icon: Info },
           ].map((tab) => (
             <motion.button
@@ -1865,6 +1885,114 @@ export function Settings() {
                     PC plugged into power
                   </li>
                 </ul>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Billing Tab */}
+          {activeTab === 'billing' && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-4"
+            >
+              <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5">
+                <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-teal" />
+                  Subscription
+                </h3>
+
+                {billingLoading && (
+                  <div className="flex items-center gap-2 text-sm text-text-muted py-4">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading billing info…
+                  </div>
+                )}
+
+                {billingError && (
+                  <p className="text-sm text-red-400">{billingError}</p>
+                )}
+
+                {!billingLoading && billingStatus && (() => {
+                  const st = billingStatus;
+                  const statusColor = { active: 'text-green-400', trial: 'text-amber-400', past_due: 'text-red-400', cancelled: 'text-red-400', trial_expired: 'text-red-400' }[st.subscriptionStatus] ?? 'text-text-muted';
+                  const statusLabel = { active: 'Active', trial: `Trial — ${st.trialDaysLeft} day${st.trialDaysLeft !== 1 ? 's' : ''} left`, past_due: `Past Due — ${st.graceDaysLeft} day${st.graceDaysLeft !== 1 ? 's' : ''} grace period`, cancelled: 'Cancelled', trial_expired: 'Trial Expired' }[st.subscriptionStatus] ?? st.subscriptionStatus;
+                  return (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-text-muted">Status</span>
+                        <span className={`text-sm font-semibold ${statusColor}`}>{statusLabel}</span>
+                      </div>
+                      {st.subscriptionStatus === 'active' && st.currentPeriodEnd > 0 && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-text-muted">Next billing date</span>
+                          <span className="text-sm text-white">{new Date(st.currentPeriodEnd * 1000).toLocaleDateString()}</span>
+                        </div>
+                      )}
+                      {st.planId && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-text-muted">Plan</span>
+                          <span className="text-sm text-white capitalize">{st.planId}</span>
+                        </div>
+                      )}
+                      {st.cancelAtPeriodEnd && (
+                        <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                          Subscription will cancel at end of billing period.
+                        </p>
+                      )}
+
+                      <div className="border-t border-whoop-divider pt-4 flex flex-col gap-2">
+                        {!st.hasAccess || st.subscriptionStatus !== 'active' ? (
+                          <button
+                            onClick={async () => {
+                              setBillingActionLoading(true);
+                              try { await import('../services/billing.service').then(m => m.default.redirectToCheckout(user?.venueId ?? '')); }
+                              catch { setBillingActionLoading(false); }
+                            }}
+                            disabled={billingActionLoading}
+                            className="w-full py-2.5 rounded-xl bg-teal text-black font-semibold text-sm hover:bg-teal/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                            <CreditCard className="w-4 h-4" />
+                            {billingActionLoading ? 'Redirecting…' : 'Subscribe Now'}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={async () => {
+                              setBillingActionLoading(true);
+                              try { await import('../services/billing.service').then(m => m.default.redirectToPortal(user?.venueId ?? '')); }
+                              catch { setBillingActionLoading(false); }
+                            }}
+                            disabled={billingActionLoading}
+                            className="w-full py-2.5 rounded-xl bg-whoop-bg border border-whoop-divider text-white text-sm font-medium hover:border-teal/50 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                            <CreditCard className="w-4 h-4 text-teal" />
+                            {billingActionLoading ? 'Redirecting…' : 'Manage Billing'}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            setBillingLoading(true);
+                            import('../services/billing.service').then(({ default: billingService }) =>
+                              billingService.refresh(user?.venueId ?? '')
+                                .then(s => { setBillingStatus(s); setBillingLoading(false); })
+                                .catch(() => { setBillingError('Refresh failed'); setBillingLoading(false); })
+                            );
+                          }}
+                          className="w-full py-2 text-xs text-text-muted hover:text-white transition-colors"
+                        >
+                          Refresh status
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5">
+                <p className="text-xs text-text-muted leading-relaxed">
+                  Billing is managed securely through Stripe. VenueScope does not store your payment details.
+                  Access is automatically restored within minutes of a successful payment.
+                  Accounts that are past due have a 7-day grace period before access is suspended.
+                </p>
               </div>
             </motion.div>
           )}

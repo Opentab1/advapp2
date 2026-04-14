@@ -24,6 +24,8 @@ import { SportsGame } from '../types';
 import venueSettingsService from '../services/venue-settings.service';
 import { isDemoAccount, generateDemoVenueScopeJobs } from '../utils/demoData';
 import cameraService, { Camera as CameraConfig } from '../services/camera.service';
+import billingService, { BillingStatus } from '../services/billing.service';
+import { PaywallOverlay, BillingBanner } from '../components/billing/PaywallOverlay';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -2470,6 +2472,8 @@ export function VenueScope() {
   const [nextPollIn, setNextPollIn]   = useState(POLL_INTERVAL_MS / 1000);
   const [cameras, setCameras]         = useState<CameraConfig[]>([]);
   const [configuringCamera, setConfiguringCamera] = useState<CameraConfig | null>(null);
+  const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null);
+  const [billingBannerDismissed, setBillingBannerDismissed] = useState(false);
   const knownIds    = useRef<Set<string>>(new Set());
   const pollTimer   = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -2547,6 +2551,16 @@ export function VenueScope() {
       document.removeEventListener('visibilitychange', onVis);
     };
   }, [load]);
+
+  // Load billing status on mount and refresh every 5 minutes
+  useEffect(() => {
+    if (!venueId) return;
+    billingService.getStatus(venueId).then(setBillingStatus);
+    const interval = setInterval(() => {
+      billingService.getStatus(venueId).then(setBillingStatus);
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [venueId]);
 
   // Business hours — read from localStorage (set in Settings > Venue)
   // Derive open/close minutes for a given Date from the V2 per-day or legacy format.
@@ -2763,6 +2777,23 @@ export function VenueScope() {
 
   return (
     <div className="space-y-6">
+      {/* Billing paywall — full block when access lapsed */}
+      {billingStatus && !billingStatus.hasAccess && (
+        <PaywallOverlay venueId={venueId} status={billingStatus} />
+      )}
+
+      {/* Billing banner — soft warning during trial end or past due grace period */}
+      {billingStatus && billingStatus.hasAccess && !billingBannerDismissed && (
+        (billingStatus.subscriptionStatus === 'past_due' ||
+         (billingStatus.subscriptionStatus === 'trial' && billingStatus.trialDaysLeft <= 3)) && (
+          <BillingBanner
+            venueId={venueId}
+            status={billingStatus}
+            onDismiss={() => setBillingBannerDismissed(true)}
+          />
+        )
+      )}
+
       {/* Theft investigation modal */}
       {investigating && (
         <TheftModal job={investigating} avgDrinkPrice={avgDrinkPrice} onClose={() => setInvestigating(null)} />

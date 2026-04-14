@@ -106,6 +106,26 @@ except ddb.exceptions.ResourceNotFoundException:
         time.sleep(2)
     print(f"{OK} VenueScopeJobs table created")
 
+# ── VenueScopeBilling table ───────────────────────────────────────────────────
+
+try:
+    ddb.describe_table(TableName="VenueScopeBilling")
+    print(f"{OK} VenueScopeBilling table already exists — skipping")
+except ddb.exceptions.ResourceNotFoundException:
+    print("  Creating VenueScopeBilling table...")
+    ddb.create_table(
+        TableName="VenueScopeBilling",
+        AttributeDefinitions=[{"AttributeName": "venueId", "AttributeType": "S"}],
+        KeySchema=[{"AttributeName": "venueId", "KeyType": "HASH"}],
+        BillingMode="PAY_PER_REQUEST",
+        Tags=[{"Key": "Project", "Value": "VenueScope"}, {"Key": "ManagedBy", "Value": "deploy_aws.py"}],
+    )
+    for _ in range(30):
+        r = ddb.describe_table(TableName="VenueScopeBilling")
+        if r["Table"]["TableStatus"] == "ACTIVE": break
+        time.sleep(2)
+    print(f"{OK} VenueScopeBilling table created")
+
 # ── 2. IAM Role for AppSync → DynamoDB ───────────────────────────────────────
 
 section("2. IAM — AppSync DynamoDB service role")

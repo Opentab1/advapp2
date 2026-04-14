@@ -29,6 +29,10 @@
  *   GET    /admin/stats
  *   GET    /admin/alerts                (query param: venueId, limit)
  *   POST   /admin/probe-cameras
+ *   GET    /billing/status              (query param: venueId)
+ *   POST   /billing/create-checkout     (body: {venueId, successUrl, cancelUrl})
+ *   POST   /billing/portal              (body: {venueId, returnUrl})
+ *   POST   /billing/webhook             (Stripe webhook — raw body, Stripe-Signature header)
  */
 
 import {
@@ -49,6 +53,7 @@ import {
   DeleteItemCommand,
   GetItemCommand,
 } from '@aws-sdk/client-dynamodb';
+import { createHmac, timingSafeEqual } from 'crypto';
 
 const REGION       = process.env.REGION || 'us-east-2';
 const USER_POOL_ID = process.env.USER_POOL_ID;
@@ -56,6 +61,11 @@ const USER_POOL_ID = process.env.USER_POOL_ID;
 const VENUES_TABLE  = 'VenueScopeVenues';
 const CAMERAS_TABLE = 'VenueScopeCameras';
 const JOBS_TABLE    = 'VenueScopeJobs';
+const BILLING_TABLE = 'VenueScopeBilling';
+const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY ?? '';
+const STRIPE_PRICE  = process.env.STRIPE_PRICE_ID   ?? '';
+const STRIPE_WH_SEC = process.env.STRIPE_WEBHOOK_SECRET ?? '';
+const TRIAL_DAYS    = 14;
 
 const cognito = new CognitoIdentityProviderClient({ region: REGION });
 const ddb     = new DynamoDBClient({ region: REGION });
@@ -543,6 +553,221 @@ async function probeCameras({ ip, port, totalChannels = 16 }) {
   return ok({ channels: results });
 }
 
+// ─── Billing helpers ──────────────────────────────────────────────────────────
+
+async function stripePost(path, params) {
+  const res = await fetch(`https://api.stripe.com/v1${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${STRIPE_SECRET}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams(params).toString(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message ?? `Stripe ${res.status}`);
+  return data;
+}
+
+async function stripeGet(path) {
+  const res = await fetch(`https://api.stripe.com/v1${path}`, {
+    headers: { Authorization: `Bearer ${STRIPE_SECRET}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message ?? `Stripe ${res.status}`);
+  return data;
+}
+
+function verifyStripeSignature(rawBody, sigHeader, secret) {
+  const parts = Object.fromEntries(sigHeader.split(',').map(p => p.split('=')));
+  const ts = parts.t; const sig = parts.v1;
+  if (!ts || !sig) throw new Error('Missing signature parts');
+  const expected = createHmac('sha256', secret).update(`${ts}.${rawBody}`).digest('hex');
+  const a = Buffer.from(expected, 'hex');
+  const bBuf = Buffer.from(sig.padEnd(expected.length, '0'), 'hex');
+  if (a.length !== bBuf.length || !timingSafeEqual(a, bBuf)) throw new Error('Signature mismatch');
+  if (Math.abs(Date.now() / 1000 - parseInt(ts)) > 300) throw new Error('Webhook too old');
+  return JSON.parse(rawBody);
+}
+
+function billingFromItem(item) {
+  if (!item) return null;
+  return {
+    venueId:              s(item.venueId),
+    subscriptionStatus:   s(item.subscriptionStatus) || 'trial',
+    stripeCustomerId:     s(item.stripeCustomerId),
+    stripeSubscriptionId: s(item.stripeSubscriptionId),
+    trialEndsAt:          n(item.trialEndsAt),
+    currentPeriodEnd:     n(item.currentPeriodEnd),
+    gracePeriodEnd:       n(item.gracePeriodEnd),
+    planId:               s(item.planId),
+    cancelAtPeriodEnd:    b(item.cancelAtPeriodEnd),
+  };
+}
+
+async function getBillingRecord(venueId) {
+  const r = await ddb.send(new GetItemCommand({ TableName: BILLING_TABLE, Key: { venueId: { S: venueId } } }));
+  return billingFromItem(r.Item ?? null);
+}
+
+async function upsertBillingFields(venueId, fields) {
+  const updates = []; const names = {}; const values = {};
+  const setS = (k, v) => { if (v == null) return; updates.push(`#${k}=:${k}`); names[`#${k}`]=k; values[`:${k}`]={S:String(v)}; };
+  const setN = (k, v) => { if (v == null) return; updates.push(`#${k}=:${k}`); names[`#${k}`]=k; values[`:${k}`]={N:String(v)}; };
+  const setBl = (k, v) => { if (v == null) return; updates.push(`#${k}=:${k}`); names[`#${k}`]=k; values[`:${k}`]={BOOL:Boolean(v)}; };
+  setS('subscriptionStatus',   fields.subscriptionStatus);
+  setS('stripeCustomerId',     fields.stripeCustomerId);
+  setS('stripeSubscriptionId', fields.stripeSubscriptionId);
+  setN('trialEndsAt',          fields.trialEndsAt);
+  setN('currentPeriodEnd',     fields.currentPeriodEnd);
+  setN('gracePeriodEnd',       fields.gracePeriodEnd);
+  setS('planId',               fields.planId);
+  setBl('cancelAtPeriodEnd',   fields.cancelAtPeriodEnd);
+  setN('lastSyncedAt',         Date.now() / 1000);
+  if (!updates.length) return;
+  await ddb.send(new UpdateItemCommand({
+    TableName: BILLING_TABLE,
+    Key: { venueId: { S: venueId } },
+    UpdateExpression: `SET ${updates.join(',')}`,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+  }));
+}
+
+async function getBillingStatus(venueId) {
+  if (!venueId) return err(400, 'venueId required');
+  const now = Date.now() / 1000;
+  let billing = await getBillingRecord(venueId);
+
+  if (!billing) {
+    const trialEndsAt = now + TRIAL_DAYS * 86400;
+    try {
+      await ddb.send(new PutItemCommand({
+        TableName: BILLING_TABLE,
+        Item: { venueId: { S: venueId }, subscriptionStatus: { S: 'trial' }, trialEndsAt: { N: String(trialEndsAt) }, lastSyncedAt: { N: String(now) } },
+        ConditionExpression: 'attribute_not_exists(venueId)',
+      }));
+    } catch (_) { /* already exists — race condition ok */ }
+    billing = await getBillingRecord(venueId);
+    billing = billing ?? { venueId, subscriptionStatus: 'trial', trialEndsAt, currentPeriodEnd: 0, gracePeriodEnd: 0, stripeCustomerId: '', stripeSubscriptionId: '', planId: '', cancelAtPeriodEnd: false };
+  }
+
+  if (billing.subscriptionStatus === 'trial' && now > billing.trialEndsAt) {
+    await upsertBillingFields(venueId, { subscriptionStatus: 'trial_expired' });
+    billing.subscriptionStatus = 'trial_expired';
+  }
+
+  const hasAccess =
+    billing.subscriptionStatus === 'active' ||
+    (billing.subscriptionStatus === 'trial' && now < billing.trialEndsAt) ||
+    (billing.subscriptionStatus === 'past_due' && (billing.gracePeriodEnd ?? 0) > now);
+
+  const trialDaysLeft = billing.subscriptionStatus === 'trial'
+    ? Math.max(0, Math.ceil((billing.trialEndsAt - now) / 86400)) : 0;
+  const graceDaysLeft = billing.subscriptionStatus === 'past_due' && (billing.gracePeriodEnd ?? 0) > now
+    ? Math.max(0, Math.ceil(((billing.gracePeriodEnd ?? 0) - now) / 86400)) : 0;
+
+  return ok({ ...billing, hasAccess, trialDaysLeft, graceDaysLeft });
+}
+
+async function createCheckoutSession(body) {
+  const { venueId, successUrl, cancelUrl } = body;
+  if (!venueId || !successUrl || !cancelUrl) return err(400, 'venueId, successUrl, cancelUrl required');
+  if (!STRIPE_SECRET) return err(500, 'STRIPE_SECRET_KEY not configured on Lambda');
+  if (!STRIPE_PRICE)  return err(500, 'STRIPE_PRICE_ID not configured on Lambda');
+
+  const venueResult = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: venueId } } }));
+  const ownerEmail  = venueResult.Item?.ownerEmail?.S ?? '';
+
+  let billing = await getBillingRecord(venueId);
+  let customerId = billing?.stripeCustomerId;
+  if (!customerId) {
+    const customer = await stripePost('/customers', { email: ownerEmail, 'metadata[venueId]': venueId });
+    customerId = customer.id;
+    await upsertBillingFields(venueId, { stripeCustomerId: customerId });
+  }
+
+  const session = await stripePost('/checkout/sessions', {
+    mode: 'subscription',
+    customer: customerId,
+    'line_items[0][price]': STRIPE_PRICE,
+    'line_items[0][quantity]': '1',
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    'metadata[venueId]': venueId,
+    'subscription_data[metadata][venueId]': venueId,
+  });
+
+  return ok({ url: session.url });
+}
+
+async function createPortalSession(body) {
+  const { venueId, returnUrl } = body;
+  if (!venueId || !returnUrl) return err(400, 'venueId, returnUrl required');
+  if (!STRIPE_SECRET) return err(500, 'STRIPE_SECRET_KEY not configured on Lambda');
+
+  const billing = await getBillingRecord(venueId);
+  if (!billing?.stripeCustomerId) return err(404, 'No Stripe customer — subscribe first');
+
+  const session = await stripePost('/billing_portal/sessions', {
+    customer: billing.stripeCustomerId,
+    return_url: returnUrl,
+  });
+  return ok({ url: session.url });
+}
+
+async function handleStripeWebhook(rawBody, sigHeader) {
+  if (!STRIPE_WH_SEC) return err(500, 'STRIPE_WEBHOOK_SECRET not configured');
+  let event;
+  try { event = verifyStripeSignature(rawBody, sigHeader, STRIPE_WH_SEC); }
+  catch (e) { return err(400, `Webhook verification failed: ${e.message}`); }
+
+  const obj      = event.data?.object ?? {};
+  const venueId  = obj.metadata?.venueId
+    ?? obj.subscription_details?.metadata?.venueId
+    ?? obj.lines?.data?.[0]?.metadata?.venueId;
+
+  console.log(`Stripe event: ${event.type}, venueId: ${venueId ?? 'unknown'}`);
+  if (!venueId) return ok({ received: true, skipped: 'no venueId in metadata' });
+
+  const now = Date.now() / 1000;
+
+  if (event.type === 'checkout.session.completed') {
+    const subId = obj.subscription;
+    if (subId) {
+      const sub = await stripeGet(`/subscriptions/${subId}`);
+      await upsertBillingFields(venueId, {
+        stripeCustomerId: obj.customer, stripeSubscriptionId: subId,
+        subscriptionStatus: 'active',
+        currentPeriodEnd: sub.current_period_end,
+        gracePeriodEnd: sub.current_period_end + 7 * 86400,
+        planId: sub.items?.data?.[0]?.price?.nickname ?? 'pro',
+        cancelAtPeriodEnd: sub.cancel_at_period_end,
+      });
+    }
+  } else if (event.type === 'invoice.paid') {
+    const periodEnd = obj.lines?.data?.[0]?.period?.end ?? (now + 30 * 86400);
+    await upsertBillingFields(venueId, {
+      subscriptionStatus: 'active', stripeCustomerId: obj.customer,
+      currentPeriodEnd: periodEnd, gracePeriodEnd: periodEnd + 7 * 86400,
+    });
+  } else if (event.type === 'invoice.payment_failed') {
+    const periodEnd = obj.lines?.data?.[0]?.period?.end ?? now;
+    await upsertBillingFields(venueId, { subscriptionStatus: 'past_due', gracePeriodEnd: periodEnd + 7 * 86400 });
+  } else if (event.type === 'customer.subscription.updated') {
+    await upsertBillingFields(venueId, {
+      subscriptionStatus: obj.status,
+      currentPeriodEnd: obj.current_period_end,
+      gracePeriodEnd: obj.current_period_end + 7 * 86400,
+      cancelAtPeriodEnd: obj.cancel_at_period_end,
+    });
+  } else if (event.type === 'customer.subscription.deleted') {
+    await upsertBillingFields(venueId, { subscriptionStatus: 'cancelled' });
+  }
+
+  return ok({ received: true });
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const handler = async (event) => {
@@ -589,6 +814,16 @@ export const handler = async (event) => {
 
     // Camera probing (NVR discovery)
     if (method === 'POST'  && rawPath === '/admin/probe-cameras')      return probeCameras(body);
+
+    // Billing
+    if (method === 'GET'  && rawPath === '/billing/status')          return getBillingStatus(qs.venueId);
+    if (method === 'POST' && rawPath === '/billing/create-checkout')  return createCheckoutSession(body);
+    if (method === 'POST' && rawPath === '/billing/portal')           return createPortalSession(body);
+    if (method === 'POST' && rawPath === '/billing/webhook') {
+      const rawBody = event.isBase64Encoded ? Buffer.from(event.body ?? '', 'base64').toString('utf8') : (event.body ?? '');
+      const sig = event.headers?.['stripe-signature'] ?? event.headers?.['Stripe-Signature'] ?? '';
+      return handleStripeWebhook(rawBody, sig);
+    }
 
     return err(404, `No route: ${method} ${rawPath}`);
   } catch (e) {
