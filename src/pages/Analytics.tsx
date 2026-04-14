@@ -410,107 +410,174 @@ function TheftSection({ jobs }: { jobs: VenueScopeJob[] }) {
   );
 }
 
-// ── Night Log ─────────────────────────────────────────────────────────────────
+// ── Detection Event Log ───────────────────────────────────────────────────────
 
-function modeTag(job: VenueScopeJob): string {
-  try {
-    if (job.activeModes) {
-      const modes = JSON.parse(job.activeModes) as string[];
-      const labels: Record<string, string> = {
-        drink_count: '🍺',
-        people_count: '👥',
-        bottle_count: '🍾',
-        staff_activity: '👤',
-        table_turns: '🔄',
-      };
-      return modes.map(m => labels[m] ?? m).join(' ');
-    }
-  } catch { /* fall through */ }
-  const labels: Record<string, string> = {
-    drink_count: '🍺',
-    people_count: '👥',
-    bottle_count: '🍾',
-    staff_activity: '👤',
-    table_turns: '🔄',
-  };
-  return labels[job.analysisMode] ?? job.analysisMode ?? '📹';
+interface DetectionEvent {
+  ts: number;           // epoch seconds
+  type: 'drink' | 'people' | 'bottle' | 'pour' | 'theft';
+  camera: string;
+  stat: string;         // human-readable value
+  detail: string;       // secondary detail
+  flag?: boolean;
 }
 
-function NightLog({ jobs }: { jobs: VenueScopeJob[] }) {
+function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
+  const events: DetectionEvent[] = [];
+
+  for (const job of jobs) {
+    const cam  = cameraName(job);
+    const ts   = jobTs(job);
+    const mode = job.analysisMode ?? '';
+
+    // Drink detection events
+    if ((mode === 'drink_count' || (job.activeModes ?? '').includes('drink_count')) && (job.totalDrinks ?? 0) > 0) {
+      const dph  = job.drinksPerHour ? `${job.drinksPerHour.toFixed(0)}/hr` : '';
+      const bartender = job.topBartender ? ` · ${job.topBartender}` : '';
+      events.push({
+        ts,
+        type: 'drink',
+        camera: cam,
+        stat: `${job.totalDrinks} drink${(job.totalDrinks ?? 0) !== 1 ? 's' : ''}`,
+        detail: [dph, bartender].filter(Boolean).join(''),
+        flag: job.hasTheftFlag,
+      });
+    }
+
+    // People count events
+    if ((mode === 'people_count' || (job.activeModes ?? '').includes('people_count')) && (job.peakOccupancy ?? 0) > 0) {
+      const entries = job.totalEntries ?? 0;
+      events.push({
+        ts,
+        type: 'people',
+        camera: cam,
+        stat: `${job.peakOccupancy} in frame`,
+        detail: entries > 0 ? `${entries} entries` : '',
+      });
+    }
+
+    // Bottle count events
+    if ((mode === 'bottle_count' || (job.activeModes ?? '').includes('bottle_count')) && (job.bottleCount ?? 0) > 0) {
+      const pours = job.pourCount ? ` · ${job.pourCount} pours` : '';
+      events.push({
+        ts,
+        type: 'bottle',
+        camera: cam,
+        stat: `${job.bottleCount} bottle${(job.bottleCount ?? 1) !== 1 ? 's' : ''}`,
+        detail: `Peak: ${job.peakBottleCount ?? job.bottleCount}${pours}`,
+      });
+    }
+
+    // Pour / over-pour events (from bottle_count jobs)
+    if ((job.overPours ?? 0) > 0) {
+      events.push({
+        ts,
+        type: 'pour',
+        camera: cam,
+        stat: `${job.overPours} over-pour${(job.overPours ?? 1) !== 1 ? 's' : ''}`,
+        detail: job.totalPouredOz ? `${job.totalPouredOz.toFixed(1)} oz total` : '',
+        flag: true,
+      });
+    }
+
+    // Theft / unrung events
+    if (job.hasTheftFlag && (job.unrungDrinks ?? 0) > 0) {
+      events.push({
+        ts,
+        type: 'theft',
+        camera: cam,
+        stat: `${job.unrungDrinks} unrung drink${(job.unrungDrinks ?? 1) !== 1 ? 's' : ''}`,
+        detail: 'Pull NVR footage to verify',
+        flag: true,
+      });
+    }
+  }
+
+  // Sort newest first
+  return events.sort((a, b) => b.ts - a.ts);
+}
+
+const EVENT_META: Record<DetectionEvent['type'], { label: string; color: string; icon: React.ReactNode }> = {
+  drink:  { label: 'Drink Detection',  color: 'text-teal',        icon: <Wine className="w-3.5 h-3.5" /> },
+  people: { label: 'People Count',     color: 'text-blue-400',    icon: <Users className="w-3.5 h-3.5" /> },
+  bottle: { label: 'Bottle Count',     color: 'text-purple-400',  icon: <Activity className="w-3.5 h-3.5" /> },
+  pour:   { label: 'Over-Pour Alert',  color: 'text-amber-400',   icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+  theft:  { label: 'Theft Flag',       color: 'text-red-400',     icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+};
+
+function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
   const [expanded, setExpanded] = useState(false);
 
-  // Show ALL completed sessions, newest first
-  const sorted = useMemo(
-    () => [...jobs]
-      .sort((a, b) => jobTs(b) - jobTs(a)),
-    [jobs]
-  );
+  const events = useMemo(() => buildEvents(jobs), [jobs]);
 
-  if (sorted.length === 0) return null;
+  if (events.length === 0) return null;
 
-  const visible = expanded ? sorted : sorted.slice(0, 10);
+  const visible = expanded ? events : events.slice(0, 12);
 
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
-        <Video className="w-4 h-4 text-teal" />
-        <span className="text-sm font-semibold text-white">Session Log</span>
-        <span className="ml-auto text-[10px] text-text-muted">{sorted.length} session{sorted.length !== 1 ? 's' : ''}</span>
+        <Activity className="w-4 h-4 text-teal" />
+        <span className="text-sm font-semibold text-white">Detection Events</span>
+        <span className="ml-auto text-[10px] text-text-muted">{events.length} event{events.length !== 1 ? 's' : ''}</span>
       </div>
 
-      {/* Column headers */}
-      <div className="grid gap-2 px-4 py-2 border-b border-whoop-divider/40 text-[9px] text-text-muted uppercase tracking-wider font-semibold"
-        style={{ gridTemplateColumns: '5rem 1fr 2rem 3.5rem 2.5rem 3.5rem' }}>
-        <span>Date</span>
+      <div className="grid gap-0 px-4 py-2 border-b border-whoop-divider/40 text-[9px] text-text-muted uppercase tracking-wider font-semibold"
+        style={{ gridTemplateColumns: '4.5rem 1fr auto auto' }}>
+        <span>Time</span>
         <span>Camera</span>
-        <span className="text-center">Mode</span>
-        <span className="text-center">Drinks</span>
-        <span className="text-center">/hr</span>
-        <span className="text-center">Status</span>
+        <span className="text-right pr-4">Event · Stat</span>
+        <span className="text-right">NVR ref</span>
       </div>
 
-      <div className="divide-y divide-whoop-divider/50">
-        {visible.map(job => {
-          const ts = jobTs(job);
-          const dph = job.drinksPerHour != null && job.drinksPerHour > 0 ? job.drinksPerHour.toFixed(0) : '—';
-          const drinks = job.totalDrinks ?? 0;
+      <div className="divide-y divide-whoop-divider/40">
+        {visible.map((ev, i) => {
+          const meta = EVENT_META[ev.type];
           return (
-            <div
-              key={job.jobId}
-              className="grid items-center gap-2 px-4 py-2.5 hover:bg-whoop-bg/40 transition-colors"
-              style={{ gridTemplateColumns: '5rem 1fr 2rem 3.5rem 2.5rem 3.5rem' }}
-            >
+            <div key={i} className="grid items-center gap-3 px-4 py-3 hover:bg-whoop-bg/40 transition-colors"
+              style={{ gridTemplateColumns: '4.5rem 1fr auto auto' }}>
+
+              {/* Time */}
               <div>
-                <div className="text-xs font-medium text-white">{fmtDate(ts)}</div>
-                <div className="text-[9px] text-text-muted">{fmtTime(ts)}</div>
+                <div className="text-[10px] font-semibold text-white tabular-nums">{fmtTime(ev.ts)}</div>
+                <div className="text-[9px] text-text-muted">{fmtDate(ev.ts)}</div>
               </div>
-              <div className="text-xs text-text-secondary truncate">{cameraName(job)}</div>
-              <div className="text-center text-xs">{modeTag(job)}</div>
-              <div className={`text-sm font-bold text-center tabular-nums ${drinks > 0 ? 'text-teal' : 'text-text-muted'}`}>
-                {drinks > 0 ? drinks : '—'}
+
+              {/* Camera */}
+              <div className="min-w-0">
+                <div className="text-xs text-text-secondary truncate">{ev.camera}</div>
+                {ev.detail && <div className="text-[9px] text-text-muted/70 truncate mt-0.5">{ev.detail}</div>}
               </div>
-              <div className="text-[10px] text-text-muted text-center tabular-nums">{dph}</div>
-              <div className="text-center">
-                {job.hasTheftFlag ? (
-                  <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-400">
-                    <AlertTriangle className="w-2.5 h-2.5" />
-                    {job.unrungDrinks ? `${job.unrungDrinks}` : 'Flag'}
-                  </span>
-                ) : (
-                  <span className="text-[9px] text-emerald-400">✓</span>
-                )}
+
+              {/* Event type + stat */}
+              <div className="text-right pr-2">
+                <div className={`flex items-center gap-1 justify-end text-[10px] font-medium ${meta.color}`}>
+                  {meta.icon}
+                  <span>{meta.label}</span>
+                  {ev.flag && <AlertTriangle className="w-2.5 h-2.5 text-red-400 ml-0.5" />}
+                </div>
+                <div className="text-sm font-bold text-white tabular-nums mt-0.5">{ev.stat}</div>
+              </div>
+
+              {/* NVR timestamp hint */}
+              <div className="text-right">
+                <div className="text-[9px] text-text-muted/50 font-mono tabular-nums leading-tight">
+                  {fmtTime(ev.ts)}
+                </div>
+                <div className="text-[8px] text-text-muted/30 uppercase tracking-wide">NVR</div>
               </div>
             </div>
           );
         })}
       </div>
 
-      {sorted.length > 10 && (
+      {events.length > 12 && (
         <button
           onClick={() => setExpanded(e => !e)}
           className="w-full py-2.5 text-xs text-text-muted hover:text-white border-t border-whoop-divider transition-colors flex items-center justify-center gap-1"
         >
-          {expanded ? <><ChevronUp className="w-3 h-3" /> Show less</> : <><ChevronDown className="w-3 h-3" /> Show all {sorted.length} sessions</>}
+          {expanded
+            ? <><ChevronUp className="w-3 h-3" /> Show less</>
+            : <><ChevronDown className="w-3 h-3" /> Show all {events.length} events</>}
         </button>
       )}
     </div>
@@ -973,7 +1040,7 @@ export function Analytics() {
             <TableTurnsSection jobs={jobs} />
             <StaffActivitySection jobs={jobs} />
             <TheftSection jobs={jobs} />
-            <NightLog jobs={jobs} />
+            <DetectionEventLog jobs={jobs} />
           </motion.div>
         </AnimatePresence>
       )}
