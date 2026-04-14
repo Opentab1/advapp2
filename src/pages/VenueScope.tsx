@@ -168,7 +168,8 @@ function ZoneEditorModal({
   const streamUrl = (() => {
     // If rtspUrl is already a full HTTP/HTTPS URL, use it directly
     if (camera.rtspUrl && (camera.rtspUrl.startsWith('http://') || camera.rtspUrl.startsWith('https://'))) {
-      return camera.rtspUrl;
+      const isPageHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+      return isPageHttps ? camera.rtspUrl.replace(/^http:\/\//, 'https://') : camera.rtspUrl;
     }
     if (!proxyBase) return null;
     const ch = channelFromSources(camera.name || '', camera.rtspUrl);
@@ -1014,7 +1015,10 @@ function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null
   // If rtspUrl is already a full HTTP/HTTPS stream URL, use it directly.
   // This handles Cortex IQ NVRs where rtspUrl = http://ip:port/hls/live/CHn/0/livetop.mp4
   if (rtspUrl && (rtspUrl.startsWith('http://') || rtspUrl.startsWith('https://'))) {
-    return rtspUrl;
+    // Auto-upgrade to HTTPS when the page is served over HTTPS (avoids mixed-content block).
+    // Cortex IQ NVRs serve both HTTP and HTTPS on the same UPnP port.
+    const isPageHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    return isPageHttps ? rtspUrl.replace(/^http:\/\//, 'https://') : rtspUrl;
   }
   const ch = channelFromSources(label, rtspUrl);
   if (!ch || !proxyBase) return null;
