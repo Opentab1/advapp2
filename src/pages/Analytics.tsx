@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   RefreshCw, AlertTriangle, ShieldCheck, TrendingUp,
   ChevronDown, ChevronUp, User, Video, DollarSign,
-  Wine, Users, Activity,
+  Wine, Users, Activity, Search, X,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
@@ -570,6 +570,7 @@ const FILTER_OPTIONS: Array<{ key: DetectionEvent['type'] | 'all'; label: string
 function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
   const [expanded, setExpanded]   = useState(false);
   const [filter, setFilter]       = useState<DetectionEvent['type'] | 'all'>('all');
+  const [search, setSearch]       = useState('');
 
   const events  = useMemo(() => buildEvents(jobs), [jobs]);
 
@@ -577,17 +578,35 @@ function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
   const typesPresent = useMemo(() => new Set(events.map(e => e.type)), [events]);
   const visibleFilters = FILTER_OPTIONS.filter(f => f.key === 'all' || typesPresent.has(f.key));
 
-  const filtered = useMemo(
-    () => filter === 'all' ? events : events.filter(e => e.type === filter),
-    [events, filter],
-  );
+  const filtered = useMemo(() => {
+    let result = filter === 'all' ? events : events.filter(e => e.type === filter);
+    const q = search.trim().toLowerCase().replace(/\s+/g, '');
+    if (q) {
+      result = result.filter(ev => {
+        // Normalise all searchable fields into one string (no spaces) for flexible matching.
+        // e.g. "8pm" matches "8:00 PM", "blindgoat" matches "Blind Goat", "drink" matches "Drink Detection"
+        const hay = [
+          fmtTime(ev.ts),
+          fmtDate(ev.ts),
+          ev.camera,
+          ev.stat,
+          ev.detail ?? '',
+          EVENT_META[ev.type].label,
+        ].join(' ').toLowerCase().replace(/\s+/g, '');
+        return hay.includes(q);
+      });
+    }
+    return result;
+  }, [events, filter, search]);
 
-  // Reset expanded when filter changes
+  // Reset expanded when filter or search changes
   const handleFilter = (key: typeof filter) => { setFilter(key); setExpanded(false); };
+  const handleSearch = (v: string) => { setSearch(v); setExpanded(false); };
 
   if (events.length === 0) return null;
 
   const visible = expanded ? filtered : filtered.slice(0, 12);
+  const isFiltering = filter !== 'all' || search.trim() !== '';
 
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
@@ -596,8 +615,27 @@ function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
         <Activity className="w-4 h-4 text-teal" />
         <span className="text-sm font-semibold text-white">Detection Events</span>
         <span className="ml-auto text-[10px] text-text-muted">
-          {filtered.length}{filter !== 'all' ? ` / ${events.length}` : ''} event{events.length !== 1 ? 's' : ''}
+          {filtered.length}{isFiltering ? ` / ${events.length}` : ''} event{events.length !== 1 ? 's' : ''}
         </span>
+      </div>
+
+      {/* Search bar */}
+      <div className="px-4 py-2.5 border-b border-whoop-divider/40">
+        <div className="relative flex items-center">
+          <Search className="absolute left-2.5 w-3 h-3 text-text-muted pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => handleSearch(e.target.value)}
+            placeholder="Search by time (8pm, 11:20), camera, or event…"
+            className="w-full bg-whoop-bg border border-whoop-divider rounded-lg pl-7 pr-7 py-1.5 text-[11px] text-white placeholder-text-muted/50 focus:outline-none focus:border-teal/50 transition-colors"
+          />
+          {search && (
+            <button onClick={() => handleSearch('')} className="absolute right-2 text-text-muted hover:text-white transition-colors">
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filter pills */}
@@ -635,7 +673,9 @@ function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
 
       {filtered.length === 0 ? (
         <div className="px-4 py-6 text-center text-[11px] text-text-muted">
-          No {FILTER_OPTIONS.find(f => f.key === filter)?.label.toLowerCase()} events in this period
+          {search.trim()
+            ? `No events matching "${search.trim()}"`
+            : `No ${FILTER_OPTIONS.find(f => f.key === filter)?.label.toLowerCase()} events in this period`}
         </div>
       ) : (
         <div className="divide-y divide-whoop-divider/40">
