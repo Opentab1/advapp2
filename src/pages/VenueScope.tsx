@@ -731,6 +731,8 @@ interface RoomSummary {
   totalTurns: number;
   avgDwellMin: number;
   avgResponseSec: number;
+  // All modes configured on this camera in admin (source of truth for stat blocks to show)
+  configuredModes: string[];
   // meta
   elapsedSec: number;
   updatedAt: number;
@@ -802,6 +804,7 @@ function buildRooms(jobs: VenueScopeJob[], enabledPeopleCamNames: Set<string> = 
       totalTurns:     best.totalTurns     ?? 0,
       avgDwellMin:    best.avgDwellMin    ?? 0,
       avgResponseSec: best.avgResponseSec ?? 0,
+      configuredModes: modes,  // overwritten by allDisplayRooms when camera config is available
       elapsedSec: best.elapsedSec ?? 0,
       updatedAt: best.updatedAt ?? best.createdAt ?? 0,
       cameraAngle: best.cameraAngle ?? '',
@@ -1344,16 +1347,10 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
   onInvestigate: (job: VenueScopeJob) => void;
   onConfigureZones?: (camera: CameraConfig) => void;
 }) {
-  // Camera config is the source of truth for which stat blocks to show.
-  // Job activeModes tells us what ran most recently — but people_count is
-  // throttled to every 20 min, so most job records won't include it even
-  // when the camera is configured for both. Merge both sources: show any
-  // block configured on the camera, populated with job data when available.
-  const camConfigModes: string[] = Array.isArray(camera?.modes) && camera!.modes.length
-    ? (camera!.modes as string[])
-    : [];
-  const jobModes = room.job ? parseModes(room.job) : [];
-  const activeModes = [...new Set([...camConfigModes, ...jobModes, room.mode])];
+  // configuredModes is stamped on the room during allDisplayRooms from the camera admin config —
+  // it's the definitive list of what this camera does, independent of which modes appeared in
+  // the most recent job (people_count is throttled to every 20 min so most jobs won't list it).
+  const activeModes  = room.configuredModes.length ? room.configuredModes : [room.mode];
   const isDrink      = activeModes.includes('drink_count');
   const isPeople     = activeModes.includes('people_count');
   const isTableTurns = activeModes.includes('table_turns');
@@ -1400,7 +1397,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones }
           <div className="min-w-0">
             <p className="text-sm font-semibold text-white truncate">{room.label || 'Camera'}</p>
             <p className="text-[10px] text-text-muted capitalize">
-              {(camConfigModes.length ? camConfigModes : [room.mode]).map(m => m.replace(/_/g, ' ')).join(' · ')}
+              {activeModes.map(m => m.replace(/_/g, ' ')).join(' · ')}
               {room.cameraAngle && (
                 <span className="ml-1.5 inline-flex items-center gap-0.5 opacity-60">
                   · {room.cameraAngle}
@@ -2869,11 +2866,12 @@ export function VenueScope() {
                       : camModes.includes('table_turns') ? 'table_turns'
                       : camModes.includes('people_count') ? 'people_count'
                       : null;
-        // Override mode from camera config when it differs from the job
-        if (camMode && camMode !== room.mode) {
-          result.push({ ...room, mode: camMode });
-          continue;
-        }
+        // Stamp camera-configured modes (source of truth for which stat blocks to show)
+        // and override primary mode if camera config differs from job
+        const overrides: Partial<RoomSummary> = { configuredModes: camModes.length ? camModes : room.configuredModes };
+        if (camMode && camMode !== room.mode) overrides.mode = camMode;
+        result.push({ ...room, ...overrides });
+        continue;
       }
       result.push(room);
     }
@@ -2887,9 +2885,10 @@ export function VenueScope() {
                  : modesRaw.includes('people_count') ? 'people_count'
                  : modesRaw[0] ?? 'drink_count';
       result.push({
-        label: cam.name,   // exact camera name → cameraForRoom finds it via direct substring match
+        label: cam.name,
         isLive: false,
         mode,
+        configuredModes: modesRaw,
         totalDrinks: 0, drinksPerHour: 0, topBartender: '', hasTheftFlag: false,
         unrungDrinks: 0, currentOccupancy: 0, peakOccupancy: 0, totalEntries: 0,
         totalTurns: 0, avgDwellMin: 0, avgResponseSec: 0,
