@@ -1067,26 +1067,29 @@ export function Analytics() {
     () => venueSettingsService.getBusinessHours(venueId) ?? null
   );
 
+  // Always fetch the full 500 most recent jobs — no server-side date filtering.
+  // Reason: the DDB sort key BETWEEN query misses jobs with legacy UUID sort keys
+  // (inserted before the !{reverse_ts}_{jobId} format was introduced). Passing
+  // startEpoch/endEpoch to listJobs causes different periods to return different
+  // total sets, making Today vs 30Days vs AllTime inconsistent.
+  // Client-side filterJobs() handles all period windowing from the same dataset.
   const load = useCallback(async () => {
     if (!venueId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const { start, end } = periodBounds(period, businessHours);
-      const startEpoch = period === 'all' ? undefined : start;
-      const endEpoch   = period === 'all' ? undefined : end + 3600; // small buffer
       const raw = isDemo
         ? generateDemoVenueScopeJobs()
-        : await venueScopeService.listJobs(venueId, 500, startEpoch, endEpoch);
+        : await venueScopeService.listJobs(venueId, 500);
       setAllJobs(raw.filter(j => !j.isLive && j.status !== 'running'));
     } finally {
       setLoading(false);
     }
-  }, [venueId, isDemo, period, businessHours]);
+  }, [venueId, isDemo]);
 
   useEffect(() => { load(); }, [load]);
 
   // Load venue settings from cloud once on mount — updates business hours and drink price.
-  // Any change to businessHours triggers a load() re-run via the dependency above.
+  // businessHours changing only affects filterJobs() client-side, no reload needed.
   useEffect(() => {
     if (!venueId) return;
     venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
