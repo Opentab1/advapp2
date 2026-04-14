@@ -300,13 +300,8 @@ class AdminService {
   async listCameras(venueId?: string): Promise<AdminCamera[]> {
     console.log('Fetching cameras...', venueId ?? 'all');
     const qs = venueId ? `?venueId=${encodeURIComponent(venueId)}` : '';
-    try {
-      const data = await adminFetch(`/admin/cameras${qs}`);
-      return data.items ?? [];
-    } catch (error) {
-      console.error('listCameras failed:', error);
-      return [];
-    }
+    const data = await adminFetch(`/admin/cameras${qs}`);
+    return data.items ?? [];
   }
 
   async createCamera(camera: {

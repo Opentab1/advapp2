@@ -731,11 +731,16 @@ function VenueCameraSection({
               )}
 
               {error && (
-                <div className="flex items-center gap-2 text-red-400 text-sm py-2">
-                  <AlertTriangle className="w-4 h-4" />
-                  {error}
+                <div className="flex flex-col gap-1 text-red-400 text-sm py-2">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                  {error.includes('not configured') && (
+                    <span className="text-amber-400 text-xs ml-6">→ Set VITE_ADMIN_API_URL in Amplify → App Settings → Environment Variables, then redeploy</span>
+                  )}
                   {error.includes('credentials') && (
-                    <span className="text-gray-500"> — set VITE_AWS_ACCESS_KEY_ID in Amplify env vars</span>
+                    <span className="text-gray-500 text-xs ml-6">→ Set VITE_AWS_ACCESS_KEY_ID in Amplify env vars</span>
                   )}
                 </div>
               )}
