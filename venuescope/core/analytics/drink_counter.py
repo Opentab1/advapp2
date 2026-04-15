@@ -18,6 +18,15 @@ from core.shift      import ShiftManager
 from core.config     import DrinkCountRules
 
 _log = logging.getLogger("drink_counter")
+# Route to stdout so serve/reject decisions appear in journald alongside worker logs.
+# Only adds handler once even if module is imported multiple times.
+if not _log.handlers:
+    import sys as _sys
+    _h = logging.StreamHandler(_sys.stdout)
+    _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    _log.addHandler(_h)
+    _log.setLevel(logging.INFO)
+    _log.propagate = False
 
 
 def _point_in_polygon(px: float, py: float, poly: List[Tuple]) -> bool:

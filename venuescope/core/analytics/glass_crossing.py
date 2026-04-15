@@ -23,6 +23,16 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 
+import logging as _logging
+import sys as _sys
+_log = _logging.getLogger("glass_crossing")
+if not _log.handlers:
+    _h = _logging.StreamHandler(_sys.stdout)
+    _h.setFormatter(_logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    _log.addHandler(_h)
+    _log.setLevel(_logging.INFO)
+    _log.propagate = False
+
 from core.bar_config import BarConfig, station_polygon_px, bar_line_px
 
 _GLASS_CLASSES   = {40, 41}              # wine_glass, cup
@@ -111,6 +121,10 @@ class GlassCrossingDetector:
             i for i in range(min(len(boxes_px), len(class_ids)))
             if class_ids[i] in _GLASS_CLASSES
         ]
+        if glass_idx:
+            _log.info("[glass] t=%.1f detected %d glass object(s): %s",
+                      t_sec, len(glass_idx),
+                      [_CLASS_NAMES.get(class_ids[i], "?") for i in glass_idx])
 
         # IoU match detections to existing tracks
         matched_tracks: set = set()
@@ -190,6 +204,9 @@ class GlassCrossingDetector:
                     continue
 
                 # CONFIRMED — glass physically crossed the bar
+                _log.info("[glass_serve] t=%.1f uid=%d class=%s station=%s prep=%d dwell=%d",
+                          t_sec, trk.uid, _CLASS_NAMES.get(trk.class_id,"?"),
+                          best_zone, trk.prep_frames, trk.customer_dwell)
                 self._last_serve[best_zone] = t_sec
                 trk.last_side      = customer_side  # reset gate
                 trk.prep_frames    = 0
