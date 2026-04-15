@@ -104,7 +104,6 @@ class DrinkBottleCorrelator:
             t_serve = ev.get("t_sec", 0.0)
             best    = self._find_pour(t_serve)
 
-            drink_type  = _classify(best)
             poured_oz   = round(best.get("estimated_oz", 0.0), 2) if best else 0.0
             is_over     = best.get("is_over_pour", False)            if best else False
             bottle_cls  = best.get("class_name")                     if best else None
@@ -112,8 +111,13 @@ class DrinkBottleCorrelator:
             if best:
                 best["_claimed"] = True
                 self._stats["correlated"] += 1
+                drink_type = _classify(best)
             else:
                 self._stats["unmatched"] += 1
+                # Glass crossings with no bottle match = water/soft drink (no bottle used).
+                # Body crossings with no bottle match = truly unknown.
+                drink_type = ("water" if ev.get("detection_method") == "glass_crossing"
+                              else "unknown")
 
             self._stats["total_oz"]             += poured_oz
             self._stats["drink_types"][drink_type] += 1

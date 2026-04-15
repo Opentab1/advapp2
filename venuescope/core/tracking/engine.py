@@ -26,8 +26,10 @@ from core.preprocessing import (enhance_for_detection, build_dewarp_maps, dewarp
                                  detect_camera_angle)
 from core.bar_config import BarConfig
 from core.shift      import ShiftManager
-from core.analytics.drink_counter  import DrinkCounter
-from core.analytics.bottle_counter import BottleCounter
+from core.analytics.drink_counter         import DrinkCounter
+from core.analytics.bottle_counter        import BottleCounter
+from core.analytics.drink_bottle_correlator import DrinkBottleCorrelator
+from core.analytics.glass_crossing          import GlassCrossingDetector
 from core.analytics.people_counter import PeopleCounter
 from core.analytics.table_tracker         import TableTurnTracker, TableZone
 from core.analytics.table_service_tracker import TableServiceTracker, ServiceTableZone
@@ -630,6 +632,26 @@ class VenueProcessor:
         # True when bottle_count runs alongside a person-tracking primary mode.
         # Requires detecting both class 0 (person) and bottle classes in one pass.
         _bottle_alongside = ("bottle_count" in self.modes and self.mode != "bottle_count")
+        # Correlator: links pour_end events from BottleCounter to drink_serve events
+        # from DrinkCounter. Only active when both modes are running together.
+        _correlator: Optional[DrinkBottleCorrelator] = (
+            DrinkBottleCorrelator() if _bottle_alongside else None
+        )
+        self._correlator = _correlator  # stored so _build_summary can include its stats
+
+        # Glass crossing detector — auto-enabled for drink_count mode.
+        # Tracks physical cup/wine_glass crossing the bar line (near-zero false positives).
+        # When it fires for a station, body-crossing (DrinkCounter) events for the
+        # same station within the cooldown window are suppressed to avoid double-counting.
+        _glass_detector: Optional[GlassCrossingDetector] = (
+            GlassCrossingDetector(self.bar_config, W, H)
+            if self.mode == "drink_count" and self.bar_config is not None
+            else None
+        )
+        self._glass_detector = _glass_detector
+        # station_id → last glass-serve t_sec; DrinkCounter checks this to suppress
+        # body-crossing events when a glass crossing already confirmed the serve.
+        _glass_served: Dict[str, float] = {}
         model_name = self.profile["model"]
         self.cb(4, f"Loading {model_name}...")
         model = _get_cached_model(model_name)
@@ -932,6 +954,11 @@ class VenueProcessor:
                 detect_classes = list({0} | set(BOTTLE_CLASSES))  # people + bottles
             elif self.mode == "bottle_count":
                 detect_classes = BOTTLE_CLASSES
+            elif self.mode == "drink_count":
+                # Always detect cups/wine_glasses alongside people so
+                # GlassCrossingDetector can see physical glass movements.
+                # Classes 40=wine_glass, 41=cup — omit 39=bottle (too small overhead).
+                detect_classes = [0, 40, 41]
             else:
                 detect_classes = [0]
             results = model.track(yolo_frame, persist=True,
@@ -1086,6 +1113,55 @@ class VenueProcessor:
                                               centroids, track_ids, confs,
                                               boxes_px, class_ids,
                                               mode_override=_m)
+
+            # Glass crossing detection — runs on cup/wine_glass detections from YOLO.
+            # Physical object crossing bar line = near-zero false positive serve signal.
+            # Must run BEFORE correlator so glass_serve events are enriched too.
+            if _glass_detector is not None:
+                # Split glass-class boxes from the full detection set
+                _g_mask  = [c in {40, 41} for c in class_ids]
+                _g_boxes = boxes_px[np.array(_g_mask)] if any(_g_mask) else np.empty((0,4), dtype=np.float32)
+                _g_cls   = [c for c, m in zip(class_ids, _g_mask) if m]
+                _g_conf  = [c for c, m in zip(confs,     _g_mask) if m]
+                _glass_evs = _glass_detector.update(frame_idx, t_sec, _g_boxes, _g_cls, _g_conf)
+
+                if _glass_evs:
+                    # Record stations where glass crossing just fired
+                    for _gev in _glass_evs:
+                        _sid = _gev.get("station_id")
+                        if _sid:
+                            _glass_served[_sid] = t_sec
+
+                    # Suppress body-crossing drink_serve events for stations where
+                    # glass crossing already confirmed the serve this frame —
+                    # avoid double-counting the same pour.
+                    _suppress_stations = {ev.get("station_id") for ev in _glass_evs}
+                    evs = [
+                        ev for ev in evs
+                        if not (ev.get("event_type") == "drink_serve"
+                                and ev.get("detection_method") != "glass_crossing"
+                                and ev.get("station_id") in _suppress_stations)
+                    ]
+                    evs.extend(_glass_evs)
+
+                # Also suppress body-crossing events for stations where a glass
+                # crossing fired within the cooldown window (not just this frame).
+                _GLASS_COOLDOWN = 4.0
+                evs = [
+                    ev for ev in evs
+                    if not (ev.get("event_type") == "drink_serve"
+                            and ev.get("detection_method") != "glass_crossing"
+                            and (t_sec - _glass_served.get(ev.get("station_id",""), -999.0))
+                            < _GLASS_COOLDOWN)
+                ]
+
+            # Correlate bottle pours with drink serves — enriches drink_serve events
+            # in-place with drink_type, poured_oz, is_over_pour when a matching
+            # pour_end event exists within the 8-second rolling buffer.
+            # Also enriches glass_crossing events: matched pour → spirit/wine/beer/shot,
+            # unmatched → stays "water" (no bottle involved).
+            if _correlator is not None:
+                evs = _correlator.process_events(evs)
 
             snap_dir = self.result_dir / "snapshots"
             clip_dir = self.result_dir / "clips"
@@ -1450,8 +1526,12 @@ class VenueProcessor:
             if analyzer is None:
                 continue   # disabled mode — skip
             if mode == "drink_count":
+                _glass_rpt = (getattr(self, "_glass_detector", None) or
+                              object()).__class__.__name__  # safe no-op default
+                _glass_rpt = (getattr(self, "_glass_detector").quality_report()
+                              if getattr(self, "_glass_detector", None) else {})
                 b.update({"bartenders":    self.shift.summary(total_sec) if self.shift else {},
-                          "drink_quality": analyzer.quality_report(),
+                          "drink_quality": {**analyzer.quality_report(), **_glass_rpt},
                           "review_events": [
                               {"t_sec": e["t_sec"], "serve_score": e["serve_score"],
                                "station_id": e["station_id"], "track_id": e["track_id"],
@@ -1461,6 +1541,9 @@ class VenueProcessor:
                           ]})
             elif mode == "bottle_count":
                 b["bottles"] = analyzer.summary()
+                # Include pour-serve correlation stats when both modes ran together
+                if getattr(self, "_correlator", None) is not None:
+                    b["pour_correlation"] = self._correlator.summary()
             elif mode == "people_count":
                 b.update({"people":        analyzer.summary(total_sec),
                           "occupancy_log": analyzer.occupancy_log})

@@ -277,9 +277,18 @@ class DrinkCounter:
                            t_sec, tid, station_id, state.cooldown_remaining)
                 continue
 
-            # PREP: centroid must be in station zone
+            if station_id not in self._bar_lines:
+                continue
+
+            # Extract bar line info early — needed for bartender-side gate below
+            p1,p2,customer_side = self._bar_lines[station_id]
+
+            # PREP: centroid must be in station zone AND on the bartender side of
+            # the bar line.  A customer leaning in is in the zone polygon but on
+            # the customer side — they must never build prep context.
             if station_id in self._station_polys:
-                if _point_in_polygon(cx,cy,self._station_polys[station_id]):
+                if (_point_in_polygon(cx,cy,self._station_polys[station_id]) and
+                        _side_of_line((cx,cy),p1,p2) == -customer_side):
                     state.prep_frames += 1
                 else:
                     state.prep_frames = max(0, state.prep_frames-1)
@@ -289,11 +298,7 @@ class DrinkCounter:
                            t_sec, tid, station_id, state.prep_frames, self.rules.min_prep_frames)
                 continue
 
-            if station_id not in self._bar_lines:
-                continue
-
             # SERVE GESTURE: use leading box edge to catch arm-reach serves
-            p1,p2,customer_side = self._bar_lines[station_id]
             if boxes is not None and i < len(boxes):
                 bx = boxes[i]
                 probe = _reach_probe(float(bx[0]), float(bx[1]),
@@ -323,9 +328,12 @@ class DrinkCounter:
             if not nz: continue
             dominant = 1 if nz.count(1)>=nz.count(-1) else -1
 
-            # Must be on customer side AND different from last confirmed
+            # Must be on customer side AND we must have explicitly observed the track
+            # on the bartender side first.  last_confirmed_side starts at 0 (unseen),
+            # so requiring == -customer_side prevents a track that first appears on the
+            # customer side (e.g. a leaning customer) from ever triggering a count.
             if dominant != customer_side: continue
-            if state.last_confirmed_side == customer_side: continue
+            if state.last_confirmed_side != -customer_side: continue
 
             # BILATERAL CROSSING: must have dwelled on customer side long enough
             # (filters out fast sweeping gestures — reaching for glass, handing change)
