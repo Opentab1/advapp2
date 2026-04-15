@@ -525,6 +525,64 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     return True
 
 
+def get_camera_shift_totals(camera_id: str, venue_id: str = "") -> Dict[str, Any]:
+    """
+    Read the stable per-camera DDB record (~{camera_id}) and return the
+    current shift totals. Called at job start so the worker initialises
+    drink counts from DDB rather than from local disk — DDB is the source
+    of truth and survives worker restarts, crashes, and redeployments.
+
+    Returns dict with keys:
+      total_drinks      int
+      bartender_summary dict   {name: {drinks, timestamps, ...}}
+      created_at        float  unix epoch of the shift start (createdAt field)
+      shift_date        str    ISO date of createdAt, or today if missing
+    Returns empty dict if not configured or camera record not found.
+    """
+    if not _is_configured():
+        return {}
+    venue_id = venue_id or _get_venue_id()
+    if not venue_id or not camera_id:
+        return {}
+    try:
+        import datetime
+        ddb      = _get_client("dynamodb")
+        resp     = ddb.get_item(
+            TableName=DYNAMODB_TABLE,
+            Key={"venueId": {"S": venue_id}, "jobId": {"S": f"~{camera_id}"}},
+        )
+        item = resp.get("Item", {})
+        if not item:
+            return {}
+
+        total_drinks = int(item.get("totalDrinks", {}).get("N", 0))
+        created_at   = float(item.get("createdAt", {}).get("N", 0))
+        shift_date   = (datetime.datetime.utcfromtimestamp(created_at).date().isoformat()
+                        if created_at else datetime.date.today().isoformat())
+
+        bt_summary = {}
+        bt_json = (item.get("bartenderBreakdown") or item.get("bartenderSummary") or {})
+        if isinstance(bt_json, dict):
+            raw = bt_json.get("S", "")
+        else:
+            raw = ""
+        if raw:
+            try:
+                bt_summary = json.loads(raw)
+            except Exception:
+                pass
+
+        return {
+            "total_drinks":      total_drinks,
+            "bartender_summary": bt_summary,
+            "created_at":        created_at,
+            "shift_date":        shift_date,
+        }
+    except Exception as e:
+        print(f"[aws_sync] get_camera_shift_totals failed (non-fatal): {e}", flush=True)
+        return {}
+
+
 def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
                     venue_id: str = "") -> bool:
     """

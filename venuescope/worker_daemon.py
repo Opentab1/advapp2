@@ -229,10 +229,53 @@ def run_job(job_id: str):
         # Per-camera venue ID — supports multiple venues on one worker
         job_venue_id = extra_config.get("venue_id", "")
 
-        # Load cross-segment state (bar line cooldowns from previous clip)
+        # Load cross-segment state — DDB is source of truth for drink counts,
+        # local disk state is the fallback. Merge: take whichever has higher
+        # per-station totals so a corrupt/missing disk file never wipes counts.
         camera_id = extra_config.get("camera_id", "")
         if camera_id and mode == "drink_count":
-            prior_state = _load_camera_state(camera_id)
+            import datetime
+            today     = datetime.date.today().isoformat()
+            disk_state = _load_camera_state(camera_id) or {}
+
+            # Read DDB for authoritative totals (survives restarts/redeployments)
+            ddb_totals: dict = {}
+            try:
+                from core.aws_sync import get_camera_shift_totals
+                ddb_totals = get_camera_shift_totals(camera_id, job_venue_id) or {}
+            except Exception as _dte:
+                log.debug(f"DDB shift total read failed (non-fatal): {_dte}")
+
+            # Only use DDB totals if they're from today's shift
+            ddb_date  = ddb_totals.get("shift_date", "")
+            ddb_drinks = int(ddb_totals.get("total_drinks", 0))
+            disk_date  = disk_state.get("saved_date", "")
+            disk_station_drinks = disk_state.get("station_drinks", {})
+            disk_total = sum(disk_station_drinks.values()) if disk_station_drinks else 0
+
+            prior_state = dict(disk_state)  # start with disk cooldown state
+
+            if ddb_date == today and ddb_drinks > 0:
+                bt_summary = ddb_totals.get("bartender_summary", {})
+                if bt_summary:
+                    # Reconstruct station_drinks from DDB bartender breakdown
+                    # DDB uses name→{drinks}, disk uses station_id→drinks.
+                    # We store both so restore can match on either key.
+                    ddb_station: dict = {}
+                    for name, bd in bt_summary.items():
+                        if isinstance(bd, dict):
+                            ddb_station[name] = int(bd.get("drinks", 0))
+                    prior_state["station_drinks_by_name"] = ddb_station
+                    prior_state["saved_date"]             = today
+                    log.info(f"DDB shift totals for {camera_id}: {ddb_drinks} drinks "
+                             f"({ddb_date}) — overrides disk ({disk_total})")
+                elif ddb_drinks > disk_total:
+                    # No breakdown available but total is higher — use total
+                    prior_state["ddb_total_drinks"] = ddb_drinks
+                    prior_state["saved_date"]       = today
+                    log.info(f"DDB total for {camera_id}: {ddb_drinks} drinks "
+                             f"(no breakdown) — overrides disk ({disk_total})")
+
             if prior_state:
                 extra_config["prior_camera_state"] = prior_state
                 log.info(f"Loaded cross-segment state for camera {camera_id}")

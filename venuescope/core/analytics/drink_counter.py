@@ -536,13 +536,27 @@ class DrinkCounter:
         # Drink count accumulation — only if saved today (same shift)
         if state.get("saved_date") != today:
             return
+
+        # station_id → drinks (from local disk state)
         station_drinks     = state.get("station_drinks", {})
         station_timestamps = state.get("station_timestamps", {})
+        # bartender name → drinks (from DDB bartender breakdown)
+        ddb_by_name        = state.get("station_drinks_by_name", {})
+        # DDB total fallback (no per-station breakdown available)
+        ddb_total          = int(state.get("ddb_total_drinks", 0))
+
         for rec in self.shift.records.values():
             sid = rec.station_id
-            if not sid or sid not in station_drinks:
+            # Resolve prior drink count: prefer DDB name match > disk station_id > ddb_total
+            if ddb_by_name and rec.name in ddb_by_name:
+                prior_drinks = int(ddb_by_name[rec.name])
+            elif sid and sid in station_drinks:
+                prior_drinks = int(station_drinks[sid])
+            elif ddb_total > 0 and len(self.shift.records) == 1:
+                # Single station — assign the full DDB total to it
+                prior_drinks = ddb_total
+            else:
                 continue
-            prior_drinks = int(station_drinks[sid])
             if prior_drinks <= 0:
                 continue
             # Seed prior counts — new detections will add on top of these
