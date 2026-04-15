@@ -61,20 +61,24 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     _cam_extra = [m for m in (cam.get("extra_modes") or [])
                   if m and m != primary_mode and m not in _parsed_extra]
     extra_modes = list(_parsed_extra) + _cam_extra
-    # drink_count and table_turns run continuously — segmented clips miss full sessions.
-    # table_turns needs to observe the complete seated→cleared lifecycle (30-90 min),
-    # so it cannot work in 30-second snapshots.
+    # YOLO modes use 20-minute segments. Cross-segment state (drink_count accumulated
+    # counts, table_turns active sessions) is restored on restart, so no data is lost.
+    # Segmented mode allows the scheduler to interleave multiple YOLO cameras on 1vCPU
+    # instead of one continuous job starving all others.
     _all_modes = set([primary_mode] + list(extra_modes))
-    _needs_continuous = bool(_all_modes & {"drink_count", "table_turns", "table_service"})
-    default_seg = 0 if _needs_continuous else 15
+    _yolo_modes = {"drink_count", "table_turns", "table_service",
+                   "bottle_count", "staff_activity", "after_hours"}
+    _needs_yolo_seg = bool(_all_modes & _yolo_modes)
+    _SEG_DEFAULT = 1200  # 20-minute default for YOLO modes
+    default_seg = _SEG_DEFAULT if _needs_yolo_seg else 15
     seg_secs = float(cam.get("segment_seconds", default_seg))
-    # Force continuous for modes that require full-session observation,
-    # even if segment_seconds was explicitly set in DDB (overrides UI setting).
-    if _needs_continuous:
-        seg_secs = 0
+    # DDB stores segment_seconds=0 for legacy "continuous" cameras — treat as 1200s.
+    # Never allow very short segments for YOLO cameras (they need warm-up time).
+    if _needs_yolo_seg and (seg_secs == 0 or seg_secs < 300):
+        seg_secs = _SEG_DEFAULT
     continuous = (seg_secs == 0)
     if seg_num > 0 and not continuous:
-        label += f" — seg {seg_num}"
+        label += f" — seg {seg_num} (df{jid})"
     if continuous:
         label += " — 🔴 LIVE"
 
