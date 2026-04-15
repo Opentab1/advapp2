@@ -25,6 +25,10 @@ from core.config import DISABLED_MODES as _DISABLED_MODES
 # for the high-priority modes: drink_count, bottle_counter, staff_activity.
 OCCUPANCY_INTERVAL = 1200  # seconds (20 minutes = 3x per hour)
 
+# Modes that require YOLO inference — these run as continuous jobs and poll every 10s.
+_YOLO_MODES = {"drink_count", "bottle_count", "staff_activity", "after_hours",
+               "table_turns", "table_service"}
+
 
 def _recent_job_for_camera(camera_id: str, camera_name: str) -> Optional[dict]:
     """Return the most recent job for this camera (active or most recent of any status)."""
@@ -77,9 +81,7 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     # Continuous mode eliminates segment gaps and cross-segment state fragility.
     # People-only cameras (lightweight, no YOLO) use 20-min snapshots.
     _all_modes = set([primary_mode] + list(extra_modes))
-    _yolo_modes = {"drink_count", "bottle_count", "staff_activity", "after_hours",
-                   "table_turns", "table_service"}  # last two disabled but listed for completeness
-    _needs_yolo = bool(_all_modes & _yolo_modes)
+    _needs_yolo = bool(_all_modes & _YOLO_MODES)
     # YOLO cameras: always continuous. Non-YOLO: 15s segments.
     # Ignore segment_seconds from DDB for YOLO cameras — it was set as a workaround
     # for single-CPU deployments and no longer applies with multi-CPU hardware.
@@ -307,7 +309,7 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             # must NOT override the continuous-poll behaviour for bar cameras).
             _eff_modes = set([effective.get("mode","drink_count").split(",")[0]]
                              + list(effective.get("extra_modes") or []))
-            _is_yolo_cam = bool(_eff_modes & _yolo_modes)
+            _is_yolo_cam = bool(_eff_modes & _YOLO_MODES)
             if _is_yolo_cam:
                 seg_secs = 0  # force continuous regardless of DDB config
             else:
