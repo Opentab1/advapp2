@@ -302,11 +302,20 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             seg_num += 1
             _launch_segment(effective, seg_num)
 
-            seg_secs    = float(current.get("segment_seconds", 15))
+            # YOLO cameras always run continuously — ignore DDB segment_seconds /
+            # interval_seconds (those were set for old people_count throttling and
+            # must NOT override the continuous-poll behaviour for bar cameras).
+            _eff_modes = set([effective.get("mode","drink_count").split(",")[0]]
+                             + list(effective.get("extra_modes") or []))
+            _is_yolo_cam = bool(_eff_modes & _yolo_modes)
+            if _is_yolo_cam:
+                seg_secs = 0  # force continuous regardless of DDB config
+            else:
+                seg_secs = float(current.get("segment_seconds", 15))
             # interval_seconds: how long to wait BETWEEN clips (defaults to seg_secs).
             # Set interval > seg_secs to run a short clip on a longer schedule,
             # e.g. seg_secs=30, interval_seconds=1200 → 30s snapshot every 20 min.
-            _iv = current.get("interval_seconds")
+            _iv = current.get("interval_seconds") if not _is_yolo_cam else None
             interval_secs = float(_iv) if _iv is not None else seg_secs
 
             if seg_secs == 0:
