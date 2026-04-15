@@ -460,17 +460,30 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         expr_vals[":bs"] = {"S": bt_json}
         expr_vals[":bd"] = {"S": bt_json}
 
-    # Include table visits by staff for live dashboard attribution
+    # Include table visits by staff + live occupancy for live dashboard
     tables_data = summary.get("tables", {})
     if tables_data:
         live_visits: Dict[str, Dict[str, int]] = {}
+        live_occupancy: Dict[str, Any] = {}
         for tid, tdata in tables_data.items():
             attr = tdata.get("staff_attribution", {})
             if attr:
                 live_visits[tid] = {str(k): v for k, v in attr.items()}
+            live_occupancy[tid] = {
+                "label":              tdata.get("label", tid),
+                "currently_occupied": tdata.get("currently_occupied", False),
+                "turn_count":         tdata.get("turn_count", 0),
+                "avg_dwell_min":      tdata.get("avg_dwell_min", 0),
+                "avg_response_sec":   tdata.get("avg_response_sec"),
+            }
         if live_visits:
             update_expr += ", tableVisitsByStaff = :tvs"
             expr_vals[":tvs"] = {"S": json.dumps(live_visits)}
+        update_expr += ", liveTableOccupancy = :lto"
+        expr_vals[":lto"] = {"S": json.dumps(live_occupancy)}
+        total_turns_live = sum(d.get("turn_count", 0) for d in tables_data.values())
+        update_expr += ", totalTurns = :tt"
+        expr_vals[":tt"] = {"N": str(total_turns_live)}
 
     # table_service mode live leaderboard
     svc_leaderboard = summary.get("tableVisitsByStaff", [])
@@ -682,13 +695,14 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
         # Per-table detail for UI breakdown
         table_detail = {
             tid: {
-                "label":            tdata.get("label", tid),
-                "turn_count":       tdata.get("turn_count", 0),
-                "avg_dwell_min":    tdata.get("avg_dwell_min", 0),
-                "min_dwell_min":    tdata.get("min_dwell_min", 0),
-                "max_dwell_min":    tdata.get("max_dwell_min", 0),
-                "avg_response_sec": tdata.get("avg_response_sec"),
-                "staff_attribution": tdata.get("staff_attribution", {}),
+                "label":              tdata.get("label", tid),
+                "turn_count":         tdata.get("turn_count", 0),
+                "avg_dwell_min":      tdata.get("avg_dwell_min", 0),
+                "min_dwell_min":      tdata.get("min_dwell_min", 0),
+                "max_dwell_min":      tdata.get("max_dwell_min", 0),
+                "avg_response_sec":   tdata.get("avg_response_sec"),
+                "staff_attribution":  tdata.get("staff_attribution", {}),
+                "currently_occupied": tdata.get("currently_occupied", False),
             }
             for tid, tdata in tables.items()
         }
