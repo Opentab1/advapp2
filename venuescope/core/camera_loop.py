@@ -65,8 +65,13 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     # table_turns needs to observe the complete seated→cleared lifecycle (30-90 min),
     # so it cannot work in 30-second snapshots.
     _all_modes = set([primary_mode] + list(extra_modes))
-    default_seg = 0 if (_all_modes & {"drink_count", "table_turns", "table_service"}) else 15
+    _needs_continuous = bool(_all_modes & {"drink_count", "table_turns", "table_service"})
+    default_seg = 0 if _needs_continuous else 15
     seg_secs = float(cam.get("segment_seconds", default_seg))
+    # Force continuous for modes that require full-session observation,
+    # even if segment_seconds was explicitly set in DDB (overrides UI setting).
+    if _needs_continuous:
+        seg_secs = 0
     continuous = (seg_secs == 0)
     if seg_num > 0 and not continuous:
         label += f" — seg {seg_num}"
