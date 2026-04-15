@@ -425,8 +425,11 @@ class VenueProcessor:
         self.shift       = shift
         self.ec          = extra_config or {}
         self.result_dir  = Path(result_dir)
-        # Always annotate drink_count — visual proof of every detected serve
-        self.annotate    = annotate or (analysis_mode == "drink_count")
+        # Annotate for file-upload jobs only — never write video to disk for
+        # continuous live streams (disk fill + CPU overhead, data goes to DDB).
+        _is_continuous_rtsp = (source_type == "rtsp" and
+                               float((extra_config or {}).get("max_seconds", 1)) == 0)
+        self.annotate    = False if _is_continuous_rtsp else (annotate or (analysis_mode == "drink_count"))
 
         import torch as _torch_init
         _has_gpu = _torch_init.cuda.is_available() or (
