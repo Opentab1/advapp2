@@ -80,6 +80,9 @@ def _mask_url(url: str) -> str:
 
 POLL_INTERVAL     = 2
 MAX_PARALLEL      = int(os.environ.get("VENUESCOPE_WORKERS", "4"))
+# Per-venue job cap: default = MAX_PARALLEL so a single-venue deployment
+# uses all available slots. Multi-venue deployments can lower this via env.
+_MAX_PER_VENUE_ENV = os.environ.get("VENUESCOPE_MAX_PER_VENUE", "")
 STALE_JOB_SECONDS = 7200   # 2 hours
 
 _shutdown_requested = False
@@ -530,8 +533,11 @@ def main():
     _active_continuous: set = set()       # job_ids that are continuous (no timeout)
     _active_venue: Dict[str, str] = {}    # job_id → venue_id (for fair scheduling)
     JOB_TIMEOUT = 600  # 10 minutes max per job — kills stuck YOLO/RTSP jobs
-    # Max concurrent jobs per venue — prevents one venue from starving 9 others
-    MAX_JOBS_PER_VENUE = max(1, MAX_PARALLEL // 2)
+    # Max concurrent jobs per venue. Single-venue deployments should set this
+    # equal to MAX_PARALLEL so all slots are available. Multi-venue deployments
+    # cap at half to prevent one venue starving others.
+    MAX_JOBS_PER_VENUE = (int(_MAX_PER_VENUE_ENV) if _MAX_PER_VENUE_ENV
+                          else max(1, MAX_PARALLEL // 2))
 
     # Start camera loop manager in its OWN process (not as threads in this
     # process). This prevents background threads from holding SQLite mutexes
