@@ -21,10 +21,12 @@ _WRITE_EVERY = 30   # only record a timeseries sample every N processed frames
 
 
 class ResultWriter:
-    def __init__(self, job_id: str, result_dir: Path, fps: float):
+    def __init__(self, job_id: str, result_dir: Path, fps: float, is_live: bool = False):
         self.job_id       = job_id
         self.result_dir   = Path(result_dir)
         self.fps          = max(fps, 1.0)
+        # Live RTSP streams: skip local CSV files — data lives in DDB/S3.
+        self.is_live      = is_live
         self._events:     List[Dict]  = []
         self._snapshots:  List[Dict]  = []
         # Sliding window of event t_sec values for the last 60s — O(1) recent count
@@ -62,7 +64,7 @@ class ResultWriter:
         self._write_summary(summary)
 
     def _write_events(self):
-        if not self._events:
+        if not self._events or self.is_live:
             return
         path = self.result_dir / "events.csv"
         keys = sorted({k for ev in self._events for k in ev.keys()})
@@ -76,7 +78,7 @@ class ResultWriter:
                 w.writerow(row)
 
     def _write_timeseries(self):
-        if not self._snapshots:
+        if not self._snapshots or self.is_live:
             return
         path = self.result_dir / "timeseries.csv"
         with open(path, "w", newline="") as f:

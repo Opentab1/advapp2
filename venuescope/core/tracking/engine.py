@@ -632,7 +632,8 @@ class VenueProcessor:
         model = _get_cached_model(model_name)
         self.cb(5, f"Model ready. Starting analysis...")
 
-        writer = ResultWriter(self.job_id, self.result_dir, fps)
+        _is_live = (self.source_type == "rtsp" and self._max_seconds == 0)
+        writer = ResultWriter(self.job_id, self.result_dir, fps, is_live=_is_live)
         vout   = None
         if self.annotate:
             # avc1 = H.264 — browser-native codec; falls back to mp4v if unavailable
