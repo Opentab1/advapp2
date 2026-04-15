@@ -800,7 +800,31 @@ class VenueProcessor:
                 if detect_night_mode(frame):
                     self._night_mode = True
                     if self._processed == 1:
-                        self.cb(0, "Night/IR camera detected — switching to night enhancement mode")
+                        # IR/night cameras: YOLO (RGB-trained) needs lower conf + every-frame
+                        # processing to reliably detect people in grayscale overhead footage.
+                        # Benchmark: on CH9 (1920x1080 IR), people visible at conf=0.08 but not 0.15.
+                        _has_gpu = False
+                        try:
+                            import torch; _has_gpu = torch.cuda.is_available()
+                        except Exception:
+                            pass
+                        self._conf_threshold        = min(self._conf_threshold, 0.08)
+                        self.profile["conf"]        = self._conf_threshold
+                        self.profile["stride"]      = 1   # process every frame — IR loses detail fast
+                        # On GPU: upscale to 960 for more detail. On CPU: stay at 640 to keep up.
+                        if _has_gpu:
+                            self.profile["imgsz"]   = max(self.profile.get("imgsz", 640), 960)
+                        self.cb(0, f"Night/IR camera detected — conf→{self._conf_threshold:.2f}, "
+                                   f"imgsz→{self.profile['imgsz']}, stride→1")
+                        # Relax drink counter gates for IR cameras — track IDs flicker more
+                        # in low-conf mode, so require fewer consecutive frames to count a serve.
+                        if "drink_count" in analyzers:
+                            _dc = analyzers["drink_count"]
+                            _dc.rules.min_prep_frames      = max(2, int(_dc.rules.min_prep_frames * 0.5))
+                            _dc.rules.serve_dwell_frames   = max(1, int(_dc.rules.serve_dwell_frames * 0.5))
+                            _dc.rules.serve_confirm_frames = max(1, int(_dc.rules.serve_confirm_frames * 0.5))
+                            _dc.rules.reappear_grace_frames = max(30, _dc.rules.reappear_grace_frames)
+                            self.cb(0, "Drink counter: night-mode gate scaling applied")
                 if self._processed >= 3:
                     self._night_mode_checked = True
             if self._night_mode:
