@@ -511,11 +511,21 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     camera_id = summary.get("camera_id", "")
     if camera_id and venue_id:
         stable_key = f"~{camera_id}"
+        # For the stable camera record, ALWAYS overwrite createdAt to the current
+        # job start so React formula (wallTime = createdAt + t_sec) gives correct
+        # local times. With if_not_exists the stable record would keep the first-ever
+        # job start time, making t_sec offsets from the current job compute wall times
+        # on the wrong day — React only shows time not date, so this surfaces as
+        # drinks appearing 1-2+ hours off from reality.
+        stable_update_expr = update_expr.replace(
+            "createdAt = if_not_exists(createdAt, :ca)",
+            "createdAt = :ca"
+        )
         try:
             _retry(lambda: ddb.update_item(
                 TableName=DYNAMODB_TABLE,
                 Key={"venueId": {"S": venue_id}, "jobId": {"S": stable_key}},
-                UpdateExpression=update_expr,
+                UpdateExpression=stable_update_expr,
                 ExpressionAttributeNames=dict(expr_names),
                 ExpressionAttributeValues=dict(expr_vals),
             ))
