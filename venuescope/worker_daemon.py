@@ -392,16 +392,6 @@ def run_job(job_id: str):
         except Exception as _sync_err:
             log.warning(f"AWS sync error (non-fatal): {_sync_err}")
 
-        # RTSP camera jobs: delete local result dir after AWS sync — everything
-        # lives in DynamoDB/S3. File-upload jobs keep results for local review.
-        if job.get("source_type") == "rtsp" and result_dir.exists():
-            try:
-                import shutil
-                shutil.rmtree(str(result_dir), ignore_errors=True)
-                log.debug(f"Cleaned up local result dir for RTSP job {job_id}")
-            except Exception:
-                pass
-
         # Track camera health
         try:
             from core.camera_health import record_frame
@@ -469,6 +459,20 @@ def run_job(job_id: str):
         except Exception:
             pass
 
+        # RTSP/HLS camera jobs: always delete local result dir — data lives in
+        # DynamoDB/S3 (pushed in real-time via live_cb). Runs on both success AND
+        # failure so crashed/dropped streams don't leave orphaned dirs behind.
+        # File-upload jobs keep results for local Streamlit review.
+        try:
+            import shutil as _shutil
+            _is_rtsp = job and job.get("source_type") == "rtsp"
+            _rdir = Path(RESULT_DIR) / job_id
+            if _is_rtsp and _rdir.exists():
+                _shutil.rmtree(str(_rdir), ignore_errors=True)
+                log.info(f"Cleaned up result dir for job {job_id}")
+        except Exception:
+            pass
+
 
 def _camera_loop_proc_entry():
     """Camera loop manager runs in a fully isolated child process."""
@@ -523,6 +527,25 @@ def main():
         log.warning(f"Reset stuck job {job['job_id']}")
 
     _reap_stale_jobs()
+
+    # Startup: purge any orphaned result dirs left by the previous session's
+    # failed/interrupted RTSP jobs (pre-fix crash residue).
+    try:
+        import shutil as _shutil
+        _result_root = Path(RESULT_DIR)
+        _active_jobs = {j["job_id"] for j in list_jobs_by_status("running", limit=500)}
+        _purged = 0
+        for _rdir in _result_root.iterdir():
+            if not _rdir.is_dir() or _rdir.name in _active_jobs:
+                continue
+            _j = get_job(_rdir.name)
+            if _j and _j.get("source_type") == "rtsp":
+                _shutil.rmtree(str(_rdir), ignore_errors=True)
+                _purged += 1
+        if _purged:
+            log.info(f"Startup: purged {_purged} orphaned RTSP result dir(s)")
+    except Exception as _pe:
+        log.warning(f"Startup result dir purge failed (non-fatal): {_pe}")
 
     _last_cleanup      = 0.0
     _last_backup       = 0.0
