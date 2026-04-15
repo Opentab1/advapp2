@@ -1183,6 +1183,13 @@ class VenueProcessor:
                 summary["_camera_state"] = analyzers["drink_count"].get_cross_segment_state()
             except Exception:
                 pass
+        if "table_turns" in analyzers:
+            try:
+                existing = summary.get("_camera_state") or {}
+                existing["_table_turns_state"] = analyzers["table_turns"].get_cross_segment_state()
+                summary["_camera_state"] = existing
+            except Exception:
+                pass
         self.cb(100, "Done.")
         return summary
 
@@ -1262,8 +1269,14 @@ class VenueProcessor:
                                polygon_px=[(p[0]*W,p[1]*H) for p in t["polygon"]])
                      for t in ec.get("tables",[])]
             r = DEFAULT_TABLE_RULES
-            return TableTurnTracker(zones, r.occupied_conf_frames,
-                                    r.empty_conf_frames, r.min_dwell_seconds)
+            tracker = TableTurnTracker(zones, r.occupied_conf_frames,
+                                       r.empty_conf_frames, r.min_dwell_seconds)
+            # Restore any active sessions from prior segment
+            prior = self.ec.get("prior_camera_state") or {}
+            prior_tt = prior.get("_table_turns_state")
+            if prior_tt:
+                tracker.restore_cross_segment_state(prior_tt)
+            return tracker
         elif mode == "table_service":
             zones = [ServiceTableZone(table_id=t["table_id"],
                                       label=t.get("label", t["table_id"]),

@@ -303,7 +303,11 @@ def run_job(job_id: str):
                 log.debug(f"Live theft alert error (non-fatal): {_ae}")
 
         # Route people_count to lightweight OpenCV runner (no YOLO, ~15MB RAM)
-        if mode == "people_count" and not extra_config.get("force_yolo"):
+        # Exception: table_turns / table_service require YOLO track IDs for per-zone
+        # occupancy — lightweight runner has no concept of bounding boxes or track IDs.
+        _needs_yolo = bool(set(extra_config.get("extra_modes", [])) &
+                           {"table_turns", "table_service"})
+        if mode == "people_count" and not extra_config.get("force_yolo") and not _needs_yolo:
             from core.lightweight_runner import run_lightweight
             log.info(f"Using lightweight counter (no YOLO) for job {job_id}")
             summary = run_lightweight(job, extra_config, result_dir, cb,

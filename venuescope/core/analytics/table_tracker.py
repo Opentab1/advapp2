@@ -229,6 +229,34 @@ class TableTurnTracker:
         self.events.append(ev)
         return [ev]
 
+    def get_cross_segment_state(self) -> Dict:
+        """Serialize active sessions so they survive a worker restart."""
+        active = {}
+        for tid, state in self._states.items():
+            if state.is_occupied and state.seated_at is not None:
+                active[tid] = {
+                    "seated_at":      state.seated_at,
+                    "person_frames":  state.person_frames,
+                    "sessions_count": len(state.sessions),
+                }
+        return {"active_sessions": active, "completed_turns": {
+            tid: len(state.sessions) for tid, state in self._states.items()
+        }}
+
+    def restore_cross_segment_state(self, state_dict: Dict) -> None:
+        """Re-hydrate active table sessions from a prior segment's state."""
+        if not state_dict:
+            return
+        active = state_dict.get("active_sessions", {})
+        for tid, info in active.items():
+            if tid in self._states:
+                s = self._states[tid]
+                s.is_occupied   = True
+                s.seated_at     = info["seated_at"]
+                s.person_frames = info.get("person_frames", self.occupied_conf)
+                if s._current_session is None:
+                    s._current_session = TableSession(table_id=tid, seated_at=info["seated_at"])
+
     def summary(self) -> Dict[str, Any]:
         result = {}
         for tid, state in self._states.items():

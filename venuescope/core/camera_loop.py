@@ -55,9 +55,11 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     jid   = str(uuid.uuid4())[:8]
     label = f"📡 {cam['name']}"
     primary_mode, extra_modes = _parse_modes(cam.get("mode", "drink_count"))
-    # drink_count runs continuously by default — segmented clips drop gestures at boundaries.
-    # All other modes default to 15s segments.
-    default_seg = 0 if primary_mode == "drink_count" else 15
+    # drink_count and table_turns run continuously — segmented clips miss full sessions.
+    # table_turns needs to observe the complete seated→cleared lifecycle (30-90 min),
+    # so it cannot work in 30-second snapshots.
+    _all_modes = set([primary_mode] + list(extra_modes))
+    default_seg = 0 if (_all_modes & {"drink_count", "table_turns", "table_service"}) else 15
     seg_secs = float(cam.get("segment_seconds", default_seg))
     continuous = (seg_secs == 0)
     if seg_num > 0 and not continuous:
