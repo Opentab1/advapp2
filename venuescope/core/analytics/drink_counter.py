@@ -487,31 +487,73 @@ class DrinkCounter:
         Return a JSON-serialisable snapshot for handoff to the next segment.
         Converts video-relative serve timestamps to wall-clock epochs so they
         survive across independently-scheduled jobs.
+        Includes accumulated drink counts per station so restart/reconnect
+        does not reset the displayed total in the UI.
         """
         import time
+        # Accumulated drinks per station (for UI continuity across restarts)
+        station_drinks: dict = {}
+        station_timestamps: dict = {}
+        for rec in self.shift.records.values():
+            if rec.station_id:
+                station_drinks[rec.station_id] = rec.total_drinks
+                # Store last 200 timestamps as wall-clock epochs
+                station_timestamps[rec.station_id] = [
+                    round(self._wall_start + t, 3) for t in rec.drink_timestamps[-200:]
+                ]
         return {
-            "saved_wall": time.time(),
+            "saved_wall":        time.time(),
+            "saved_date":        __import__("datetime").date.today().isoformat(),
             "station_serve_walls": {
                 sid: self._wall_start + tsec
                 for sid, tsec in self._station_last_serve_tsec.items()
             },
+            "station_drinks":      station_drinks,
+            "station_timestamps":  station_timestamps,
         }
 
     def restore_cross_segment_state(self, state: dict) -> None:
         """
         Seed cooldown state from the previous segment's snapshot.
         Maps wall-clock serve times back to negative t_sec offsets so the
-        time-based cooldown check (t_sec - last_serve_tsec) works correctly
-        even though this segment starts at t_sec = 0.
+        time-based cooldown check works correctly even though this segment
+        starts at t_sec = 0.
+        Also restores accumulated drink counts so the UI total is continuous
+        across stream reconnects and worker restarts.
+        Only restores counts from today — never carries over yesterday's shift.
         """
         if not state:
             return
-        import time
-        now = time.time()
+        import time, datetime
+        now   = time.time()
+        today = datetime.date.today().isoformat()
+
+        # Cooldown state (always restore regardless of date — safe for resets)
         for sid, serve_wall in state.get("station_serve_walls", {}).items():
             elapsed = now - serve_wall
-            # Negative offset: at t_sec=0 the check reads  0 - (-elapsed) = elapsed seconds
             self._station_last_serve_tsec[sid] = -elapsed
+
+        # Drink count accumulation — only if saved today (same shift)
+        if state.get("saved_date") != today:
+            return
+        station_drinks     = state.get("station_drinks", {})
+        station_timestamps = state.get("station_timestamps", {})
+        for rec in self.shift.records.values():
+            sid = rec.station_id
+            if not sid or sid not in station_drinks:
+                continue
+            prior_drinks = int(station_drinks[sid])
+            if prior_drinks <= 0:
+                continue
+            # Seed prior counts — new detections will add on top of these
+            rec.total_drinks += prior_drinks
+            # Restore timestamps as negative t_sec offsets (before this segment)
+            for wall_t in station_timestamps.get(sid, []):
+                t_sec = wall_t - self._wall_start  # will be negative (in the past)
+                rec.drink_timestamps.append(round(t_sec, 1))
+                bucket = max(0, int(t_sec // 3600)) if t_sec >= 0 else 0
+                rec.hourly_counts[bucket] = rec.hourly_counts.get(bucket, 0) + 1
+            rec.drink_timestamps.sort()
 
     def quality_report(self) -> Dict[str,Any]:
         warnings=[]
