@@ -817,12 +817,19 @@ class VenueProcessor:
                             pass
                         self._conf_threshold        = min(self._conf_threshold, 0.08)
                         self.profile["conf"]        = self._conf_threshold
-                        self.profile["stride"]      = 1   # process every frame — IR loses detail fast
-                        # On GPU: upscale to 960 for more detail. On CPU: stay at 640 to keep up.
                         if _has_gpu:
+                            # GPU: process every frame at higher res for IR detail
+                            self.profile["stride"]  = 1
                             self.profile["imgsz"]   = max(self.profile.get("imgsz", 640), 960)
+                        else:
+                            # CPU: keep stride=2 and cap imgsz at 480 — IR mode can't
+                            # override the real-time budget (2fps stream, ~0.4s/frame).
+                            # stride=1 at 640px would fall 3x behind; stride=2 at 480px keeps up.
+                            self.profile["stride"]  = max(self.profile.get("stride", 2), 2)
+                            self.profile["imgsz"]   = min(self.profile.get("imgsz", 480), 480)
                         self.cb(0, f"Night/IR camera detected — conf→{self._conf_threshold:.2f}, "
-                                   f"imgsz→{self.profile['imgsz']}, stride→1")
+                                   f"imgsz→{self.profile['imgsz']}, "
+                                   f"stride→{self.profile['stride']}")
                         # Relax drink counter gates for IR cameras — track IDs flicker more
                         # in low-conf mode, so require fewer consecutive frames to count a serve.
                         if "drink_count" in analyzers:
