@@ -272,6 +272,11 @@ def run_job(job_id: str):
             # Push to AWS DynamoDB for React dashboard
             try:
                 from core.aws_sync import push_live_metrics
+                # Inject camera metadata so push_live_metrics can maintain
+                # the stable per-camera DDB record (~ prefix key)
+                partial_summary.setdefault("clip_label",   job.get("clip_label", ""))
+                partial_summary.setdefault("camera_id",    camera_id)
+                partial_summary.setdefault("analysis_mode", mode)
                 push_live_metrics(job_id, partial_summary, elapsed_sec,
                                   venue_id=job_venue_id,
                                   created_at=job.get("created_at"))
@@ -365,6 +370,13 @@ def run_job(job_id: str):
                 )
         except Exception as _pos_err:
             log.warning(f"POS reconciliation skipped (non-fatal): {_pos_err}")
+
+        # Enrich summary with job metadata before DDB sync — VenueProcessor.run()
+        # doesn't include clip_label, analysis_mode, or created_at in its return dict.
+        summary["clip_label"]    = summary.get("clip_label")    or job.get("clip_label", "")
+        summary["analysis_mode"] = summary.get("analysis_mode") or mode
+        summary["created_at"]    = summary.get("created_at")    or job.get("created_at", time.time())
+        summary["camera_id"]     = summary.get("camera_id")     or camera_id
 
         # Sync final results to AWS — use per-camera venue_id for multi-venue support
         try:

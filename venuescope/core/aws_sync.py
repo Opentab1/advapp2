@@ -479,10 +479,28 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
             ExpressionAttributeNames=expr_names,
             ExpressionAttributeValues=expr_vals,
         ))
-        return True
     except Exception as e:
         print(f"[aws_sync] Live metrics push failed: {e}", flush=True)
         return False
+
+    # Also upsert the stable per-camera record (~{camera_id}) so the React
+    # camera grid always has a current "live status" row for each camera.
+    # This is the record the VenueScope tab deduplicates on (isGhost check).
+    camera_id = summary.get("camera_id", "")
+    if camera_id and venue_id:
+        stable_key = f"~{camera_id}"
+        try:
+            _retry(lambda: ddb.update_item(
+                TableName=DYNAMODB_TABLE,
+                Key={"venueId": {"S": venue_id}, "jobId": {"S": stable_key}},
+                UpdateExpression=update_expr,
+                ExpressionAttributeNames=dict(expr_names),
+                ExpressionAttributeValues=dict(expr_vals),
+            ))
+        except Exception as _se:
+            print(f"[aws_sync] Stable camera record upsert failed: {_se}", flush=True)
+
+    return True
 
 
 def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
@@ -722,6 +740,30 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
         print(f"[aws_sync] DynamoDB write failed: {e} — queuing locally", flush=True)
         _enqueue_offline(job_id, item)
         return False
+
+    # Keep the stable per-camera record (~{camera_id}) current so the React
+    # camera grid always reflects the latest state even between segments.
+    # For LIVE cameras: set status=running so the grid shows the camera as live.
+    # For segmented cameras: set status=done so history reflects the last result.
+    _cam_id = summary.get("camera_id", "")
+    if _cam_id and venue_id:
+        _stable_key = f"~{_cam_id}"
+        _stable_item = dict(item)
+        _stable_item["jobId"] = {"S": _stable_key}
+        # LIVE cameras should always appear running in the camera grid
+        if is_live_cam:
+            _stable_item["status"] = {"S": "running"}
+            _stable_item["isLive"] = {"BOOL": True}
+        else:
+            # Segmented cameras: keep running so the camera grid doesn't flicker
+            # between segments; it will go to done if the camera is disabled.
+            _stable_item["status"] = {"S": "running"}
+            _stable_item["isLive"] = {"BOOL": True}
+            _stable_item["lastSegmentAt"] = {"N": now_ts}
+        try:
+            _retry(lambda: ddb.put_item(TableName=DYNAMODB_TABLE, Item=_stable_item))
+        except Exception as _se:
+            print(f"[aws_sync] Stable camera record sync failed: {_se}", flush=True)
 
     # ── Bartender profile sync ─────────────────────────────────────────────────
     try:
