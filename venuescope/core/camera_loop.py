@@ -54,7 +54,13 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     from core.database import create_job, _raw_update
     jid   = str(uuid.uuid4())[:8]
     label = f"📡 {cam['name']}"
-    primary_mode, extra_modes = _parse_modes(cam.get("mode", "drink_count"))
+    primary_mode, _parsed_extra = _parse_modes(cam.get("mode", "drink_count"))
+    # _item_to_camera (DDB source) stores extra modes in cam["extra_modes"] separately
+    # from cam["mode"] which only holds the primary mode string. Merge both sources so
+    # we don't lose extra modes like "table_turns" when coming from DDB cameras.
+    _cam_extra = [m for m in (cam.get("extra_modes") or [])
+                  if m and m != primary_mode and m not in _parsed_extra]
+    extra_modes = list(_parsed_extra) + _cam_extra
     # drink_count and table_turns run continuously — segmented clips miss full sessions.
     # table_turns needs to observe the complete seated→cleared lifecycle (30-90 min),
     # so it cannot work in 30-second snapshots.
