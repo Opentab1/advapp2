@@ -13,7 +13,7 @@ _page_auth()
 import cv2, numpy as np
 
 from core.config     import UPLOAD_DIR, RESULT_DIR, CONFIG_DIR
-from core.config     import MODEL_PROFILES, ANALYSIS_MODES, ANALYSIS_DESCRIPTIONS
+from core.config     import MODEL_PROFILES, ANALYSIS_MODES, ANALYSIS_DESCRIPTIONS, DISABLED_MODES
 from core.database   import (create_job, list_shifts, get_shift, get_job,
                               _raw_update, retry_job, list_jobs_filtered)
 from core.bar_config import BarConfig
@@ -210,7 +210,7 @@ with col1:
         st.info("ℹ️ Stream captured live during analysis. Must be on venue WiFi or have remote access.")
     clip_label = st.text_input("Label", placeholder="e.g. Main Bar – Fri 9pm")
 with col2:
-    _mode_keys = list(ANALYSIS_MODES.keys())
+    _mode_keys = [k for k in ANALYSIS_MODES.keys() if k not in DISABLED_MODES]
     # Support both old single-mode and new multi-mode profiles
     _profile_modes = _loaded_profile.get("modes", None)
     if _profile_modes is None:

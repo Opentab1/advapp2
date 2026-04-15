@@ -1203,7 +1203,7 @@ class VenueProcessor:
                 summary["_camera_state"] = analyzers["drink_count"].get_cross_segment_state()
             except Exception:
                 pass
-        if "table_turns" in analyzers:
+        if "table_turns" in analyzers and analyzers["table_turns"] is not None:
             try:
                 existing = summary.get("_camera_state") or {}
                 existing["_table_turns_state"] = analyzers["table_turns"].get_cross_segment_state()
@@ -1215,6 +1215,9 @@ class VenueProcessor:
 
     def _build_analyzer(self, W, H, fps: float = 25.0, mode_override: str = None):
         ec = self.ec; mode = mode_override or self.mode
+        from core.config import DISABLED_MODES as _dm
+        if mode in _dm:
+            return None   # mode temporarily disabled — no-op, code intact
         if mode == "drink_count":
             import copy
             rules = copy.copy(DEFAULT_RULES)
@@ -1334,6 +1337,8 @@ class VenueProcessor:
     def _run_analyzer(self, analyzer, frame, frame_idx, t_sec,
                       centroids, track_ids, confs, boxes_px, class_ids=None,
                       mode_override: str = None):
+        if analyzer is None:
+            return []   # disabled mode — skip silently
         mode = mode_override or self.mode
         if mode == "drink_count":
             return analyzer.update(frame_idx, t_sec, centroids, track_ids, confs,
@@ -1387,6 +1392,8 @@ class VenueProcessor:
 
         # Collect results from every active mode
         for mode, analyzer in analyzers.items():
+            if analyzer is None:
+                continue   # disabled mode — skip
             if mode == "drink_count":
                 b.update({"bartenders":    self.shift.summary(total_sec) if self.shift else {},
                           "drink_quality": analyzer.quality_report(),

@@ -17,8 +17,12 @@ from typing import Optional
 
 log = logging.getLogger("camera_loop")
 
+# Modes that are temporarily disabled — camera_loop will strip them from every
+# job before launch. See core/config.py DISABLED_MODES. Re-enable there.
+from core.config import DISABLED_MODES as _DISABLED_MODES
+
 # Occupancy (people_counter) runs every 20 minutes — frees camera bandwidth
-# for the high-priority modes: drink_count, bottle_counter, staff_activity, table_turns.
+# for the high-priority modes: drink_count, bottle_counter, staff_activity.
 OCCUPANCY_INTERVAL = 1200  # seconds (20 minutes = 3x per hour)
 
 
@@ -57,17 +61,24 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     primary_mode, _parsed_extra = _parse_modes(cam.get("mode", "drink_count"))
     # _item_to_camera (DDB source) stores extra modes in cam["extra_modes"] separately
     # from cam["mode"] which only holds the primary mode string. Merge both sources so
-    # we don't lose extra modes like "table_turns" when coming from DDB cameras.
+    # we don't lose extra modes like "staff_activity" when coming from DDB cameras.
     _cam_extra = [m for m in (cam.get("extra_modes") or [])
                   if m and m != primary_mode and m not in _parsed_extra]
     extra_modes = list(_parsed_extra) + _cam_extra
+
+    # Strip temporarily disabled modes — never launch them. Code stays in repo.
+    if primary_mode in _DISABLED_MODES:
+        log.info(f"[camera_loop] '{cam.get('name')}' primary mode '{primary_mode}' "
+                 f"is disabled — skipping launch")
+        return ""
+    extra_modes = [m for m in extra_modes if m not in _DISABLED_MODES]
     # YOLO cameras run continuously (max_seconds=0) — with 4+ vCPUs each camera
     # gets its own dedicated core and never needs to yield to other cameras.
     # Continuous mode eliminates segment gaps and cross-segment state fragility.
     # People-only cameras (lightweight, no YOLO) use 20-min snapshots.
     _all_modes = set([primary_mode] + list(extra_modes))
-    _yolo_modes = {"drink_count", "table_turns", "table_service",
-                   "bottle_count", "staff_activity", "after_hours"}
+    _yolo_modes = {"drink_count", "bottle_count", "staff_activity", "after_hours",
+                   "table_turns", "table_service"}  # last two disabled but listed for completeness
     _needs_yolo = bool(_all_modes & _yolo_modes)
     # YOLO cameras: always continuous. Non-YOLO: 15s segments.
     # Ignore segment_seconds from DDB for YOLO cameras — it was set as a workaround
@@ -190,6 +201,14 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             if not current or not current.get("enabled", True):
                 log.info(f"[camera_loop] '{camera_name}' disabled — stopping loop")
                 break
+            # Stop loop if all configured modes are disabled
+            _all_cam_modes = {m.strip() for m in current.get("mode","").split(",") if m.strip()}
+            _all_cam_modes |= set(current.get("extra_modes") or [])
+            if _all_cam_modes and _all_cam_modes.issubset(_DISABLED_MODES):
+                log.info(f"[camera_loop] '{camera_name}' all modes disabled "
+                         f"({_all_cam_modes}) — loop idle until re-enabled")
+                stop_event.wait(300)  # check every 5 min in case config changes
+                continue
 
             # Don't launch if one is already running/pending; back off if last job failed
             recent = _recent_job_for_camera(camera_id, camera_name)
