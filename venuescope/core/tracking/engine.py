@@ -428,24 +428,31 @@ class VenueProcessor:
         # Always annotate drink_count — visual proof of every detected serve
         self.annotate    = annotate or (analysis_mode == "drink_count")
 
-        # Gap 1: Overhead camera — lower conf floor + larger imgsz for top-down fisheye
+        import torch as _torch_init
+        _has_gpu = _torch_init.cuda.is_available() or (
+            hasattr(_torch_init.backends, 'mps') and _torch_init.backends.mps.is_available())
+
+        # Live CPU override: ALL live RTSP jobs on CPU must use nano@≤480px to stay
+        # near real-time (2fps stream). 640px YOLO takes 1.5-2s/frame; 320px ~0.4s/frame.
+        # Without this, table_turns/people cameras default to yolov8m@640@stride=1
+        # which takes 5+ seconds/frame — completely unusable on a 1vCPU droplet.
+        if self.source_type == "rtsp" and not _has_gpu:
+            self.profile = dict(self.profile)
+            _live_imgsz = 480 if analysis_mode in ("drink_count", "bottle_count") else 320
+            self.profile["model"]  = "yolov8n.pt"
+            self.profile["imgsz"]  = min(self.profile.get("imgsz", _live_imgsz), _live_imgsz)
+            self.profile["stride"] = max(self.profile.get("stride", 2), 2)
+
+        # Gap 1: Overhead camera — lower conf floor for top-down fisheye
         self._overhead = bool(bar_config and getattr(bar_config, "overhead_camera", False))
         if self._overhead:
             self.profile = dict(self.profile)   # shallow copy so we don't mutate the global
             self.profile["conf"] = min(self.profile["conf"], 0.15)
-            # On CPU-only hosts (droplet), yolov8m@1280 takes >1s/frame = can't keep up with live
-            # streams. Use 640px + stride=2 instead (~8x faster). GPU hosts get full 1280px + stride=1.
-            import torch as _torch
-            _has_gpu = _torch.cuda.is_available() or (
-                hasattr(_torch.backends, 'mps') and _torch.backends.mps.is_available())
             if _has_gpu:
+                # GPU: full resolution + every frame
                 self.profile["imgsz"]  = max(self.profile["imgsz"], 1280)
-                self.profile["stride"] = 1   # every frame on GPU — can afford it
-            else:
-                # CPU: cap at 640px, stride=2; swap to nano model for ~8x total speedup
-                self.profile["imgsz"]  = min(self.profile.get("imgsz", 640), 640)
-                self.profile["stride"] = max(self.profile.get("stride", 2), 2)
-                self.profile["model"]  = "yolov8n.pt"
+                self.profile["stride"] = 1
+            # CPU: already handled by live CPU override above (yolov8n@480, stride=2)
 
         # Bottle count: bottles in overhead/fisheye cameras need high-res inference.
         # YOLO misses them at 640px but detects reliably at 1280px.
