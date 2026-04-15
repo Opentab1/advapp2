@@ -1148,6 +1148,13 @@ class VenueProcessor:
                 try:
                     partial = self._build_summary(analyzers, t_sec, fps)
                     partial["_elapsed_sec"] = t_sec
+                    # Attach cross-segment state so live_cb can persist it to disk
+                    # even if the worker is killed before the job ends cleanly.
+                    if "drink_count" in analyzers and analyzers["drink_count"] is not None:
+                        try:
+                            partial["_camera_state"] = analyzers["drink_count"].get_cross_segment_state()
+                        except Exception:
+                            pass
                     self._live_event_cb(partial, t_sec)
                 except Exception:
                     pass
@@ -1163,6 +1170,11 @@ class VenueProcessor:
                 try:
                     partial = self._build_summary(analyzers, t_sec, fps)
                     partial["_elapsed_sec"] = t_sec
+                    if "drink_count" in analyzers and analyzers["drink_count"] is not None:
+                        try:
+                            partial["_camera_state"] = analyzers["drink_count"].get_cross_segment_state()
+                        except Exception:
+                            pass
                     self._live_event_cb(partial, t_sec)
                 except Exception:
                     pass

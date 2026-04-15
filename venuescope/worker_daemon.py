@@ -272,6 +272,14 @@ def run_job(job_id: str):
                 live_file.write_text(json.dumps(partial_summary, default=str))
             except Exception:
                 pass
+            # Persist cross-segment state (drink counts, cooldowns) every live push
+            # so a forced restart/kill preserves the accumulated shift total.
+            try:
+                _cs = partial_summary.get("_camera_state")
+                if _cs and camera_id:
+                    _save_camera_state(camera_id, _cs)
+            except Exception:
+                pass
             # Push to AWS DynamoDB for React dashboard
             try:
                 from core.aws_sync import push_live_metrics
