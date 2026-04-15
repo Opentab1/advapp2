@@ -431,6 +431,7 @@ class VenueProcessor:
         import torch as _torch_init
         _has_gpu = _torch_init.cuda.is_available() or (
             hasattr(_torch_init.backends, 'mps') and _torch_init.backends.mps.is_available())
+        self._has_gpu = _has_gpu   # store so run() can reference without reimport
 
         # Live CPU override: ALL live RTSP jobs on CPU must use nano@≤480px to stay
         # near real-time (2fps stream). 640px YOLO takes 1.5-2s/frame; 320px ~0.4s/frame.
@@ -594,7 +595,7 @@ class VenueProcessor:
             # so dup_factor=2 at 2fps real = 4fps effective stays within budget.
             # dup_factor=7 (14fps) on CPU caused "7x slower than stream" queue backup
             # making the live dashboard report 7 minutes of lag. Fix: match real throughput.
-            _target_fps = 14.0 if _has_gpu else 4.0
+            _target_fps = 14.0 if self._has_gpu else 4.0
             _hls_dup_factor = max(1, round(_target_fps / max(fps, 0.5)))
             _raw_fps = fps
             fps = _raw_fps * _hls_dup_factor
@@ -819,11 +820,7 @@ class VenueProcessor:
                         # IR/night cameras: YOLO (RGB-trained) needs lower conf + every-frame
                         # processing to reliably detect people in grayscale overhead footage.
                         # Benchmark: on CH9 (1920x1080 IR), people visible at conf=0.08 but not 0.15.
-                        _has_gpu = False
-                        try:
-                            import torch; _has_gpu = torch.cuda.is_available()
-                        except Exception:
-                            pass
+                        _has_gpu = self._has_gpu
                         self._conf_threshold        = min(self._conf_threshold, 0.08)
                         self.profile["conf"]        = self._conf_threshold
                         if _has_gpu:
