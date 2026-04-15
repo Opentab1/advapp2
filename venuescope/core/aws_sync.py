@@ -307,10 +307,14 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
         expr_vals[":ca"] = {"N": str(created_at_val or time.time())}
         expr_vals[":ij"] = {"S": job_id}
         expr_vals[":il"] = {"BOOL": is_live_cam}
-        # Derive camera name from clip label for room grouping in React UI
-        cam_name = ""
-        if clip_label.startswith("📡 "):
-            cam_name = clip_label[len("📡 "):].split(" — ")[0].strip()
+        # Prefer camera_id as cameraLabel for unique deduplication in React
+        cam_name = str(job_data.get("camera_id", "") or "")
+        if not cam_name and clip_label.startswith("📡 "):
+            raw = clip_label[len("📡 "):]
+            for _sfx in (" — 🔴 LIVE", " — seg "):
+                if _sfx in raw:
+                    raw = raw[:raw.index(_sfx)]
+            cam_name = raw.strip()
         if cam_name:
             update_expr += ", cameraLabel = :cnl"
             expr_vals[":cnl"] = {"S": cam_name}
@@ -396,9 +400,14 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     if clip:
         update_expr += ", clipLabel = if_not_exists(clipLabel, :cl)"
         expr_vals[":cl"] = {"S": clip}
-        cam_name = summary.get("camera_label", "")
+        # Prefer camera_id for unique deduplication; derive from clip_label as fallback
+        cam_name = summary.get("camera_id") or summary.get("camera_label", "")
         if not cam_name and clip.startswith("📡 "):
-            cam_name = clip[len("📡 "):].split(" — ")[0].strip()
+            raw = clip[len("📡 "):]
+            for _sfx in (" — 🔴 LIVE", " — seg "):
+                if _sfx in raw:
+                    raw = raw[:raw.index(_sfx)]
+            cam_name = raw.strip()
         if cam_name:
             update_expr += ", cameraLabel = if_not_exists(cameraLabel, :cnl)"
             expr_vals[":cnl"] = {"S": cam_name}
@@ -603,12 +612,17 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
             "over_pours":  int(corr.get("over_pours", 0)),
         })}
 
-    camera = summary.get("camera_label") or ""
+    # Prefer explicit camera_id for deduplication — unique per camera, no collision.
+    # Fall back to camera_label or derive from clip_label (strip seg/LIVE suffix).
+    camera = summary.get("camera_id") or summary.get("camera_label") or ""
     if not camera:
-        # Derive camera name from clip_label: "📡 CH10 Back Entrance — seg 5" → "CH10 Back Entrance"
         clip = summary.get("clip_label", "")
         if clip.startswith("📡 "):
-            camera = clip[len("📡 "):].split(" — ")[0].strip()
+            raw = clip[len("📡 "):]
+            for _sfx in (" — 🔴 LIVE", " — seg "):
+                if _sfx in raw:
+                    raw = raw[:raw.index(_sfx)]
+            camera = raw.strip()
     if camera:
         item["cameraLabel"] = {"S": str(camera)}
 
