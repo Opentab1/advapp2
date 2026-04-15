@@ -624,6 +624,9 @@ class VenueProcessor:
         analyzers  = {m: self._build_analyzer(W, H, fps, mode_override=m)
                       for m in self.modes}
         analyzer   = analyzers[self.mode]   # primary (used for annotation)
+        # True when bottle_count runs alongside a person-tracking primary mode.
+        # Requires detecting both class 0 (person) and bottle classes in one pass.
+        _bottle_alongside = ("bottle_count" in self.modes and self.mode != "bottle_count")
         model_name = self.profile["model"]
         self.cb(4, f"Loading {model_name}...")
         model = _get_cached_model(model_name)
@@ -921,7 +924,12 @@ class VenueProcessor:
                 yolo_frame = frame
                 scale      = 1.0
 
-            detect_classes = BOTTLE_CLASSES if self.mode == "bottle_count" else [0]
+            if _bottle_alongside:
+                detect_classes = list({0} | set(BOTTLE_CLASSES))  # people + bottles
+            elif self.mode == "bottle_count":
+                detect_classes = BOTTLE_CLASSES
+            else:
+                detect_classes = [0]
             results = model.track(yolo_frame, persist=True,
                                   imgsz=imgsz,
                                   conf=self._conf_threshold,
@@ -962,17 +970,38 @@ class VenueProcessor:
                     boxes_px  = np.stack(fb).astype(np.float32)
                     track_ids = fi; confs = fc; class_ids = fk
 
-                # Skip min-age filter for bottle mode (bottles don't move, no track age warmup needed)
-                if self.mode != "bottle_count":
-                    for tid in track_ids:
-                        self._track_ages[tid] = self._track_ages.get(tid, 0) + 1
-                    mask      = [self._track_ages.get(t,0) >= self._min_track_age for t in track_ids]
-                    boxes_px  = boxes_px[mask]  if len(boxes_px)  else boxes_px
-                    track_ids = [t for t,m in zip(track_ids,mask) if m]
-                    confs     = [c for c,m in zip(confs,mask)     if m]
-                    class_ids = [k for k,m in zip(class_ids,mask) if m]
+            # When bottle_count runs alongside a person-tracking primary:
+            # split detections so each analyzer gets the right object class.
+            # BottleCounter has its own IoU tracker — it only needs raw boxes.
+            # ByteTrack / drink_count must only see person (class 0) boxes.
+            _bottle_boxes_cur  = np.empty((0, 4), dtype=np.float32)
+            _bottle_cls_cur:   list = []
+            _bottle_conf_cur:  list = []
+            if _bottle_alongside and len(boxes_px):
+                _bc_set = set(BOTTLE_CLASSES)
+                _b_mask = [c in _bc_set for c in class_ids]
+                _p_mask = [c == 0        for c in class_ids]
+                if any(_b_mask):
+                    _bottle_boxes_cur = boxes_px[np.array(_b_mask)]
+                    _bottle_cls_cur   = [c for c, m in zip(class_ids, _b_mask) if m]
+                    _bottle_conf_cur  = [c for c, m in zip(confs,     _b_mask) if m]
+                # Keep only person boxes in the main pipeline
+                boxes_px  = boxes_px[np.array(_p_mask)] if any(_p_mask) else np.empty((0,4), dtype=np.float32)
+                track_ids = [t for t, m in zip(track_ids, _p_mask) if m]
+                confs     = [c for c, m in zip(confs,     _p_mask) if m]
+                class_ids = [c for c, m in zip(class_ids, _p_mask) if m]
 
-                if len(boxes_px):
+            # Skip min-age filter for bottle mode (bottles don't move, no track age warmup needed)
+            if self.mode != "bottle_count":
+                for tid in track_ids:
+                    self._track_ages[tid] = self._track_ages.get(tid, 0) + 1
+                mask      = [self._track_ages.get(t,0) >= self._min_track_age for t in track_ids]
+                boxes_px  = boxes_px[mask]  if len(boxes_px)  else boxes_px
+                track_ids = [t for t,m in zip(track_ids,mask) if m]
+                confs     = [c for c,m in zip(confs,mask)     if m]
+                class_ids = [k for k,m in zip(class_ids,mask) if m]
+
+            if len(boxes_px):
                     # A2: IoU track re-ID — inherit state when new ID overlaps lost track
                     cur = set(track_ids)
                     just_lost     = self._prev_ids - cur
@@ -1039,10 +1068,20 @@ class VenueProcessor:
             # Feed detections to ALL analyzers — one YOLO pass, many metrics
             evs = []
             for _m, _az in analyzers.items():
-                evs += self._run_analyzer(_az, frame, frame_idx, t_sec,
-                                          centroids, track_ids, confs,
-                                          boxes_px, class_ids,
-                                          mode_override=_m)
+                if _az is None:
+                    continue
+                if _m == "bottle_count" and _bottle_alongside:
+                    # Multi-mode: bottle_count gets the pre-split bottle boxes,
+                    # not the person-only boxes that drink_count sees.
+                    evs += _az.update(frame_idx, t_sec,
+                                      _bottle_boxes_cur,
+                                      _bottle_cls_cur,
+                                      _bottle_conf_cur)
+                else:
+                    evs += self._run_analyzer(_az, frame, frame_idx, t_sec,
+                                              centroids, track_ids, confs,
+                                              boxes_px, class_ids,
+                                              mode_override=_m)
 
             snap_dir = self.result_dir / "snapshots"
             clip_dir = self.result_dir / "clips"
