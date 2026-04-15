@@ -524,7 +524,7 @@ class VenueProcessor:
         self._live_event_cb:    Optional[Callable] = live_event_cb
         self._last_live_push:   float = 0.0
         self._live_push_interval: float = float(
-            self.ec.get("live_push_interval", 10.0))
+            self.ec.get("live_push_interval", 5.0))  # 5s default (was 10s)
 
         # Checkpoint / resume
         self._checkpoint_file   = self.result_dir / "checkpoint.json"
@@ -589,7 +589,13 @@ class VenueProcessor:
         # so frame-count thresholds (prep_frames, dwell_frames, cooldowns) work correctly.
         _hls_dup_factor = 1
         if _is_hls and fps < 5.0:
-            _hls_dup_factor = max(1, round(14.0 / max(fps, 0.5)))
+            # GPU: target 14fps effective (GPU can process every duplicated frame)
+            # CPU: target 4fps effective — yolov8n@480px processes ~2.5fps per core,
+            # so dup_factor=2 at 2fps real = 4fps effective stays within budget.
+            # dup_factor=7 (14fps) on CPU caused "7x slower than stream" queue backup
+            # making the live dashboard report 7 minutes of lag. Fix: match real throughput.
+            _target_fps = 14.0 if _has_gpu else 4.0
+            _hls_dup_factor = max(1, round(_target_fps / max(fps, 0.5)))
             _raw_fps = fps
             fps = _raw_fps * _hls_dup_factor
             self.cb(2, f"HLS: stream is {_raw_fps:.1f}fps — enabling {_hls_dup_factor}x frame "
@@ -683,7 +689,10 @@ class VenueProcessor:
 
         _rtsp_consecutive_errors = 0
         _rtsp_reconnect_count    = 0    # how many reconnects have been attempted
-        _MAX_RTSP_ERRORS         = 60   # ~2 min of consecutive failures before giving up
+        # Continuous jobs (max_seconds=0) never give up — the bar is open and the
+        # camera WILL come back. Use a very large limit instead of float('inf')
+        # to avoid any overflow issues in comparison operators.
+        _MAX_RTSP_ERRORS         = (10_000_000 if self._max_seconds == 0 else 60)
         _RTSP_RECONNECT_AFTER    = 15   # reconnect after 15 consecutive failures (was 5)
         # NVR streams can have >10s buffering latency — 5 failures = 2.5s at 2fps was
         # too aggressive, causing flapping that resets ByteTrack track IDs mid-shift.

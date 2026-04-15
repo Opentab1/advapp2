@@ -515,11 +515,12 @@ def main():
     except Exception as _me:
         log.warning(f"Model pre-load skipped (non-fatal): {_me}")
 
-    # Reset stuck running jobs from previous session
-    for job in list_jobs(50):
-        if job["status"] == "running":
-            set_failed(job["job_id"], "worker restarted — job was interrupted")
-            log.warning(f"Reset stuck job {job['job_id']}")
+    # Reset ALL stuck running jobs from previous session.
+    # Use status filter (not list_jobs which only returns first 50) so we catch
+    # every orphaned job — critical when the droplet reboots mid-shift.
+    for job in list_jobs_by_status("running", limit=500):
+        set_failed(job["job_id"], "worker restarted — job was interrupted")
+        log.warning(f"Reset stuck job {job['job_id']}")
 
     _reap_stale_jobs()
 
@@ -527,6 +528,7 @@ def main():
     _last_backup       = 0.0
     _last_health_check = 0.0
     _last_cam_sync     = 0.0
+    _last_queue_drain  = 0.0
     _poll_count        = 0
     _active: Dict[str, multiprocessing.Process] = {}
     _active_start: Dict[str, float] = {}  # job_id → launch timestamp
@@ -536,8 +538,10 @@ def main():
     # Max concurrent jobs per venue. Single-venue deployments should set this
     # equal to MAX_PARALLEL so all slots are available. Multi-venue deployments
     # cap at half to prevent one venue starving others.
+    # Single-venue deployments: all slots available to the venue.
+    # Multi-venue deployments: use VENUESCOPE_MAX_PER_VENUE to cap per-venue usage.
     MAX_JOBS_PER_VENUE = (int(_MAX_PER_VENUE_ENV) if _MAX_PER_VENUE_ENV
-                          else max(1, MAX_PARALLEL // 2))
+                          else MAX_PARALLEL)
 
     # Start camera loop manager in its OWN process (not as threads in this
     # process). This prevents background threads from holding SQLite mutexes
@@ -681,6 +685,18 @@ def main():
                     _active_continuous.discard(job_id)
                     _active_venue.pop(job_id, None)
                     log.info(f"Reaped process for job {job_id}")
+
+            # Drain offline AWS sync queue (every 5 minutes)
+            # Items queued here when DDB was unreachable — drain them now.
+            if _now - _last_queue_drain > 300:
+                try:
+                    from core.aws_sync import drain_sync_queue
+                    _drained = drain_sync_queue()
+                    if _drained > 0:
+                        log.info(f"Drained {_drained} item(s) from offline AWS sync queue")
+                except Exception as _dqe:
+                    log.debug(f"Queue drain error (non-fatal): {_dqe}")
+                _last_queue_drain = _now
 
             # Retention cleanup (every 6 hours)
             # RTSP camera results are deleted after sync; file uploads kept 7 days.

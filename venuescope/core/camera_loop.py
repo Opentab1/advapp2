@@ -61,22 +61,23 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     _cam_extra = [m for m in (cam.get("extra_modes") or [])
                   if m and m != primary_mode and m not in _parsed_extra]
     extra_modes = list(_parsed_extra) + _cam_extra
-    # YOLO modes use 20-minute segments. Cross-segment state (drink_count accumulated
-    # counts, table_turns active sessions) is restored on restart, so no data is lost.
-    # Segmented mode allows the scheduler to interleave multiple YOLO cameras on 1vCPU
-    # instead of one continuous job starving all others.
+    # YOLO cameras run continuously (max_seconds=0) — with 4+ vCPUs each camera
+    # gets its own dedicated core and never needs to yield to other cameras.
+    # Continuous mode eliminates segment gaps and cross-segment state fragility.
+    # People-only cameras (lightweight, no YOLO) use 20-min snapshots.
     _all_modes = set([primary_mode] + list(extra_modes))
     _yolo_modes = {"drink_count", "table_turns", "table_service",
                    "bottle_count", "staff_activity", "after_hours"}
-    _needs_yolo_seg = bool(_all_modes & _yolo_modes)
-    _SEG_DEFAULT = 1200  # 20-minute default for YOLO modes
-    default_seg = _SEG_DEFAULT if _needs_yolo_seg else 15
-    seg_secs = float(cam.get("segment_seconds", default_seg))
-    # DDB stores segment_seconds=0 for legacy "continuous" cameras — treat as 1200s.
-    # Never allow very short segments for YOLO cameras (they need warm-up time).
-    if _needs_yolo_seg and (seg_secs == 0 or seg_secs < 300):
-        seg_secs = _SEG_DEFAULT
-    continuous = (seg_secs == 0)
+    _needs_yolo = bool(_all_modes & _yolo_modes)
+    # YOLO cameras: always continuous. Non-YOLO: 15s segments.
+    # Ignore segment_seconds from DDB for YOLO cameras — it was set as a workaround
+    # for single-CPU deployments and no longer applies with multi-CPU hardware.
+    if _needs_yolo:
+        seg_secs  = 0   # continuous — never ending
+        continuous = True
+    else:
+        seg_secs   = float(cam.get("segment_seconds", 15))
+        continuous = (seg_secs == 0)
     if seg_num > 0 and not continuous:
         label += f" — seg {seg_num} (df{jid})"
     if continuous:

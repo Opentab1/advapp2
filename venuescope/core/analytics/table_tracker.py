@@ -4,11 +4,16 @@ VenueScope — Table turn tracker (table_turns mode).
 Detects table occupancy, measures turn time, dwell time, and server response time.
 User defines table zones as polygons on the dining floor frame.
 
-v2 fixes:
-  - Every server visit emitted as an event (not just the first)
-  - staff_attribution populated in summary (was always empty)
-  - Min server visit lowered to 0.5s — catches "pass by and say hi"
-  - Grace period (4 frames) so tracking glitches don't split one visit into two
+v3 fixes:
+  - Server vs customer distinction: tracks dwelling >60s in the zone are
+    reclassified as customers (occupants), not server visits. Eliminates the
+    most common false positive: a customer whose track ID changes mid-session.
+  - Occupant ID refresh: if a seated customer's track ID is reassigned by YOLO
+    (e.g., after occlusion), their new ID is promoted to occupant status within
+    60s — no false "server visit" is counted.
+  - Minimum server visit: 0.5s (catches "pass by and say hi")
+  - Maximum server visit: 240s (>4 min = seated customer, not server)
+  - Grace period: 4 frames so tracking glitches don't split one visit into two
   - Per-server visit leaderboard in summary
 """
 from __future__ import annotations
@@ -71,9 +76,11 @@ class TableSession:
         return len(self.visits)
 
 
-_SERVER_MIN_VISIT_SEC = 0.5    # ≥ 0.5s = counts — catches pass-by greetings
-_SERVER_MAX_VISIT_SEC = 240.0  # > 4 min = probably seated customer, not server
-_VISIT_GRACE_FRAMES   = 4      # frames visitor can vanish without ending visit
+# Track dwell thresholds
+_SERVER_MIN_VISIT_SEC  = 0.5    # ≥ 0.5s = counts — catches pass-by greetings
+_SERVER_MAX_VISIT_SEC  = 240.0  # > 4 min = probably seated customer, not server
+_VISIT_GRACE_FRAMES    = 4      # frames visitor can vanish without ending visit
+_CUSTOMER_PROMOTE_SEC  = 60.0   # after 60s in zone, reclassify visitor as customer
 
 
 class _VisitorTrack:
@@ -183,6 +190,21 @@ class TableTurnTracker:
                     else:
                         state._visitors[vtid].dwell_frames += 1
                         state._visitors[vtid].out_frames    = 0
+
+                # ── Customer promotion ────────────────────────────────────────
+                # If a "visitor" has been in the zone continuously for >60 seconds
+                # they are a seated customer, not a server. Promote them to occupant
+                # so they stop generating server-visit events. This handles:
+                #   1. Track ID changes mid-session (YOLO reassigns the ID of a
+                #      seated customer after occlusion — new ID shows up as "newcomer")
+                #   2. Customers who arrived after initial seating detection
+                _to_promote = [
+                    vtid for vtid, vt in state._visitors.items()
+                    if (vt.dwell_frames / self._fps) >= _CUSTOMER_PROMOTE_SEC
+                ]
+                for vtid in _to_promote:
+                    state._occupant_ids.add(vtid)
+                    del state._visitors[vtid]
 
                 for vtid in list(state._visitors):
                     if vtid not in newcomers:
