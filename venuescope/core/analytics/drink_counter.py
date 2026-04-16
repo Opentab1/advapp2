@@ -128,7 +128,7 @@ class _TrackState:
     __slots__=("prep_frames","serve_side_buffer","cooldown_remaining",
                "last_confirmed_side","missing_frames","station_id_cache",
                "customer_dwell_frames","crossing_confs","centroid_history",
-               "box_width_history","recent_conf_history")
+               "box_width_history","recent_conf_history","extra_line_states")
     def __init__(self):
         self.prep_frames           = 0
         self.serve_side_buffer:    List[int] = []
@@ -141,6 +141,7 @@ class _TrackState:
         self.centroid_history: List[tuple] = []   # (cx, cy) per frame for velocity
         self.box_width_history: List[float] = []  # bounding box widths for lean detection
         self.recent_conf_history:  deque = deque(maxlen=10)  # rolling per-track detection conf
+        self.extra_line_states:    dict  = {}     # {line_idx: {serve_side_buffer,customer_dwell_frames,...}}
 
 
 class DrinkCounter:
@@ -155,13 +156,15 @@ class DrinkCounter:
         self.W=W; self.H=H
 
         self._station_polys: Dict[str,List] = {}
-        self._bar_lines:     Dict[str,Tuple] = {}
+        # Each zone maps to a LIST of (p1_px, p2_px, customer_side) tuples —
+        # index 0 is the primary bar line, indices 1+ are extra bar lines.
+        self._bar_lines:     Dict[str,List] = {}
 
         if bar_config:
+            from core.bar_config import all_bar_lines_px
             for st in bar_config.stations:
                 self._station_polys[st.zone_id] = station_polygon_px(st,W,H)
-                p1,p2 = bar_line_px(st,W,H)
-                self._bar_lines[st.zone_id] = (p1,p2,st.customer_side)
+                self._bar_lines[st.zone_id] = all_bar_lines_px(st,W,H)
 
         self._states: Dict[int,_TrackState] = defaultdict(_TrackState)
         # Station-level cooldown — survives track ID switches
@@ -330,8 +333,8 @@ class DrinkCounter:
             if station_id not in self._bar_lines:
                 continue
 
-            # Extract bar line info early — needed for bartender-side gate below
-            p1,p2,customer_side = self._bar_lines[station_id]
+            # Extract primary bar line info
+            p1,p2,customer_side = self._bar_lines[station_id][0]
 
             # PREP: centroid must be in station zone AND on the bartender side of
             # the bar line.  A customer leaning in is in the zone polygon but on
@@ -526,6 +529,141 @@ class DrinkCounter:
                 self.events.append(ev)
                 events.append(ev)
 
+        # ── Extra bar line crossing detection ────────────────────────────────
+        # Runs as a separate pass so primary-line early-exits don't suppress it.
+        for i, tid in enumerate(track_ids):
+            if i >= len(centroids): continue
+            if tid in _just_served: continue
+            cx, cy = float(centroids[i][0]), float(centroids[i][1])
+            state  = self._states[tid]
+            if state.cooldown_remaining > 0: continue
+            station_id = self._resolve_station(cx, cy, tid)
+            if not station_id: continue
+            if self._station_cooldown.get(station_id, 0) > 0: continue
+            if station_id not in self._bar_lines: continue
+            if len(self._bar_lines[station_id]) <= 1: continue
+            if state.prep_frames < self.rules.min_prep_frames: continue
+
+            _vel_n = self.rules.velocity_window_frames
+            _vel_vec2 = None
+            if len(state.centroid_history) >= _vel_n:
+                _vel_vec2 = (cx - state.centroid_history[-_vel_n][0],
+                             cy - state.centroid_history[-_vel_n][1])
+
+            for _xidx, (xp1, xp2, xcside) in enumerate(self._bar_lines[station_id][1:], 1):
+                if tid in _just_served: break
+                # Initialise per-line state on first encounter
+                if _xidx not in state.extra_line_states:
+                    state.extra_line_states[_xidx] = {
+                        'serve_side_buffer': [], 'customer_dwell_frames': 0,
+                        'crossing_confs': [],    'last_confirmed_side':   0,
+                    }
+                _xs = state.extra_line_states[_xidx]
+
+                # Probe
+                if boxes is not None and i < len(boxes):
+                    bx = boxes[i]
+                    _xprobe = _reach_probe(float(bx[0]), float(bx[1]),
+                                           float(bx[2]), float(bx[3]),
+                                           xp1, xp2, xcside, _vel_vec2)
+                else:
+                    _xprobe = (cx, cy)
+                _xside = _side_of_line(_xprobe, xp1, xp2)
+                if abs(_signed_dist_px(_xprobe, xp1, xp2, xcside)) < self.rules.bar_line_dead_zone_px \
+                        and _xs['serve_side_buffer']:
+                    _xside = _xs['serve_side_buffer'][-1]
+                _xs['serve_side_buffer'].append(_xside)
+                _N = self.rules.serve_confirm_frames
+                if len(_xs['serve_side_buffer']) > _N + 10:
+                    _xs['serve_side_buffer'] = _xs['serve_side_buffer'][-(_N + 10):]
+                if _xside == xcside:
+                    _xs['customer_dwell_frames'] += 1
+                    _xs['crossing_confs'].append(conf_map.get(tid, 0.0))
+                else:
+                    _xs['customer_dwell_frames'] = 0
+                    _xs['crossing_confs'] = []
+
+                # Bilateral crossing check
+                if len(_xs['serve_side_buffer']) < _N: continue
+                _xnz = [s for s in _xs['serve_side_buffer'][-_N:] if s != 0]
+                if not _xnz: continue
+                if (1 if _xnz.count(1) >= _xnz.count(-1) else -1) != xcside: continue
+                if _xs['last_confirmed_side'] != -xcside: continue
+                if _xs['customer_dwell_frames'] < self.rules.serve_dwell_frames: continue
+
+                # Velocity filter
+                if _vel_vec2 is not None:
+                    _xv = (_vel_vec2[0]**2 + _vel_vec2[1]**2)**0.5 / _vel_n
+                    if _xv >= self.rules.max_cross_velocity_px: continue
+
+                # Time-based cooldown (per extra-line key)
+                _xkey = f"{station_id}__x{_xidx}"
+                if t_sec - self._station_last_serve_tsec.get(_xkey, -9999.0) < self.rules.serve_cooldown_seconds:
+                    continue
+
+                # Score
+                _xconf = (sum(_xs['crossing_confs']) / len(_xs['crossing_confs'])
+                          if _xs['crossing_confs'] else conf_map.get(tid, 0.0))
+                if state.recent_conf_history:
+                    _xconf = 0.7*_xconf + 0.3*(sum(state.recent_conf_history)/len(state.recent_conf_history))
+                _xscore = round(0.7*_xconf + 0.3*min(_xs['customer_dwell_frames']/15.0, 1.0), 3)
+
+                _log.info("[serve] t=%.1f tid=%s station=%s line=%d score=%.3f",
+                          t_sec, tid, station_id, _xidx, _xscore)
+                _just_served.add(tid)
+                _xs['last_confirmed_side']    = xcside
+                _xs['customer_dwell_frames']  = 0
+                _xs['crossing_confs']         = []
+                _xs['serve_side_buffer']      = []
+                state.cooldown_remaining      = self.rules.serve_cooldown_frames
+                self._station_cooldown[station_id] = self.rules.serve_cooldown_frames
+                self._station_last_serve_tsec[_xkey] = t_sec
+                state.prep_frames = max(0, state.prep_frames - 3)
+
+                _xis_review = _xscore < self.rules.min_serve_score
+                _xname = self.shift.record_drink(tid, t_sec, _xscore) if not _xis_review else None
+                if _xname is None and not _xis_review:
+                    _xrec = self.shift.get_by_station(station_id)
+                    if _xrec is None and len(self.shift.records) == 1:
+                        _xrec = next(iter(self.shift.records.values()))
+                    if _xrec is not None:
+                        _xrec.record_drink(t_sec, _xscore)
+                        _xname = _xrec.name
+                    else:
+                        self._unassigned_serves += 1
+                        _xname = f"UNASSIGNED_track_{tid}"
+
+                if not _xis_review:
+                    self._zone_drinks[station_id] = self._zone_drinks.get(station_id, 0) + 1
+                    self._zone_events.setdefault(station_id, []).append({
+                        "t_sec": round(t_sec,1), "score": round(_xscore,3),
+                        "x": round(float(cx),4), "y": round(float(cy),4),
+                    })
+                    if _xconf >= self.rules.min_serve_conf:
+                        self._high_conf_serves += 1
+                    else:
+                        self._low_conf_serves  += 1
+                else:
+                    self._review_count += 1
+
+                _xev = {
+                    "event_type": "drink_serve",   "bartender":  _xname,
+                    "station_id": station_id,       "track_id":   tid,
+                    "t_sec":      round(t_sec,3),   "x":          round(float(cx),4),
+                    "y":          round(float(cy),4),"confidence": round(conf_map.get(tid,0.0),4),
+                    "serve_score": _xscore,          "high_conf":  _xconf >= self.rules.min_serve_conf,
+                    "dwell_frames": _xs['customer_dwell_frames'] + self.rules.serve_dwell_frames,
+                    "frame_idx": frame_idx,          "review":     _xis_review,
+                    "review_reason": f"low_serve_score_{_xscore:.3f}" if _xis_review else "",
+                    "bar_line_idx": _xidx,
+                }
+                if _xis_review:
+                    self._review_events.append(_xev)
+                else:
+                    self.events.append(_xev)
+                events.append(_xev)
+                break  # one serve per frame per station
+
         # Reset confirmed side when bartender returns to their own side.
         # IMPORTANT: skip any track that just confirmed a serve this frame —
         # _reach_probe uses bbox corners so the centroid may already be on the
@@ -537,10 +675,16 @@ class DrinkCounter:
             cx,cy=float(centroids[i][0]),float(centroids[i][1])
             sid=self._resolve_station(cx,cy,tid)
             if sid and sid in self._bar_lines:
-                p1,p2,customer_side=self._bar_lines[sid]
+                # Primary line re-arm
+                p1,p2,customer_side=self._bar_lines[sid][0]
                 side=_side_of_line((cx,cy),p1,p2)
                 if side==-customer_side:
                     self._states[tid].last_confirmed_side=-customer_side
+                # Extra lines re-arm
+                for _xidx2,(xp1,xp2,xcside) in enumerate(self._bar_lines[sid][1:],1):
+                    if _xidx2 in self._states[tid].extra_line_states:
+                        if _side_of_line((cx,cy),xp1,xp2) == -xcside:
+                            self._states[tid].extra_line_states[_xidx2]['last_confirmed_side'] = -xcside
 
         return events
 

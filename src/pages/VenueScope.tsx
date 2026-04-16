@@ -67,13 +67,20 @@ function ConfidenceBadge({ color, label }: { color: string; label: string }) {
 
 // ── Bar zone config types ─────────────────────────────────────────────────────
 
+interface BarLine {
+  p1: [number, number];
+  p2: [number, number];
+  customer_side: 1 | -1;
+}
+
 interface BarStation {
   zone_id: string;
   label: string;
   polygon: [number, number][];       // normalized [0-1] x,y vertices
-  bar_line_p1: [number, number];     // normalized start of bar line
-  bar_line_p2: [number, number];     // normalized end of bar line
+  bar_line_p1: [number, number];     // normalized start of primary bar line
+  bar_line_p2: [number, number];     // normalized end of primary bar line
   customer_side: 1 | -1;            // +1 = below bar line, -1 = above
+  extra_bar_lines?: BarLine[];       // additional crossing lines (same zone, different orientation)
 }
 
 interface BarConfig {
@@ -120,9 +127,10 @@ function ZoneOverlay({ config }: { config: BarConfig }) {
 // ── Zone editor modal ─────────────────────────────────────────────────────────
 
 type DragTarget =
-  | { kind: 'barHandle'; stationIdx: number; handle: 'p1' | 'p2' }
-  | { kind: 'corner';    stationIdx: number; cornerIdx: number }
-  | { kind: 'zone';      stationIdx: number; startPt: [number, number]; startPolygon: [number, number][]; startP1: [number, number]; startP2: [number, number] }
+  | { kind: 'barHandle';      stationIdx: number; handle: 'p1' | 'p2' }
+  | { kind: 'extraBarHandle'; stationIdx: number; lineIdx: number; handle: 'p1' | 'p2' }
+  | { kind: 'corner';         stationIdx: number; cornerIdx: number }
+  | { kind: 'zone';           stationIdx: number; startPt: [number, number]; startPolygon: [number, number][]; startP1: [number, number]; startP2: [number, number] }
   | null;
 
 function _ptInRect(pt: [number,number], poly: [number,number][]): boolean {
@@ -215,7 +223,7 @@ function ZoneEditorModal({
     for (let i = 0; i < config.stations.length; i++) {
       const s = config.stations[i];
 
-      // 1. Bar line handles — highest priority
+      // 1. Bar line handles — highest priority (primary + extra)
       if (Math.hypot(pt[0] - s.bar_line_p1[0], pt[1] - s.bar_line_p1[1]) < HIT) {
         setDragTarget({ kind: 'barHandle', stationIdx: i, handle: 'p1' });
         e.preventDefault(); return;
@@ -223,6 +231,17 @@ function ZoneEditorModal({
       if (Math.hypot(pt[0] - s.bar_line_p2[0], pt[1] - s.bar_line_p2[1]) < HIT) {
         setDragTarget({ kind: 'barHandle', stationIdx: i, handle: 'p2' });
         e.preventDefault(); return;
+      }
+      for (let li = 0; li < (s.extra_bar_lines?.length ?? 0); li++) {
+        const xl = s.extra_bar_lines![li];
+        if (Math.hypot(pt[0] - xl.p1[0], pt[1] - xl.p1[1]) < HIT) {
+          setDragTarget({ kind: 'extraBarHandle', stationIdx: i, lineIdx: li, handle: 'p1' });
+          e.preventDefault(); return;
+        }
+        if (Math.hypot(pt[0] - xl.p2[0], pt[1] - xl.p2[1]) < HIT) {
+          setDragTarget({ kind: 'extraBarHandle', stationIdx: i, lineIdx: li, handle: 'p2' });
+          e.preventDefault(); return;
+        }
       }
 
       // 2. Polygon corner handles
@@ -264,6 +283,14 @@ function ZoneEditorModal({
           return { ...s, [dragTarget.handle === 'p1' ? 'bar_line_p1' : 'bar_line_p2']: pt };
         }
 
+        if (dragTarget.kind === 'extraBarHandle') {
+          const extras = [...(s.extra_bar_lines ?? [])];
+          const xl = { ...extras[dragTarget.lineIdx] };
+          if (dragTarget.handle === 'p1') xl.p1 = pt; else xl.p2 = pt;
+          extras[dragTarget.lineIdx] = xl;
+          return { ...s, extra_bar_lines: extras };
+        }
+
         if (dragTarget.kind === 'corner') {
           const poly = s.polygon.map((p, ci) =>
             ci === dragTarget.cornerIdx ? pt : p
@@ -283,6 +310,11 @@ function ZoneEditorModal({
             polygon: poly,
             bar_line_p1: [clamp(dragTarget.startP1[0] + dx), clamp(dragTarget.startP1[1] + dy)] as [number, number],
             bar_line_p2: [clamp(dragTarget.startP2[0] + dx), clamp(dragTarget.startP2[1] + dy)] as [number, number],
+            extra_bar_lines: (s.extra_bar_lines ?? []).map(xl => ({
+              ...xl,
+              p1: [clamp(xl.p1[0] + dx), clamp(xl.p1[1] + dy)] as [number, number],
+              p2: [clamp(xl.p2[0] + dx), clamp(xl.p2[1] + dy)] as [number, number],
+            })),
           };
         }
 
@@ -313,12 +345,13 @@ function ZoneEditorModal({
       ? [x2, (y1 + y2) / 2]
       : [(x1 + x2) / 2, y2];
     const newStation: BarStation = {
-      zone_id:       `zone_${Date.now()}`,
-      label:         `Bar Zone ${config.stations.length + 1}`,
-      polygon:       [[x1,y1],[x2,y1],[x2,y2],[x1,y2]],
-      bar_line_p1:   newBarP1,
-      bar_line_p2:   newBarP2,
-      customer_side: 1,
+      zone_id:         `zone_${Date.now()}`,
+      label:           `Bar Zone ${config.stations.length + 1}`,
+      polygon:         [[x1,y1],[x2,y1],[x2,y2],[x1,y2]],
+      bar_line_p1:     newBarP1,
+      bar_line_p2:     newBarP2,
+      customer_side:   1,
+      extra_bar_lines: [],
     };
     setConfig(c => ({ stations: [...c.stations, newStation] }));
     setRectAnchor(null);
@@ -332,6 +365,47 @@ function ZoneEditorModal({
   function deleteZone(idx: number) {
     setConfig(c => ({ stations: c.stations.filter((_, i) => i !== idx) }));
     if (config.stations.length <= 1) setStep('draw');
+  }
+
+  function addExtraLine(stationIdx: number) {
+    setConfig(c => ({
+      stations: c.stations.map((s, i) => {
+        if (i !== stationIdx) return s;
+        // Default new line: offset slightly from primary line so it's visible
+        const ldx = s.bar_line_p2[0] - s.bar_line_p1[0];
+        const ldy = s.bar_line_p2[1] - s.bar_line_p1[1];
+        const llen = Math.hypot(ldx, ldy) || 1;
+        const offset = 0.08;
+        const newLine: BarLine = {
+          p1: [Math.max(0, Math.min(1, s.bar_line_p1[0] + (-ldy/llen) * offset)),
+               Math.max(0, Math.min(1, s.bar_line_p1[1] + (ldx/llen) * offset))] as [number,number],
+          p2: [Math.max(0, Math.min(1, s.bar_line_p2[0] + (-ldy/llen) * offset)),
+               Math.max(0, Math.min(1, s.bar_line_p2[1] + (ldx/llen) * offset))] as [number,number],
+          customer_side: s.customer_side === 1 ? -1 : 1,
+        };
+        return { ...s, extra_bar_lines: [...(s.extra_bar_lines ?? []), newLine] };
+      }),
+    }));
+  }
+
+  function deleteExtraLine(stationIdx: number, lineIdx: number) {
+    setConfig(c => ({
+      stations: c.stations.map((s, i) => {
+        if (i !== stationIdx) return s;
+        return { ...s, extra_bar_lines: (s.extra_bar_lines ?? []).filter((_, li) => li !== lineIdx) };
+      }),
+    }));
+  }
+
+  function toggleExtraLineSide(stationIdx: number, lineIdx: number) {
+    setConfig(c => ({
+      stations: c.stations.map((s, i) => {
+        if (i !== stationIdx) return s;
+        const extras = [...(s.extra_bar_lines ?? [])];
+        extras[lineIdx] = { ...extras[lineIdx], customer_side: extras[lineIdx].customer_side === 1 ? -1 : 1 };
+        return { ...s, extra_bar_lines: extras };
+      }),
+    }));
   }
 
   function updateLabel(idx: number, label: string) {
@@ -483,6 +557,26 @@ function ZoneEditorModal({
                   fill="rgba(255,140,0,0.25)" stroke="rgba(255,140,0,0.9)" strokeWidth="0.004"
                   style={{ cursor: 'grab' }}
                 />
+                {/* Extra bar lines — same style but slightly different orange */}
+                {(s.extra_bar_lines ?? []).map((xl, li) => (
+                  <g key={`xl-${li}`}>
+                    <line
+                      x1={xl.p1[0]} y1={xl.p1[1]} x2={xl.p2[0]} y2={xl.p2[1]}
+                      stroke="rgba(251,191,36,0.95)"
+                      strokeWidth="0.005"
+                      strokeDasharray="0.018 0.009"
+                    />
+                    <circle cx={xl.p1[0]} cy={xl.p1[1]} r="0.022"
+                      fill="rgba(251,191,36,0.25)" stroke="rgba(251,191,36,0.9)" strokeWidth="0.004"
+                      style={{ cursor: 'grab' }}
+                    />
+                    <circle cx={xl.p2[0]} cy={xl.p2[1]} r="0.022"
+                      fill="rgba(251,191,36,0.25)" stroke="rgba(251,191,36,0.9)" strokeWidth="0.004"
+                      style={{ cursor: 'grab' }}
+                    />
+                  </g>
+                ))}
+
                 {/* Corner handles — drag to resize zone */}
                 {s.polygon.map(([cx, cy], ci) => (
                   <circle key={ci} cx={cx} cy={cy} r="0.018"
@@ -593,6 +687,38 @@ function ZoneEditorModal({
                     Customer side {custArrow}
                   </span>
                 </div>
+
+                {/* Extra bar line labels */}
+                {(s.extra_bar_lines ?? []).map((xl, li) => {
+                  const xmx = (xl.p1[0] + xl.p2[0]) / 2;
+                  const xmy = (xl.p1[1] + xl.p2[1]) / 2;
+                  const xdx = xl.p2[0] - xl.p1[0];
+                  const xdy = xl.p2[1] - xl.p1[1];
+                  const xlen = Math.hypot(xdx, xdy) || 1;
+                  const xperpX = -xdy / xlen;
+                  const xperpY =  xdx / xlen;
+                  const xcx = xl.customer_side * xperpX;
+                  const xcy = xl.customer_side * xperpY;
+                  const xgap = 0.055;
+                  const xclamp = (v: number) => Math.max(0.01, Math.min(0.99, v));
+                  const xcLX = xclamp(xmx + xcx * xgap);
+                  const xcLY = xclamp(xmy + xcy * xgap);
+                  const xcArrow = Math.abs(xcy) >= Math.abs(xcx) ? (xcy > 0 ? '↓' : '↑') : (xcx > 0 ? '→' : '←');
+                  return (
+                    <React.Fragment key={`xl-label-${li}`}>
+                      <div className="absolute pointer-events-none" style={{ left: `${xmx * 100}%`, top: `${xmy * 100}%`, transform: 'translate(-50%, -50%)' }}>
+                        <span className="text-[8px] font-semibold text-yellow-300/80 bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap">
+                          Line {li + 2}
+                        </span>
+                      </div>
+                      <div className="absolute pointer-events-none" style={{ left: `${xcLX * 100}%`, top: `${xcLY * 100}%`, transform: 'translate(-50%, -50%)' }}>
+                        <span className="text-[8px] font-semibold text-purple-300/80 bg-black/50 backdrop-blur-sm px-1 py-0.5 rounded whitespace-nowrap">
+                          Customer {xcArrow}
+                        </span>
+                      </div>
+                    </React.Fragment>
+                  );
+                })}
               </React.Fragment>
             );
           })}
@@ -644,6 +770,13 @@ function ZoneEditorModal({
                   </button>
                 </div>
                 <button
+                  onClick={() => addExtraLine(i)}
+                  className="text-[10px] px-2 py-1 rounded-lg bg-yellow-500/10 text-yellow-300 border border-yellow-500/20 hover:bg-yellow-500/20 transition-colors whitespace-nowrap flex-shrink-0"
+                  title="Add another crossing line to this zone"
+                >
+                  + Line
+                </button>
+                <button
                   onClick={() => deleteZone(i)}
                   className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0 ml-1"
                   title="Delete zone"
@@ -651,6 +784,40 @@ function ZoneEditorModal({
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
+              {/* Extra bar line controls */}
+              {(s.extra_bar_lines ?? []).map((xl, li) => {
+                const xdx = xl.p2[0] - xl.p1[0];
+                const xdy = xl.p2[1] - xl.p1[1];
+                const xlen = Math.hypot(xdx, xdy) || 1;
+                const xperpX = -xdy / xlen;
+                const xperpY =  xdx / xlen;
+                const xcx = xl.customer_side * xperpX;
+                const xcy2 = xl.customer_side * xperpY;
+                const xarrow = Math.abs(xcy2) >= Math.abs(xcx) ? (xcy2 > 0 ? '▼' : '▲') : (xcx > 0 ? '▶' : '◀');
+                const xdir = Math.abs(xcy2) >= Math.abs(xcx) ? (xcy2 > 0 ? 'below' : 'above') : (xcx > 0 ? 'right of' : 'left of');
+                return (
+                  <div key={li} className="flex items-center gap-2 bg-whoop-bg/50 rounded-lg px-3 py-1.5 ml-4 border border-yellow-500/10">
+                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-400/60 flex-shrink-0" />
+                    <span className="text-[10px] text-yellow-300/70 flex-1">Crossing line {li + 2}</span>
+                    <div className="flex flex-col items-center flex-shrink-0">
+                      <p className="text-[8px] text-text-muted mb-0.5">Customers are</p>
+                      <button
+                        onClick={() => toggleExtraLineSide(i, li)}
+                        className="text-[9px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 hover:bg-purple-500/20 transition-colors whitespace-nowrap"
+                      >
+                        {xarrow} {xdir} line
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => deleteExtraLine(i, li)}
+                      className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0"
+                      title="Delete this crossing line"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
             ))
           )}
         </div>
