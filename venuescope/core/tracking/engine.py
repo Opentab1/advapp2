@@ -631,26 +631,37 @@ class VenueProcessor:
         # so frame-count thresholds (prep_frames, dwell_frames, cooldowns) work correctly.
         _hls_dup_factor = 1
         if _is_hls and fps < 5.0:
-            # GPU: target 14fps effective (GPU can process every duplicated frame)
-            # CPU: target 4fps effective — yolov8n@480px processes ~2.5fps per core,
-            # so dup_factor=2 at 2fps real = 4fps effective stays within budget.
-            # dup_factor=7 (14fps) on CPU caused "7x slower than stream" queue backup
-            # making the live dashboard report 7 minutes of lag. Fix: match real throughput.
-            _target_fps = 14.0 if self._has_gpu else 4.0
+            # GPU: target 14fps effective (GPU can process every duplicated frame).
+            # CPU: NO duplication — dup_factor=2 + stride=2 produces the same 2fps
+            # effective as dup_factor=1 + stride=1, but wastes CPU decoding duplicate
+            # frames that are immediately discarded by the stride check. At 1920×1080
+            # that's ~12MB/sec of wasted ffmpeg decode + numpy copy per camera.
+            # Instead: keep dup_factor=1 and set stride=1 so we process every real
+            # frame at the native 2fps rate. Frame-count thresholds (min_prep_frames,
+            # serve_cooldown_frames) are calibrated against effective_fps = fps/stride
+            # which is the same (2fps) either way.
+            _target_fps = 14.0 if self._has_gpu else fps  # CPU: no duplication
             _hls_dup_factor = max(1, round(_target_fps / max(fps, 0.5)))
             _raw_fps = fps
             fps = _raw_fps * _hls_dup_factor
-            self.cb(2, f"HLS: stream is {_raw_fps:.1f}fps — enabling {_hls_dup_factor}x frame "
-                       f"duplication → effective {fps:.0f}fps for detection pipeline")
-            # Reduce min_track_age: ByteTrack may reset track IDs on each new NVR frame
-            # (0.5s gap, person can move enough that IoU drops below match threshold).
-            # With dup_factor frames per NVR frame and stride, we get dup_factor/stride
-            # processed frames per real frame — use that as the new min_track_age.
-            stride = self.profile.get("stride", 2)
-            _hls_min_age = max(2, _hls_dup_factor // max(stride, 1))
-            self._min_track_age = _hls_min_age
-            self.cb(2, f"HLS: min_track_age reduced to {_hls_min_age} "
-                       f"(was {self.ec.get('min_track_age_frames', 8)})")
+            if _hls_dup_factor > 1:
+                self.cb(2, f"HLS: stream is {_raw_fps:.1f}fps — enabling {_hls_dup_factor}x frame "
+                           f"duplication → effective {fps:.0f}fps for detection pipeline")
+                # On CPU with dup_factor>1 (shouldn't happen now), keep stride to match.
+                stride = self.profile.get("stride", 2)
+                _hls_min_age = max(2, _hls_dup_factor // max(stride, 1))
+                self._min_track_age = _hls_min_age
+                self.cb(2, f"HLS: min_track_age reduced to {_hls_min_age} "
+                           f"(was {self.ec.get('min_track_age_frames', 8)})")
+            else:
+                # CPU no-dup path: process every real frame (stride=1) for 2fps effective.
+                # Overrides the RTSP minimum-stride=2 set in __init__ — for 2fps HLS
+                # there's no decode overload risk, and stride=2 would waste half the frames.
+                self.cb(2, f"HLS CPU: native {_raw_fps:.1f}fps — no frame duplication, stride=1 "
+                           f"(saves ~50% frame decode vs dup×2 + stride×2)")
+                stride = 1
+                self.profile = dict(self.profile)
+                self.profile["stride"] = 1
         self._clip_fps = fps / max(self.profile.get("stride", 2), 1)
         self._clip_H   = int(H * self._clip_W / W)
         self.cb(2, f"Video: {W}x{H} @ {fps:.1f}fps  ({total_f} frames, {total_f/fps/60:.1f} min)")
