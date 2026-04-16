@@ -450,7 +450,8 @@ class VenueProcessor:
             self.profile = dict(self.profile)
             if analysis_mode == "drink_count":
                 self.profile["model"]  = "yolov8s.pt"   # 3× more accurate than nano
-                self.profile["imgsz"]  = 320             # ROI crop compensates for lower res
+                self.profile["imgsz"]  = 256             # ROI crop compensates — bar zone
+                                                          # fills the full 256px input
             elif analysis_mode == "bottle_count":
                 self.profile["model"]  = "yolov8n.pt"
                 self.profile["imgsz"]  = min(self.profile.get("imgsz", 480), 480)
