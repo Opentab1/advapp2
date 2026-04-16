@@ -65,7 +65,10 @@ MODEL_PROFILES: Dict[str, Dict[str, Any]] = {
         "imgsz":   640,
         "conf":    0.30,
         "iou":     0.45,
-        "stride":  2,
+        # stride=3: process every 3rd frame — at 2-4fps NVR streams this is
+        # still ~1-1.5 inferences/sec which is sufficient for serve detection
+        # (serves take 3-5 seconds). Saves ~33% CPU vs stride=2.
+        "stride":  3,
         "tracker": "bytetrack.yaml",
     },
     "accurate": {
@@ -73,7 +76,10 @@ MODEL_PROFILES: Dict[str, Dict[str, Any]] = {
         "imgsz":   640,
         "conf":    0.25,
         "iou":     0.40,
-        "stride":  1,
+        # stride=2: at 2fps NVR input → 1 YOLO inference/sec. Serves take
+        # 3-8 seconds to complete — stride=2 captures all of them. Saves
+        # ~50% CPU vs stride=1 with no accuracy loss at low NVR frame rates.
+        "stride":  2,
         "tracker": "bytetrack.yaml",
     },
     "low_quality": {

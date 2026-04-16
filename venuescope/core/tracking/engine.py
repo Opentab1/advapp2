@@ -156,7 +156,9 @@ class _HLSCapture:
     issuing secondary seek/range requests.
     """
 
-    _QUEUE_MAXSIZE = 60
+    # Keep the buffer small — if YOLO inference lags, drop old frames rather
+    # than accumulating a multi-minute backlog that makes detections stale.
+    _QUEUE_MAXSIZE = 20
 
     def __init__(self, url: str, w: int, h: int, dup_factor: int = 1):
         import av as _av, requests as _req, logging, queue, threading, io
@@ -536,7 +538,7 @@ class VenueProcessor:
 
         # Checkpoint / resume
         self._checkpoint_file   = self.result_dir / "checkpoint.json"
-        self._checkpoint_every  = 500   # save every N processed frames
+        self._checkpoint_every  = 1000  # save every N processed frames (disk I/O reduction)
         self._resumed_from      = 0     # frame_idx we resumed from (0 = fresh start)
 
         # Pre-job memory check (require at least 1 GB free)
