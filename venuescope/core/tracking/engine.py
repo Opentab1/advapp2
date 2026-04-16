@@ -463,11 +463,13 @@ class VenueProcessor:
         if self.source_type == "rtsp" and not _has_gpu:
             self.profile = dict(self.profile)
             if analysis_mode == "drink_count":
-                # yolov8s: 2.4× more accurate than nano for person detection.
-                # Affordable because adaptive stride (below) limits to ~2fps inference,
-                # so 2 cameras × 2fps × ~150ms/inf = ~60% CPU (vs 84% with nano@stride=2).
+                # yolov8s@320: 2.4× more accurate than nano for person detection.
+                # ROI crop zooms the bar zone to fill the input, so bartenders appear
+                # ~120px tall at 320px (same as yolov8n@480 full-frame, but with
+                # the better yolov8s model). At ~100ms/inference vs ~200ms at 480px,
+                # saves ~50% inference CPU while keeping the accuracy upgrade.
                 self.profile["model"]  = "yolov8s.pt"
-                self.profile["imgsz"]  = 480             # ROI crop gives bar zone full 480px
+                self.profile["imgsz"]  = 320
             elif analysis_mode == "bottle_count":
                 self.profile["model"]  = "yolov8n.pt"
                 self.profile["imgsz"]  = min(self.profile.get("imgsz", 480), 480)
