@@ -449,7 +449,10 @@ class VenueProcessor:
         if self.source_type == "rtsp" and not _has_gpu:
             self.profile = dict(self.profile)
             if analysis_mode == "drink_count":
-                self.profile["model"]  = "yolov8n.pt"
+                # yolov8s: 2.4× more accurate than nano for person detection.
+                # Affordable because adaptive stride (below) limits to ~2fps inference,
+                # so 2 cameras × 2fps × ~150ms/inf = ~60% CPU (vs 84% with nano@stride=2).
+                self.profile["model"]  = "yolov8s.pt"
                 self.profile["imgsz"]  = 480             # ROI crop gives bar zone full 480px
             elif analysis_mode == "bottle_count":
                 self.profile["model"]  = "yolov8n.pt"
@@ -697,6 +700,23 @@ class VenueProcessor:
             vout = _test
 
         stride    = self.profile["stride"]
+
+        # Adaptive stride for RTSP on CPU: instead of a fixed stride, scale it so
+        # we process at a consistent ~2fps regardless of the camera's native frame rate.
+        # At 2fps a serve (3-5 seconds) gives 6-10 processed frames — plenty to detect.
+        # This frees CPU headroom to use yolov8s (set in __init__ override) without overload.
+        # Only activate when source is significantly faster than our 2fps target.
+        if self.source_type == "rtsp" and not self._has_gpu and fps > 4.0:
+            _TARGET_FPS = 2.0
+            _adaptive   = max(stride, int(fps / _TARGET_FPS + 0.5))
+            if _adaptive > stride:
+                self.cb(2, f"Adaptive stride: {stride}→{_adaptive} "
+                           f"({fps:.1f}fps source → {fps/_adaptive:.1f}fps effective processing; "
+                           f"yolov8s affordable at this rate)")
+                stride = _adaptive
+                self.profile = dict(self.profile)
+                self.profile["stride"] = stride
+
         imgsz     = self.profile["imgsz"]
         frame_idx = 0
         t0        = time.time()
