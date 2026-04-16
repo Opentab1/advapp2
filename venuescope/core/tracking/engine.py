@@ -16,6 +16,11 @@ from collections import deque
 
 os.environ.setdefault("YOLO_TELEMETRY",          "False")
 os.environ.setdefault("ULTRALYTICS_AUTOINSTALL", "False")
+# Ensure thread limits are set before torch/MKL/BLAS imports — worker_daemon.py sets
+# these too, but engine may be imported independently in other contexts.
+os.environ.setdefault("OMP_NUM_THREADS",     "2")
+os.environ.setdefault("MKL_NUM_THREADS",     "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS","2")
 
 from ultralytics import YOLO
 
