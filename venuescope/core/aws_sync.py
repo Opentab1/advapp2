@@ -240,6 +240,35 @@ def _upload_clip_to_s3(result_dir: Path, job_id: str, venue_id: str) -> Optional
         return None
 
 
+def upload_serve_snapshot(frame_jpg: bytes, job_id: str, t_sec: float,
+                          venue_id: str = "") -> Optional[str]:
+    """
+    Upload a JPEG snapshot frame to S3 at serve-confirm time.
+    Called from a background thread — never blocks the inference loop.
+    Returns the S3 key on success, None on failure.
+    Key pattern: venuescope/{venueId}/{jobId}/snapshots/{t_sec:.1f}.jpg
+    """
+    bucket = os.environ.get("S3_BUCKET", "")
+    if not bucket or not frame_jpg:
+        return None
+    venue_id = venue_id or _get_venue_id()
+    if not venue_id:
+        return None
+    s3_key = f"venuescope/{venue_id}/{job_id}/snapshots/{t_sec:.1f}.jpg"
+    try:
+        s3 = _get_client("s3")
+        s3.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=frame_jpg,
+            ContentType="image/jpeg",
+        )
+        return s3_key
+    except Exception as e:
+        print(f"[aws_sync] Snapshot upload failed t={t_sec:.1f}s: {e}", flush=True)
+        return None
+
+
 def _upload_summary_to_s3(summary: Dict[str, Any], job_id: str, venue_id: str) -> Optional[str]:
     """
     Upload the full summary JSON to S3 so the web app can fetch rich detail.
@@ -491,6 +520,14 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
             }
             for z, cnt in zone_drinks.items()
         })}
+
+    # Push serve snapshot S3 keys so React can show frame thumbnails in drink log
+    serve_snaps = summary.get("serve_snapshots", {})
+    if serve_snaps:
+        update_expr += ", serveSnapshots = :snaps"
+        expr_vals[":snaps"] = {"S": json.dumps(
+            {str(round(float(k), 1)): v for k, v in serve_snaps.items()}
+        )}
 
     # Include table visits by staff + live occupancy for live dashboard
     tables_data = summary.get("tables", {})

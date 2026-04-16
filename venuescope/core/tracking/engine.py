@@ -485,6 +485,8 @@ class VenueProcessor:
         self._track_ages: Dict[int,int] = {}
         self._snap_count = 0
         self._clip_count  = 0
+        self._serve_snapshots: Dict[float, str] = {}  # t_sec -> S3 key (populated async)
+        self._snap_executor = None  # ThreadPoolExecutor, created lazily
         self._min_track_age = self.ec.get("min_track_age_frames", 8)
         self._ignore_zones  = self.ec.get("ignore_zones", [])
 
@@ -1165,8 +1167,40 @@ class VenueProcessor:
 
             snap_dir = self.result_dir / "snapshots"
             clip_dir = self.result_dir / "clips"
+
+            # RTSP live snapshot upload — fire-and-forget to S3 for each drink serve
+            if not _save_local:
+                _drink_evs = [ev for ev in evs
+                              if ev.get("event_type") == "drink_serve"
+                              and self._snap_count < 500]
+                if _drink_evs:
+                    try:
+                        import concurrent.futures as _cf
+                        from core.aws_sync import upload_serve_snapshot as _upload_snap
+                        if self._snap_executor is None:
+                            self._snap_executor = _cf.ThreadPoolExecutor(max_workers=2,
+                                                                          thread_name_prefix="snap")
+                        # Encode once, upload for each event (usually 1 per frame)
+                        _thumb = cv2.resize(frame, (640, int(H * 640 / W)))
+                        _ok, _buf = cv2.imencode('.jpg', _thumb,
+                                                 [cv2.IMWRITE_JPEG_QUALITY, 75])
+                        if _ok:
+                            _jpg = _buf.tobytes()
+                            _jid = self.job_id
+                            _vid = self.ec.get("venue_id", "")
+                            for _ev in _drink_evs:
+                                _ts = float(_ev.get("t_sec", 0.0))
+                                def _do_upload(jpg=_jpg, jid=_jid, vid=_vid, ts=_ts):
+                                    key = _upload_snap(jpg, jid, ts, vid)
+                                    if key:
+                                        self._serve_snapshots[ts] = key
+                                self._snap_executor.submit(_do_upload)
+                                self._snap_count += 1
+                    except Exception as _se:
+                        pass  # never crash the inference loop
+
             for ev in evs:
-                # Snapshot and clip writing only for file-upload jobs (not live RTSP)
+                # Local snapshot and clip writing only for file-upload jobs
                 if not _save_local:
                     continue
 
@@ -1324,6 +1358,14 @@ class VenueProcessor:
                 self._checkpoint_file.unlink()
         except Exception:
             pass
+
+        # Wait for any in-flight S3 snapshot uploads to finish before building final summary
+        if self._snap_executor is not None:
+            try:
+                self._snap_executor.shutdown(wait=True, cancel_futures=False)
+            except Exception:
+                pass
+            self._snap_executor = None
 
         self.cb(96, "Writing results...")
         summary = self._build_summary(analyzers, frame_idx/fps, fps)
@@ -1516,7 +1558,8 @@ class VenueProcessor:
              "video_seconds": round(total_sec, 1),
              "quality":       quality,
              "snap_count":    self._snap_count,
-             "heatmap_generated": False}
+             "heatmap_generated": False,
+             "serve_snapshots": dict(self._serve_snapshots)}
 
         if self._angle_info:
             b["camera_angle"] = self._angle_info
