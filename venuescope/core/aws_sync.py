@@ -444,21 +444,38 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
 
     # Include per-bartender breakdown if available
     if bts:
-        bt_compact = {
-            name: {
+        bt_compact = {}
+        for name, d in bts.items():
+            ts   = d.get("drink_timestamps", [])[-50:]
+            scrs = d.get("drink_scores", [])
+            if len(scrs) > len(ts):
+                scrs = scrs[-len(ts):]
+            elif len(scrs) < len(ts):
+                scrs = [0.0] * (len(ts) - len(scrs)) + scrs
+            bt_compact[name] = {
                 "drinks":        int(d.get("total_drinks", 0)),
                 "per_hour":      round(float(d.get("drinks_per_hour", 0.0)), 1),
                 # Last 50 timestamps (secs-into-video) so React can show drink log
-                "timestamps":    [round(t, 1) for t in d.get("drink_timestamps", [])[-50:]],
+                "timestamps":    [round(t, 1) for t in ts],
+                # Confidence scores parallel to timestamps
+                "drink_scores":  [round(s, 3) for s in scrs],
                 # Hourly breakdown so dashboard can show "drinks per hour" curve
                 "hourly_counts": {str(k): int(v) for k, v in d.get("hourly_counts", {}).items()},
             }
-            for name, d in bts.items()
-        }
         bt_json = json.dumps(bt_compact)
         update_expr += ", bartenderSummary = :bs, bartenderBreakdown = :bd"
         expr_vals[":bs"] = {"S": bt_json}
         expr_vals[":bd"] = {"S": bt_json}
+
+    # Push low-confidence review events so React can show the "low confidence" log section
+    review_evs = summary.get("review_events", [])
+    if review_evs:
+        update_expr += ", reviewEvents = :re"
+        expr_vals[":re"] = {"S": json.dumps([
+            {"t_sec": round(e["t_sec"], 1), "score": round(e["serve_score"], 3),
+             "station_id": e.get("station_id", ""), "reason": e.get("review_reason", "")}
+            for e in review_evs[-50:]
+        ])}
 
     # Include table visits by staff + live occupancy for live dashboard
     tables_data = summary.get("tables", {})
@@ -663,17 +680,25 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
     # React reads bartenderBreakdown as JSON: {name: {drinks, per_hour, timestamps}}
     bts = summary.get("bartenders", {})
     if bts:
-        bt_breakdown = {
-            name: {
+        bt_breakdown = {}
+        for name, d in bts.items():
+            ts   = d.get("drink_timestamps", [])[-50:]
+            scrs = d.get("drink_scores", [])
+            # Align scores with timestamps (pad with 0 if missing)
+            if len(scrs) > len(ts):
+                scrs = scrs[-len(ts):]
+            elif len(scrs) < len(ts):
+                scrs = [0.0] * (len(ts) - len(scrs)) + scrs
+            bt_breakdown[name] = {
                 "drinks":        int(d.get("total_drinks", 0)),
                 "per_hour":      round(float(d.get("drinks_per_hour", 0.0)), 1),
                 # Last 50 drink timestamps as seconds-into-video (wall_time = createdAt + t)
-                "timestamps":    [round(t, 1) for t in d.get("drink_timestamps", [])[-50:]],
+                "timestamps":    [round(t, 1) for t in ts],
+                # Confidence scores (0.0–1.0) parallel to timestamps
+                "drink_scores":  [round(s, 3) for s in scrs],
                 # Hourly breakdown so dashboard can show "drinks per hour" curve per bartender
                 "hourly_counts": {str(k): int(v) for k, v in d.get("hourly_counts", {}).items()},
             }
-            for name, d in bts.items()
-        }
         # Enrich bartenderBreakdown with oz/over-pours from correlator
         corr_by_bar = summary.get("drink_correlation", {}).get("by_bartender", {})
         for name, bar_data in corr_by_bar.items():
@@ -682,6 +707,15 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
                 bt_breakdown[name]["total_oz"]    = round(bar_data.get("total_oz", 0.0), 2)
                 bt_breakdown[name]["drink_types"] = dict(bar_data.get("drink_types", {}))
         item["bartenderBreakdown"] = {"S": json.dumps(bt_breakdown)}
+
+    # ── Low-confidence (review bucket) events ─────────────────────────────────
+    review_evs = summary.get("review_events", [])
+    if review_evs:
+        item["reviewEvents"] = {"S": json.dumps([
+            {"t_sec": round(e["t_sec"], 1), "score": round(e["serve_score"], 3),
+             "station_id": e.get("station_id", ""), "reason": e.get("review_reason", "")}
+            for e in review_evs[-50:]
+        ])}
 
     # ── Drink type breakdown (correlator) ──────────────────────────────────────
     corr = summary.get("drink_correlation", {})

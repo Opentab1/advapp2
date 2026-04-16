@@ -21,6 +21,7 @@ class BartenderRecord:
     assigned_at:      Optional[float] = None
     total_drinks:     int             = 0
     drink_timestamps: List[float]     = field(default_factory=list)
+    drink_scores:     List[float]     = field(default_factory=list)
     hourly_counts:    Dict[int, int]  = field(default_factory=dict)
 
     def assign_track(self, track_id: int):
@@ -31,9 +32,10 @@ class BartenderRecord:
         self.track_id    = None
         self.assigned_at = None
 
-    def record_drink(self, t_sec: float):
+    def record_drink(self, t_sec: float, serve_score: float = 0.0):
         self.total_drinks += 1
         self.drink_timestamps.append(t_sec)
+        self.drink_scores.append(round(serve_score, 3))
         bucket = int(t_sec // 3600)
         self.hourly_counts[bucket] = self.hourly_counts.get(bucket, 0) + 1
 
@@ -47,6 +49,7 @@ class BartenderRecord:
             "hourly_counts":     {f"hour_{k}": v for k, v in sorted(self.hourly_counts.items())},
             "peak_hour_count":   max(self.hourly_counts.values(), default=0),
             "drink_timestamps":  [round(t, 1) for t in self.drink_timestamps],
+            "drink_scores":      [round(s, 3) for s in self.drink_scores],
         }
 
 
@@ -88,10 +91,10 @@ class ShiftManager:
                 return rec
         return None
 
-    def record_drink(self, track_id: int, t_sec: float) -> Optional[str]:
+    def record_drink(self, track_id: int, t_sec: float, serve_score: float = 0.0) -> Optional[str]:
         rec = self.track_to_bartender(track_id)
         if rec:
-            rec.record_drink(t_sec)
+            rec.record_drink(t_sec, serve_score)
             return rec.name
         return None
 

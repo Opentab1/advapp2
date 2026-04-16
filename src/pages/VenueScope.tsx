@@ -2451,27 +2451,67 @@ function TableVisitsSection({ job }: { job: VenueScopeJob | null }) {
 interface DrinkEntry {
   wallTime: number; // epoch seconds
   bartender: string;
+  score: number;    // 0.0–1.0 confidence
+}
+
+interface ReviewEntry {
+  wallTime: number;
+  score: number;
+  stationId: string;
+}
+
+function ConfidenceBadge({ score }: { score: number }) {
+  const pct = Math.round(score * 100);
+  const color = pct >= 70 ? 'text-emerald-400' : pct >= 40 ? 'text-yellow-400' : 'text-orange-400';
+  return <span className={`font-mono tabular-nums text-[10px] ${color}`}>{pct}%</span>;
 }
 
 function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
   const [open, setOpen] = useState(false);
+  const [showLowConf, setShowLowConf] = useState(false);
 
   if (!job?.bartenderBreakdown) return null;
 
   let entries: DrinkEntry[] = [];
+  let reviewEntries: ReviewEntry[] = [];
+
   try {
-    const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks?: number; per_hour?: number; timestamps?: number[] }>;
+    const bd = JSON.parse(job.bartenderBreakdown) as Record<string, {
+      drinks?: number; per_hour?: number; timestamps?: number[]; drink_scores?: number[];
+    }>;
     for (const [name, d] of Object.entries(bd)) {
-      for (const t of d.timestamps ?? []) {
-        entries.push({ wallTime: (job.createdAt ?? 0) + t, bartender: name });
+      const ts = d.timestamps ?? [];
+      const scores = d.drink_scores ?? [];
+      for (let i = 0; i < ts.length; i++) {
+        entries.push({
+          wallTime: (job.createdAt ?? 0) + ts[i],
+          bartender: name,
+          score: scores[i] ?? 0,
+        });
       }
     }
   } catch { /* no-op */ }
 
-  if (entries.length === 0) return null;
+  try {
+    if ((job as any).reviewEvents) {
+      const revs = JSON.parse((job as any).reviewEvents) as Array<{
+        t_sec: number; score: number; station_id: string;
+      }>;
+      for (const r of revs) {
+        reviewEntries.push({
+          wallTime: (job.createdAt ?? 0) + r.t_sec,
+          score: r.score,
+          stationId: r.station_id,
+        });
+      }
+    }
+  } catch { /* no-op */ }
+
+  if (entries.length === 0 && reviewEntries.length === 0) return null;
 
   // Most recent first
   entries = entries.sort((a, b) => b.wallTime - a.wallTime);
+  reviewEntries = reviewEntries.sort((a, b) => b.wallTime - a.wallTime);
 
   return (
     <div className="mt-3 pt-3 border-t border-whoop-divider/60">
@@ -2500,11 +2540,57 @@ function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
                   <span className="text-teal font-mono tabular-nums">
                     {new Date(e.wallTime * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
                   </span>
-                  <span className="text-text-muted truncate max-w-[100px] ml-2">{e.bartender}</span>
-                  <span className="ml-auto text-emerald-400 flex-shrink-0">✓</span>
+                  <span className="text-text-muted truncate max-w-[80px] ml-2">{e.bartender}</span>
+                  <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                    {e.score > 0 && <ConfidenceBadge score={e.score} />}
+                    <span className="text-emerald-400">✓</span>
+                  </div>
                 </div>
               ))}
             </div>
+
+            {/* Low confidence section */}
+            {reviewEntries.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-whoop-divider/40">
+                <button
+                  onClick={() => setShowLowConf(o => !o)}
+                  className="w-full flex items-center justify-between text-[10px] text-yellow-500/80 hover:text-yellow-400 transition-colors"
+                >
+                  <span className="flex items-center gap-1 uppercase tracking-wide font-semibold">
+                    <span>⚠</span> Low Confidence ({reviewEntries.length})
+                  </span>
+                  {showLowConf ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
+                <AnimatePresence>
+                  {showLowConf && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <p className="text-[9px] text-text-muted mt-1 mb-1.5 italic">
+                        Below confidence threshold — not counted. Review to confirm or dismiss.
+                      </p>
+                      <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                        {reviewEntries.map((e, i) => (
+                          <div key={i} className="flex items-center justify-between text-[11px] py-1 border-b border-whoop-divider/20 last:border-0">
+                            <span className="text-text-muted font-mono tabular-nums">
+                              {new Date(e.wallTime * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
+                            </span>
+                            <span className="text-text-muted/60 truncate max-w-[80px] ml-2 text-[10px]">{e.stationId || 'bar'}</span>
+                            <div className="ml-auto flex items-center gap-1 flex-shrink-0">
+                              <ConfidenceBadge score={e.score} />
+                              <span className="text-yellow-500/60 text-[10px]">?</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

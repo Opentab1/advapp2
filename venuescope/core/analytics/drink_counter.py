@@ -416,7 +416,7 @@ class DrinkCounter:
             else:
                 self._low_conf_serves += 1
 
-            name = self.shift.record_drink(tid, t_sec) if not _is_review else None
+            name = self.shift.record_drink(tid, t_sec, serve_score) if not _is_review else None
             if name is None and not _is_review:
                 # Fallback: assign drink to bartender at this station
                 rec = self.shift.get_by_station(station_id)
@@ -424,7 +424,7 @@ class DrinkCounter:
                     # Single-bartender scenario: assign to whoever is there
                     rec = next(iter(self.shift.records.values()))
                 if rec is not None:
-                    rec.record_drink(t_sec)
+                    rec.record_drink(t_sec, serve_score)
                     name = rec.name
                 else:
                     self._unassigned_serves += 1
