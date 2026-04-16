@@ -463,12 +463,13 @@ class VenueProcessor:
         if self.source_type == "rtsp" and not _has_gpu:
             self.profile = dict(self.profile)
             if analysis_mode == "drink_count":
-                # yolov8s@320: 2.4× more accurate than nano for person detection.
-                # ROI crop zooms the bar zone to fill the input, so bartenders appear
-                # ~120px tall at 320px (same as yolov8n@480 full-frame, but with
-                # the better yolov8s model). At ~100ms/inference vs ~200ms at 480px,
-                # saves ~50% inference CPU while keeping the accuracy upgrade.
-                self.profile["model"]  = "yolov8s.pt"
+                # yolov8n@320 + ROI crop: ROI crop zooms the bar zone to fill
+                # the 320px input — bartenders appear ~120px tall (vs ~50px without
+                # ROI at 480px). This gives 2.4× better bartender resolution for YOLO
+                # while yolov8n@320 runs in 243ms vs yolov8n@480 at ~550ms (2.2× faster).
+                # yolov8s@320 was benchmarked at 541ms — too heavy for 2 concurrent cameras.
+                # Net: better detection resolution + significant CPU reduction.
+                self.profile["model"]  = "yolov8n.pt"
                 self.profile["imgsz"]  = 320
             elif analysis_mode == "bottle_count":
                 self.profile["model"]  = "yolov8n.pt"
@@ -661,14 +662,16 @@ class VenueProcessor:
                 self.cb(2, f"HLS: min_track_age reduced to {_hls_min_age} "
                            f"(was {self.ec.get('min_track_age_frames', 8)})")
             else:
-                # CPU no-dup path: process every real frame (stride=1) for 2fps effective.
-                # Overrides the RTSP minimum-stride=2 set in __init__ — for 2fps HLS
-                # there's no decode overload risk, and stride=2 would waste half the frames.
-                self.cb(2, f"HLS CPU: native {_raw_fps:.1f}fps — no frame duplication, stride=1 "
-                           f"(saves ~50% frame decode vs dup×2 + stride×2)")
-                stride = 1
+                # CPU no-dup path: use stride=2 on the native 2fps stream → 1fps effective.
+                # At 1fps, serves (3-5s) give 2-4 processed frames — sufficient for
+                # 2-consecutive-frame serve confirmation. Halves YOLO inference calls vs
+                # stride=1, saving ~50% inference CPU. Combined with yolov8n@320 at 243ms
+                # per call, targets ~48% total CPU (vs 90% with yolov8s@320 at stride=1).
+                self.cb(2, f"HLS CPU: native {_raw_fps:.1f}fps — no frame duplication, stride=2 "
+                           f"→ {_raw_fps/2:.1f}fps effective (saves dup+frame-decode overhead)")
+                stride = 2
                 self.profile = dict(self.profile)
-                self.profile["stride"] = 1
+                self.profile["stride"] = 2
         self._clip_fps = fps / max(self.profile.get("stride", 2), 1)
         self._clip_H   = int(H * self._clip_W / W)
         self.cb(2, f"Video: {W}x{H} @ {fps:.1f}fps  ({total_f} frames, {total_f/fps/60:.1f} min)")
