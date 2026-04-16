@@ -622,9 +622,10 @@ def main():
     _last_queue_drain  = 0.0
     _poll_count        = 0
     _active: Dict[str, multiprocessing.Process] = {}
-    _active_start: Dict[str, float] = {}  # job_id → launch timestamp
-    _active_continuous: set = set()       # job_ids that are continuous (no timeout)
-    _active_venue: Dict[str, str] = {}    # job_id → venue_id (for fair scheduling)
+    _active_start: Dict[str, float] = {}     # job_id → launch timestamp
+    _active_continuous: set = set()          # job_ids that are continuous (no timeout)
+    _active_venue: Dict[str, str] = {}       # job_id → venue_id (for fair scheduling)
+    _active_camera: Dict[str, str] = {}      # job_id → camera_id (dedup: one job per camera)
     JOB_TIMEOUT = 600  # 10 minutes max per job — kills stuck YOLO/RTSP jobs
     # Max concurrent jobs per venue. Single-venue deployments should set this
     # equal to MAX_PARALLEL so all slots are available. Multi-venue deployments
@@ -763,6 +764,7 @@ def main():
                     _active_start.pop(job_id, None)
                     _active_continuous.discard(job_id)
                     _active_venue.pop(job_id, None)
+                    _active_camera.pop(job_id, None)
                     try:
                         from core.database import _raw_update
                         _raw_update(job_id, status="failed", error_message="Job timeout — exceeded 10 minutes")
@@ -775,6 +777,7 @@ def main():
                     _active_start.pop(job_id, None)
                     _active_continuous.discard(job_id)
                     _active_venue.pop(job_id, None)
+                    _active_camera.pop(job_id, None)
                     log.info(f"Reaped process for job {job_id}")
 
             # Drain offline AWS sync queue (every 5 minutes)
@@ -865,6 +868,15 @@ def main():
                         continue
                     _pjob, _pec = _venue_pending[_vid].pop(0)
                     job_id = _pjob["job_id"]
+                    # Per-camera dedup: skip if we're already running a job for this camera
+                    _cam_id = _pec.get("camera_id", "")
+                    if _cam_id and _cam_id in _active_camera.values():
+                        log.warning(f"Skipping job {job_id} — camera {_cam_id} already has an active job")
+                        try:
+                            set_failed(job_id, f"duplicate — camera {_cam_id} already running")
+                        except Exception:
+                            pass
+                        continue
                     p = multiprocessing.Process(
                         target=run_job, args=(job_id,), daemon=True
                     )
@@ -872,6 +884,8 @@ def main():
                     _active[job_id]       = p
                     _active_start[job_id] = time.time()
                     _active_venue[job_id] = _vid
+                    if _cam_id:
+                        _active_camera[job_id] = _cam_id
                     _venue_active_count[_vid] = _venue_active_count.get(_vid, 0) + 1
                     # Mark continuous jobs so timeout reaper skips them
                     try:
