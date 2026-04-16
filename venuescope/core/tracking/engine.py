@@ -857,11 +857,7 @@ class VenueProcessor:
             _roi_offset_x = 0
             _roi_offset_y = 0
 
-            # Preprocessing for bad cameras
-            if self._dewarp:
-                if self._dewarp_maps is None:
-                    self._dewarp_maps = build_dewarp_maps(W, H, self._dewarp_strength)
-                frame = dewarp_frame(frame, self._dewarp_maps[0], self._dewarp_maps[1])
+            # Enhancement (runs on full frame — only when explicitly configured)
             if self._enhance_strength != "off":
                 frame = enhance_for_detection(frame, self._enhance_strength)
 
@@ -962,6 +958,14 @@ class VenueProcessor:
                     _roi_offset_x = _rx1
                     _roi_offset_y = _ry1
                     frame = frame[_ry1:_ry2, _rx1:_rx2]
+
+            # Dewarping runs AFTER ROI crop — applies to the small bar zone only
+            # (~768×432 instead of 1920×1080), making it ~5× cheaper than full-frame.
+            if self._dewarp:
+                _rh, _rw = frame.shape[:2]
+                if self._dewarp_maps is None or self._dewarp_maps[0].shape[:2] != (_rh, _rw):
+                    self._dewarp_maps = build_dewarp_maps(_rw, _rh, self._dewarp_strength)
+                frame = dewarp_frame(frame, self._dewarp_maps[0], self._dewarp_maps[1])
 
             # Resize frame down to imgsz before YOLO — critical for high-res cameras
             H_orig, W_orig = frame.shape[:2]
