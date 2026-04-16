@@ -58,7 +58,8 @@ def _signed_dist_px(p: Tuple[float,float],
 
 def _reach_probe(x1: float, y1: float, x2: float, y2: float,
                  p1, p2, customer_side: int,
-                 velocity: Optional[Tuple[float,float]] = None) -> Tuple[float, float]:
+                 velocity: Optional[Tuple[float,float]] = None,
+                 reach_bonus_px: int = 30) -> Tuple[float, float]:
     """Return the bounding-box point most advanced toward the customer side.
 
     Catches arm-reach serves where only the bartender's arm/torso crosses the
@@ -106,9 +107,8 @@ def _reach_probe(x1: float, y1: float, x2: float, y2: float,
             _perp_x = _ex / _elen
             _perp_y = _ey / _elen
 
-    REACH_BONUS_PX = 30
-    return (best_pt[0] + _perp_x * REACH_BONUS_PX,
-            best_pt[1] + _perp_y * REACH_BONUS_PX)
+    return (best_pt[0] + _perp_x * reach_bonus_px,
+            best_pt[1] + _perp_y * reach_bonus_px)
 
 
 def _lean_bonus(box_w: float, box_h: float,
@@ -128,7 +128,8 @@ class _TrackState:
     __slots__=("prep_frames","serve_side_buffer","cooldown_remaining",
                "last_confirmed_side","missing_frames","station_id_cache",
                "customer_dwell_frames","crossing_confs","centroid_history",
-               "box_width_history","recent_conf_history","extra_line_states")
+               "box_width_history","recent_conf_history","extra_line_states",
+               "line_prox_frames")
     def __init__(self):
         self.prep_frames           = 0
         self.serve_side_buffer:    List[int] = []
@@ -142,6 +143,7 @@ class _TrackState:
         self.box_width_history: List[float] = []  # bounding box widths for lean detection
         self.recent_conf_history:  deque = deque(maxlen=10)  # rolling per-track detection conf
         self.extra_line_states:    dict  = {}     # {line_idx: {serve_side_buffer,customer_dwell_frames,...}}
+        self.line_prox_frames:     int   = 0      # frames probe has been near bar line without crossing
 
 
 class DrinkCounter:
@@ -165,6 +167,13 @@ class DrinkCounter:
             for st in bar_config.stations:
                 self._station_polys[st.zone_id] = station_polygon_px(st,W,H)
                 self._bar_lines[st.zone_id] = all_bar_lines_px(st,W,H)
+
+        # Overhead cameras use a larger reach bonus — from top-down the bounding box
+        # of a person is small and their arm extends further relative to body size.
+        # Also enables the "line proximity dwell" trigger for gun-fill serves where
+        # the bartender never bodily crosses the line but hovers near it for 1-2s.
+        self._overhead = bool(bar_config and getattr(bar_config, "overhead_camera", False))
+        self._reach_bonus_px: int = 80 if self._overhead else 30
 
         self._states: Dict[int,_TrackState] = defaultdict(_TrackState)
         # Station-level cooldown — survives track ID switches
@@ -362,7 +371,8 @@ class DrinkCounter:
                 bx = boxes[i]
                 probe = _reach_probe(float(bx[0]), float(bx[1]),
                                      float(bx[2]), float(bx[3]),
-                                     p1, p2, customer_side, _vel_vec)
+                                     p1, p2, customer_side, _vel_vec,
+                                     reach_bonus_px=self._reach_bonus_px)
             else:
                 probe = (cx, cy)
 
@@ -373,6 +383,71 @@ class DrinkCounter:
             _dist = _signed_dist_px(probe, p1, p2, customer_side)
             if abs(_dist) < self.rules.bar_line_dead_zone_px and state.serve_side_buffer:
                 side = state.serve_side_buffer[-1]
+
+            # LINE PROXIMITY DWELL — overhead camera gun-fill pattern:
+            # Bartender pours liquor, places cup on counter, uses soda gun —
+            # their body never fully crosses but they hover near the bar line
+            # for 1-2 seconds while filling. Catch this by counting frames where
+            # the probe is within proximity_px of the bar line (but still staff side).
+            # Only enabled for overhead cameras to avoid false positives on side cameras.
+            if self._overhead:
+                _prox_px = max(self.rules.bar_line_dead_zone_px * 10, 100)
+                if _dist < _prox_px and side == -customer_side:  # near line, staff side
+                    state.line_prox_frames += 1
+                else:
+                    state.line_prox_frames = 0
+                # Fire: hovered near bar line for ≥3 frames (≈1.5s at 2fps) with prep
+                _prox_dwell_req = 3
+                if (state.line_prox_frames >= _prox_dwell_req
+                        and state.last_confirmed_side != customer_side):
+                    # Check station + time cooldowns before firing
+                    _elapsed = t_sec - self._station_last_serve_tsec.get(station_id, -9999.0)
+                    if _elapsed >= self.rules.serve_cooldown_seconds:
+                        avg_cross_conf = conf_map.get(tid, 0.0)
+                        if state.recent_conf_history:
+                            avg_cross_conf = sum(state.recent_conf_history) / len(state.recent_conf_history)
+                        serve_score = round(0.4 + 0.2 * min(avg_cross_conf, 1.0), 3)
+                        _log.info("[serve/prox_dwell] t=%.1f tid=%s station=%s score=%.3f "
+                                  "prox_frames=%d (gun-fill pattern)",
+                                  t_sec, tid, station_id, serve_score, state.line_prox_frames)
+                        state.line_prox_frames      = 0
+                        state.last_confirmed_side   = customer_side
+                        state.cooldown_remaining    = self.rules.serve_cooldown_frames
+                        self._station_cooldown[station_id] = self.rules.serve_cooldown_frames
+                        self._station_last_serve_tsec[station_id] = t_sec
+                        state.prep_frames = max(0, state.prep_frames - 3)
+                        _is_review = serve_score < self.rules.min_serve_score
+                        if _is_review:
+                            self._review_count += 1
+                        else:
+                            self._low_conf_serves += 1
+                        name = self.shift.record_drink(tid, t_sec, serve_score) if not _is_review else None
+                        if name is None and not _is_review:
+                            rec = self.shift.get_by_station(station_id)
+                            if rec is None and len(self.shift.records) == 1:
+                                rec = next(iter(self.shift.records.values()))
+                            if rec is not None:
+                                rec.record_drink(t_sec, serve_score)
+                                name = rec.name
+                            else:
+                                self._unassigned_serves += 1
+                                name = f"UNASSIGNED_track_{tid}"
+                        if not _is_review:
+                            self.events.append({
+                                "event_type": "drink_serve", "detection_method": "prox_dwell",
+                                "bartender": name, "station_id": station_id, "track_id": tid,
+                                "t_sec": round(t_sec, 3), "serve_score": serve_score,
+                                "high_conf": False, "dwell_frames": _prox_dwell_req,
+                                "frame_idx": frame_idx, "review": False, "review_reason": "",
+                            })
+                            self._zone_drinks[station_id] = self._zone_drinks.get(station_id, 0) + 1
+                            if station_id not in self._zone_events:
+                                self._zone_events[station_id] = []
+                            self._zone_events[station_id].append({
+                                "t_sec": round(t_sec, 1), "score": round(serve_score, 3),
+                                "x": round(float(cx), 4), "y": round(float(cy), 4),
+                            })
+                        continue  # skip normal bilateral-crossing logic this frame
 
             state.serve_side_buffer.append(side)
 

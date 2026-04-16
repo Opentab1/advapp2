@@ -38,7 +38,7 @@ from core.bar_config import BarConfig, station_polygon_px, bar_line_px
 _GLASS_CLASSES   = {39, 40, 41}          # bottle/can, wine_glass, cup
 _CLASS_NAMES     = {39: "can", 40: "wine_glass", 41: "cup"}
 _IOU_MATCH       = 0.10                  # lower than bottle — cups move across bar
-_MIN_PREP_FRAMES = 3                     # frames on bartender side before crossing counts
+_MIN_PREP_FRAMES = 1                     # frames on bartender side before crossing counts
 _MIN_DWELL_FRAMES = 2                    # consecutive frames on customer side to confirm
 _COOLDOWN_SEC    = 4.0                   # min seconds between serves per station
 _MAX_MISSED      = 20                    # frames before track is dropped (~0.67s @ 30fps)
@@ -184,14 +184,23 @@ class GlassCrossingDetector:
             trk.station_id = best_zone
             side = _side_of_line((cx, cy), p1, p2)
 
-            # Accumulate prep (bartender side) or dwell (customer side)
+            # Accumulate prep (bartender side) or dwell (customer side).
+            # side==0 (exactly on the line) counts as prep — cups placed on the
+            # bar counter for gun-fill often sit right at the bar line and should
+            # still count as "starting on the bartender side" for detection purposes.
             if side == -customer_side:
                 trk.prep_frames    = min(trk.prep_frames + 1, 30)
                 trk.customer_dwell = 0
                 trk.last_side      = -customer_side
+            elif side == 0:
+                # At the bar line: treat as prep if not yet seen on either side,
+                # or continue current prep to avoid resetting state for cups resting on counter.
+                trk.prep_frames    = min(trk.prep_frames + 1, 30)
+                trk.customer_dwell = 0
+                if trk.last_side == 0:
+                    trk.last_side = -customer_side  # assume staff side for cups first seen at line
             elif side == customer_side:
                 trk.customer_dwell += 1
-            # side == 0 → on the line, don't change anything
 
             # Crossing confirmed: was on bartender side (prep), now dwelled on customer side
             if (trk.prep_frames >= _MIN_PREP_FRAMES
