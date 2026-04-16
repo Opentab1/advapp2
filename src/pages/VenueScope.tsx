@@ -302,13 +302,22 @@ function ZoneEditorModal({
 
     if (x2 - x1 < 0.05 || y2 - y1 < 0.05) { setRectAnchor(null); return; }
 
-    const midY = (y1 + y2) / 2;
+    const zoneW = x2 - x1;
+    const zoneH = y2 - y1;
+    // Bar line runs across the counter edge — horizontal when zone is wider than tall
+    // (counter runs left-right), vertical when zone is taller than wide (counter runs top-bottom).
+    const newBarP1: [number, number] = zoneW >= zoneH
+      ? [x1, (y1 + y2) / 2]   // horizontal: left → right at mid-height
+      : [(x1 + x2) / 2, y1];  // vertical: top → bottom at mid-width
+    const newBarP2: [number, number] = zoneW >= zoneH
+      ? [x2, (y1 + y2) / 2]
+      : [(x1 + x2) / 2, y2];
     const newStation: BarStation = {
       zone_id:       `zone_${Date.now()}`,
       label:         `Bar Zone ${config.stations.length + 1}`,
       polygon:       [[x1,y1],[x2,y1],[x2,y2],[x1,y2]],
-      bar_line_p1:   [x1, midY],
-      bar_line_p2:   [x2, midY],
+      bar_line_p1:   newBarP1,
+      bar_line_p2:   newBarP2,
       customer_side: 1,
     };
     setConfig(c => ({ stations: [...c.stations, newStation] }));
@@ -523,13 +532,31 @@ function ZoneEditorModal({
             const pyMin = Math.min(...ys);
             const barMidX = (s.bar_line_p1[0] + s.bar_line_p2[0]) / 2;
             const barMidY = (s.bar_line_p1[1] + s.bar_line_p2[1]) / 2;
-            const gap = 0.045;
-            // customer_side: 1 = customers below bar line, -1 = customers above
-            const staffAbove = s.customer_side === 1;
-            const aboveLabel = staffAbove ? '↑ Staff side' : '↑ Customer side';
-            const belowLabel = staffAbove ? 'Customer side ↓' : 'Staff side ↓';
-            const aboveColor = staffAbove ? 'text-amber-300/90' : 'text-purple-300/90';
-            const belowColor = staffAbove ? 'text-purple-300/90' : 'text-amber-300/90';
+
+            // Compute perpendicular direction to bar line so labels sit on the correct
+            // side regardless of whether the line is horizontal, vertical, or diagonal.
+            const ldx = s.bar_line_p2[0] - s.bar_line_p1[0];
+            const ldy = s.bar_line_p2[1] - s.bar_line_p1[1];
+            const llen = Math.hypot(ldx, ldy) || 1;
+            // Unit perpendicular pointing in direction where cross-product = +1 (side = 1)
+            const perpX = -ldy / llen;
+            const perpY =  ldx / llen;
+            // Customer direction: customer_side * perp
+            const custX = s.customer_side * perpX;
+            const custY = s.customer_side * perpY;
+            const gap = 0.058;
+            const clamp = (v: number) => Math.max(0.01, Math.min(0.99, v));
+            const custLX = clamp(barMidX + custX * gap);
+            const custLY = clamp(barMidY + custY * gap);
+            const staffLX = clamp(barMidX - custX * gap);
+            const staffLY = clamp(barMidY - custY * gap);
+
+            // Pick arrow glyph matching the actual offset direction
+            const _arrow = (vx: number, vy: number) =>
+              Math.abs(vy) >= Math.abs(vx) ? (vy > 0 ? '↓' : '↑') : (vx > 0 ? '→' : '←');
+            const custArrow  = _arrow(custX, custY);
+            const staffArrow = _arrow(-custX, -custY);
+
             return (
               <React.Fragment key={i}>
                 {/* Zone name label */}
@@ -539,10 +566,10 @@ function ZoneEditorModal({
                   </span>
                 </div>
 
-                {/* Label above bar line */}
-                <div className="absolute pointer-events-none" style={{ left: `${barMidX * 100}%`, top: `${Math.max(0.01, barMidY - gap) * 100}%`, transform: 'translate(-50%, -100%)' }}>
-                  <span className={`text-[9px] font-semibold ${aboveColor} bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap`}>
-                    {aboveLabel}
+                {/* Staff side label — perpendicular to bar line on staff side */}
+                <div className="absolute pointer-events-none" style={{ left: `${staffLX * 100}%`, top: `${staffLY * 100}%`, transform: 'translate(-50%, -50%)' }}>
+                  <span className="text-[9px] font-semibold text-amber-300/90 bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap">
+                    {staffArrow} Staff side
                   </span>
                 </div>
 
@@ -560,10 +587,10 @@ function ZoneEditorModal({
                   </button>
                 </div>
 
-                {/* Label below bar line */}
-                <div className="absolute pointer-events-none" style={{ left: `${barMidX * 100}%`, top: `${Math.min(0.99, barMidY + gap) * 100}%`, transform: 'translate(-50%, 0%)' }}>
-                  <span className={`text-[9px] font-semibold ${belowColor} bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap`}>
-                    {belowLabel}
+                {/* Customer side label — perpendicular to bar line on customer side */}
+                <div className="absolute pointer-events-none" style={{ left: `${custLX * 100}%`, top: `${custLY * 100}%`, transform: 'translate(-50%, -50%)' }}>
+                  <span className="text-[9px] font-semibold text-purple-300/90 bg-black/50 backdrop-blur-sm px-1.5 py-0.5 rounded whitespace-nowrap">
+                    Customer side {custArrow}
                   </span>
                 </div>
               </React.Fragment>
@@ -602,7 +629,18 @@ function ZoneEditorModal({
                     onClick={() => toggleCustomerSide(i)}
                     className="text-[10px] px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/25 hover:bg-purple-500/25 transition-colors whitespace-nowrap"
                   >
-                    {s.customer_side === 1 ? '▼ below bar line' : '▲ above bar line'}
+                    {(() => {
+                      const ldx = s.bar_line_p2[0] - s.bar_line_p1[0];
+                      const ldy = s.bar_line_p2[1] - s.bar_line_p1[1];
+                      const llen = Math.hypot(ldx, ldy) || 1;
+                      const perpX = -ldy / llen;
+                      const perpY =  ldx / llen;
+                      const cx = s.customer_side * perpX;
+                      const cy = s.customer_side * perpY;
+                      const arrow = Math.abs(cy) >= Math.abs(cx) ? (cy > 0 ? '▼' : '▲') : (cx > 0 ? '▶' : '◀');
+                      const dir = Math.abs(cy) >= Math.abs(cx) ? (cy > 0 ? 'below' : 'above') : (cx > 0 ? 'right of' : 'left of');
+                      return `${arrow} ${dir} bar line`;
+                    })()}
                   </button>
                 </div>
                 <button
