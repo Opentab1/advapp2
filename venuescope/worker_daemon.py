@@ -575,33 +575,32 @@ def main():
     except Exception as _me:
         log.warning(f"Model pre-load skipped (non-fatal): {_me}")
 
-    # Kill any stale worker_daemon processes left over from a previous run.
-    # This catches orphans that survived systemd restarts (e.g. processes that
-    # were forked before KillMode=control-group was applied to the unit file).
+    # PID-file based orphan cleanup: kill only the previous daemon's process
+    # group (the PID recorded from the last run), not everything matching the
+    # process name. This avoids accidentally killing legitimate sibling workers
+    # that were spawned by the current systemd invocation.
+    _PIDFILE = Path(os.environ.get("VENUESCOPE_DATA_DIR",
+                                   str(Path.home() / ".venuescope"))) / "worker.pid"
+    _my_pid = os.getpid()
     try:
-        import subprocess as _sp
-        _my_pid  = os.getpid()
-        _my_ppid = os.getppid()
-        _result  = _sp.run(
-            ["pgrep", "-f", "worker_daemon"],
-            capture_output=True, text=True
-        )
-        _stale_pids = [
-            int(p) for p in _result.stdout.split()
-            if p.strip().isdigit()
-            and int(p) != _my_pid
-            and int(p) != _my_ppid
-        ]
-        if _stale_pids:
-            log.warning(f"Killing {len(_stale_pids)} stale worker process(es): {_stale_pids}")
-            for _pid in _stale_pids:
+        if _PIDFILE.exists():
+            _old_pid = int(_PIDFILE.read_text().strip())
+            if _old_pid != _my_pid:
                 try:
-                    os.kill(_pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            time.sleep(1)  # brief pause to let OS reap them
+                    # Kill the old daemon and its entire process group
+                    os.killpg(os.getpgid(_old_pid), signal.SIGKILL)
+                    log.warning(f"Killed stale worker process group (old pid={_old_pid})")
+                    time.sleep(1)
+                except (ProcessLookupError, PermissionError):
+                    pass  # already dead
     except Exception as _ke:
-        log.warning(f"Stale-process cleanup failed (non-fatal): {_ke}")
+        log.warning(f"PID-file cleanup failed (non-fatal): {_ke}")
+    # Write our PID so the next startup can clean us up
+    try:
+        _PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+        _PIDFILE.write_text(str(_my_pid))
+    except Exception:
+        pass
 
     # Reset ALL stuck running jobs from previous session.
     # Use status filter (not list_jobs which only returns first 50) so we catch
