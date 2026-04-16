@@ -35,8 +35,8 @@ if not _log.handlers:
 
 from core.bar_config import BarConfig, station_polygon_px, bar_line_px
 
-_GLASS_CLASSES   = {40, 41}              # wine_glass, cup
-_CLASS_NAMES     = {40: "wine_glass", 41: "cup"}
+_GLASS_CLASSES   = {39, 40, 41}          # bottle/can, wine_glass, cup
+_CLASS_NAMES     = {39: "can", 40: "wine_glass", 41: "cup"}
 _IOU_MATCH       = 0.10                  # lower than bottle — cups move across bar
 _MIN_PREP_FRAMES = 3                     # frames on bartender side before crossing counts
 _MIN_DWELL_FRAMES = 2                    # consecutive frames on customer side to confirm

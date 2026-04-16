@@ -955,10 +955,10 @@ class VenueProcessor:
             elif self.mode == "bottle_count":
                 detect_classes = BOTTLE_CLASSES
             elif self.mode == "drink_count":
-                # Always detect cups/wine_glasses alongside people so
-                # GlassCrossingDetector can see physical glass movements.
-                # Classes 40=wine_glass, 41=cup — omit 39=bottle (too small overhead).
-                detect_classes = [0, 40, 41]
+                # Detect people + all drink containers for GlassCrossingDetector.
+                # 39=bottle/can, 40=wine_glass, 41=cup
+                # YOLO detects beer/seltzer cans as class 39 (bottle) from overhead.
+                detect_classes = [0, 39, 40, 41]
             else:
                 detect_classes = [0]
             results = model.track(yolo_frame, persist=True,
@@ -1119,7 +1119,7 @@ class VenueProcessor:
             # Must run BEFORE correlator so glass_serve events are enriched too.
             if _glass_detector is not None:
                 # Split glass-class boxes from the full detection set
-                _g_mask  = [c in {40, 41} for c in class_ids]
+                _g_mask  = [c in {39, 40, 41} for c in class_ids]
                 _g_boxes = boxes_px[np.array(_g_mask)] if any(_g_mask) else np.empty((0,4), dtype=np.float32)
                 _g_cls   = [c for c, m in zip(class_ids, _g_mask) if m]
                 _g_conf  = [c for c, m in zip(confs,     _g_mask) if m]
