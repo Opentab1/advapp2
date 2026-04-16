@@ -106,18 +106,28 @@ function ZoneOverlay({ config }: { config: BarConfig }) {
           {/* Zone polygon */}
           <polygon
             points={s.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
-            fill="rgba(0,200,160,0.07)"
-            stroke="rgba(0,200,160,0.55)"
-            strokeWidth="0.004"
+            fill="rgba(0,200,160,0.12)"
+            stroke="rgba(0,200,160,0.8)"
+            strokeWidth="0.006"
           />
-          {/* Bar line (orange dashed) */}
+          {/* Primary bar line (orange dashed) */}
           <line
             x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
             x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
-            stroke="rgba(255,140,0,0.85)"
-            strokeWidth="0.004"
+            stroke="rgba(255,140,0,0.9)"
+            strokeWidth="0.007"
             strokeDasharray="0.025 0.012"
           />
+          {/* Extra crossing lines (amber/yellow dashed) */}
+          {(s.extra_bar_lines ?? []).map((bl, li) => (
+            <line key={li}
+              x1={bl.p1[0]} y1={bl.p1[1]}
+              x2={bl.p2[0]} y2={bl.p2[1]}
+              stroke="rgba(251,191,36,0.9)"
+              strokeWidth="0.007"
+              strokeDasharray="0.02 0.01"
+            />
+          ))}
         </g>
       ))}
     </svg>
