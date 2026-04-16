@@ -582,12 +582,15 @@ def main():
         set_failed(job["job_id"], "worker restarted — job was interrupted")
         log.warning(f"Reset stuck job {job['job_id']}")
 
-    # Also cancel pending continuous/live jobs left over from the previous session.
+    # Also cancel pending live/RTSP jobs left over from the previous session.
     # Without this the DDB poller grabs them immediately and camera_loop also
     # launches a fresh job for the same camera — causing a duplicate YOLO process.
+    # Live jobs are identified by source_type="rtsp" (set by camera_loop).
     for job in list_jobs_by_status("pending", limit=500):
-        if job.get("continuous") or job.get("source", "").startswith("rtsp://") or \
-                job.get("source", "").startswith("http://"):
+        src_type = job.get("source_type", "")
+        src_path = job.get("source_path", "") or job.get("source", "")
+        if (src_type == "rtsp" or src_path.startswith("rtsp://")
+                or src_path.startswith("http://")):
             set_failed(job["job_id"], "worker restarted — stale live job cancelled")
             log.info(f"Cancelled stale live job {job['job_id']} (camera_loop will relaunch)")
 
