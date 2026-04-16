@@ -731,6 +731,16 @@ class VenueProcessor:
 
         stride    = self.profile["stride"]
 
+        # RTSP/HLS live inference rate limiter: the _HLSCapture queue buffers frames ahead
+        # of the inference loop. Without a rate limit, the main thread processes frames as
+        # fast as YOLO allows (~2.5fps per camera) instead of at the real camera rate (~1fps
+        # after stride). This saturates all 4 CPUs continuously.
+        # Fix: enforce a minimum inter-inference interval so we stay at ~1fps per camera.
+        # At 1fps: 243ms YOLO + 757ms sleep = 24% CPU per process instead of 100%.
+        _rtsp_rate_limit   = (self.source_type == "rtsp" and not self._has_gpu)
+        _min_inf_interval  = 1.0   # target ~1fps effective per camera
+        _last_inf_t        = 0.0   # tracks last YOLO call time
+
         # Adaptive stride for RTSP on CPU: instead of a fixed stride, scale it so
         # we process at a consistent ~2fps regardless of the camera's native frame rate.
         # At 2fps a serve (3-5 seconds) gives 6-10 processed frames — plenty to detect.
@@ -1041,6 +1051,16 @@ class VenueProcessor:
                 detect_classes = [0, 39, 40, 41]
             else:
                 detect_classes = [0]
+            # Rate-limit live RTSP/HLS inference: without this, the _HLSCapture queue
+            # backfills with buffered frames and YOLO runs continuously at maximum
+            # throughput, saturating CPUs. Sleeping here keeps us at ~1fps per camera.
+            if _rtsp_rate_limit:
+                _now = time.perf_counter()
+                _wait = _min_inf_interval - (_now - _last_inf_t)
+                if _wait > 0.01:
+                    time.sleep(_wait)
+                _last_inf_t = time.perf_counter()
+
             results = model.track(yolo_frame, persist=True,
                                   imgsz=imgsz,
                                   conf=self._conf_threshold,
