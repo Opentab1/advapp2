@@ -2841,7 +2841,7 @@ function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
       for (let i = 0; i < ts.length; i++) {
         const tSec = ts[i];
         entries.push({
-          wallTime: (job.createdAt ?? 0) + tSec,
+          wallTime: tSec, // absolute epoch seconds (backend stores wall-clock directly)
           bartender: name,
           score: scores[i] ?? 0,
           tSec,
@@ -2858,7 +2858,7 @@ function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
       }>;
       for (const r of revs) {
         reviewEntries.push({
-          wallTime: (job.createdAt ?? 0) + r.t_sec,
+          wallTime: r.t_sec, // absolute epoch seconds (same convention as bartenderBreakdown)
           score: r.score,
           stationId: r.station_id,
           tSec: r.t_sec,
