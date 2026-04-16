@@ -738,7 +738,7 @@ class VenueProcessor:
         # Fix: enforce a minimum inter-inference interval so we stay at ~1fps per camera.
         # At 1fps: 243ms YOLO + 757ms sleep = 24% CPU per process instead of 100%.
         _rtsp_rate_limit   = (self.source_type == "rtsp" and not self._has_gpu)
-        _min_inf_interval  = 1.0   # target ~1fps effective per camera
+        _min_inf_interval  = 0.5   # target ~2fps effective per camera (original design spec)
         _last_inf_t        = 0.0   # tracks last YOLO call time
 
         # Adaptive stride for RTSP on CPU: instead of a fixed stride, scale it so
