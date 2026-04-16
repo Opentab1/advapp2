@@ -124,8 +124,12 @@ def run_job(job_id: str):
         if not job:
             raise RuntimeError(f"Job {job_id} not found")
 
+        is_rtsp = job.get("source_type") == "rtsp"
         result_dir = Path(RESULT_DIR) / job_id
-        result_dir.mkdir(parents=True, exist_ok=True)
+        # RTSP live jobs don't write local files — skip dir creation to avoid
+        # accumulating thousands of empty result directories over time.
+        if not is_rtsp:
+            result_dir.mkdir(parents=True, exist_ok=True)
 
         mode = job.get("analysis_mode", "drink_count")
         set_progress(job_id, 2)
@@ -399,6 +403,16 @@ def run_job(job_id: str):
         set_done(job_id, str(result_dir), summary)
         log.info(f"Job {job_id} DONE — drinks={summary.get('total_drinks', 0)}, "
                  f"unrung={summary.get('unrung_drinks', 0)}")
+
+        # RTSP jobs: delete the result dir immediately — nothing useful is stored
+        # locally for live streams (everything goes to DynamoDB/S3). Prevents
+        # thousands of empty directories accumulating over time.
+        if is_rtsp and result_dir.exists():
+            try:
+                import shutil
+                shutil.rmtree(result_dir, ignore_errors=True)
+            except Exception:
+                pass
 
         # Persist cross-segment state for the next clip of this camera
         if camera_id and mode == "drink_count" and summary.get("_camera_state"):
