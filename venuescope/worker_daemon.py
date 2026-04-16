@@ -575,33 +575,6 @@ def main():
     except Exception as _me:
         log.warning(f"Model pre-load skipped (non-fatal): {_me}")
 
-    # PID-file based orphan cleanup: kill only the previous daemon's process
-    # group (the PID recorded from the last run), not everything matching the
-    # process name. This avoids accidentally killing legitimate sibling workers
-    # that were spawned by the current systemd invocation.
-    _PIDFILE = Path(os.environ.get("VENUESCOPE_DATA_DIR",
-                                   str(Path.home() / ".venuescope"))) / "worker.pid"
-    _my_pid = os.getpid()
-    try:
-        if _PIDFILE.exists():
-            _old_pid = int(_PIDFILE.read_text().strip())
-            if _old_pid != _my_pid:
-                try:
-                    # Kill the old daemon and its entire process group
-                    os.killpg(os.getpgid(_old_pid), signal.SIGKILL)
-                    log.warning(f"Killed stale worker process group (old pid={_old_pid})")
-                    time.sleep(1)
-                except (ProcessLookupError, PermissionError):
-                    pass  # already dead
-    except Exception as _ke:
-        log.warning(f"PID-file cleanup failed (non-fatal): {_ke}")
-    # Write our PID so the next startup can clean us up
-    try:
-        _PIDFILE.parent.mkdir(parents=True, exist_ok=True)
-        _PIDFILE.write_text(str(_my_pid))
-    except Exception:
-        pass
-
     # Reset ALL stuck running jobs from previous session.
     # Use status filter (not list_jobs which only returns first 50) so we catch
     # every orphaned job — critical when the droplet reboots mid-shift.
