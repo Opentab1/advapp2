@@ -134,7 +134,7 @@ function Ring({
             fill="none"
             stroke="currentColor"
             strokeWidth="8"
-            className={closed ? 'text-warm-600' : 'text-warm-700'}
+            className="text-white/20"
           />
           {/* Progress arc — hidden when closed or no data */}
           {!suppressFill && (
@@ -152,7 +152,7 @@ function Ring({
         </svg>
         {/* Center text */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className={`text-2xl font-bold tabular-nums leading-none ${closed ? 'text-warm-500' : noData ? 'text-warm-500' : 'text-white'}`}>
+          <span className={`text-2xl font-bold tabular-nums leading-none ${closed ? 'text-warm-300' : noData ? 'text-warm-300' : 'text-white'}`}>
             {noData ? '—' : closed ? '—' : `${Math.round(pct)}%`}
           </span>
           {closed && (
@@ -165,10 +165,10 @@ function Ring({
       </div>
       {/* Label below ring */}
       <div className="text-center">
-        <div className={`text-xs font-semibold uppercase tracking-wider ${closed ? 'text-warm-500' : noData ? 'text-warm-600' : 'text-warm-400'}`}>
+        <div className={`text-xs font-semibold uppercase tracking-wider ${closed ? 'text-warm-400' : noData ? 'text-warm-400' : 'text-warm-400'}`}>
           {label}
         </div>
-        <div className={`text-sm font-bold mt-0.5 ${closed ? 'text-warm-400' : noData ? 'text-warm-600' : 'text-white'}`}>
+        <div className={`text-sm font-bold mt-0.5 ${closed ? 'text-warm-300' : noData ? 'text-warm-300' : 'text-white'}`}>
           {value}
         </div>
       </div>
