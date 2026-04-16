@@ -2519,9 +2519,9 @@ function ZoneBreakdownSection({ job }: { job: VenueScopeJob | null }) {
   );
 }
 
-// ── Confidence badge ───────────────────────────────────────────────────────────
+// ── Serve score badge (drink log confidence %) ────────────────────────────────
 
-function ConfidenceBadge({ score }: { score: number }) {
+function ServeScoreBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100);
   const color = pct >= 70 ? 'text-emerald-400' : pct >= 40 ? 'text-yellow-400' : 'text-orange-400';
   return <span className={`font-mono tabular-nums text-[10px] ${color}`}>{pct}%</span>;
@@ -2603,7 +2603,7 @@ function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
                   </span>
                   <span className="text-text-muted truncate max-w-[80px] ml-2">{e.bartender}</span>
                   <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
-                    {e.score > 0 && <ConfidenceBadge score={e.score} />}
+                    {e.score > 0 && <ServeScoreBadge score={e.score} />}
                     <span className="text-emerald-400">✓</span>
                   </div>
                 </div>
@@ -2641,7 +2641,7 @@ function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
                             </span>
                             <span className="text-text-muted/60 truncate max-w-[80px] ml-2 text-[10px]">{e.stationId || 'bar'}</span>
                             <div className="ml-auto flex items-center gap-1 flex-shrink-0">
-                              <ConfidenceBadge score={e.score} />
+                              <ServeScoreBadge score={e.score} />
                               <span className="text-yellow-500/60 text-[10px]">?</span>
                             </div>
                           </div>
