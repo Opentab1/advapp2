@@ -8,7 +8,7 @@ Fixes:
   - Unassigned track fallback: promote track if only one person in zone
 """
 from __future__ import annotations
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import List, Dict, Any, Optional, Tuple
 import logging
 import numpy as np
@@ -46,8 +46,19 @@ def _side_of_line(p: Tuple[float,float],
     return 1 if cross>0 else (-1 if cross<0 else 0)
 
 
+def _signed_dist_px(p: Tuple[float,float],
+                    lp1: Tuple[int,int], lp2: Tuple[int,int],
+                    customer_side: int) -> float:
+    """Signed pixel distance from p to line lp1→lp2. Positive = customer side."""
+    dx = lp2[0]-lp1[0]; dy = lp2[1]-lp1[1]
+    line_len = max(1.0, (dx*dx + dy*dy) ** 0.5)
+    cross = dx*(p[1]-lp1[1]) - dy*(p[0]-lp1[0])
+    return customer_side * cross / line_len
+
+
 def _reach_probe(x1: float, y1: float, x2: float, y2: float,
-                 p1, p2, customer_side: int) -> Tuple[float, float]:
+                 p1, p2, customer_side: int,
+                 velocity: Optional[Tuple[float,float]] = None) -> Tuple[float, float]:
     """Return the bounding-box point most advanced toward the customer side.
 
     Catches arm-reach serves where only the bartender's arm/torso crosses the
@@ -79,6 +90,22 @@ def _reach_probe(x1: float, y1: float, x2: float, y2: float,
     _len = max(1.0, (dx * dx + dy * dy) ** 0.5)
     _perp_x = customer_side * (-dy / _len)
     _perp_y = customer_side * ( dx / _len)
+
+    # If the bartender is already moving toward the customer (velocity available),
+    # blend extension toward their actual travel direction — catches diagonal reaches.
+    if velocity is not None:
+        vx, vy = velocity
+        vlen = max(1.0, (vx*vx + vy*vy) ** 0.5)
+        # How much of the velocity is directed toward the customer side
+        vel_toward = (_perp_x * vx + _perp_y * vy) / vlen
+        if vel_toward > 0.3:  # clearly moving toward customer
+            blend = min(vel_toward, 0.5)  # up to 50% velocity direction
+            _ex = (1 - blend) * _perp_x + blend * (vx / vlen)
+            _ey = (1 - blend) * _perp_y + blend * (vy / vlen)
+            _elen = max(1.0, (_ex*_ex + _ey*_ey) ** 0.5)
+            _perp_x = _ex / _elen
+            _perp_y = _ey / _elen
+
     REACH_BONUS_PX = 30
     return (best_pt[0] + _perp_x * REACH_BONUS_PX,
             best_pt[1] + _perp_y * REACH_BONUS_PX)
@@ -101,7 +128,7 @@ class _TrackState:
     __slots__=("prep_frames","serve_side_buffer","cooldown_remaining",
                "last_confirmed_side","missing_frames","station_id_cache",
                "customer_dwell_frames","crossing_confs","centroid_history",
-               "box_width_history")
+               "box_width_history","recent_conf_history")
     def __init__(self):
         self.prep_frames           = 0
         self.serve_side_buffer:    List[int] = []
@@ -113,6 +140,7 @@ class _TrackState:
         self.crossing_confs:       List[float] = []  # detection confs during crossing
         self.centroid_history: List[tuple] = []   # (cx, cy) per frame for velocity
         self.box_width_history: List[float] = []  # bounding box widths for lean detection
+        self.recent_conf_history:  deque = deque(maxlen=10)  # rolling per-track detection conf
 
 
 class DrinkCounter:
@@ -277,6 +305,10 @@ class DrinkCounter:
                 if len(state.box_width_history) > 20:
                     state.box_width_history = state.box_width_history[-20:]
 
+            # Rolling detection confidence — all visible frames, not just crossings.
+            # Used later to weight serve score by long-term track quality.
+            state.recent_conf_history.append(conf_map.get(tid, 0.0))
+
             # Try auto re-ID if unassigned
             self._try_reid_by_zone(cx, cy, tid, active_set)
 
@@ -316,15 +348,29 @@ class DrinkCounter:
                            t_sec, tid, station_id, state.prep_frames, self.rules.min_prep_frames)
                 continue
 
-            # SERVE GESTURE: use leading box edge to catch arm-reach serves
+            # SERVE GESTURE: use leading box edge to catch arm-reach serves.
+            # Compute velocity for momentum-weighted reach extension direction.
+            _vel_vec = None
+            if len(state.centroid_history) >= _vel_n:
+                _vh = state.centroid_history
+                _vel_vec = (cx - _vh[-_vel_n][0], cy - _vh[-_vel_n][1])
+
             if boxes is not None and i < len(boxes):
                 bx = boxes[i]
                 probe = _reach_probe(float(bx[0]), float(bx[1]),
                                      float(bx[2]), float(bx[3]),
-                                     p1, p2, customer_side)
+                                     p1, p2, customer_side, _vel_vec)
             else:
                 probe = (cx, cy)
+
+            # Dead zone: if probe is within N px of bar line, freeze the side
+            # reading at the last observed value — prevents centroid jitter right
+            # at the boundary from generating spurious bilateral crossings.
             side = _side_of_line(probe, p1, p2)
+            _dist = _signed_dist_px(probe, p1, p2, customer_side)
+            if abs(_dist) < self.rules.bar_line_dead_zone_px and state.serve_side_buffer:
+                side = state.serve_side_buffer[-1]
+
             state.serve_side_buffer.append(side)
 
             N = self.rules.serve_confirm_frames
@@ -386,9 +432,15 @@ class DrinkCounter:
                            t_sec, tid, station_id, _elapsed_since_last, self.rules.serve_cooldown_seconds)
                 continue
 
-            # PER-EVENT CONFIDENCE: score based on detection quality + dwell duration
+            # PER-EVENT CONFIDENCE: score based on detection quality + dwell duration.
+            # Blend crossing-window confs with the track's rolling quality over recent
+            # frames — a well-tracked bartender (10 solid frames) scores more reliably
+            # than one detected for the first time at the moment of crossing.
             avg_cross_conf = (sum(state.crossing_confs) / len(state.crossing_confs)
                               if state.crossing_confs else conf_map.get(tid, 0.0))
+            if state.recent_conf_history:
+                _track_quality = sum(state.recent_conf_history) / len(state.recent_conf_history)
+                avg_cross_conf = 0.7 * avg_cross_conf + 0.3 * _track_quality
             dwell_score    = min(state.customer_dwell_frames / 15.0, 1.0)
             # High-conf bypass: fast but confident serves (quick hand-off, slide across bar)
             # don't need long dwell — detection quality is the ground truth.

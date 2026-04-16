@@ -111,6 +111,7 @@ class DrinkCountRules:
     # (serve_cooldown_seconds already exists — A4 reuses it for time-based floor)
     # A5
     min_serve_score:         float = 0.35  # serves below this go to review bucket
+    bar_line_dead_zone_px:   float = 8.0   # px from bar line — freeze side within this band to suppress jitter
 
 @dataclass
 class PeopleCountRules:

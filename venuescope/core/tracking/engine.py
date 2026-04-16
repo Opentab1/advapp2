@@ -330,7 +330,11 @@ class _HLSCapture:
 # Gap 3: Mode-specific ByteTrack configs
 # Lower match_thresh = tracks survive more occlusion; higher track_buffer = longer ID persistence
 _TRACKER_PARAMS = {
-    "drink_count":    {"match_thresh": 0.55, "track_buffer": 90,  "new_track_thresh": 0.20},
+    # match_thresh 0.35: at 2fps NVR streams, a walking bartender moves 40-80px between
+    # frames, dropping IOU to ~0.25. 0.55 caused frequent track ID switches that reset
+    # the bilateral-crossing state machine and lost serves. 0.35 keeps the association
+    # alive through normal bar movement without introducing false matches (few people in frame).
+    "drink_count":    {"match_thresh": 0.35, "track_buffer": 90,  "new_track_thresh": 0.20},
     "people_count":   {"match_thresh": 0.65, "track_buffer": 60,  "new_track_thresh": 0.25},
     "table_turns":    {"match_thresh": 0.60, "track_buffer": 60,  "new_track_thresh": 0.25},
     "staff_activity": {"match_thresh": 0.60, "track_buffer": 60,  "new_track_thresh": 0.25},
