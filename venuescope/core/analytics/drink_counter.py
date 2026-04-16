@@ -74,7 +74,14 @@ def _reach_probe(x1: float, y1: float, x2: float, y2: float,
         val = customer_side * (dx * (py - p1[1]) - dy * (px - p1[0]))
         if val > best_val:
             best_val = val; best_pt = (px, py)
-    return best_pt
+    # Extend probe 30px beyond box edge in customer direction to catch arm reaches.
+    # From overhead, arms extend 30-40px past the YOLO bounding box boundary.
+    _len = max(1.0, (dx * dx + dy * dy) ** 0.5)
+    _perp_x = customer_side * (-dy / _len)
+    _perp_y = customer_side * ( dx / _len)
+    REACH_BONUS_PX = 30
+    return (best_pt[0] + _perp_x * REACH_BONUS_PX,
+            best_pt[1] + _perp_y * REACH_BONUS_PX)
 
 
 def _lean_bonus(box_w: float, box_h: float,

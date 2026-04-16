@@ -958,9 +958,6 @@ class VenueProcessor:
                             self.cb(0, "Drink counter: night-mode gate scaling applied")
                 if self._processed >= 3:
                     self._night_mode_checked = True
-            if self._night_mode:
-                frame = night_mode_enhance(frame)
-
             # Feature 4: Camera angle auto-detection on first frame
             if not self._angle_checked and self._processed == 1:
                 self._angle_info    = detect_camera_angle(frame)
@@ -1020,6 +1017,11 @@ class VenueProcessor:
                     _roi_offset_x = _rx1
                     _roi_offset_y = _ry1
                     frame = frame[_ry1:_ry2, _rx1:_rx2]
+
+            # Night mode enhancement runs AFTER ROI crop — applies to bar zone only
+            # (~320px instead of 1920×1080), making it 36× cheaper + more targeted contrast.
+            if self._night_mode:
+                frame = night_mode_enhance(frame)
 
             # Dewarping runs AFTER ROI crop — applies to the small bar zone only
             # (~768×432 instead of 1920×1080), making it ~5× cheaper than full-frame.
