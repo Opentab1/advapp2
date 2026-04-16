@@ -741,7 +741,8 @@ function ZoneEditorModal({
             <p className="text-[11px] text-text-muted text-center py-1">Drag a box on the camera image to draw your bar zone</p>
           ) : (
             config.stations.map((s, i) => (
-              <div key={i} className="flex items-center gap-2 bg-whoop-bg rounded-xl px-3 py-2.5">
+              <React.Fragment key={i}>
+              <div className="flex items-center gap-2 bg-whoop-bg rounded-xl px-3 py-2.5">
                 <div className="w-2 h-2 rounded-full bg-teal/60 flex-shrink-0" />
                 <input
                   value={s.label}
@@ -818,6 +819,7 @@ function ZoneEditorModal({
                   </div>
                 );
               })}
+              </React.Fragment>
             ))
           )}
         </div>
