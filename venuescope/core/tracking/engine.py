@@ -570,6 +570,12 @@ class VenueProcessor:
         self._rtsp_errors     = 0
         self._rtsp_timeouts   = 0
 
+        # NVR buffer start calibration: for buffered HLS/NVR streams, t_sec = frame_idx/fps
+        # is the NVR buffer position (can be 3500+ seconds), NOT elapsed time since job start.
+        # _nwr_start = time.time() - t_sec, computed once after a few frames, gives the actual
+        # wall-clock time when the NVR buffer began, so React can compute correct timestamps.
+        self._nwr_start: Optional[float] = None
+
         # Per-frame timing for performance monitoring
         self._frame_times: List[float] = []   # ms per processed frame
 
@@ -1192,6 +1198,17 @@ class VenueProcessor:
                                     self.cb(0, f"Confidence threshold recovered to {self._conf_threshold:.2f}")
 
             t_sec     = frame_idx / fps
+            # Calibrate NVR buffer start once for live streams.
+            # NVR HLS streams deliver a buffered window (often 30-60 min). t_sec = frame_idx/fps
+            # is the NVR buffer position, not elapsed time since the worker started.
+            # nwr_start = time.time() - t_sec gives the wall-clock time the NVR buffer began,
+            # so React's formula (createdAt + t_sec) yields the correct drink timestamp.
+            # We only do this for rtsp/live sources; for file-based jobs t_sec IS elapsed time.
+            if (self.source_type == "rtsp" and self._nwr_start is None and t_sec > 10):
+                self._nwr_start = time.time() - t_sec
+                self.cb(0, f"NVR buffer start calibrated: "
+                           f"{time.strftime('%H:%M:%S', time.gmtime(self._nwr_start))} UTC "
+                           f"(t_sec={t_sec:.1f}s into buffer)")
             # For live streams (rtsp/http sources), use wall-clock time for the
             # segment limit — the NVR may buffer frames and deliver them faster
             # than the nominal fps, causing frame_idx/fps to advance faster than
@@ -1679,6 +1696,7 @@ class VenueProcessor:
                               if getattr(self, "_glass_detector", None) else {})
                 b.update({"bartenders":    self.shift.summary(total_sec) if self.shift else {},
                           "drink_wall_start": getattr(analyzer, "_wall_start", None),
+                          "drink_nwr_start":  self._nwr_start,  # NVR buffer start (calibrated)
                           "drink_quality": {**analyzer.quality_report(), **_glass_rpt},
                           "review_events": [
                               {"t_sec": e["t_sec"], "serve_score": e["serve_score"],

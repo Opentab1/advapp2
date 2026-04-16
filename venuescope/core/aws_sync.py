@@ -418,11 +418,14 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         ":po2": {"N": str(peak_occ)},
     }
 
-    # Use drink counter's _wall_start as the epoch base so timestamps are
-    # correct even when the job record restarts but the counter keeps running.
-    # This is ALWAYS overwritten (not if_not_exists) to stay accurate.
-    _wall_start = summary.get("drink_wall_start")
-    _ca = _wall_start or created_at or time.time()
+    # createdAt = NVR buffer start time so React's formula (createdAt + t_sec) yields
+    # the correct wall-clock time for each drink. For buffered NVR/HLS streams the
+    # NVR buffer may start 30-60 min before the worker connects, so we use the
+    # calibrated nwr_start rather than the worker's _wall_start.
+    # Fallback chain: nwr_start → wall_start → job created_at → now
+    _nwr_start  = summary.get("drink_nwr_start")   # calibrated NVR buffer start (preferred)
+    _wall_start = summary.get("drink_wall_start")   # worker start time (legacy fallback)
+    _ca = _nwr_start or _wall_start or created_at or time.time()
     update_expr += ", createdAt = :ca"
     expr_vals[":ca"] = {"N": str(_ca)}
 
