@@ -501,11 +501,11 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         expr_vals[":bd"] = {"S": bt_json}
 
     # Push serve snapshot S3 keys so React shows frame thumbnails in the live drink log
-    live_snaps = summary.get("serve_snapshots", {})
-    if live_snaps:
+    serve_snaps = summary.get("serve_snapshots", {})
+    if serve_snaps:
         update_expr += ", serveSnapshots = :snaps"
         expr_vals[":snaps"] = {"S": json.dumps(
-            {str(round(float(k), 1)): v for k, v in live_snaps.items()}
+            {str(round(float(k), 1)): v for k, v in serve_snaps.items()}
         )}
 
     # Push low-confidence review events so React can show the "low confidence" log section
@@ -533,14 +533,6 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
             }
             for z, cnt in zone_drinks.items()
         })}
-
-    # Push serve snapshot S3 keys so React can show frame thumbnails in drink log
-    serve_snaps = summary.get("serve_snapshots", {})
-    if serve_snaps:
-        update_expr += ", serveSnapshots = :snaps"
-        expr_vals[":snaps"] = {"S": json.dumps(
-            {str(round(float(k), 1)): v for k, v in serve_snaps.items()}
-        )}
 
     # Include table visits by staff + live occupancy for live dashboard
     tables_data = summary.get("tables", {})
@@ -673,6 +665,45 @@ def get_camera_shift_totals(camera_id: str, venue_id: str = "") -> Dict[str, Any
     except Exception as e:
         print(f"[aws_sync] get_camera_shift_totals failed (non-fatal): {e}", flush=True)
         return {}
+
+
+def reset_camera_shift(camera_id: str, venue_id: str = "") -> bool:
+    """
+    Clear the stable per-camera DDB record (~{camera_id}) drink counts for a
+    new shift/day. Called at job start when the stored createdAt date != today.
+    This ensures the React dashboard shows 0 immediately when a new shift begins
+    instead of displaying stale totals from the previous day until the first push.
+    """
+    if not _is_configured():
+        return False
+    venue_id = venue_id or _get_venue_id()
+    if not venue_id or not camera_id:
+        return False
+    try:
+        import datetime
+        today = datetime.date.today().isoformat()
+        ddb = _get_client("dynamodb")
+        _retry(lambda: ddb.update_item(
+            TableName=DYNAMODB_TABLE,
+            Key={"venueId": {"S": venue_id}, "jobId": {"S": f"~{camera_id}"}},
+            UpdateExpression=(
+                "SET totalDrinks = :z, bartenderSummary = :bs, "
+                "bartenderBreakdown = :bd, serveSnapshots = :ss, shiftDate = :sd "
+                "REMOVE reviewEvents, liveTheftEvents, zoneBreakdown"
+            ),
+            ExpressionAttributeValues={
+                ":z":  {"N": "0"},
+                ":bs": {"S": "{}"},
+                ":bd": {"S": "{}"},
+                ":ss": {"S": "{}"},
+                ":sd": {"S": today},
+            },
+        ))
+        print(f"[aws_sync] Shift reset for camera {camera_id} (new day: {today})", flush=True)
+        return True
+    except Exception as e:
+        print(f"[aws_sync] reset_camera_shift failed (non-fatal): {e}", flush=True)
+        return False
 
 
 def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,

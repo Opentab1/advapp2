@@ -269,6 +269,21 @@ def run_job(job_id: str):
 
             prior_state = dict(disk_state)  # start with disk cooldown state
 
+            # New shift detected — proactively clear stale stable DDB record so
+            # the React dashboard shows 0 immediately instead of yesterday's total.
+            if ddb_drinks > 0 and ddb_date and ddb_date != today:
+                try:
+                    from core.aws_sync import reset_camera_shift
+                    reset_camera_shift(camera_id, job_venue_id)
+                    log.info(f"New shift for {camera_id}: cleared stale {ddb_drinks} drinks "
+                             f"from {ddb_date}")
+                except Exception as _re:
+                    log.debug(f"Shift reset failed (non-fatal): {_re}")
+                # Also clear disk state if it's from a different day
+                if disk_date and disk_date != today:
+                    prior_state = {}
+                    log.info(f"Cleared stale disk state for {camera_id} (was {disk_date})")
+
             if ddb_date == today and ddb_drinks > 0:
                 bt_summary = ddb_totals.get("bartender_summary", {})
                 if bt_summary:
@@ -586,6 +601,12 @@ def _camera_loop_proc_entry():
 def main():
     log.info(f"VenueScope v6 worker started — polling every {POLL_INTERVAL}s, "
              f"MAX_PARALLEL={MAX_PARALLEL}")
+
+    # Startup config validation — warn loudly for missing optional env vars
+    # so operators see them in journalctl rather than discovering them silently.
+    if not os.environ.get("S3_BUCKET"):
+        log.warning("[CONFIG] S3_BUCKET not set — serve snapshots and clip uploads "
+                    "are DISABLED. Set S3_BUCKET=<bucket-name> in .env to enable.")
 
     # Pre-load the default YOLO model in the parent process so forked child
     # processes inherit it via copy-on-write (Linux fork semantics).
