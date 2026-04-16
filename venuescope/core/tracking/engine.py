@@ -1678,6 +1678,7 @@ class VenueProcessor:
                 _glass_rpt = (getattr(self, "_glass_detector").quality_report()
                               if getattr(self, "_glass_detector", None) else {})
                 b.update({"bartenders":    self.shift.summary(total_sec) if self.shift else {},
+                          "drink_wall_start": getattr(analyzer, "_wall_start", None),
                           "drink_quality": {**analyzer.quality_report(), **_glass_rpt},
                           "review_events": [
                               {"t_sec": e["t_sec"], "serve_score": e["serve_score"],

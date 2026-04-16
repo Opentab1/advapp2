@@ -418,9 +418,12 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         ":po2": {"N": str(peak_occ)},
     }
 
-    # Always write createdAt so the React dashboard can filter "tonight's" jobs
-    _ca = created_at or time.time()
-    update_expr += ", createdAt = if_not_exists(createdAt, :ca)"
+    # Use drink counter's _wall_start as the epoch base so timestamps are
+    # correct even when the job record restarts but the counter keeps running.
+    # This is ALWAYS overwritten (not if_not_exists) to stay accurate.
+    _wall_start = summary.get("drink_wall_start")
+    _ca = _wall_start or created_at or time.time()
+    update_expr += ", createdAt = :ca"
     expr_vals[":ca"] = {"N": str(_ca)}
 
     # Write clipLabel + cameraLabel on first push so React can display the camera name
@@ -484,9 +487,9 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
             bt_compact[name] = {
                 "drinks":        int(d.get("total_drinks", 0)),
                 "per_hour":      round(float(d.get("drinks_per_hour", 0.0)), 1),
-                # Absolute wall-clock epoch times so React can display correctly
-                # regardless of segment restarts (wallTime = ts[i] directly).
-                "timestamps":    [round(_ca + t, 1) for t in ts],
+                # Video-relative t_sec (React uses wallTime = createdAt + tSec,
+                # and createdAt is now always set to drink_wall_start)
+                "timestamps":    [round(t, 1) for t in ts],
                 # Confidence scores parallel to timestamps
                 "drink_scores":  [round(s, 3) for s in scrs],
                 # Hourly breakdown so dashboard can show "drinks per hour" curve
@@ -498,21 +501,20 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         expr_vals[":bd"] = {"S": bt_json}
 
     # Push serve snapshot S3 keys so React shows frame thumbnails in the live drink log
-    # Keys use absolute wall-clock epochs to match bartenderBreakdown.timestamps
     live_snaps = summary.get("serve_snapshots", {})
     if live_snaps:
         update_expr += ", serveSnapshots = :snaps"
         expr_vals[":snaps"] = {"S": json.dumps(
-            {str(round(_ca + float(k), 1)): v for k, v in live_snaps.items()}
+            {str(round(float(k), 1)): v for k, v in live_snaps.items()}
         )}
 
     # Push low-confidence review events so React can show the "low confidence" log section
-    # t_sec stored as absolute wall-clock epoch (same convention as bartenderBreakdown.timestamps)
+    # t_sec stored as video-relative seconds (React: wallTime = createdAt + tSec)
     review_evs = summary.get("review_events", [])
     if review_evs:
         update_expr += ", reviewEvents = :re"
         expr_vals[":re"] = {"S": json.dumps([
-            {"t_sec": round(_ca + e["t_sec"], 1), "score": round(e["serve_score"], 3),
+            {"t_sec": round(e["t_sec"], 1), "score": round(e["serve_score"], 3),
              "station_id": e.get("station_id", ""), "reason": e.get("review_reason", "")}
             for e in review_evs[-50:]
         ])}
@@ -533,12 +535,11 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         })}
 
     # Push serve snapshot S3 keys so React can show frame thumbnails in drink log
-    # Keys are stored as absolute wall-clock epochs (matching bartenderBreakdown.timestamps)
     serve_snaps = summary.get("serve_snapshots", {})
     if serve_snaps:
         update_expr += ", serveSnapshots = :snaps"
         expr_vals[":snaps"] = {"S": json.dumps(
-            {str(round(created_at + float(k), 1)): v for k, v in serve_snaps.items()}
+            {str(round(float(k), 1)): v for k, v in serve_snaps.items()}
         )}
 
     # Include table visits by staff + live occupancy for live dashboard
@@ -756,8 +757,8 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
             bt_breakdown[name] = {
                 "drinks":        int(d.get("total_drinks", 0)),
                 "per_hour":      round(float(d.get("drinks_per_hour", 0.0)), 1),
-                # Absolute wall-clock epoch times (wallTime = ts[i] directly in React)
-                "timestamps":    [round(created_at + t, 1) for t in ts],
+                # Video-relative t_sec (React: wallTime = createdAt + tSec)
+                "timestamps":    [round(t, 1) for t in ts],
                 # Confidence scores (0.0–1.0) parallel to timestamps
                 "drink_scores":  [round(s, 3) for s in scrs],
                 # Hourly breakdown so dashboard can show "drinks per hour" curve per bartender
