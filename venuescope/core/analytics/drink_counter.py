@@ -357,8 +357,8 @@ class DrinkCounter:
                 if _lean_bonus(_bw, float(bx[3]) - float(bx[1]), state.box_width_history):
                     _dwell_req = max(1, _dwell_req - 1)
             if state.customer_dwell_frames < _dwell_req:
-                _log.info("[reject] t=%.1f tid=%s station=%s reason=dwell_frames have=%d need=%d",
-                          t_sec, tid, station_id, state.customer_dwell_frames, self.rules.serve_dwell_frames)
+                _log.debug("[reject] t=%.1f tid=%s station=%s reason=dwell_frames have=%d need=%d",
+                           t_sec, tid, station_id, state.customer_dwell_frames, self.rules.serve_dwell_frames)
                 continue
 
             # A1: velocity filter — reject fast sweeps (reaching, cleaning, handing change)
@@ -368,15 +368,15 @@ class DrinkCounter:
                 _dy = cy - state.centroid_history[-_vel_n][1]
                 _vel = (_dx*_dx + _dy*_dy) ** 0.5 / _vel_n
                 if _vel >= self.rules.max_cross_velocity_px:
-                    _log.info("[reject] t=%.1f tid=%s station=%s reason=velocity_too_high vel=%.1fpx max=%.1fpx",
-                              t_sec, tid, station_id, _vel, self.rules.max_cross_velocity_px)
+                    _log.debug("[reject] t=%.1f tid=%s station=%s reason=velocity_too_high vel=%.1fpx max=%.1fpx",
+                               t_sec, tid, station_id, _vel, self.rules.max_cross_velocity_px)
                     continue  # too fast — not a serve gesture
 
             # A4: time-based hard floor — guards against variable-rate video fps drift
             _elapsed_since_last = t_sec - self._station_last_serve_tsec.get(station_id, -9999.0)
             if _elapsed_since_last < self.rules.serve_cooldown_seconds:
-                _log.info("[reject] t=%.1f tid=%s station=%s reason=time_cooldown elapsed=%.1fs need=%.1fs",
-                          t_sec, tid, station_id, _elapsed_since_last, self.rules.serve_cooldown_seconds)
+                _log.debug("[reject] t=%.1f tid=%s station=%s reason=time_cooldown elapsed=%.1fs need=%.1fs",
+                           t_sec, tid, station_id, _elapsed_since_last, self.rules.serve_cooldown_seconds)
                 continue
 
             # PER-EVENT CONFIDENCE: score based on detection quality + dwell duration
@@ -410,8 +410,8 @@ class DrinkCounter:
             # A5: route low-score events to review bucket
             _is_review = serve_score < self.rules.min_serve_score
             if _is_review:
-                _log.info("[review] t=%.1f tid=%s station=%s score=%.3f < min=%.3f → review bucket",
-                          t_sec, tid, station_id, serve_score, self.rules.min_serve_score)
+                _log.debug("[review] t=%.1f tid=%s station=%s score=%.3f < min=%.3f → review bucket",
+                           t_sec, tid, station_id, serve_score, self.rules.min_serve_score)
                 self._review_count += 1
             elif is_high_conf:
                 self._high_conf_serves += 1

@@ -440,6 +440,15 @@ class VenueProcessor:
             hasattr(_torch_init.backends, 'mps') and _torch_init.backends.mps.is_available())
         self._has_gpu = _has_gpu   # store so run() can reference without reimport
 
+        # Limit PyTorch intra-op threads for RTSP live jobs.
+        # Default: PyTorch grabs all available CPUs for each inference call. With 2
+        # concurrent camera jobs on a 4-CPU droplet, each tries to use all 4 threads →
+        # contention spikes and thrashing. Cap to 2 threads per job so both cameras
+        # share the 4 CPUs cleanly (2+2), reducing total CPU from ~170% to ~100% each.
+        if self.source_type == "rtsp" and not _has_gpu:
+            _max_threads = max(1, (_torch_init.get_num_threads() // 2))
+            _torch_init.set_num_threads(_max_threads)
+
         # Live CPU override: keep RTSP jobs real-time on a 1vCPU droplet.
         # drink_count gets yolov8s@320px — ROI crop means YOLO only sees the bar zone
         # at full 320px resolution (bartenders go from ~50px → ~120px tall in input),
@@ -886,11 +895,13 @@ class VenueProcessor:
                 if detect_night_mode(frame):
                     self._night_mode = True
                     if self._processed == 1:
-                        # IR/night cameras: YOLO (RGB-trained) needs lower conf + every-frame
-                        # processing to reliably detect people in grayscale overhead footage.
-                        # Benchmark: on CH9 (1920x1080 IR), people visible at conf=0.08 but not 0.15.
+                        # IR/night cameras: YOLO (RGB-trained) needs lower conf.
+                        # Floor 0.12 (not 0.08): 0.08 causes too many spurious detections on
+                        # overhead bar cameras, flooding ByteTrack and DrinkCounter with false
+                        # tracks and burning CPU. 0.12 still catches real people in dim IR footage
+                        # while rejecting most shadow/lens-flare false positives.
                         _has_gpu = self._has_gpu
-                        self._conf_threshold        = min(self._conf_threshold, 0.08)
+                        self._conf_threshold        = min(self._conf_threshold, 0.12)
                         self.profile["conf"]        = self._conf_threshold
                         if _has_gpu:
                             # GPU: process every frame at higher res for IR detail
