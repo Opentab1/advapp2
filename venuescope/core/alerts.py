@@ -21,8 +21,13 @@ _alerted_jobs: Dict[str, float] = {}
 
 
 def _should_alert_theft(summary: Dict[str, Any]) -> bool:
-    unrung   = int(summary.get("unrung_drinks", 0) or 0)
-    has_flag = bool(summary.get("has_theft_flag"))
+    unrung    = int(summary.get("unrung_drinks", 0) or 0)
+    has_flag  = bool(summary.get("has_theft_flag"))
+    total     = int(summary.get("total_drinks", 0) or 0)
+    # Never fire a bottle-based theft alert when no drinks have been detected.
+    # Prevents false alerts from IR-glare bottle false-positives on idle cameras.
+    if has_flag and total == 0 and unrung == 0:
+        return False
     return has_flag or unrung >= ALERT_UNRUNG_THRESHOLD
 
 

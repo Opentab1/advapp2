@@ -340,10 +340,7 @@ def run_job(job_id: str):
             # during live streams so owners are notified mid-shift, not after.
             try:
                 bottles = partial_summary.get("bottles", {})
-                _live_total_drinks = int(sum(
-                    d.get("total_drinks", 0)
-                    for d in partial_summary.get("bartenders", {}).values()
-                ) or partial_summary.get("total_drinks", 0))
+                _live_total_drinks = int(partial_summary.get("total_drinks", 0) or 0)
                 # Only flag bottle-based theft if bar is actually serving drinks.
                 # Without this guard, false-positive bottle detections (IR glare, etc.)
                 # fire walk_out_alerts even when the bar is completely idle.
