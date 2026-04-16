@@ -1937,6 +1937,9 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
         )}
       </div>
 
+      {/* Zone breakdown — drinks per bar zone */}
+      {isDrink && <ZoneBreakdownSection job={room.job} />}
+
       {/* Drink log — expandable, drink_count cameras only */}
       {isDrink && <DrinkLogSection job={room.job} />}
 
@@ -2459,6 +2462,64 @@ interface ReviewEntry {
   score: number;
   stationId: string;
 }
+
+// ── Zone breakdown ─────────────────────────────────────────────────────────────
+
+interface ZoneData {
+  drinks: number;
+  label: string;
+  events?: Array<{ t_sec: number; score: number; x: number; y: number }>;
+}
+
+function ZoneBreakdownSection({ job }: { job: VenueScopeJob | null }) {
+  if (!(job as any)?.zoneBreakdown) return null;
+
+  let zones: Record<string, ZoneData> = {};
+  try {
+    zones = JSON.parse((job as any).zoneBreakdown) as Record<string, ZoneData>;
+  } catch { return null; }
+
+  const entries = Object.entries(zones).sort((a, b) => b[1].drinks - a[1].drinks);
+  if (entries.length === 0) return null;
+
+  const total = entries.reduce((s, [, z]) => s + z.drinks, 0);
+  const max   = entries[0][1].drinks;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-whoop-divider/60">
+      <div className="text-[10px] text-text-muted uppercase tracking-wide font-semibold mb-2 flex items-center gap-1.5">
+        <span>⬛</span> Zone Output
+      </div>
+      <div className="space-y-2">
+        {entries.map(([zoneId, z]) => {
+          const pct    = max > 0 ? (z.drinks / max) * 100 : 0;
+          const share  = total > 0 ? Math.round((z.drinks / total) * 100) : 0;
+          const label  = z.label !== zoneId ? z.label : zoneId.replace(/_/g, ' ');
+          return (
+            <div key={zoneId}>
+              <div className="flex items-center justify-between text-[11px] mb-0.5">
+                <span className="text-white font-medium capitalize">{label}</span>
+                <div className="flex items-center gap-2 text-[10px]">
+                  <span className="text-text-muted">{share}%</span>
+                  <span className="text-teal font-bold tabular-nums">{z.drinks}</span>
+                </div>
+              </div>
+              <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-teal rounded-full transition-all duration-700"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-1.5 text-[9px] text-text-muted text-right">{total} total · positions stored for re-zoning</div>
+    </div>
+  );
+}
+
+// ── Confidence badge ───────────────────────────────────────────────────────────
 
 function ConfidenceBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100);

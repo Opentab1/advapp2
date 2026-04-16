@@ -140,6 +140,8 @@ class DrinkCounter:
         self._review_count:              int            = 0
         self._review_events:             List[Dict]     = []
         self._station_last_serve_tsec:   Dict[str,float] = {}  # A4: time-based hard floor
+        self._zone_drinks:  Dict[str, int]        = {}   # zone_id -> confirmed drink count
+        self._zone_events:  Dict[str, List[Dict]] = {}   # zone_id -> [{t_sec, score, x, y}]
 
         # Seed states for all pre-assigned tracks so grace period fires
         # even if the track is never seen (e.g. wrong ID was assigned)
@@ -430,12 +432,26 @@ class DrinkCounter:
                     self._unassigned_serves += 1
                     name = f"UNASSIGNED_track_{tid}"
 
+            # Zone-level accumulation — store centroid so zones can be re-applied retroactively
+            if not _is_review and station_id:
+                self._zone_drinks[station_id] = self._zone_drinks.get(station_id, 0) + 1
+                if station_id not in self._zone_events:
+                    self._zone_events[station_id] = []
+                self._zone_events[station_id].append({
+                    "t_sec": round(t_sec, 1),
+                    "score": round(serve_score, 3),
+                    "x":     round(float(cx), 4),
+                    "y":     round(float(cy), 4),
+                })
+
             ev = {
                 "event_type":   "drink_serve",
                 "bartender":    name,
                 "station_id":   station_id,
                 "track_id":     tid,
                 "t_sec":        round(t_sec, 3),
+                "x":            round(float(cx), 4),
+                "y":            round(float(cy), 4),
                 "confidence":   round(conf_map.get(tid, 0.0), 4),
                 "serve_score":  serve_score,
                 "high_conf":    is_high_conf,
@@ -630,4 +646,6 @@ class DrinkCounter:
             "review_count":          self._review_count,
             "potential_unrung":      _high_conf_review,  # for theft flag escalation
             "warnings":              warnings,
+            "zone_drinks":           dict(self._zone_drinks),
+            "zone_events":           {z: list(evs[-200:]) for z, evs in self._zone_events.items()},
         }

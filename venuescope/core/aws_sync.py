@@ -477,6 +477,21 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
             for e in review_evs[-50:]
         ])}
 
+    # Push per-zone drink counts + serve positions for zone breakdown UI
+    _dq = summary.get("drink_quality", {})
+    zone_drinks = _dq.get("zone_drinks", {})
+    zone_events = _dq.get("zone_events", {})
+    if zone_drinks:
+        update_expr += ", zoneBreakdown = :zb"
+        expr_vals[":zb"] = {"S": json.dumps({
+            z: {
+                "drinks": cnt,
+                "label":  z,   # React can override with config label
+                "events": zone_events.get(z, [])[-50:],  # last 50 serve positions
+            }
+            for z, cnt in zone_drinks.items()
+        })}
+
     # Include table visits by staff + live occupancy for live dashboard
     tables_data = summary.get("tables", {})
     if tables_data:
@@ -716,6 +731,20 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
              "station_id": e.get("station_id", ""), "reason": e.get("review_reason", "")}
             for e in review_evs[-50:]
         ])}
+
+    # ── Zone breakdown — drinks per zone with serve positions for retroactive re-zoning ──
+    _dq = summary.get("drink_quality", {})
+    _zone_drinks = _dq.get("zone_drinks", {})
+    _zone_events = _dq.get("zone_events", {})
+    if _zone_drinks:
+        item["zoneBreakdown"] = {"S": json.dumps({
+            z: {
+                "drinks": cnt,
+                "label":  z,
+                "events": _zone_events.get(z, [])[-50:],
+            }
+            for z, cnt in _zone_drinks.items()
+        })}
 
     # ── Drink type breakdown (correlator) ──────────────────────────────────────
     corr = summary.get("drink_correlation", {})
