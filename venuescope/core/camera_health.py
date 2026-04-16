@@ -16,6 +16,8 @@ _OFFLINE_THRESHOLD = float(os.environ.get("CAMERA_OFFLINE_THRESHOLD_SEC", "600")
 _health: Dict[str, dict] = {}
 _alerted: Dict[str, float] = {}   # camera_id -> last alert timestamp
 _loaded = False
+_start_time = time.time()         # suppress alerts during startup grace period
+_STARTUP_GRACE_SEC = 90           # cameras need time to reconnect after worker restart
 
 
 def _load():
@@ -79,6 +81,8 @@ def get_offline_cameras() -> list:
 
 def check_and_alert():
     """Check for offline cameras; send alert at most once per hour per camera."""
+    if time.time() - _start_time < _STARTUP_GRACE_SEC:
+        return  # suppress alerts while cameras reconnect after worker restart
     for cam in get_offline_cameras():
         cam_id = cam["camera_id"]
         if time.time() - _alerted.get(cam_id, 0) < 3600:
