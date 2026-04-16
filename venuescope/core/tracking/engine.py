@@ -449,9 +449,8 @@ class VenueProcessor:
         if self.source_type == "rtsp" and not _has_gpu:
             self.profile = dict(self.profile)
             if analysis_mode == "drink_count":
-                self.profile["model"]  = "yolov8s.pt"   # 3× more accurate than nano
-                self.profile["imgsz"]  = 256             # ROI crop compensates — bar zone
-                                                          # fills the full 256px input
+                self.profile["model"]  = "yolov8n.pt"
+                self.profile["imgsz"]  = 480             # ROI crop gives bar zone full 480px
             elif analysis_mode == "bottle_count":
                 self.profile["model"]  = "yolov8n.pt"
                 self.profile["imgsz"]  = min(self.profile.get("imgsz", 480), 480)
