@@ -257,12 +257,20 @@ def upload_serve_snapshot(frame_jpg: bytes, job_id: str, t_sec: float,
     s3_key = f"venuescope/{venue_id}/{job_id}/snapshots/{t_sec:.1f}.jpg"
     try:
         s3 = _get_client("s3")
-        s3.put_object(
-            Bucket=bucket,
-            Key=s3_key,
-            Body=frame_jpg,
-            ContentType="image/jpeg",
-        )
+        put_kwargs: Dict[str, Any] = {
+            "Bucket":      bucket,
+            "Key":         s3_key,
+            "Body":        frame_jpg,
+            "ContentType": "image/jpeg",
+        }
+        # Make publicly readable so React can load direct S3 URLs without presigning.
+        # Requires bucket ACLs enabled (Object Ownership = "Bucket owner preferred"
+        # or "Object writer") and Block Public Access off for "new public bucket ACLs".
+        try:
+            s3.put_object(**put_kwargs, ACL="public-read")
+        except Exception:
+            # Fall back silently if ACLs are disabled on the bucket
+            s3.put_object(**put_kwargs)
         return s3_key
     except Exception as e:
         print(f"[aws_sync] Snapshot upload failed t={t_sec:.1f}s: {e}", flush=True)
@@ -418,14 +426,31 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         ":po2": {"N": str(peak_occ)},
     }
 
-    # createdAt = NVR buffer start time so React's formula (createdAt + t_sec) yields
-    # the correct wall-clock time for each drink. For buffered NVR/HLS streams the
-    # NVR buffer may start 30-60 min before the worker connects, so we use the
-    # calibrated nwr_start rather than the worker's _wall_start.
-    # Fallback chain: nwr_start → wall_start → job created_at → now
-    _nwr_start  = summary.get("drink_nwr_start")   # calibrated NVR buffer start (preferred)
-    _wall_start = summary.get("drink_wall_start")   # worker start time (legacy fallback)
-    _ca = _nwr_start or _wall_start or created_at or time.time()
+    # Timestamp scaling for buffered NVR/HLS streams.
+    #
+    # The NVR delivers its buffer at ~1.87x real-time. t_sec = frame_idx/fps grows much faster
+    # than wall time. React computes: wallTime = createdAt + tSec
+    # So we must:
+    #   1. Set createdAt = _wall_start (the moment the worker started processing)
+    #   2. Scale all stored t_sec values by / delivery_rate so they reflect wall-clock offsets
+    #
+    # delivery_rate = NVR t_sec elapsed / wall time elapsed
+    #   = (time.time() - _nwr_start) / (time.time() - _wall_start)
+    # because _nwr_start = time.time() - t_sec (updated every frame)
+    _nwr_start  = summary.get("drink_nwr_start")   # time.time() - current_t_sec at last frame
+    _wall_start = summary.get("drink_wall_start")   # epoch when worker started
+    T_push = time.time()
+    if _nwr_start and _wall_start:
+        _nwr_start   = float(_nwr_start)
+        _wall_start  = float(_wall_start)
+        wall_elapsed = max(T_push - _wall_start, 1.0)
+        current_t_sec_est = T_push - _nwr_start   # ≈ current t_sec in NVR buffer
+        raw_rate = current_t_sec_est / wall_elapsed
+        delivery_rate = max(1.0, min(raw_rate, 20.0))  # clamp: 1x–20x
+    else:
+        _wall_start   = _wall_start or created_at or T_push
+        delivery_rate = 1.0
+    _ca = _wall_start  # createdAt = worker start; React adds scaled t_sec to get wall time
     update_expr += ", createdAt = :ca"
     expr_vals[":ca"] = {"N": str(_ca)}
 
@@ -490,9 +515,9 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
             bt_compact[name] = {
                 "drinks":        int(d.get("total_drinks", 0)),
                 "per_hour":      round(float(d.get("drinks_per_hour", 0.0)), 1),
-                # Video-relative t_sec (React uses wallTime = createdAt + tSec,
-                # and createdAt is now always set to drink_wall_start)
-                "timestamps":    [round(t, 1) for t in ts],
+                # Wall-clock offsets from createdAt (= _wall_start).
+                # Divide by delivery_rate to convert NVR t_sec → real elapsed seconds.
+                "timestamps":    [round(t / delivery_rate, 1) for t in ts],
                 # Confidence scores parallel to timestamps
                 "drink_scores":  [round(s, 3) for s in scrs],
                 # Hourly breakdown so dashboard can show "drinks per hour" curve
@@ -503,21 +528,22 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         expr_vals[":bs"] = {"S": bt_json}
         expr_vals[":bd"] = {"S": bt_json}
 
-    # Push serve snapshot S3 keys so React shows frame thumbnails in the live drink log
+    # Push serve snapshot S3 keys so React shows frame thumbnails in the live drink log.
+    # Keys are t_sec values — scale by delivery_rate so they match scaled timestamps.
     serve_snaps = summary.get("serve_snapshots", {})
     if serve_snaps:
         update_expr += ", serveSnapshots = :snaps"
         expr_vals[":snaps"] = {"S": json.dumps(
-            {str(round(float(k), 1)): v for k, v in serve_snaps.items()}
+            {str(round(float(k) / delivery_rate, 1)): v for k, v in serve_snaps.items()}
         )}
 
     # Push low-confidence review events so React can show the "low confidence" log section
-    # t_sec stored as video-relative seconds (React: wallTime = createdAt + tSec)
+    # t_sec scaled by delivery_rate (React: wallTime = createdAt + tSec)
     review_evs = summary.get("review_events", [])
     if review_evs:
         update_expr += ", reviewEvents = :re"
         expr_vals[":re"] = {"S": json.dumps([
-            {"t_sec": round(e["t_sec"], 1), "score": round(e["serve_score"], 3),
+            {"t_sec": round(e["t_sec"] / delivery_rate, 1), "score": round(e["serve_score"], 3),
              "station_id": e.get("station_id", ""), "reason": e.get("review_reason", "")}
             for e in review_evs[-50:]
         ])}
