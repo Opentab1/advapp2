@@ -33,7 +33,7 @@ ANALYSIS_MODES = {
 
 # Modes temporarily disabled — code is intact, worker will not run them.
 # Re-enable by removing mode keys from this set.
-DISABLED_MODES: set = {"people_count"}
+DISABLED_MODES: set = set()  # all modes enabled
 
 ANALYSIS_DESCRIPTIONS = {
     "drink_count":    "Bar overhead camera. Counts drinks made per bartender. Compare against POS to flag theft.",
