@@ -458,11 +458,14 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     expr_vals[":ca"] = {"N": str(_ca)}
 
     # ── Drinks per hour (live) ────────────────────────────────────────────────
-    # total_drinks includes accumulated prior-segment drinks — cannot use it
-    # for a rate. drink_timestamps only contains current-segment serves, so
-    # count those and divide by wall-elapsed for an accurate live dph.
+    # Prior-segment drinks are restored as negative t_sec offsets (before this
+    # segment started). Current-segment drinks have t_sec >= 0. Filter to get
+    # only new detections so the rate isn't inflated by accumulated totals.
     _live_wall_elapsed = max(T_push - float(_ca), 1.0)
-    _seg_drinks = sum(len(d.get("drink_timestamps", [])) for d in bts.values())
+    _seg_drinks = sum(
+        sum(1 for t in d.get("drink_timestamps", []) if t >= 0)
+        for d in bts.values()
+    )
     if _live_wall_elapsed >= 60 and _seg_drinks > 0:
         live_dph = round(_seg_drinks * 3600 / _live_wall_elapsed, 1)
         update_expr += ", drinksPerHour = :dph"
