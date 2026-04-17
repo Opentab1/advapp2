@@ -33,8 +33,7 @@ ANALYSIS_MODES = {
 
 # Modes temporarily disabled — code is intact, worker will not run them.
 # Re-enable by removing mode keys from this set.
-# ETA: ~3 weeks. Focus is drink/bottle detection and theft prevention.
-DISABLED_MODES: set = {"people_count", "table_turns", "table_service"}
+DISABLED_MODES: set = {"people_count"}
 
 ANALYSIS_DESCRIPTIONS = {
     "drink_count":    "Bar overhead camera. Counts drinks made per bartender. Compare against POS to flag theft.",
