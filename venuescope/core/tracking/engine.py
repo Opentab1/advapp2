@@ -91,6 +91,31 @@ def _load_yolo(model_name: str) -> YOLO:
         Path.cwd() / model_name,
         Path(model_name),
     ]
+
+    # On CPU: look for ONNX export in all known locations before falling back to .pt.
+    # ONNX Runtime is 30-40% faster than PyTorch on CPU with identical accuracy.
+    # The ONNX file is generated alongside the .pt, so search the same directories.
+    if not _has_gpu and model_name.endswith(".pt"):
+        onnx_name = model_name.replace(".pt", ".onnx")
+        onnx_candidates = [
+            Path.cwd() / onnx_name,
+            Path(onnx_name),
+            Path.home() / ".cache" / "ultralytics" / "assets" / onnx_name,
+            Path.home() / ".cache" / "ultralytics" / onnx_name,
+        ]
+        for onnx_path in onnx_candidates:
+            if onnx_path.exists():
+                try:
+                    model = YOLO(str(onnx_path))
+                    import logging as _lg
+                    _lg.getLogger("engine").info(f"Using ONNX model: {onnx_path}")
+                    return model
+                except Exception as _onnx_err:
+                    import logging as _lg
+                    _lg.getLogger("engine").warning(
+                        f"ONNX load failed ({_onnx_err}), falling back to PyTorch")
+                    break  # don't retry other ONNX paths after a failure
+
     for c in candidates:
         if c.exists():
             size_mb = c.stat().st_size / 1_048_576
@@ -104,20 +129,6 @@ def _load_yolo(model_name: str) -> YOLO:
                     f"Model file {c} is unexpectedly large ({size_mb:.0f} MB). "
                     "Check that the correct .pt file is referenced."
                 )
-            # On CPU: prefer ONNX export if present (1.5-2.5x faster than PyTorch)
-            if not _has_gpu and model_name.endswith(".pt"):
-                onnx_path = c.with_suffix(".onnx")
-                if onnx_path.exists():
-                    try:
-                        model = YOLO(str(onnx_path))
-                        import logging as _lg
-                        _lg.getLogger("engine").info(
-                            f"Using ONNX model: {onnx_path.name}")
-                        return model
-                    except Exception as _onnx_err:
-                        import logging as _lg
-                        _lg.getLogger("engine").warning(
-                            f"ONNX load failed ({_onnx_err}), falling back to PyTorch")
             return YOLO(str(c))
     # Not found locally — let ultralytics download it
     return YOLO(model_name)
