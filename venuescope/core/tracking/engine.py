@@ -450,13 +450,15 @@ class VenueProcessor:
         self._has_gpu = _has_gpu   # store so run() can reference without reimport
 
         # Limit PyTorch intra-op threads for RTSP live jobs.
-        # Default: PyTorch grabs all available CPUs for each inference call. With 2
-        # concurrent camera jobs on a 4-CPU droplet, each tries to use all 4 threads →
-        # contention spikes and thrashing. Cap to 2 threads per job so both cameras
-        # share the 4 CPUs cleanly (2+2), reducing total CPU from ~170% to ~100% each.
+        # On a 1-vCPU droplet, force single-threaded inference so concurrent camera
+        # jobs don't spawn 13-17 threads each and thrash the CPU scheduler.
+        # On multi-CPU machines, cap to half the available threads to share cleanly.
         if self.source_type == "rtsp" and not _has_gpu:
-            _max_threads = max(1, (_torch_init.get_num_threads() // 2))
+            import os as _os
+            _ncpu = _os.cpu_count() or 1
+            _max_threads = 1 if _ncpu <= 1 else max(1, (_torch_init.get_num_threads() // 2))
             _torch_init.set_num_threads(_max_threads)
+            _torch_init.set_num_interop_threads(1)
 
         # Live CPU override: keep RTSP jobs real-time on a 1vCPU droplet.
         # drink_count gets yolov8s@320px — ROI crop means YOLO only sees the bar zone
