@@ -3577,13 +3577,14 @@ export function VenueScope() {
 
   // Is the bar open right now?
   const barIsOpen = useMemo(() => {
+    if (isDemo) return true; // demo bar is always open
     const win = bizWindowForDate(new Date());
     if (!win) return true; // no hours configured = always show
     const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
     // Handles past-midnight close (e.g. open 17:00 close 02:00)
     if (win.closeMin <= win.openMin) return nowMin >= win.openMin || nowMin < win.closeMin;
     return nowMin >= win.openMin && nowMin < win.closeMin;
-  }, [bizWindowForDate]);
+  }, [isDemo, bizWindowForDate]);
 
   // Unix seconds at which the current service window opened.
   // Logic: only slide back to yesterday if we are still WITHIN yesterday's service window
