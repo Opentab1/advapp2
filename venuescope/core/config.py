@@ -97,7 +97,7 @@ MODEL_PROFILES: Dict[str, Dict[str, Any]] = {
 class DrinkCountRules:
     min_prep_frames:         int   = 8    # frames in zone before counting (prevents cold-start false positives)
     serve_confirm_frames:    int   = 2    # consecutive frames on customer side to confirm
-    serve_dwell_frames:      int   = 2    # min frames bartender must dwell on customer side (bilateral crossing)
+    serve_dwell_frames:      int   = 1    # min frames bartender must dwell on customer side (bilateral crossing)
     serve_cooldown_seconds:  float = 4.0  # min seconds between serves per station — 8s was too long for busy bars doing back-to-back pours
     serve_cooldown_frames:   int   = 48   # computed by engine from serve_cooldown_seconds × effective_fps
     max_track_jump_px:       float = 150.0
@@ -110,7 +110,7 @@ class DrinkCountRules:
     # A4
     # (serve_cooldown_seconds already exists — A4 reuses it for time-based floor)
     # A5
-    min_serve_score:         float = 0.35  # serves below this go to review bucket
+    min_serve_score:         float = 0.20  # serves below this go to review bucket (IR/grayscale cams score ~0.23)
     bar_line_dead_zone_px:   float = 8.0   # px from bar line — freeze side within this band to suppress jitter
 
 @dataclass
