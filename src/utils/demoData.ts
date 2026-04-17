@@ -1490,11 +1490,37 @@ export function getDemoTopPerformersPlaylist(limit: number = 20): Array<{
 // ============ DEMO VENUESCOPE DATA ============
 
 // Stable Unsplash bar/nightclub images for snapshot previews
+// Bar/serve detection frame images — used as demo snapshots throughout the detection log
+const _BAR_IMGS = [
+  "https://images.unsplash.com/photo-1575444758702-4a6b9222336e?w=640&q=80",
+  "https://images.unsplash.com/photo-1566633806327-68e152aaf26d?w=640&q=80",
+  "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=640&q=80",
+  "https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=640&q=80",
+  "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=640&q=80",
+  "https://images.unsplash.com/photo-1527281400683-1aae777175f8?w=640&q=80",
+];
+
+// Demo snapshot keys MATCH the timestamps in makeTimestamps exactly (every ~400s).
+// Keys are stored as exact integers so findSnap(tSec) can match with a ±400s window.
 const DEMO_SERVE_SNAPSHOTS: Record<string, string> = {
-  "245.0":  "https://images.unsplash.com/photo-1575444758702-4a6b9222336e?w=640&q=80",
-  "612.0":  "https://images.unsplash.com/photo-1566633806327-68e152aaf26d?w=640&q=80",
-  "1847.0": "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=640&q=80",
-  "2931.0": "https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=640&q=80",
+  "420":   _BAR_IMGS[0],
+  "840":   _BAR_IMGS[1],
+  "1260":  _BAR_IMGS[2],
+  "1680":  _BAR_IMGS[3],
+  "2100":  _BAR_IMGS[4],
+  "2520":  _BAR_IMGS[5],
+  "3360":  _BAR_IMGS[0],
+  "4200":  _BAR_IMGS[1],
+  "5040":  _BAR_IMGS[2],
+  "5880":  _BAR_IMGS[3],
+  "6720":  _BAR_IMGS[4],
+  "7560":  _BAR_IMGS[5],
+  "8400":  _BAR_IMGS[0],
+  "9240":  _BAR_IMGS[1],
+  "10080": _BAR_IMGS[2],
+  "10920": _BAR_IMGS[3],
+  "11760": _BAR_IMGS[4],
+  "12600": _BAR_IMGS[5],
 };
 
 /**
@@ -1563,26 +1589,16 @@ export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
   });
 
   // ── Live job: tonight's ongoing shift ──
-  const shiftOpenHour = 18; // 6 PM
-  const shiftCloseHour = 26; // 2 AM next day (26 = 24 + 2)
-  const nowHour = new Date().getHours() + new Date().getMinutes() / 60;
-  // How far into tonight's shift are we? (open 6 PM)
-  const hoursIntoShift = nowHour >= shiftOpenHour
-    ? nowHour - shiftOpenHour
-    : nowHour < 2
-      ? nowHour + (24 - shiftOpenHour) // past midnight
-      : 0;
-  const shiftTotalHours = shiftCloseHour - shiftOpenHour;
-  const shiftProgress = Math.min(100, Math.round((hoursIntoShift / shiftTotalHours) * 100));
-  const liveElapsedSec = Math.round(hoursIntoShift * 3600);
-  const liveDrinksSoFar = Math.round(hoursIntoShift * 9.5); // ~9.5 drinks/hr pace
+  // Always simulate as if we're 3.5 hours into an evening shift (9:30 PM equivalent).
+  // "The bar is never closed" per demo spec — always shows active data.
+  const DEMO_HOURS_IN    = 3.5;
+  const shiftTotalHours  = 8;
+  const shiftProgress    = Math.round((DEMO_HOURS_IN / shiftTotalHours) * 100); // 44%
+  const liveElapsedSec   = Math.round(DEMO_HOURS_IN * 3600);                    // 12600s
+  const liveDrinksSoFar  = Math.round(DEMO_HOURS_IN * 9.5);                     // 33 drinks
 
-  // Tonight's shift started at 6 PM today
-  const tonightShiftStart = (() => {
-    const d = new Date();
-    d.setHours(18, 0, 0, 0);
-    return Math.floor(d.getTime() / 1000);
-  })();
+  // Shift started 3.5 hours ago regardless of wall clock
+  const tonightShiftStart = now - liveElapsedSec;
 
   const liveJob: VenueScopeJob = {
     venueId,
