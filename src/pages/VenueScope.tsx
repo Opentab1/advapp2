@@ -1314,13 +1314,21 @@ function buildRooms(jobs: VenueScopeJob[], enabledPeopleCamNames: Set<string> = 
     // For snapshot cameras (done, not isLive), treat as current if completed within 5 minutes.
     // Only count occupancy when there is an ENABLED camera explicitly configured for people_count —
     // prevents stale snapshots from disabled cameras from polluting the occupancy hero stat.
-    const camLabel = (best.cameraLabel || label).toLowerCase();
+    const camLabel  = (best.cameraLabel || label).toLowerCase();
+    const roomLabel = label.toLowerCase();
     const hasPeopleCam = enabledPeopleCamNames.size === 0
       ? isPeople  // no camera list → fall back to job mode
-      : Array.from(enabledPeopleCamNames).some(n => n.includes(camLabel) || camLabel.includes(n));
+      // Check both cameraLabel (camera_id like "ch2_bar") and room label
+      // ("ch2 — bar" from clipLabel) so underscore IDs still match camera names.
+      : Array.from(enabledPeopleCamNames).some(n =>
+          n.includes(camLabel) || camLabel.includes(n) ||
+          n.includes(roomLabel) || roomLabel.includes(n)
+        );
     const entriesExits  = Math.max(0, (best.totalEntries ?? 0) - (best.totalExits ?? 0));
     const jobAge = Date.now() / 1000 - (best.finishedAt ?? best.updatedAt ?? best.createdAt ?? 0);
-    const isRecentSnapshot = isPeople && hasPeopleCam && !best.isLive && jobAge < 300 && (best.peakOccupancy ?? 0) > 0;
+    // Keep snapshot visible for 25 min (20-min interval + 5-min buffer) so
+    // occupancy never goes dark between snapshots.
+    const isRecentSnapshot = isPeople && hasPeopleCam && !best.isLive && jobAge < 1500 && (best.peakOccupancy ?? 0) > 0;
     const currentOcc    = (best.isLive && hasPeopleCam)
       ? (entriesExits > 0 ? entriesExits : (best.peakOccupancy ?? 0))
       : isRecentSnapshot ? (best.peakOccupancy ?? 0) : 0;
