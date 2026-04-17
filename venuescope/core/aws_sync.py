@@ -594,6 +594,14 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         total_turns_live = sum(d.get("turn_count", 0) for d in tables_data.values())
         update_expr += ", totalTurns = :tt"
         expr_vals[":tt"] = {"N": str(total_turns_live)}
+        dwells_live = [d.get("avg_dwell_min", 0) for d in tables_data.values() if d.get("avg_dwell_min")]
+        if dwells_live:
+            update_expr += ", avgDwellMin = :adm"
+            expr_vals[":adm"] = {"N": str(round(sum(dwells_live) / len(dwells_live), 1))}
+        resps_live = [d.get("avg_response_sec") for d in tables_data.values() if d.get("avg_response_sec") is not None]
+        if resps_live:
+            update_expr += ", avgResponseSec = :ars"
+            expr_vals[":ars"] = {"N": str(round(sum(resps_live) / len(resps_live), 1))}
 
     # table_service mode live leaderboard
     svc_leaderboard = summary.get("tableVisitsByStaff", [])

@@ -71,6 +71,7 @@ function _itemToJob(item: Record<string, Record<string, unknown>>): VenueScopeJo
     avgResponseSec:  n('avgResponseSec'),
     avgDwellMin:     n('avgDwellMin'),
     tableDetail:     s('tableDetail'),
+    liveTableOccupancy: s('liveTableOccupancy'),
     uniqueStaff:     n('uniqueStaff'),
     peakHeadcount:   n('peakHeadcount'),
     avgIdlePct:      n('avgIdlePct'),
@@ -190,6 +191,7 @@ export interface VenueScopeJob {
   avgResponseSec?: number;
   avgDwellMin?: number;
   tableDetail?: string; // JSON: {tableId: {label, turn_count, avg_dwell_min, ...}}
+  liveTableOccupancy?: string; // JSON: {tableId: {currently_occupied, turn_count, avg_dwell_min, avg_response_sec}}
   // Staff activity
   uniqueStaff?: number;
   peakHeadcount?: number;

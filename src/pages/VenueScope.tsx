@@ -2109,8 +2109,30 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
               .sort((a, b) => b.dwellMin - a.dwellMin);
           }
         } catch { /* ignore */ }
+
+        // Parse live occupancy for real-time "currently seated" indicators
+        type LiveOccRow = { label: string; occupied: boolean };
+        let liveOccRows: LiveOccRow[] = [];
+        try {
+          const lto = room.job?.liveTableOccupancy ? JSON.parse(room.job.liveTableOccupancy) : null;
+          if (lto) {
+            liveOccRows = Object.entries(lto as Record<string, { label?: string; currently_occupied?: boolean }>)
+              .map(([id, d]) => ({ label: d.label ?? id, occupied: d.currently_occupied ?? false }));
+          }
+        } catch { /* ignore */ }
+        const occupiedCount = liveOccRows.filter(r => r.occupied).length;
+
         return (
           <div className="space-y-2">
+            {/* Live occupancy banner — only shown when zones are detected */}
+            {room.isLive && liveOccRows.length > 0 && (
+              <div className={`rounded-xl px-3 py-2 flex items-center gap-2 text-[11px] font-medium ${occupiedCount > 0 ? 'bg-green-900/40 text-green-300' : 'bg-whoop-bg text-text-muted'}`}>
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${occupiedCount > 0 ? 'bg-green-400 animate-pulse' : 'bg-gray-600'}`} />
+                {occupiedCount > 0
+                  ? `${occupiedCount} of ${liveOccRows.length} table${liveOccRows.length !== 1 ? 's' : ''} occupied`
+                  : `${liveOccRows.length} table${liveOccRows.length !== 1 ? 's' : ''} — all clear`}
+              </div>
+            )}
             <div className="grid grid-cols-3 gap-2">
               <div className="bg-whoop-bg rounded-xl p-3 text-center">
                 <div className="text-xl font-bold text-white">
