@@ -395,12 +395,41 @@ def run_job(job_id: str):
         # occupancy — lightweight runner has no concept of bounding boxes or track IDs.
         _needs_yolo = bool(set(extra_config.get("extra_modes", [])) &
                            {"table_turns", "table_service"})
-        if mode == "people_count" and not extra_config.get("force_yolo") and not _needs_yolo:
+        _use_lightweight_people = (
+            mode == "people_count"
+            and not extra_config.get("force_yolo")
+            and not _needs_yolo
+        )
+        # Route table_turns primary mode to MOG2 background subtraction runner
+        # (no YOLO) when running on CPU-only RTSP streams. ~10x faster than YOLO
+        # with equivalent accuracy for slow-moving seated people.
+        _use_lightweight_tables = (
+            mode == "table_turns"
+            and not extra_config.get("force_yolo")
+            and job.get("source_type") == "rtsp"
+        )
+
+        if _use_lightweight_people:
             from core.lightweight_runner import run_lightweight
             log.info(f"Using lightweight counter (no YOLO) for job {job_id}")
             summary = run_lightweight(job, extra_config, result_dir, cb,
                                       live_cb if is_continuous else lambda s,e: None,
                                       is_continuous)
+        elif _use_lightweight_tables:
+            from core.table_turns_runner import run_table_turns_lightweight
+            log.info(f"Using lightweight table-turns runner (MOG2, no YOLO) for job {job_id}")
+            # Restore cross-segment table state if available
+            prior_tbl = _load_camera_state(f"{camera_id}_tables") if camera_id else {}
+            if prior_tbl:
+                extra_config["prior_table_state"] = prior_tbl
+            summary = run_table_turns_lightweight(
+                job, extra_config, result_dir, cb,
+                live_cb if is_continuous else lambda s, e: None,
+                is_continuous,
+            )
+            # Persist table state for next segment
+            if camera_id and summary.get("_table_state"):
+                _save_camera_state(f"{camera_id}_tables", summary["_table_state"])
         else:
             proc = VenueProcessor(
                 job_id        = job_id,

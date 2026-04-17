@@ -599,6 +599,12 @@ class VenueProcessor:
                            (self.source_type == "rtsp" or
                             self.ec.get("enhance_strength", "off") in ("light", "strong")))
         self._roi_boxes: Optional[tuple] = None   # (x1, y1, x2, y2) in pixels, set lazily
+        # table_turns ROI: crop to bounding box of all table zones before YOLO.
+        # Seated people fill more of the 320px input → better detection + faster inference.
+        self._table_roi_crop = (self.mode == "table_turns" and
+                                bool(self.ec.get("tables")) and
+                                self.source_type == "rtsp" and not _has_gpu)
+        self._table_roi_boxes: Optional[tuple] = None
 
         self._max_seconds = float(self.ec.get("max_seconds", 0))  # 0 = unlimited
 
@@ -1060,6 +1066,31 @@ class VenueProcessor:
                         self._roi_boxes = (_rx1, _ry1, _rx2, _ry2)
                 if self._roi_boxes:
                     _rx1, _ry1, _rx2, _ry2 = self._roi_boxes
+                    _roi_offset_x = _rx1
+                    _roi_offset_y = _ry1
+                    frame = frame[_ry1:_ry2, _rx1:_rx2]
+
+            # ROI crop for table_turns — bounding box of all table zones (5% padding)
+            # Seated people appear much larger in the 320px input → better detection.
+            if self._table_roi_crop:
+                if self._table_roi_boxes is None:
+                    _cur_H, _cur_W = frame.shape[:2]
+                    _all_tpts = []
+                    for _tz in self.ec.get("tables", []):
+                        for _tp in _tz.get("polygon", []):
+                            _all_tpts.append((_tp[0] * _cur_W, _tp[1] * _cur_H))
+                    if _all_tpts:
+                        _pad = 0.05
+                        _txs = [p[0] for p in _all_tpts]
+                        _tys = [p[1] for p in _all_tpts]
+                        self._table_roi_boxes = (
+                            max(0,       int(min(_txs) - _pad * _cur_W)),
+                            max(0,       int(min(_tys) - _pad * _cur_H)),
+                            min(_cur_W,  int(max(_txs) + _pad * _cur_W)),
+                            min(_cur_H,  int(max(_tys) + _pad * _cur_H)),
+                        )
+                if self._table_roi_boxes:
+                    _rx1, _ry1, _rx2, _ry2 = self._table_roi_boxes
                     _roi_offset_x = _rx1
                     _roi_offset_y = _ry1
                     frame = frame[_ry1:_ry2, _rx1:_rx2]
