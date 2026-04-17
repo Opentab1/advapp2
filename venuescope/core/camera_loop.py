@@ -192,6 +192,14 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
     last_occupancy_t = now - ((now - _cam_offset) % OCCUPANCY_INTERVAL)
     log.info(f"[camera_loop] Starting loop for '{camera_name}' ({camera_id}) "
              f"(schedule offset: {_cam_offset}s within {OCCUPANCY_INTERVAL//60}min window)")
+    # Track the last job we launched so we can give it a startup grace period.
+    # On a loaded CPU, YOLO jobs can take 20-30s to open the stream and report
+    # their first heartbeat. Without this, camera_loop sees the job as "failed"
+    # (because it was just-created and got caught by worker startup cleanup) and
+    # relaunches, creating duplicate processes.
+    _last_launched_job_id: str = ""
+    _last_launch_t: float      = 0.0
+    _LAUNCH_GRACE_SEC          = 45   # seconds to wait after launch before declaring failure
 
 
     while not stop_event.is_set():
@@ -221,6 +229,19 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
                     stop_event.wait(10)
                     continue
                 if recent["status"] == "failed":
+                    # Grace period: if we just launched this job, don't immediately
+                    # declare it failed. On a loaded box, YOLO takes 20-30s to start
+                    # and the job can get cancelled by worker startup cleanup before it
+                    # even runs — without this guard, camera_loop relaunches instantly
+                    # and creates duplicate YOLO processes.
+                    secs_since_launch = time.time() - _last_launch_t
+                    if (recent["job_id"] == _last_launched_job_id
+                            and secs_since_launch < _LAUNCH_GRACE_SEC):
+                        log.debug(f"[camera_loop] '{camera_name}' job {recent['job_id']} "
+                                  f"shows failed but was just launched {secs_since_launch:.0f}s ago "
+                                  f"— holding ({_LAUNCH_GRACE_SEC - secs_since_launch:.0f}s grace remaining)")
+                        stop_event.wait(5)
+                        continue
                     _consecutive_fails = getattr(stop_event, "_cam_fails", 0) + 1
                     stop_event._cam_fails = _consecutive_fails
                     # Exponential backoff: 15s, 30s, 60s, 120s, 240s — capped at 300s.
@@ -302,7 +323,9 @@ def _run_camera_loop(cam: dict, stop_event: threading.Event):
             stop_event._cam_fails = 0
             # Launch next segment (or continuous job)
             seg_num += 1
-            _launch_segment(effective, seg_num)
+            launched_id = _launch_segment(effective, seg_num)
+            _last_launched_job_id = launched_id or ""
+            _last_launch_t = time.time()
 
             # YOLO cameras always run continuously — ignore DDB segment_seconds /
             # interval_seconds (those were set for old people_count throttling and

@@ -1,33 +1,38 @@
 [Unit]
 Description=VenueScope Worker Daemon
-Documentation=https://github.com/Opentab1/advapp2
 After=network-online.target
 Wants=network-online.target
-# Restart automatically if the process dies for any reason
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/wedid/venuescope
-ExecStart=/usr/bin/python3 /root/wedid/venuescope/worker_daemon.py
+WorkingDirectory=/opt/venuescope/venuescope
+EnvironmentFile=/opt/venuescope/venuescope/.env
+# Kill all stale worker_daemon processes from previous sessions before starting.
+# This prevents orphaned YOLO processes from surviving restarts and doubling load.
+ExecStartPre=/opt/venuescope/kill_stale_workers.sh
+ExecStartPre=/bin/sleep 1
+ExecStart=/opt/venuescope/venv/bin/python worker_daemon.py
 Restart=always
-RestartSec=5
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=10
+OOMScoreAdjust=500
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=15
 
-# Environment — add AWS credentials and venue config here
-# Copy from your .env file or set inline:
-EnvironmentFile=-/root/wedid/venuescope/.env
+# Prevent PyTorch from spawning dozens of threads per YOLO process.
+# On a CPU-only server, multi-threaded inference causes thread contention
+# (load avg 15+ with only 4 jobs). Single-threaded inference keeps load ~4-8.
+Environment=OMP_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=NUMEXPR_NUM_THREADS=1
 Environment=PYTHONUNBUFFERED=1
 Environment=YOLO_TELEMETRY=False
 Environment=ULTRALYTICS_AUTOINSTALL=False
 
-# Resource limits
-TimeoutStartSec=60
-TimeoutStopSec=30
-KillSignal=SIGTERM
-
-# Logging — view with: journalctl -u venuescope-worker -f
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=venuescope-worker
