@@ -46,6 +46,10 @@ _TRACK_TIMEOUT  = 3.0  # seconds without detection before track is dropped
 # Live push interval (seconds)
 _LIVE_INTERVAL  = 5.0
 
+# Process every Nth frame. Seated people barely move — 3 effective FPS from
+# a 15-FPS stream is more than sufficient. Reduces CPU ~5x vs full-rate.
+_PROCESS_EVERY_N = 5
+
 
 # ─── Centroid tracker ─────────────────────────────────────────────────────────
 
@@ -224,12 +228,15 @@ def run_table_turns_lightweight(
             "video_seconds": 0,
         }
 
+    # Effective FPS seen by the tracker (after frame skipping)
+    effective_fps = fps / _PROCESS_EVERY_N
+
     tracker = TableTurnTracker(
         tables        = table_zones,
         occupied_conf = occ_conf,
         empty_conf    = emp_conf,
         min_dwell_sec = min_dwell,
-        fps           = fps,
+        fps           = effective_fps,
     )
 
     # Restore cross-segment state (active sessions survive worker restart)
@@ -254,8 +261,20 @@ def run_table_turns_lightweight(
         masks_per_zone[tz.table_id]      = _build_mask(tz.polygon_px, H, W)
         centroid_trackers[tz.table_id]   = _CentroidTracker()
 
+    # Downscale factor for MOG2 processing. Full 1080p is expensive; 540p is
+    # sufficient for blob detection of seated people from overhead cameras.
+    _SCALE = 0.5
+    _SW = max(1, int(W * _SCALE))
+    _SH = max(1, int(H * _SCALE))
+
+    # Rebuild masks at reduced resolution
+    for tz in table_zones:
+        scaled_poly = [(x * _SCALE, y * _SCALE) for x, y in tz.polygon_px]
+        masks_per_zone[tz.table_id] = _build_mask(scaled_poly, _SH, _SW)
+
     # ── Main processing loop ─────────────────────────────────────────────────
     frame_idx      = 0
+    proc_idx       = 0   # count of actually-processed frames
     start_wall     = time.time()
     t_sec          = 0.0
     last_live_push = 0.0
@@ -282,6 +301,16 @@ def run_table_turns_lightweight(
         if os.environ.get("_VENUESCOPE_STOP"):
             break
 
+        # Frame skip — decode all frames but only run MOG2 every N frames.
+        # This dramatically reduces CPU since seated people move slowly.
+        if frame_idx % _PROCESS_EVERY_N != 1:
+            continue
+
+        proc_idx += 1
+
+        # Downscale frame for processing
+        small = cv2.resize(frame, (_SW, _SH), interpolation=cv2.INTER_LINEAR)
+
         # ── Per-zone detection ───────────────────────────────────────────────
         all_centroids: List[Tuple[float, float]] = []
         all_track_ids: List[int] = []
@@ -291,23 +320,25 @@ def run_table_turns_lightweight(
             zmask = masks_per_zone[tz.table_id]
             zctrack = centroid_trackers[tz.table_id]
 
-            fg = zmog.apply(frame, learningRate=_MOG2_LEARN_RATE)
+            fg = zmog.apply(small, learningRate=_MOG2_LEARN_RATE)
             # Threshold: shadows (127) → 0, foreground (255) → 255
             _, fg_bin = cv2.threshold(fg, 200, 255, cv2.THRESH_BINARY)
 
             zone_centroids = _detect_centroids(fg_bin, zmask)
-            tracked = zctrack.update(zone_centroids, t_sec)
+            # Scale centroids back to original frame coordinates
+            zone_centroids_full = [(cx / _SCALE, cy / _SCALE) for cx, cy in zone_centroids]
+            tracked = zctrack.update(zone_centroids_full, t_sec)
 
             for tid, cx, cy in tracked:
                 all_centroids.append((cx, cy))
                 all_track_ids.append(tid)
 
-        # Feed TableTurnTracker
+        # Feed TableTurnTracker (use proc_idx so conf_frames counts processed frames)
         if all_centroids:
             c_arr = np.array(all_centroids, dtype=np.float32)
-            tracker.update(frame_idx, t_sec, c_arr, all_track_ids)
+            tracker.update(proc_idx, t_sec, c_arr, all_track_ids)
         else:
-            tracker.update(frame_idx, t_sec, np.empty((0, 2), dtype=np.float32), [])
+            tracker.update(proc_idx, t_sec, np.empty((0, 2), dtype=np.float32), [])
 
         # ── Progress ────────────────────────────────────────────────────────
         if frame_idx % 150 == 0:
