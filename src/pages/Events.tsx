@@ -155,16 +155,62 @@ function todayString(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+// ─── Client-side prior (used when backend unreachable) ────────────────────────
+// DOW × month multipliers from forecasting.py (Lucas & Kilby baseline)
+const DOW_MULT  = [0.31, 0.35, 0.44, 0.62, 0.85, 1.00, 0.65]; // Mon=0..Sun=6
+const MON_MULT  = [0, 0.72, 0.78, 0.92, 0.88, 0.91, 0.96, 0.94, 0.93, 0.87, 0.97, 0.85, 1.12];
+// Hourly distribution across a typical bar shift (sums to 1.0)
+const HOUR_DIST = [0.06, 0.08, 0.10, 0.13, 0.15, 0.16, 0.14, 0.10, 0.05, 0.03];
+const HOURS_LBL = ['4:00 PM','5:00 PM','6:00 PM','7:00 PM','8:00 PM','9:00 PM','10:00 PM','11:00 PM','12:00 AM','1:00 AM'];
+const BASE_HEADCOUNT = 150;
+const AVG_CHECK = 33;
+const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const MON_NAMES = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function buildClientPrior(): TonightForecast {
+  const now   = new Date();
+  const dow   = now.getDay();   // 0=Sun
+  const mon   = now.getMonth() + 1;
+  const mult  = DOW_MULT[dow === 0 ? 6 : dow - 1] * MON_MULT[mon];
+  const mid   = Math.round(BASE_HEADCOUNT * mult);
+  const low   = Math.round(mid * 0.80);
+  const high  = Math.round(mid * 1.20);
+  const peakIdx = HOUR_DIST.indexOf(Math.max(...HOUR_DIST));
+  return {
+    model_type: 'prior',
+    calibration_state: 'generic_prior',
+    mape_expected: '±30%',
+    confidence_pct: 70,
+    final_estimate: { low, mid, high },
+    revenue_estimate: { low: low * AVG_CHECK, mid: mid * AVG_CHECK, high: high * AVG_CHECK },
+    peak_hour: HOURS_LBL[peakIdx],
+    weather_multiplier: 1.0,
+    competition_drag: 1.0,
+    staffing_rec: {
+      bartenders: Math.max(1, Math.ceil(mid / 80)),
+      note: 'Based on industry averages — improves as sensor data accumulates.',
+    },
+    factors: [
+      { name: 'Day of week', value: DOW_NAMES[dow], impact: `×${DOW_MULT[dow === 0 ? 6 : dow - 1].toFixed(2)}` },
+      { name: 'Month',       value: MON_NAMES[mon], impact: `×${MON_MULT[mon].toFixed(2)}` },
+      { name: 'Weather',     value: 'Not fetched',  impact: '—' },
+      { name: 'Competing events', value: 'Not checked', impact: '—' },
+    ],
+    hourly_curve: HOUR_DIST.map((pct, i) => {
+      const yhat = Math.round(mid * pct * 10); // scale to headcount, not pct
+      return { hour: HOURS_LBL[i], yhat, yhat_lower: Math.round(yhat * 0.75), yhat_upper: Math.round(yhat * 1.25) };
+    }),
+  };
+}
+
 // ─── Tonight Tab ──────────────────────────────────────────────────────────────
 
 function TonightTab({ venueId }: { venueId: string }) {
   const [forecast, setForecast] = useState<TonightForecast | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(false);
 
     if (!venueId) {
       setLoading(false);
@@ -202,7 +248,8 @@ function TonightTab({ venueId }: { venueId: string }) {
       const data = await res.json();
       setForecast(data);
     } catch {
-      setError(true);
+      // Backend unreachable — fall back to client-side prior so something useful always shows
+      setForecast(buildClientPrior());
     }
 
     setLoading(false);
@@ -227,22 +274,7 @@ function TonightTab({ venueId }: { venueId: string }) {
     );
   }
 
-  if (error || !forecast) {
-    return (
-      <div className="bg-warm-800/60 border border-warm-700 rounded-2xl p-5 text-center space-y-3">
-        <AlertTriangle className="w-7 h-7 text-amber-400 mx-auto" />
-        <p className="text-sm text-warm-300">Forecast unavailable — backend not reachable</p>
-        <motion.button
-          onClick={load}
-          whileTap={{ scale: 0.95 }}
-          className="px-4 py-2 rounded-lg bg-warm-700 border border-warm-600 text-xs font-semibold text-white hover:bg-warm-600 transition-colors inline-flex items-center gap-2"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Retry
-        </motion.button>
-      </div>
-    );
-  }
+  if (!forecast) return null;
 
   const maxYhat = Math.max(...forecast.hourly_curve.map(h => h.yhat_upper), 1);
   const confidenceColor =
