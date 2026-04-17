@@ -88,6 +88,7 @@ function _itemToJob(item: Record<string, Record<string, unknown>>): VenueScopeJo
     peopleOut:       n('peopleOut'),
     shrinkageOz:     n('shrinkageOz'),
     liveTheftEvents: s('liveTheftEvents'),
+    serveSnapshots:  s('serveSnapshots'),
   } as VenueScopeJob;
 }
 
@@ -214,6 +215,8 @@ export interface VenueScopeJob {
   liveTheftEvents?: string;
   // Shrinkage (oz poured above expected)
   shrinkageOz?: number;
+  // Serve frame snapshots: JSON {t_sec: presigned_url}
+  serveSnapshots?: string;
   // POS reconciliation
   posProvider?: string;
   posRevenue?: number;
@@ -256,6 +259,7 @@ const LIST_JOBS_QUERY = `
         isLive roomLabel bartenderBreakdown elapsedSec
         shrinkageOz liveTheftEvents
         posProvider posRevenue posItemCount posCameraCount posVariancePct posVarianceDrinks posLostRevenue tableVisitsByStaff
+        serveSnapshots
       }
       nextToken
     }
