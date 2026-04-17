@@ -38,7 +38,7 @@ export function DashboardLayout({
   onOpenAlertSettings,
 }: DashboardLayoutProps) {
   return (
-    <div className="min-h-screen bg-warm-900 flex flex-col">
+    <div className="mobile-full-height bg-warm-900 flex flex-col">
       {/* Minimal Header */}
       <Header
         isConnected={isConnected}
@@ -47,14 +47,14 @@ export function DashboardLayout({
         onTabChange={onTabChange}
         onOpenAlertSettings={onOpenAlertSettings}
       />
-      
+
       {/* Main content area */}
-      <div className="flex flex-1">
+      <div className="flex flex-1 overflow-hidden">
         {/* Desktop sidebar nav */}
         <TabNav activeTab={activeTab} onTabChange={onTabChange} />
-        
+
         {/* Content with smooth transitions */}
-        <main className="flex-1 overflow-auto pb-20 lg:pb-6">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden momentum-scroll pb-nav lg:pb-6">
           {/* Mobile: full width with padding, Desktop: centered with max-width */}
           <div className="w-full max-w-lg mx-auto px-4 py-6 lg:max-w-4xl lg:px-8 xl:max-w-5xl">
             <AnimatePresence mode="wait">
