@@ -120,8 +120,16 @@ function jobTs(j: VenueScopeJob): number {
   return j.finishedAt || j.updatedAt || j.createdAt || 0;
 }
 
-function filterJobs(jobs: VenueScopeJob[], period: Period, bh: BizHours | null | undefined): VenueScopeJob[] {
+function filterJobs(jobs: VenueScopeJob[], period: Period, bh: BizHours | null | undefined, isDemo = false): VenueScopeJob[] {
   if (period === 'all') return jobs;
+  if (isDemo && period === 'today') {
+    // Demo bar is always open — "Today" = last 8 hours so the live shift is always visible
+    const now = Date.now() / 1000;
+    return jobs.filter(j => {
+      const t = jobTs(j) || j.createdAt || 0;
+      return t >= now - 8 * 3600;
+    });
+  }
   const { start, end } = periodBounds(period, bh);
   return jobs.filter(j => { const t = jobTs(j); return t >= start && t < end; });
 }
@@ -1100,7 +1108,7 @@ export function Analytics() {
   const [period, setPeriod]           = useState<Period>('today');
   const [allJobs, setAllJobs]         = useState<VenueScopeJob[]>([]);
   const [loading, setLoading]         = useState(true);
-  const [avgDrinkPrice, setAvgDrinkPrice] = useState(0);
+  const [avgDrinkPrice, setAvgDrinkPrice] = useState(() => isDemo ? 14 : 0);
   // Business hours from venue Settings — drives "Today" / "Yesterday" window boundaries.
   // Initialise synchronously from cache so first render is instant; refreshed from cloud below.
   const [businessHours, setBusinessHours] = useState<BizHours | null>(
@@ -1120,7 +1128,8 @@ export function Analytics() {
       const raw = isDemo
         ? generateDemoVenueScopeJobs()
         : await venueScopeService.listJobs(venueId, 500);
-      setAllJobs(raw.filter(j => !j.isLive && j.status !== 'running'));
+      // For demo: include the live job so "Today" tab shows the ongoing shift
+      setAllJobs(isDemo ? raw : raw.filter(j => !j.isLive && j.status !== 'running'));
     } finally {
       setLoading(false);
     }
@@ -1138,7 +1147,7 @@ export function Analytics() {
     }).catch(() => {});
   }, [venueId]);
 
-  const jobs = useMemo(() => filterJobs(allJobs, period, businessHours), [allJobs, period, businessHours]);
+  const jobs = useMemo(() => filterJobs(allJobs, period, businessHours, isDemo), [allJobs, period, businessHours, isDemo]);
 
   return (
     <div className="space-y-4 pb-24">
