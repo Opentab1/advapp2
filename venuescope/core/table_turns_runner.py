@@ -341,7 +341,7 @@ def run_table_turns_lightweight(
             tracker.update(proc_idx, t_sec, np.empty((0, 2), dtype=np.float32), [])
 
         # ── Progress ────────────────────────────────────────────────────────
-        if frame_idx % 150 == 0:
+        if proc_idx % 30 == 0:
             if total_frames_hint > 0 and max_frames == 0:
                 pct = min(95.0, 100.0 * frame_idx / total_frames_hint)
             elif max_frames > 0:
