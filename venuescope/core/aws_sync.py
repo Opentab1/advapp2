@@ -273,6 +273,7 @@ def upload_serve_snapshot(frame_jpg: bytes, job_id: str, t_sec: float,
             Params={"Bucket": bucket, "Key": s3_key},
             ExpiresIn=_SNAP_PRESIGN_SECONDS,
         )
+        print(f"[aws_sync] Snapshot uploaded t={t_sec:.1f}s key={s3_key} presigned_ok=True", flush=True)
         return url
     except Exception as e:
         print(f"[aws_sync] Snapshot upload failed t={t_sec:.1f}s: {e}", flush=True)
@@ -455,6 +456,10 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     _ca = _wall_start  # createdAt = worker start; React adds scaled t_sec to get wall time
     update_expr += ", createdAt = :ca"
     expr_vals[":ca"] = {"N": str(_ca)}
+    import time as _t
+    print(f"[aws_sync] push delivery_rate={delivery_rate:.3f} "
+          f"createdAt_EST={_t.strftime('%H:%M:%S', _t.gmtime(_ca - 3600*4))} "
+          f"total_drinks={total_drinks} job={job_id[:8]}", flush=True)
 
     # Write clipLabel + cameraLabel on first push so React can display the camera name
     # immediately — these are immutable for the job's lifetime, so if_not_exists is safe.
