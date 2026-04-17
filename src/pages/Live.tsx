@@ -49,6 +49,7 @@ import venueScopeService from '../services/venuescope.service';
 import venueSettingsService from '../services/venue-settings.service';
 import staffService from '../services/staff.service';
 import { pulseStore } from '../stores/pulseStore';
+import { isDemoAccount } from '../utils/demoData';
 import type { SportsGame } from '../types';
 
 // Common components
@@ -389,6 +390,19 @@ export function Live() {
   useEffect(() => {
     if (!venueId) return;
 
+    // Demo account: inject ring data directly — no real jobs in DB
+    if (isDemoAccount(venueId)) {
+      const dow = new Date().getDay();
+      // Realistic DOW-aware avg drinks for a 500-cap venue
+      const dowDrinkAvg: Record<number, number> = { 0: 72, 1: 58, 2: 66, 3: 94, 4: 148, 5: 162, 6: 131 };
+      setAvgDrinksForDow(dowDrinkAvg[dow] ?? 120);
+      setVenueCapacity(500);
+      setAvgDwellToday(47);
+      setAvgDwellLastWeekSameDay(44);
+      setLatestJobMeta({ topBartender: 'Marcus', unrungDrinks: 4, avgDrinkPrice: 14 });
+      return;
+    }
+
     venueScopeService.listJobs(venueId, 200).then(jobs => {
       const nonLive = jobs.filter(j => !j.isLive && (j.status === 'done' || j.status === 'completed'));
 
@@ -574,7 +588,7 @@ export function Live() {
         const hasSensor  = !!pulseData.sensorData;
         const hasVS      = pulseData.hasVenueScopeData;
         const hasReviews = !!pulseData.reviews;
-        if (hasVS) return null;
+        if (hasVS || isDemoAccount(venueId)) return null;
         return (
           <motion.div
             initial={{ opacity: 0, y: -8 }}

@@ -15,6 +15,118 @@ import {
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import bartenderProfilesService, { BartenderProfile } from '../services/bartender-profiles.service';
+import { isDemoAccount } from '../utils/demoData';
+
+// ── Demo profiles ──────────────────────────────────────────────────────────────
+
+function makeDemoBartenderProfiles(venueId: string): BartenderProfile[] {
+  const now = new Date();
+
+  function shiftDate(daysAgo: number): string {
+    const d = new Date(now);
+    d.setDate(d.getDate() - daysAgo);
+    d.setHours(22, 0, 0, 0);
+    return d.toISOString();
+  }
+
+  // Marcus Williams — top performer, 18 shifts, clean
+  const marcus: BartenderProfile = {
+    venueId,
+    bartenderId: 'demo-marcus',
+    name: 'Marcus',
+    displayName: 'Marcus Williams',
+    totalShifts: 18,
+    totalDrinks: 389,
+    totalHours: 126,
+    avgDrinksPerHour: 11.4,
+    peakDrinksPerHour: 14.7,
+    theftFlags: 0,
+    lastSeen: shiftDate(1),
+    avgIdlePct: 14,
+    tableVisits: 127,
+    createdAt: shiftDate(90),
+    updatedAt: shiftDate(1),
+    shiftHistory: [
+      { date: shiftDate(1),  jobId: 'demo-100', drinks: 91, perHour: 11.4, durationHours: 8.0, hasTheft: false, avgIdlePct: 12, tableVisits: 14 },
+      { date: shiftDate(2),  jobId: 'demo-202', drinks: 83, perHour: 12.1, durationHours: 6.9, hasTheft: false, avgIdlePct: 11, tableVisits: 12 },
+      { date: shiftDate(3),  jobId: 'demo-207', drinks: 38, perHour:  9.5, durationHours: 4.0, hasTheft: false, avgIdlePct: 16, tableVisits:  8 },
+      { date: shiftDate(4),  jobId: 'demo-209', drinks: 35, perHour:  8.8, durationHours: 4.0, hasTheft: false, avgIdlePct: 18, tableVisits:  7 },
+      { date: shiftDate(5),  jobId: 'demo-214', drinks: 57, perHour: 11.4, durationHours: 5.0, hasTheft: false, avgIdlePct: 13, tableVisits: 11 },
+      { date: shiftDate(7),  jobId: 'demo-h07', drinks: 88, perHour: 12.6, durationHours: 7.0, hasTheft: false, avgIdlePct: 12, tableVisits: 13 },
+      { date: shiftDate(9),  jobId: 'demo-h09', drinks: 44, perHour: 11.0, durationHours: 4.0, hasTheft: false, avgIdlePct: 15, tableVisits:  9 },
+      { date: shiftDate(10), jobId: 'demo-h10', drinks: 76, perHour: 12.7, durationHours: 6.0, hasTheft: false, avgIdlePct: 11, tableVisits: 12 },
+      { date: shiftDate(11), jobId: 'demo-h11', drinks: 29, perHour:  9.7, durationHours: 3.0, hasTheft: false, avgIdlePct: 17, tableVisits:  7 },
+      { date: shiftDate(12), jobId: 'demo-h12', drinks: 81, perHour: 13.5, durationHours: 6.0, hasTheft: false, avgIdlePct: 10, tableVisits: 14 },
+      { date: shiftDate(14), jobId: 'demo-h14', drinks: 92, perHour: 14.7, durationHours: 6.3, hasTheft: false, avgIdlePct: 10, tableVisits: 15 },
+      { date: shiftDate(16), jobId: 'demo-h16', drinks: 54, perHour: 10.8, durationHours: 5.0, hasTheft: false, avgIdlePct: 14, tableVisits: 10 },
+      { date: shiftDate(17), jobId: 'demo-h17', drinks: 67, perHour: 11.2, durationHours: 6.0, hasTheft: false, avgIdlePct: 13, tableVisits: 11 },
+      { date: shiftDate(18), jobId: 'demo-h18', drinks: 49, perHour: 12.3, durationHours: 4.0, hasTheft: false, avgIdlePct: 15, tableVisits:  9 },
+    ],
+  };
+
+  // Priya Patel — solid #2 performer, 16 shifts, clean
+  const priya: BartenderProfile = {
+    venueId,
+    bartenderId: 'demo-priya',
+    name: 'Priya',
+    displayName: 'Priya Patel',
+    totalShifts: 16,
+    totalDrinks: 312,
+    totalHours: 108,
+    avgDrinksPerHour: 8.6,
+    peakDrinksPerHour: 11.2,
+    theftFlags: 0,
+    lastSeen: shiftDate(1),
+    avgIdlePct: 22,
+    tableVisits: 98,
+    createdAt: shiftDate(90),
+    updatedAt: shiftDate(1),
+    shiftHistory: [
+      { date: shiftDate(1),  jobId: 'demo-100', drinks: 67, perHour:  8.4, durationHours: 8.0, hasTheft: false, avgIdlePct: 20, tableVisits: 11 },
+      { date: shiftDate(2),  jobId: 'demo-203', drinks: 44, perHour:  8.8, durationHours: 5.0, hasTheft: false, avgIdlePct: 22, tableVisits:  9 },
+      { date: shiftDate(2),  jobId: 'demo-201', drinks: 29, perHour:  9.7, durationHours: 3.0, hasTheft: false, avgIdlePct: 18, tableVisits:  7 },
+      { date: shiftDate(4),  jobId: 'demo-205', drinks: 55, perHour:  9.2, durationHours: 6.0, hasTheft: false, avgIdlePct: 21, tableVisits: 10 },
+      { date: shiftDate(5),  jobId: 'demo-207', drinks: 72, perHour: 10.3, durationHours: 7.0, hasTheft: false, avgIdlePct: 19, tableVisits: 12 },
+      { date: shiftDate(7),  jobId: 'demo-211', drinks: 79, perHour: 11.2, durationHours: 7.1, hasTheft: false, avgIdlePct: 18, tableVisits: 13 },
+      { date: shiftDate(9),  jobId: 'demo-h09', drinks: 48, perHour:  8.0, durationHours: 6.0, hasTheft: false, avgIdlePct: 23, tableVisits:  9 },
+      { date: shiftDate(10), jobId: 'demo-h10', drinks: 61, perHour:  8.7, durationHours: 7.0, hasTheft: false, avgIdlePct: 22, tableVisits: 10 },
+      { date: shiftDate(11), jobId: 'demo-h11', drinks: 34, perHour:  8.5, durationHours: 4.0, hasTheft: false, avgIdlePct: 24, tableVisits:  7 },
+      { date: shiftDate(12), jobId: 'demo-h12', drinks: 58, perHour:  9.7, durationHours: 6.0, hasTheft: false, avgIdlePct: 20, tableVisits: 10 },
+      { date: shiftDate(14), jobId: 'demo-h14', drinks: 71, perHour: 10.1, durationHours: 7.0, hasTheft: false, avgIdlePct: 21, tableVisits: 11 },
+      { date: shiftDate(16), jobId: 'demo-h16', drinks: 44, perHour:  8.8, durationHours: 5.0, hasTheft: false, avgIdlePct: 23, tableVisits:  8 },
+    ],
+  };
+
+  // Jordan Lee — flagged, 10 shifts, 1 theft incident
+  const jordan: BartenderProfile = {
+    venueId,
+    bartenderId: 'demo-jordan',
+    name: 'Jordan',
+    displayName: 'Jordan Lee',
+    totalShifts: 10,
+    totalDrinks: 162,
+    totalHours: 68,
+    avgDrinksPerHour: 3.8,
+    peakDrinksPerHour: 9.1,
+    theftFlags: 1,
+    lastSeen: shiftDate(1),
+    avgIdlePct: 38,
+    tableVisits: 42,
+    createdAt: shiftDate(60),
+    updatedAt: shiftDate(1),
+    shiftHistory: [
+      { date: shiftDate(1),  jobId: 'demo-100', drinks:  4, perHour:  0.5, durationHours: 8.0, hasTheft: true,  avgIdlePct: 72, tableVisits:  2 },
+      { date: shiftDate(3),  jobId: 'demo-206', drinks: 61, perHour:  9.1, durationHours: 6.7, hasTheft: false, avgIdlePct: 24, tableVisits:  9 },
+      { date: shiftDate(5),  jobId: 'demo-208', drinks: 48, perHour:  8.0, durationHours: 6.0, hasTheft: false, avgIdlePct: 28, tableVisits:  8 },
+      { date: shiftDate(7),  jobId: 'demo-213', drinks: 38, perHour:  7.6, durationHours: 5.0, hasTheft: false, avgIdlePct: 31, tableVisits:  6 },
+      { date: shiftDate(9),  jobId: 'demo-h09', drinks: 42, perHour:  7.0, durationHours: 6.0, hasTheft: false, avgIdlePct: 33, tableVisits:  7 },
+      { date: shiftDate(11), jobId: 'demo-h11', drinks: 35, perHour:  7.0, durationHours: 5.0, hasTheft: false, avgIdlePct: 35, tableVisits:  6 },
+      { date: shiftDate(13), jobId: 'demo-h13', drinks: 28, perHour:  7.0, durationHours: 4.0, hasTheft: false, avgIdlePct: 39, tableVisits:  5 },
+    ],
+  };
+
+  return [marcus, priya, jordan];
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -452,19 +564,29 @@ export function BartenderProfiles() {
   const [sortField, setSortField]       = useState<SortField>('avgDrinksPerHour');
   const [sortAsc, setSortAsc]           = useState(false);
 
-  // Aggregate tableVisitsByStaff across all jobs stored in localStorage (demo/fallback)
-  // In production this will come from AppSync profile data
+  // Aggregate tableVisitsByStaff — demo data or production AppSync data
   const tableVisitsByStaff = useMemo<Record<string, Record<string, number>> | null>(() => {
+    if (isDemoAccount(venueId)) {
+      return {
+        'Marcus Williams': { 'Bar-A': 34, 'Bar-B': 28, 'VIP-1': 22, 'Patio': 17, 'Stage': 14, 'Entry': 12 },
+        'Priya Patel':     { 'Bar-B': 29, 'Bar-A': 24, 'Lounge': 18, 'Patio': 14, 'VIP-2': 9, 'Entry': 4 },
+        'Jordan Lee':      { 'Bar-A': 14, 'Bar-B': 11, 'Lounge': 8, 'Patio': 5, 'Entry': 4 },
+      };
+    }
     return null; // populated from job data in production
-  }, []);
+  }, [venueId]);
 
   const load = useCallback(async () => {
     if (!venueId) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const data = await bartenderProfilesService.listProfiles(venueId);
-      setProfiles(data);
+      if (isDemoAccount(venueId)) {
+        setProfiles(makeDemoBartenderProfiles(venueId));
+      } else {
+        const data = await bartenderProfilesService.listProfiles(venueId);
+        setProfiles(data);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load profiles.';
       setError(msg);

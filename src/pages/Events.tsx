@@ -790,6 +790,7 @@ export default function Events() {
   const [venueCapacity, setVenueCapacity] = useState(150);
 
   useEffect(() => {
+    if (isDemoAccount(venueId)) { setVenueCapacity(500); return; }
     const cap = venueSettingsService.getCapacity(venueId);
     if (cap) setVenueCapacity(cap);
     venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
@@ -799,6 +800,22 @@ export default function Events() {
 
   const loadEvents = async () => {
     setLoadingEvents(true);
+
+    if (isDemoAccount(venueId)) {
+      // Demo account: inject realistic concept history data
+      setConcepts([
+        { concept_type: 'Sports Watch Party',  run_count: 8,  avg_health_score: 84, verdict: 'keep',     avg_peak_occupancy: 412, avg_drink_velocity: 18.2 },
+        { concept_type: 'DJ Night',            run_count: 12, avg_health_score: 79, verdict: 'keep',     avg_peak_occupancy: 389, avg_drink_velocity: 16.4 },
+        { concept_type: 'Themed Party',        run_count: 5,  avg_health_score: 71, verdict: 'optimize', avg_peak_occupancy: 318, avg_drink_velocity: 13.7 },
+        { concept_type: 'Live Music',          run_count: 6,  avg_health_score: 68, verdict: 'optimize', avg_peak_occupancy: 297, avg_drink_velocity: 12.1 },
+        { concept_type: 'Happy Hour Special',  run_count: 14, avg_health_score: 62, verdict: 'optimize', avg_peak_occupancy: 178, avg_drink_velocity:  9.4 },
+        { concept_type: 'Comedy Night',        run_count: 3,  avg_health_score: 44, verdict: 'kill',     avg_peak_occupancy: 134, avg_drink_velocity:  6.8 },
+      ]);
+      setEvents([]);
+      setLoadingEvents(false);
+      return;
+    }
+
     try {
       const r = await fetch(`${getServerUrl()}/api/events`);
       const data = await r.json();

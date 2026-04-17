@@ -1,0 +1,319 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  VenueScope Tonight's Forecast — Lambda + API Gateway + DynamoDB + EventBridge.
+  Uses ECR container images so Prophet's 500 MB dependency tree fits.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+
+  EcrImageUri:
+    Type: String
+    Description: >
+      Full ECR image URI for the Prophet container.
+      e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/venuescope-forecast:latest
+
+  S3Bucket:
+    Type: String
+    Default: venuescope-media
+    Description: Existing S3 bucket for model artefacts and media.
+
+  ForecasterType:
+    Type: String
+    Default: prophet
+    AllowedValues: [prophet, gbm]
+
+  EventProvider:
+    Type: String
+    Default: stub
+    AllowedValues: [stub, ticketmaster, predicthq]
+
+  VenueIds:
+    Type: String
+    Default: ""
+    Description: Comma-separated venue IDs to train. Leave blank to scan DynamoDB.
+
+  TicketmasterApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+
+  PredictHQApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+
+# ── DynamoDB ──────────────────────────────────────────────────────────────────
+
+Resources:
+
+  ForecastModelsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "forecast_models_${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: venue_id
+          AttributeType: S
+        - AttributeName: trained_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: venue_id
+          KeyType: HASH
+        - AttributeName: trained_at
+          KeyType: RANGE
+      Tags:
+        - Key: Project
+          Value: VenueScope
+
+  ForecastLiveStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "forecast_live_state_${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: venue_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: venue_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: VenueScope
+
+# ── IAM ───────────────────────────────────────────────────────────────────────
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "venuescope-forecast-lambda-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ForecastLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # S3 model artefacts
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${S3Bucket}"
+                  - !Sub "arn:aws:s3:::${S3Bucket}/models/forecasts/*"
+              # DynamoDB
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt ForecastModelsTable.Arn
+                  - !GetAtt ForecastLiveStateTable.Arn
+
+# ── Lambda: forecast_training ─────────────────────────────────────────────────
+
+  ForecastTrainingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "venuescope-forecast-training-${Environment}"
+      PackageType: Image
+      Code:
+        ImageUri: !Ref EcrImageUri
+      ImageConfig:
+        Command: ["forecast_training_handler.handler"]
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: 3008        # Prophet needs ~2 GB peak during fit
+      Timeout: 900            # 15 min — enough for 90-day backfill
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref ForecastModelsTable
+          S3_BUCKET:      !Ref S3Bucket
+          FORECASTER:     !Ref ForecasterType
+          VENUE_IDS:      !Ref VenueIds
+      Tags:
+        - Key: Project
+          Value: VenueScope
+
+  # EventBridge rule: every Sunday at 02:00 UTC
+  TrainingScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "venuescope-forecast-training-weekly-${Environment}"
+      Description: "Trigger Prophet model training every Sunday 02:00 UTC"
+      ScheduleExpression: "cron(0 2 ? * SUN *)"
+      State: ENABLED
+      Targets:
+        - Id: ForecastTrainingTarget
+          Arn: !GetAtt ForecastTrainingFunction.Arn
+
+  TrainingPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ForecastTrainingFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TrainingScheduleRule.Arn
+
+# ── Lambda: forecast_serving ──────────────────────────────────────────────────
+
+  ForecastServingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "venuescope-forecast-serving-${Environment}"
+      PackageType: Image
+      Code:
+        ImageUri: !Ref EcrImageUri
+      ImageConfig:
+        Command: ["forecast_serving_handler.handler"]
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: 1024
+      Timeout: 30
+      Environment:
+        Variables:
+          DYNAMODB_TABLE:      !Ref ForecastModelsTable
+          S3_BUCKET:           !Ref S3Bucket
+          FORECASTER:          !Ref ForecasterType
+          EVENT_PROVIDER:      !Ref EventProvider
+          TICKETMASTER_API_KEY: !Ref TicketmasterApiKey
+          PREDICTHQ_API_KEY:    !Ref PredictHQApiKey
+      Tags:
+        - Key: Project
+          Value: VenueScope
+
+  # HTTP API Gateway
+  ForecastHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "venuescope-forecast-api-${Environment}"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [Content-Type, Authorization]
+
+  ForecastServingIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ForecastHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ForecastServingFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  ForecastRouteGet:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ForecastHttpApi
+      RouteKey: "GET /forecast/tonight"
+      Target: !Sub "integrations/${ForecastServingIntegration}"
+
+  ForecastRoutePost:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ForecastHttpApi
+      RouteKey: "POST /forecast/tonight"
+      Target: !Sub "integrations/${ForecastServingIntegration}"
+
+  ForecastApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ForecastHttpApi
+      StageName: "$default"
+      AutoDeploy: true
+
+  ServingPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ForecastServingFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ForecastHttpApi}/*"
+
+# ── Lambda: kalman_live ───────────────────────────────────────────────────────
+
+  KalmanLiveFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "venuescope-kalman-live-${Environment}"
+      PackageType: Image
+      Code:
+        ImageUri: !Ref EcrImageUri
+      ImageConfig:
+        Command: ["kalman_live_handler.handler"]
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: 256         # numpy only — tiny footprint
+      Timeout: 60
+      Environment:
+        Variables:
+          DYNAMODB_TABLE:   !Ref ForecastModelsTable
+          LIVE_STATE_TABLE: !Ref ForecastLiveStateTable
+          S3_BUCKET:        !Ref S3Bucket
+          VENUE_IDS:        !Ref VenueIds
+      Tags:
+        - Key: Project
+          Value: VenueScope
+
+  # EventBridge rule: every 15 minutes
+  KalmanScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "venuescope-kalman-live-15min-${Environment}"
+      Description: "Run Kalman live update every 15 minutes"
+      ScheduleExpression: "rate(15 minutes)"
+      State: ENABLED
+      Targets:
+        - Id: KalmanLiveTarget
+          Arn: !GetAtt KalmanLiveFunction.Arn
+
+  KalmanPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt KalmanLiveFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt KalmanScheduleRule.Arn
+
+# ── Outputs ───────────────────────────────────────────────────────────────────
+
+Outputs:
+
+  ForecastApiUrl:
+    Description: "Tonight's Forecast API endpoint — use this in REACT_APP_FORECAST_API_URL"
+    Value: !Sub "https://${ForecastHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Export:
+      Name: !Sub "venuescope-forecast-api-url-${Environment}"
+
+  ForecastModelsTableName:
+    Value: !Ref ForecastModelsTable
+    Export:
+      Name: !Sub "venuescope-forecast-models-table-${Environment}"
+
+  ForecastLiveStateTableName:
+    Value: !Ref ForecastLiveStateTable
+    Export:
+      Name: !Sub "venuescope-forecast-live-state-table-${Environment}"
+
+  TrainingFunctionArn:
+    Value: !GetAtt ForecastTrainingFunction.Arn
+
+  ServingFunctionArn:
+    Value: !GetAtt ForecastServingFunction.Arn
+
+  KalmanFunctionArn:
+    Value: !GetAtt KalmanLiveFunction.Arn

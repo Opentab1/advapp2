@@ -275,6 +275,16 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   const fetchVenueScopeData = useCallback(async () => {
     if (!venueId) return;
+    // Demo account: inject demo jobs so rings and stats populate correctly
+    if (isDemoAccount(venueId)) {
+      const { generateDemoVenueScopeJobs } = await import('../utils/demoData');
+      const demoJobs = generateDemoVenueScopeJobs();
+      setVsJobs(demoJobs.filter(j =>
+        j.status === 'done' || j.isLive === true || j.status === 'running'
+      ));
+      setLastUpdated(new Date());
+      return;
+    }
     try {
       const jobs = await venueScopeService.listJobs(venueId, 20);
       // Include done, running, and live-stream jobs (stable '~' IDs always included)

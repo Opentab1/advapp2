@@ -1,0 +1,8 @@
+# Lambda container requirements — Prophet base image
+prophet>=1.1.5
+pandas>=2.0
+numpy>=1.24
+boto3>=1.34
+requests>=2.31
+pystan>=3.7
+holidays>=0.39
