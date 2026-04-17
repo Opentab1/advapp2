@@ -240,13 +240,16 @@ def _upload_clip_to_s3(result_dir: Path, job_id: str, venue_id: str) -> Optional
         return None
 
 
+_SNAP_PRESIGN_SECONDS = 7 * 24 * 3600  # 7 days — max S3 allows for presigned URLs
+
+
 def upload_serve_snapshot(frame_jpg: bytes, job_id: str, t_sec: float,
                           venue_id: str = "") -> Optional[str]:
     """
     Upload a JPEG snapshot frame to S3 at serve-confirm time.
+    Returns a 7-day presigned URL (not the raw key) so React can load it
+    directly without any public bucket policy. Objects stay private.
     Called from a background thread — never blocks the inference loop.
-    Returns the S3 key on success, None on failure.
-    Key pattern: venuescope/{venueId}/{jobId}/snapshots/{t_sec:.1f}.jpg
     """
     bucket = os.environ.get("S3_BUCKET", "")
     if not bucket or not frame_jpg:
@@ -257,21 +260,20 @@ def upload_serve_snapshot(frame_jpg: bytes, job_id: str, t_sec: float,
     s3_key = f"venuescope/{venue_id}/{job_id}/snapshots/{t_sec:.1f}.jpg"
     try:
         s3 = _get_client("s3")
-        put_kwargs: Dict[str, Any] = {
-            "Bucket":      bucket,
-            "Key":         s3_key,
-            "Body":        frame_jpg,
-            "ContentType": "image/jpeg",
-        }
-        # Make publicly readable so React can load direct S3 URLs without presigning.
-        # Requires bucket ACLs enabled (Object Ownership = "Bucket owner preferred"
-        # or "Object writer") and Block Public Access off for "new public bucket ACLs".
-        try:
-            s3.put_object(**put_kwargs, ACL="public-read")
-        except Exception:
-            # Fall back silently if ACLs are disabled on the bucket
-            s3.put_object(**put_kwargs)
-        return s3_key
+        s3.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=frame_jpg,
+            ContentType="image/jpeg",
+        )
+        # Generate presigned URL valid for 7 days so only authenticated owners
+        # (who receive the URL via DDB/React) can view the snapshot.
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": s3_key},
+            ExpiresIn=_SNAP_PRESIGN_SECONDS,
+        )
+        return url
     except Exception as e:
         print(f"[aws_sync] Snapshot upload failed t={t_sec:.1f}s: {e}", flush=True)
         return None

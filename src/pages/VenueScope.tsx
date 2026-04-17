@@ -2691,8 +2691,12 @@ function SnapshotModal({ snapshotKey, wallTime, onClose }: {
   wallTime: number;
   onClose: () => void;
 }) {
+  // snapshotKey may be a full presigned URL (new worker) or a raw S3 key (legacy).
+  // Presigned URLs start with "https://"; raw keys need s3Base prepended.
   const s3Base = (import.meta.env.VITE_S3_SUMMARY_BASE_URL || '').replace(/\/$/, '');
-  const url = s3Base ? `${s3Base}/${snapshotKey}` : null;
+  const url = snapshotKey.startsWith('https://')
+    ? snapshotKey
+    : s3Base ? `${s3Base}/${snapshotKey}` : null;
 
   return (
     <div
