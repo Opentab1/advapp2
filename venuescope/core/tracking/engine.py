@@ -75,7 +75,16 @@ _model_cache: dict = {}
 
 
 def _load_yolo(model_name: str) -> YOLO:
-    """Find and load YOLO model from any common location, with size validation."""
+    """Find and load YOLO model from any common location, with size validation.
+
+    On CPU-only hosts, prefers an OpenVINO-exported model directory alongside
+    the .pt file (e.g. yolov8n_openvino_model/) which runs 3-4x faster on
+    Intel CPUs with identical accuracy.  Falls back to PyTorch .pt if absent.
+    """
+    import torch as _t
+    _has_gpu = _t.cuda.is_available() or (
+        hasattr(_t.backends, "mps") and _t.backends.mps.is_available())
+
     candidates = [
         Path.home() / ".cache" / "ultralytics" / "assets" / model_name,
         Path.home() / ".cache" / "ultralytics" / model_name,
@@ -95,6 +104,20 @@ def _load_yolo(model_name: str) -> YOLO:
                     f"Model file {c} is unexpectedly large ({size_mb:.0f} MB). "
                     "Check that the correct .pt file is referenced."
                 )
+            # On CPU: prefer OpenVINO export if present (3-4x faster on Intel)
+            if not _has_gpu and model_name.endswith(".pt"):
+                ov_dir = c.parent / (c.stem + "_openvino_model")
+                if ov_dir.is_dir():
+                    try:
+                        model = YOLO(str(ov_dir))
+                        import logging as _lg
+                        _lg.getLogger("engine").info(
+                            f"Using OpenVINO model: {ov_dir.name}")
+                        return model
+                    except Exception as _ov_err:
+                        import logging as _lg
+                        _lg.getLogger("engine").warning(
+                            f"OpenVINO load failed ({_ov_err}), falling back to PyTorch")
             return YOLO(str(c))
     # Not found locally — let ultralytics download it
     return YOLO(model_name)
