@@ -400,32 +400,62 @@ def forecast_tonight(
     # DOW factor
     dow_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     dow_name = dow_names[target_date.weekday()]
-    dow_impact = "high" if target_date.weekday() >= 4 else ("medium" if target_date.weekday() == 3 else "low")
+    dow_mult = _DOW_PRIOR.get(target_date.weekday(), 0.60)
+    dow_impact_pct = round((dow_mult - 1.0) * 100)
+    dow_impact_str = f"{dow_impact_pct:+d}%" if dow_impact_pct != 0 else "baseline"
+
+    # Month factor
+    month_names = ["", "January", "February", "March", "April", "May", "June",
+                   "July", "August", "September", "October", "November", "December"]
+    month_name = month_names[target_date.month]
+
+    # Weather impact as percentage
+    w_impact_pct = round((w_overall - 1.0) * 100)
+    w_impact_str = f"{w_impact_pct:+d}%" if w_impact_pct != 0 else "no impact"
+
+    # Competition drag as percentage
+    c_impact_pct = round((c_drag - 1.0) * 100)
+    c_impact_str = f"{c_impact_pct:+d}%" if c_impact_pct != 0 else "no impact"
+
+    # Baseline covers (DOW × month shape, no weather or event effects)
+    _month_mult = {
+        1: 0.72, 2: 0.78, 3: 0.92, 4: 0.88, 5: 0.91, 6: 0.96,
+        7: 0.94, 8: 0.93, 9: 0.87, 10: 0.97, 11: 0.85, 12: 1.12,
+    }
+    month_mult = _month_mult.get(target_date.month, 1.0)
+    baseline_covers = max(1, int(round(_GENERIC_PEAK * dow_mult * month_mult)))
+    lift = mid_covers - baseline_covers
+    lift_pct = round((lift / baseline_covers) * 100) if baseline_covers > 0 else 0
 
     # Build factors list
     factors = [
         {
             "name": "Day of week",
             "value": dow_name,
-            "impact": dow_impact,
+            "impact": dow_impact_str,
+        },
+        {
+            "name": "Month",
+            "value": month_name,
+            "impact": f"{round((month_mult - 1.0) * 100):+d}%" if month_mult != 1.0 else "baseline",
         },
         {
             "name": "Weather",
-            "value": f"{weather_desc} ({rep_temp:.0f}°F)",
-            "impact": "low" if w_overall >= 0.90 else ("medium" if w_overall >= 0.70 else "high"),
+            "value": f"{weather_desc} · {rep_temp:.0f}°F",
+            "impact": w_impact_str,
         },
     ]
     if competing_events:
         factors.append({
             "name": "Competing events",
-            "value": f"{len(competing_events)} nearby event(s)",
-            "impact": "medium" if c_drag >= 0.85 else "high",
+            "value": f"{len(competing_events)} nearby",
+            "impact": c_impact_str,
         })
     else:
         factors.append({
             "name": "Competing events",
             "value": "None detected",
-            "impact": "none",
+            "impact": "no impact",
         })
 
     # Calibration state and MAPE
@@ -456,14 +486,17 @@ def forecast_tonight(
             "mid": rev_mid,
             "high": rev_high,
         },
+        "baseline_covers": baseline_covers,
+        "lift": lift,
+        "lift_pct": lift_pct,
         "peak_hour": peak_hour_str,
         "weather_multiplier": round(w_overall, 4),
-        "competition_drag": c_drag,
+        "competition_drag": round(c_drag, 4),
         "staffing_rec": {
             "bartenders": bartenders_needed,
             "note": (
-                f"Estimated {mid_covers} covers at peak. "
-                f"1 bartender per 80 covers = {bartenders_needed} recommended."
+                f"Estimated {mid_covers} covers. "
+                f"{bartenders_needed} bartender{'s' if bartenders_needed != 1 else ''} recommended."
             ),
         },
         "hourly_curve": hourly_curve,

@@ -71,12 +71,15 @@ interface HourlyPoint {
 }
 
 interface TonightForecast {
-  model_type: 'prophet' | 'prior';
+  model_type: 'prophet' | 'gbm' | 'prior';
   calibration_state: string;
   mape_expected: string;
   confidence_pct: number;
   final_estimate: { low: number; mid: number; high: number };
   revenue_estimate: { low: number; mid: number; high: number };
+  baseline_covers: number;
+  lift: number;
+  lift_pct: number;
   peak_hour: string;
   weather_multiplier: number;
   competition_drag: number;
@@ -94,15 +97,18 @@ const DEMO_FORECAST: TonightForecast = {
   confidence_pct: 89,
   final_estimate: { low: 193, mid: 235, high: 277 },
   revenue_estimate: { low: 6360, mid: 7755, high: 9150 },
+  baseline_covers: 220,
+  lift: 15,
+  lift_pct: 7,
   peak_hour: '10:00 PM',
   weather_multiplier: 0.90,
   competition_drag: 0.97,
   staffing_rec: { bartenders: 3, note: '1 extra bartender recommended after 9 PM based on Friday pattern' },
   factors: [
     { name: 'Day of week', value: 'Friday', impact: '+80%' },
-    { name: 'Weather', value: 'Light rain forecast', impact: '-10%' },
+    { name: 'Month',       value: 'October', impact: '+7%' },
+    { name: 'Weather',     value: 'Light rain · 68°F', impact: '-10%' },
     { name: 'Competing events', value: 'Mid concert nearby', impact: '-3%' },
-    { name: 'Month', value: 'October', impact: '+7%' },
   ],
   hourly_curve: [
     { hour: '4:00 PM', yhat: 18, yhat_lower: 12, yhat_upper: 24 },
@@ -155,62 +161,16 @@ function todayString(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// ─── Client-side prior (used when backend unreachable) ────────────────────────
-// DOW × month multipliers from forecasting.py (Lucas & Kilby baseline)
-const PRIOR_DOW_MULT  = [0.31, 0.35, 0.44, 0.62, 0.85, 1.00, 0.65]; // Mon=0..Sun=6
-const PRIOR_MON_MULT  = [0, 0.72, 0.78, 0.92, 0.88, 0.91, 0.96, 0.94, 0.93, 0.87, 0.97, 0.85, 1.12];
-const PRIOR_HOUR_DIST = [0.06, 0.08, 0.10, 0.13, 0.15, 0.16, 0.14, 0.10, 0.05, 0.03];
-const PRIOR_HOURS_LBL = ['4:00 PM','5:00 PM','6:00 PM','7:00 PM','8:00 PM','9:00 PM','10:00 PM','11:00 PM','12:00 AM','1:00 AM'];
-const PRIOR_BASE = 150;
-const PRIOR_AVG_CHECK = 33;
-const PRIOR_DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-const PRIOR_MON_NAMES = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
-
-function buildClientPrior(): TonightForecast {
-  const now   = new Date();
-  const dow   = now.getDay();   // 0=Sun
-  const mon   = now.getMonth() + 1;
-  const dowIdx = dow === 0 ? 6 : dow - 1;
-  const mult  = PRIOR_DOW_MULT[dowIdx] * PRIOR_MON_MULT[mon];
-  const mid   = Math.round(PRIOR_BASE * mult);
-  const low   = Math.round(mid * 0.80);
-  const high  = Math.round(mid * 1.20);
-  const peakIdx = PRIOR_HOUR_DIST.indexOf(Math.max(...PRIOR_HOUR_DIST));
-  return {
-    model_type: 'prior',
-    calibration_state: 'generic_prior',
-    mape_expected: '±30%',
-    confidence_pct: 70,
-    final_estimate: { low, mid, high },
-    revenue_estimate: { low: low * PRIOR_AVG_CHECK, mid: mid * PRIOR_AVG_CHECK, high: high * PRIOR_AVG_CHECK },
-    peak_hour: PRIOR_HOURS_LBL[peakIdx],
-    weather_multiplier: 1.0,
-    competition_drag: 1.0,
-    staffing_rec: {
-      bartenders: Math.max(1, Math.ceil(mid / 80)),
-      note: 'Based on industry averages — improves as sensor data accumulates.',
-    },
-    factors: [
-      { name: 'Day of week', value: PRIOR_DOW_NAMES[dow], impact: `×${PRIOR_DOW_MULT[dowIdx].toFixed(2)}` },
-      { name: 'Month',       value: PRIOR_MON_NAMES[mon], impact: `×${PRIOR_MON_MULT[mon].toFixed(2)}` },
-      { name: 'Weather',     value: 'Not fetched',  impact: '—' },
-      { name: 'Competing events', value: 'Not checked', impact: '—' },
-    ],
-    hourly_curve: PRIOR_HOUR_DIST.map((pct, i) => {
-      const yhat = Math.round(mid * pct * 10);
-      return { hour: PRIOR_HOURS_LBL[i], yhat, yhat_lower: Math.round(yhat * 0.75), yhat_upper: Math.round(yhat * 1.25) };
-    }),
-  };
-}
-
 // ─── Tonight Tab ──────────────────────────────────────────────────────────────
 
 function TonightTab({ venueId }: { venueId: string }) {
   const [forecast, setForecast] = useState<TonightForecast | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(false);
 
     if (!venueId) {
       setLoading(false);
@@ -248,8 +208,7 @@ function TonightTab({ venueId }: { venueId: string }) {
       const data = await res.json();
       setForecast(data);
     } catch {
-      // Backend unreachable — fall back to client-side prior so something useful always shows
-      setForecast(buildClientPrior());
+      setError(true);
     }
 
     setLoading(false);
@@ -274,15 +233,22 @@ function TonightTab({ venueId }: { venueId: string }) {
     );
   }
 
+  if (error) {
+    return (
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-8 text-center space-y-3">
+        <TrendingUp className="w-8 h-8 text-warm-600 mx-auto" />
+        <p className="text-sm font-semibold text-warm-300">Forecast system offline</p>
+        <p className="text-xs text-warm-500">The forecast service isn't reachable. Make sure the VenueScope worker is running.</p>
+        <button onClick={load} className="mt-2 px-4 py-2 rounded-lg bg-warm-800 border border-warm-700 text-xs font-semibold text-white hover:bg-warm-700 transition-colors">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   if (!forecast) return null;
 
-  // Baseline = what a typical night like tonight looks like without any lift
-  const now        = new Date();
-  const dowName    = PRIOR_DOW_NAMES[now.getDay()];
-  const monName    = PRIOR_MON_NAMES[now.getMonth() + 1];
-  const baseline   = Math.round(PRIOR_BASE * PRIOR_DOW_MULT[now.getDay() === 0 ? 6 : now.getDay() - 1] * PRIOR_MON_MULT[now.getMonth() + 1]);
-  const lift       = forecast.final_estimate.mid - baseline;
-  const liftPct    = baseline > 0 ? Math.round((lift / baseline) * 100) : 0;
+  const { baseline_covers, lift, lift_pct } = forecast;
 
   // Confidence label — human-readable, no formula exposed
   const confidenceLabel: Record<string, string> = {
@@ -333,13 +299,16 @@ function TonightTab({ venueId }: { venueId: string }) {
         {/* Baseline + lift */}
         <div className="space-y-1.5 text-xs">
           <div className="flex items-center justify-between">
-            <span className="text-warm-500">Baseline {dowName} {monName}</span>
-            <span className="text-white font-semibold">{baseline} covers</span>
+            <span className="text-warm-500">
+              Baseline {forecast.factors.find(f => f.name === 'Day of week')?.value ?? ''}{' '}
+              {forecast.factors.find(f => f.name === 'Month')?.value ?? ''}
+            </span>
+            <span className="text-white font-semibold">{baseline_covers} covers</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-warm-500">Predicted lift</span>
             <span className={`font-bold ${lift >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {lift >= 0 ? '+' : ''}{lift} ({liftPct >= 0 ? '+' : ''}{liftPct}%)
+              {lift >= 0 ? '+' : ''}{lift} ({lift_pct >= 0 ? '+' : ''}{lift_pct}%)
             </span>
           </div>
           <div className="flex items-center justify-between">
@@ -366,7 +335,7 @@ function TonightTab({ venueId }: { venueId: string }) {
           </li>
           {forecast.factors.map(f => {
             const isNegative = f.impact.startsWith('-');
-            const isNeutral  = f.impact === '—' || f.impact.startsWith('×');
+            const isNeutral  = ['—', 'no impact', 'baseline'].includes(f.impact) || f.impact.startsWith('×');
             if (isNeutral) return null;
             return (
               <li key={f.name} className="flex items-start gap-2 text-sm text-warm-200">
