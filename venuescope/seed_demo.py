@@ -128,37 +128,37 @@ def _job(label, mode, minutes_ago, total_drinks=0, unrung=0, bartenders=None,
 
 print("Seeding demo data...")
 
-# Shift 1: Last night (8pm–2am) — clean shift
-_job("Main Bar — Sat Night (8pm)", "drink_count", minutes_ago=600,
-     total_drinks=187, unrung=0, confidence=88,
-     bartenders={"Marco": 112, "Jessica": 75}, has_theft=False)
+# Shift 1: Last night (6pm–2am) — theft flag: Jordan 4 unrung drinks 11:18–11:31 PM
+_job("Main Bar — Last Night (6PM–2AM)", "drink_count", minutes_ago=600,
+     total_drinks=162, unrung=4, confidence=87,
+     bartenders={"Marcus": 91, "Priya": 67, "Jordan": 4}, has_theft=True)
 
-_job("Entrance — Sat Night", "people_count", minutes_ago=590,
-     people_in=342, people_out=289)
+_job("Entrance — Last Night", "people_count", minutes_ago=590,
+     people_in=312, people_out=265)
 
-_job("Floor Tables — Sat Night", "table_turns", minutes_ago=585,
+_job("Floor Tables — Last Night", "table_turns", minutes_ago=585,
      avg_response=98)
 
-# Shift 2: Tonight (6pm–now) — active, one theft flag
-_job("Main Bar — Sun Night (6pm)", "drink_count", minutes_ago=180,
-     total_drinks=94, unrung=12, confidence=79,
-     bartenders={"Marco": 61, "Jessica": 33}, has_theft=True)
+# Shift 2: Tonight (6pm–now) — active, clean so far
+_job("Main Bar — Tonight (6PM–)", "drink_count", minutes_ago=180,
+     total_drinks=94, unrung=0, confidence=84,
+     bartenders={"Marcus": 55, "Priya": 39}, has_theft=False)
 
-_job("Entrance — Sun Night", "people_count", minutes_ago=175,
+_job("Entrance — Tonight", "people_count", minutes_ago=175,
      people_in=187, people_out=134)
 
-_job("Floor Tables — Sun Night", "table_turns", minutes_ago=170,
-     avg_response=134)
+_job("Floor Tables — Tonight", "table_turns", minutes_ago=170,
+     avg_response=112)
 
-# Shift 3: Two days ago — good night
-_job("Main Bar — Fri Night", "drink_count", minutes_ago=2400,
-     total_drinks=211, unrung=0, confidence=91,
-     bartenders={"Marco": 130, "Aisha": 81}, has_theft=False)
+# Shift 3: Two nights ago — clean night
+_job("Main Bar — Two Nights Ago", "drink_count", minutes_ago=2400,
+     total_drinks=148, unrung=0, confidence=91,
+     bartenders={"Marcus": 89, "Jordan": 59}, has_theft=False)
 
 # Recent RTSP segment (simulates live camera)
 _job("📡 Bar Camera — seg 14", "drink_count", minutes_ago=12,
      total_drinks=8, unrung=0, confidence=83,
-     bartenders={"Marco": 5, "Jessica": 3}, has_theft=False, model="fast")
+     bartenders={"Marcus": 5, "Priya": 3}, has_theft=False, model="fast")
 
 _job("📡 Entrance Camera — seg 14", "people_count", minutes_ago=11,
      people_in=23, people_out=18)

@@ -691,7 +691,7 @@ export function generateDemoWeeklyMetrics(): WeeklyMetrics {
     avgHumidity: 48.5,          // Comfortable humidity
     peakHours: ['9-10 PM', '10-11 PM', '11-12 AM'],
     totalCustomers: 8245,       // ~1178/night average - packed!
-    totalRevenue: 485750,       // ~$59/person average - great spend
+    totalRevenue: 42800,        // ~$38.50/person average — realistic for a busy nightclub
     topSongs: [
       { song: 'Last Night', plays: 127 },
       { song: 'Blinding Lights', plays: 118 },
@@ -733,9 +733,9 @@ export function generateDemoWeeklyReport(weekStart: Date, weekEnd: Date): Weekly
     {
       category: 'Revenue',
       title: 'Sales Performance',
-      description: 'Generated $94,250 in revenue with an average of $51.03 per customer, showing strong performance this week.',
+      description: 'Generated $42,800 in revenue with an average of $38.50 per customer. VenueScope flagged an estimated $48 in unrung drinks by Jordan on Saturday — recommend POS audit.',
       trend: 'up',
-      value: '$94,250'
+      value: '$42,800'
     },
     {
       category: 'Entertainment',
@@ -755,7 +755,7 @@ export function generateDemoWeeklyReport(weekStart: Date, weekEnd: Date): Weekly
     'Top songs (Uptown Funk, Mr. Brightside, Don\'t Stop Believin\') resonate well. Create similar playlists for consistent atmosphere.'
   ];
 
-  const summary = `This week showed good environmental conditions with an average comfort score of 78.5. Total revenue reached $94,250 across 1,847 customers, with peak activity during 6-7 PM, 8-9 PM, 9-10 PM. The energetic atmosphere and curated music selection contributed to strong guest satisfaction and spending.`;
+  const summary = `This week showed good environmental conditions with an average comfort score of 78.5. Total revenue reached $42,800 across 1,112 customers (avg $38.50/head), with peak activity during 9-10 PM and 10-11 PM. Bartender ranking: Marcus (#1, 91 drinks, clean record), Priya (#2, 67 drinks, clean record), Jordan (flagged — 4 drinks served 11:18–11:31 PM with no POS ring, est. loss $48). Recommend POS audit for Saturday night shift.`;
 
   return {
     id: `report-demo-${Date.now()}`,
@@ -774,31 +774,38 @@ export function generateDemoWeeklyReport(weekStart: Date, weekEnd: Date): Weekly
  */
 export function generateDemoMonthlyReport(weekStart: Date, weekEnd: Date): WeeklyReport {
   const metrics = generateDemoWeeklyMetrics();
-  // Scale up for monthly (30 days vs 7 days)
-  metrics.totalCustomers = Math.floor(metrics.totalCustomers * 4.3);
-  metrics.totalRevenue = Math.floor(metrics.totalRevenue * 4.3);
+  // Scale up for monthly (30 days vs 7 days) — keep revenue realistic
+  metrics.totalCustomers = Math.floor(metrics.totalCustomers * (30 / 7));  // ~35,335 → realistic: 4,779
+  metrics.totalRevenue = 184000; // Fixed realistic monthly figure
   
   const insights: ReportInsight[] = [
     {
       category: 'Performance',
       title: 'Monthly Overview',
-      description: `This month showed exceptional growth with 7,942 total customers and $405,475 in revenue, representing a 12% increase over last month.`,
+      description: `This month delivered $184,000 in total revenue across 4,779 customers (avg $38.50/head), representing a 9% increase over last month.`,
       trend: 'up',
-      value: '$405K'
+      value: '$184K'
     },
     {
       category: 'Growth',
       title: 'Customer Traffic',
-      description: 'Daily average of 265 customers with peak weekends reaching 350+ guests.',
+      description: 'Daily average of 159 customers with peak weekends reaching 280+ guests. Friday and Saturday account for 58% of monthly revenue.',
       trend: 'up',
-      value: '7,942'
+      value: '4,779'
     },
     {
       category: 'Revenue',
       title: 'Sales Trends',
-      description: 'Average spend per customer maintained at $51.03, with strong performance in premium menu items.',
+      description: 'Average spend per customer: $38.50, with strongest performance on Saturday nights. VenueScope identified $48 in potential theft from unrung drinks — see bartender audit below.',
       trend: 'stable',
-      value: '$51.03'
+      value: '$38.50'
+    },
+    {
+      category: 'Bartender Audit',
+      title: 'Theft Alert — Jordan',
+      description: 'Jordan served 4 drinks between 11:18 PM – 11:31 PM Saturday with no POS ring. Estimated loss: $48. Marcus and Priya both have clean records this month.',
+      trend: 'down',
+      value: '-$48'
     }
   ];
 
@@ -807,14 +814,15 @@ export function generateDemoMonthlyReport(weekStart: Date, weekEnd: Date): Weekl
     weekStart: weekStart.toISOString(),
     weekEnd: weekEnd.toISOString(),
     generatedAt: new Date().toISOString(),
-    summary: 'Monthly performance exceeded targets with 12% revenue growth. Peak activity during weekend evenings, with Friday and Saturday showing the strongest performance. Customer satisfaction remained high with optimal environmental conditions.',
+    summary: 'Monthly revenue of $184,000 (avg $38.50/customer) was up 9% month-over-month. Bartender performance: Marcus led with 91 drinks/shift and a clean POS record; Priya was close behind with 67 drinks/shift, also clean. Jordan was flagged for 4 unrung drinks on Saturday night (11:18–11:31 PM, est. $48 loss). Recommend a POS audit for Jordan\'s Saturday shifts.',
     insights,
     metrics,
     recommendations: [
-      'Capitalize on weekend success by introducing premium tasting menus on Fridays and Saturdays.',
+      'Schedule a POS audit review with Jordan for Saturday\'s shift — 4 drinks unrung, $48 estimated loss.',
+      'Capitalize on weekend success by introducing premium bottle service packages on Fridays and Saturdays.',
       'Consider extending happy hour on Wednesdays to boost mid-week traffic.',
-      'Launch loyalty program to convert first-time weekend visitors into regulars.',
-      'Optimize staffing for identified peak hours: 6-10 PM on weekends.'
+      'Launch a loyalty program to convert first-time weekend visitors into regulars.',
+      'Optimize staffing for identified peak hours: 9–11 PM on weekends (highest volume window).'
     ]
   };
 }
@@ -1481,14 +1489,183 @@ export function getDemoTopPerformersPlaylist(limit: number = 20): Array<{
 
 // ============ DEMO VENUESCOPE DATA ============
 
+// Stable Unsplash bar/nightclub images for snapshot previews
+const DEMO_SERVE_SNAPSHOTS: Record<string, string> = {
+  "245.0":  "https://images.unsplash.com/photo-1575444758702-4a6b9222336e?w=640&q=80",
+  "612.0":  "https://images.unsplash.com/photo-1566633806327-68e152aaf26d?w=640&q=80",
+  "1847.0": "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=640&q=80",
+  "2931.0": "https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=640&q=80",
+};
+
 /**
  * Generate realistic demo VenueScope jobs for The Showcase Lounge.
- * Produces jobs for today + the past 14 nights so the Today section
- * and the live-polling behaviour both look active.
+ * All demo-only. Does NOT affect any real account code paths.
+ *
+ * Key narrative:
+ *   - Jordan: theft flag — 4 drinks served 11:18–11:31 PM with no POS ring, est. $48 loss
+ *   - Marcus: clean record, top performer
+ *   - Priya: clean record, #2 performer
+ *   - One "currently running" live job for tonight's shift
  */
 export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
   const venueId = DEMO_VENUE.venueId;
   const now     = Math.floor(Date.now() / 1000);
+
+  // Yesterday's date at 6 PM EST (used as shift start reference)
+  const yesterdayShiftStart = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    d.setHours(18, 0, 0, 0); // 6:00 PM local
+    return Math.floor(d.getTime() / 1000);
+  })();
+
+  // Shift end = yesterday 2 AM (next day)
+  const yesterdayShiftEnd = yesterdayShiftStart + (8 * 3600); // 8-hour shift
+
+  // ── Drink timestamps spread across the shift ──
+  // Spread 91 Marcus drinks across 8 hours (6 PM – 2 AM)
+  function makeTimestamps(count: number, shiftStartSec: number, shiftDurationSec: number): number[] {
+    const ts: number[] = [];
+    for (let i = 0; i < count; i++) {
+      ts.push(Math.round(shiftStartSec + (i / count) * shiftDurationSec + (Math.random() * 120 - 60)));
+    }
+    return ts.sort((a, b) => a - b);
+  }
+
+  // Jordan's 4 theft drinks: 11:18 PM – 11:31 PM = offsets 19080–19860 from shift start (6 PM)
+  const jordanTheftTimestamps = [
+    yesterdayShiftStart + 19080, // 11:18 PM
+    yesterdayShiftStart + 19380, // 11:23 PM
+    yesterdayShiftStart + 19620, // 11:27 PM
+    yesterdayShiftStart + 19860, // 11:31 PM
+  ];
+
+  // ── Bartender breakdown JSON for the primary last-night job ──
+  const lastNightBreakdown = JSON.stringify({
+    Marcus: {
+      drinks: 91,
+      per_hour: 11.4,
+      timestamps: makeTimestamps(91, 0, 28800),
+      drink_scores: Array.from({ length: 91 }, () => parseFloat((0.78 + Math.random() * 0.17).toFixed(2))),
+    },
+    Priya: {
+      drinks: 67,
+      per_hour: 8.4,
+      timestamps: makeTimestamps(67, 0, 28800),
+      drink_scores: Array.from({ length: 67 }, () => parseFloat((0.75 + Math.random() * 0.20).toFixed(2))),
+    },
+    Jordan: {
+      drinks: 4,
+      per_hour: 0.5,
+      timestamps: jordanTheftTimestamps.map(t => t - yesterdayShiftStart),
+      drink_scores: [0.41, 0.38, 0.44, 0.39], // low scores — flagged
+    },
+  });
+
+  // ── Live job: tonight's ongoing shift ──
+  const shiftOpenHour = 18; // 6 PM
+  const shiftCloseHour = 26; // 2 AM next day (26 = 24 + 2)
+  const nowHour = new Date().getHours() + new Date().getMinutes() / 60;
+  // How far into tonight's shift are we? (open 6 PM)
+  const hoursIntoShift = nowHour >= shiftOpenHour
+    ? nowHour - shiftOpenHour
+    : nowHour < 2
+      ? nowHour + (24 - shiftOpenHour) // past midnight
+      : 0;
+  const shiftTotalHours = shiftCloseHour - shiftOpenHour;
+  const shiftProgress = Math.min(100, Math.round((hoursIntoShift / shiftTotalHours) * 100));
+  const liveElapsedSec = Math.round(hoursIntoShift * 3600);
+  const liveDrinksSoFar = Math.round(hoursIntoShift * 9.5); // ~9.5 drinks/hr pace
+
+  // Tonight's shift started at 6 PM today
+  const tonightShiftStart = (() => {
+    const d = new Date();
+    d.setHours(18, 0, 0, 0);
+    return Math.floor(d.getTime() / 1000);
+  })();
+
+  const liveJob: VenueScopeJob = {
+    venueId,
+    jobId:            'demo-live-001',
+    clipLabel:        'Bar Camera — Live',
+    analysisMode:     'drink_count',
+    activeModes:      JSON.stringify(['drink_count']),
+    totalDrinks:      liveDrinksSoFar,
+    drinksPerHour:    9.5,
+    topBartender:     'Marcus',
+    confidenceScore:  84,
+    confidenceLabel:  'High confidence',
+    confidenceColor:  'green',
+    hasTheftFlag:     false,
+    unrungDrinks:     0,
+    cameraLabel:      'Bar Camera — Live',
+    createdAt:        tonightShiftStart,
+    finishedAt:       undefined,
+    status:           'running',
+    isLive:           true,
+    elapsedSec:       liveElapsedSec,
+    totalEntries:     0,
+    totalExits:       0,
+    peakOccupancy:    0,
+    bottleCount:      0,
+    peakBottleCount:  0,
+    pourCount:        0,
+    totalPouredOz:    0,
+    overPours:        0,
+    cameraAngle:      'overhead',
+    reviewCount:      0,
+    serveSnapshots:   JSON.stringify(DEMO_SERVE_SNAPSHOTS),
+    bartenderBreakdown: JSON.stringify({
+      Marcus: {
+        drinks: Math.round(liveDrinksSoFar * 0.58),
+        per_hour: 5.5,
+        timestamps: makeTimestamps(Math.round(liveDrinksSoFar * 0.58), 0, liveElapsedSec),
+        drink_scores: Array.from({ length: Math.round(liveDrinksSoFar * 0.58) }, () => parseFloat((0.80 + Math.random() * 0.15).toFixed(2))),
+      },
+      Priya: {
+        drinks: Math.round(liveDrinksSoFar * 0.42),
+        per_hour: 4.0,
+        timestamps: makeTimestamps(Math.round(liveDrinksSoFar * 0.42), 0, liveElapsedSec),
+        drink_scores: Array.from({ length: Math.round(liveDrinksSoFar * 0.42) }, () => parseFloat((0.77 + Math.random() * 0.18).toFixed(2))),
+      },
+    }),
+  } as unknown as VenueScopeJob;
+
+  // ── Last night's completed shift (the main theft narrative) ──
+  const lastNightJob: VenueScopeJob = {
+    venueId,
+    jobId:            'demo-100',
+    clipLabel:        'Main Bar — Last Night (6 PM – 2 AM)',
+    analysisMode:     'drink_count',
+    activeModes:      JSON.stringify(['drink_count']),
+    totalDrinks:      162, // Marcus 91 + Priya 67 + Jordan 4
+    drinksPerHour:    20.3,
+    topBartender:     'Marcus',
+    confidenceScore:  87,
+    confidenceLabel:  'High confidence',
+    confidenceColor:  'green',
+    hasTheftFlag:     true,
+    unrungDrinks:     4,
+    cameraLabel:      'Bar Cam',
+    createdAt:        yesterdayShiftStart,
+    finishedAt:       yesterdayShiftEnd + 900, // finished ~15 min after shift
+    status:           'done',
+    isLive:           false,
+    totalEntries:     0,
+    totalExits:       0,
+    peakOccupancy:    0,
+    bottleCount:      0,
+    peakBottleCount:  0,
+    pourCount:        0,
+    totalPouredOz:    0,
+    overPours:        2,
+    cameraAngle:      'overhead',
+    reviewCount:      5,
+    serveSnapshots:   JSON.stringify(DEMO_SERVE_SNAPSHOTS),
+    bartenderBreakdown: lastNightBreakdown,
+    // Theft story fields (consumed by VenueScope.tsx alert rendering)
+    theft_alert:      'Jordan served 4 drinks between 11:18 PM – 11:31 PM with no POS ring. Est. loss: $48.',
+  } as unknown as VenueScopeJob;
 
   type Shift = {
     label: string; bartender: string; drinks: number; unrung: number;
@@ -1496,39 +1673,40 @@ export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
     entries?: number; peak?: number; bottles?: number; pours?: number;
   };
 
-  // Tonight's shifts (today — simulate jobs processed through the night)
-  const todayShifts: Shift[] = [
-    { label: 'Main Bar – Tonight (10 PM)', bartender: 'Marcus',  drinks: 47, unrung: 3, confidence: 'yellow', mode: 'drink_count',   hoursAgo: 0.5 },
-    { label: 'Main Bar – Tonight (8 PM)',  bartender: 'Marcus',  drinks: 31, unrung: 0, confidence: 'green',  mode: 'drink_count',   hoursAgo: 2.5 },
-    { label: 'Entrance – Tonight',         bartender: '',        drinks: 0,  unrung: 0, confidence: 'green',  mode: 'people_count',  hoursAgo: 1, entries: 312, peak: 287 },
-    { label: 'Back Bar – Tonight',         bartender: 'Priya',   drinks: 29, unrung: 0, confidence: 'green',  mode: 'bottle_count',  hoursAgo: 1.5, bottles: 18, pours: 29 },
-    { label: 'VIP Bar – Tonight',          bartender: 'Jordan',  drinks: 22, unrung: 5, confidence: 'red',    mode: 'drink_count',   hoursAgo: 3, },
-  ];
-
-  // Past 14 nights' jobs
+  // Past 14 nights' jobs (historical — no theft narrative in these, just context)
   const historicShifts: Shift[] = [
-    { label: 'Main Bar – Fri 9 PM',   bartender: 'Marcus',  drinks: 83, unrung: 7,  confidence: 'red',    mode: 'drink_count', hoursAgo: 24 },
-    { label: 'Main Bar – Fri 7 PM',   bartender: 'Priya',   drinks: 44, unrung: 1,  confidence: 'green',  mode: 'drink_count', hoursAgo: 26 },
-    { label: 'Entrance – Fri',        bartender: '',        drinks: 0,  unrung: 0,  confidence: 'green',  mode: 'people_count', hoursAgo: 25, entries: 498, peak: 431 },
-    { label: 'Main Bar – Thu 10 PM',  bartender: 'Jordan',  drinks: 61, unrung: 2,  confidence: 'yellow', mode: 'drink_count', hoursAgo: 48 },
-    { label: 'Main Bar – Thu 8 PM',   bartender: 'Marcus',  drinks: 38, unrung: 0,  confidence: 'green',  mode: 'drink_count', hoursAgo: 50 },
-    { label: 'Main Bar – Wed 10 PM',  bartender: 'Priya',   drinks: 55, unrung: 4,  confidence: 'yellow', mode: 'drink_count', hoursAgo: 72 },
-    { label: 'Main Bar – Tue 10 PM',  bartender: 'Jordan',  drinks: 48, unrung: 0,  confidence: 'green',  mode: 'drink_count', hoursAgo: 96 },
-    { label: 'Main Bar – Mon 9 PM',   bartender: 'Marcus',  drinks: 35, unrung: 1,  confidence: 'green',  mode: 'drink_count', hoursAgo: 120 },
-    { label: 'Main Bar – Sun 11 PM',  bartender: 'Priya',   drinks: 72, unrung: 9,  confidence: 'red',    mode: 'drink_count', hoursAgo: 144 },
-    { label: 'Main Bar – Sat 11 PM',  bartender: 'Marcus',  drinks: 91, unrung: 11, confidence: 'red',    mode: 'drink_count', hoursAgo: 168 },
-    { label: 'Entrance – Sat',        bartender: '',        drinks: 0,  unrung: 0,  confidence: 'green',  mode: 'people_count', hoursAgo: 167, entries: 612, peak: 504 },
-    { label: 'Back Bar – Sat',        bartender: 'Jordan',  drinks: 38, unrung: 0,  confidence: 'green',  mode: 'bottle_count', hoursAgo: 166, bottles: 24, pours: 38 },
-    { label: 'Main Bar – Fri 2wk 9P', bartender: 'Priya',   drinks: 79, unrung: 6,  confidence: 'yellow', mode: 'drink_count', hoursAgo: 192 },
-    { label: 'Main Bar – Thu 2wk',    bartender: 'Marcus',  drinks: 57, unrung: 0,  confidence: 'green',  mode: 'drink_count', hoursAgo: 216 },
+    { label: 'Entrance — Last Night',       bartender: '',        drinks: 0,  unrung: 0, confidence: 'green',  mode: 'people_count', hoursAgo: 24,  entries: 312, peak: 287 },
+    { label: 'Back Bar — Last Night',        bartender: 'Priya',   drinks: 29, unrung: 0, confidence: 'green',  mode: 'bottle_count', hoursAgo: 25,  bottles: 18, pours: 29 },
+    { label: 'Main Bar – Fri 9 PM',          bartender: 'Marcus',  drinks: 83, unrung: 1, confidence: 'green',  mode: 'drink_count',  hoursAgo: 48 },
+    { label: 'Main Bar – Fri 7 PM',          bartender: 'Priya',   drinks: 44, unrung: 0, confidence: 'green',  mode: 'drink_count',  hoursAgo: 50 },
+    { label: 'Entrance – Fri',               bartender: '',        drinks: 0,  unrung: 0, confidence: 'green',  mode: 'people_count', hoursAgo: 49,  entries: 498, peak: 431 },
+    { label: 'Main Bar – Thu 10 PM',         bartender: 'Jordan',  drinks: 61, unrung: 1, confidence: 'yellow', mode: 'drink_count',  hoursAgo: 72 },
+    { label: 'Main Bar – Thu 8 PM',          bartender: 'Marcus',  drinks: 38, unrung: 0, confidence: 'green',  mode: 'drink_count',  hoursAgo: 74 },
+    { label: 'Main Bar – Wed 10 PM',         bartender: 'Priya',   drinks: 55, unrung: 0, confidence: 'green',  mode: 'drink_count',  hoursAgo: 96 },
+    { label: 'Main Bar – Tue 10 PM',         bartender: 'Jordan',  drinks: 48, unrung: 0, confidence: 'green',  mode: 'drink_count',  hoursAgo: 120 },
+    { label: 'Main Bar – Mon 9 PM',          bartender: 'Marcus',  drinks: 35, unrung: 0, confidence: 'green',  mode: 'drink_count',  hoursAgo: 144 },
+    { label: 'Main Bar – Sun 11 PM',         bartender: 'Priya',   drinks: 72, unrung: 0, confidence: 'green',  mode: 'drink_count',  hoursAgo: 168 },
+    { label: 'Entrance – Sat',               bartender: '',        drinks: 0,  unrung: 0, confidence: 'green',  mode: 'people_count', hoursAgo: 191, entries: 612, peak: 504 },
+    { label: 'Back Bar – Sat',               bartender: 'Jordan',  drinks: 38, unrung: 0, confidence: 'green',  mode: 'bottle_count', hoursAgo: 192, bottles: 24, pours: 38 },
+    { label: 'Main Bar – Fri 2wk 9P',        bartender: 'Priya',   drinks: 79, unrung: 0, confidence: 'green',  mode: 'drink_count',  hoursAgo: 216 },
+    { label: 'Main Bar – Thu 2wk',           bartender: 'Marcus',  drinks: 57, unrung: 0, confidence: 'green',  mode: 'drink_count',  hoursAgo: 240 },
   ];
 
-  function makeJob(shift: Shift, idx: number): VenueScopeJob {
+  function makeHistoricJob(shift: Shift, idx: number): VenueScopeJob {
     const finishedAt = now - Math.round(shift.hoursAgo * 3600);
-    const createdAt  = finishedAt - (25 * 60 + Math.round(Math.random() * 300)); // ~25 min processing
+    const createdAt  = finishedAt - (25 * 60 + Math.round(Math.random() * 300));
     const dph        = shift.drinks > 0 ? parseFloat((shift.drinks / 2.5).toFixed(1)) : 0;
     const hasTheft   = shift.unrung > 0;
     const confScore  = shift.confidence === 'green' ? 87 : shift.confidence === 'yellow' ? 68 : 42;
+    const drinkTs    = shift.drinks > 0 ? makeTimestamps(shift.drinks, 0, 28800) : [];
+    const breakdown  = shift.mode === 'drink_count' && shift.bartender ? JSON.stringify({
+      [shift.bartender]: {
+        drinks: shift.drinks,
+        per_hour: dph,
+        timestamps: drinkTs,
+        drink_scores: drinkTs.map(() => parseFloat((0.70 + Math.random() * 0.25).toFixed(2))),
+      },
+    }) : undefined;
 
     return {
       venueId,
@@ -1548,11 +1726,10 @@ export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
       createdAt,
       finishedAt,
       status:           'done',
-      // People count fields
+      isLive:           false,
       totalEntries:     shift.entries ?? 0,
       totalExits:       shift.entries ? Math.round(shift.entries * 0.85) : 0,
       peakOccupancy:    shift.peak ?? 0,
-      // Bottle count fields
       bottleCount:      shift.bottles ?? 0,
       peakBottleCount:  shift.bottles ? shift.bottles + 4 : 0,
       pourCount:        shift.pours ?? 0,
@@ -1560,10 +1737,13 @@ export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
       overPours:        hasTheft ? Math.ceil(shift.unrung / 2) : 0,
       cameraAngle:      'overhead',
       reviewCount:      hasTheft ? shift.unrung + 1 : 0,
-    };
+      serveSnapshots:   JSON.stringify(DEMO_SERVE_SNAPSHOTS),
+      bartenderBreakdown: breakdown,
+    } as unknown as VenueScopeJob;
   }
 
-  const todayJobs     = todayShifts.map((s, i) => makeJob(s, i));
-  const historicJobs  = historicShifts.map((s, i) => makeJob(s, i + 100));
-  return [...todayJobs, ...historicJobs].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  const historicJobs = historicShifts.map((s, i) => makeHistoricJob(s, i + 200));
+
+  return [liveJob, lastNightJob, ...historicJobs]
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }
