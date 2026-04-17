@@ -22,6 +22,7 @@ from core.database import (list_jobs, get_job, list_cameras, list_venues, save_c
                             list_events, get_event, save_event, delete_event, get_concept_stats,
                             _compute_demand_score)
 from core.onvif_discover import discover_cameras, get_rtsp_url
+from core.prophet_forecast import forecast_service as _forecast_service
 
 API_VERSION = "1.0"
 API_PORT    = 8502
@@ -297,7 +298,16 @@ class _APIHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body   = json.loads(self.rfile.read(length)) if length else {}
 
-            if path == "/api/cameras":
+            if path == "/forecast/tonight":
+                data, status = _forecast_service.handle_request(
+                    method="POST",
+                    path=path,
+                    query_string=parsed.query,
+                    body=body,
+                )
+                _json_response(self, data, status)
+
+            elif path == "/api/cameras":
                 import uuid as _uuid
                 cam_id = body.get("camera_id") or str(_uuid.uuid4())[:8]
                 save_camera(
@@ -1046,6 +1056,15 @@ class _APIHandler(BaseHTTPRequestHandler):
                 _json_response(self, {
                     "url": url3, "ok": ok3, "latency_ms": latency3, "detail": detail3
                 }, 200)
+
+            elif path == "/forecast/tonight":
+                data, status = _forecast_service.handle_request(
+                    method="GET",
+                    path=path,
+                    query_string=parsed.query,
+                    body={},
+                )
+                _json_response(self, data, status)
 
             elif path == "/api/cameras/subnet-scan":
                 # Scan a /24 (or smaller) subnet for devices with open camera ports

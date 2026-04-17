@@ -1,0 +1,540 @@
+"""
+VenueScope — Tonight's Forecast HTTP service.
+Handles POST /forecast/tonight and GET /forecast/tonight.
+Integrates with the existing http.server BaseHTTPRequestHandler pattern in app/api.py.
+"""
+from __future__ import annotations
+import json
+import logging
+import math
+import os
+import time
+from datetime import date, datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler
+from typing import Optional
+from urllib.parse import parse_qs, urlparse
+
+import pandas as pd
+
+from core.prophet_forecast.model_interface import ForecastModel, get_forecaster
+from core.prophet_forecast.weather_ingest import fetch_weather_forecast, weather_multiplier
+from core.prophet_forecast.events_ingest import get_event_provider, compute_competition_drag
+from core.prophet_forecast.training_pipeline import (
+    _mape_from_days, _calibration_state_from_days,
+)
+
+logger = logging.getLogger(__name__)
+
+# Operating window: 4 PM to 2 AM (next day)
+_OPEN_HOUR = 16   # 4 PM
+_CLOSE_HOUR = 26  # 2 AM next day (26 = 24 + 2)
+_SLOT_MINUTES = 15
+_SLOTS_PER_HOUR = 60 // _SLOT_MINUTES   # 4
+
+# Default revenue per cover
+_AVG_DRINK_PRICE = 33.0
+
+# Day-of-week multipliers for generic prior (Mon=0 ... Sun=6)
+_DOW_PRIOR = {
+    0: 0.40,   # Monday
+    1: 0.45,   # Tuesday
+    2: 0.50,   # Wednesday
+    3: 0.65,   # Thursday
+    4: 1.00,   # Friday
+    5: 0.95,   # Saturday
+    6: 0.55,   # Sunday
+}
+
+# Hour-of-day shape for generic prior (hour 16..25, index 0..9)
+_HOUR_SHAPE_PRIOR = {
+    16: 0.20,
+    17: 0.35,
+    18: 0.55,
+    19: 0.70,
+    20: 0.85,
+    21: 0.95,
+    22: 1.00,
+    23: 0.90,
+    24: 0.70,  # midnight
+    25: 0.40,  # 1 AM
+}
+
+# Typical weekend peak occupancy for generic prior (before DOW multiplier)
+_GENERIC_PEAK = 120
+
+
+def _generic_prior_forecast(target_date: date) -> list[dict]:
+    """
+    Build a generic prior hourly curve when no model is trained.
+    Uses DOW + hour-of-day shape table to produce a plausible baseline.
+    """
+    dow = target_date.weekday()
+    dow_mult = _DOW_PRIOR.get(dow, 0.60)
+    base_peak = _GENERIC_PEAK * dow_mult
+
+    slots = []
+    for hour_abs in range(_OPEN_HOUR, _CLOSE_HOUR):
+        hour_display = hour_abs if hour_abs < 24 else hour_abs - 24
+        shape = _HOUR_SHAPE_PRIOR.get(hour_abs, 0.30)
+        yhat = base_peak * shape
+        for slot in range(_SLOTS_PER_HOUR):
+            slot_hour = hour_abs if hour_abs < 24 else hour_abs - 24
+            slot_minute = slot * _SLOT_MINUTES
+            # Build datetime for the slot
+            if hour_abs < 24:
+                slot_dt = datetime(target_date.year, target_date.month, target_date.day,
+                                   slot_hour, slot_minute)
+            else:
+                next_day = target_date + timedelta(days=1)
+                slot_dt = datetime(next_day.year, next_day.month, next_day.day,
+                                   slot_hour, slot_minute)
+            slots.append({
+                "ds": slot_dt,
+                "yhat": max(0.0, yhat),
+                "yhat_lower": max(0.0, yhat * 0.70),
+                "yhat_upper": yhat * 1.30,
+            })
+
+    return slots
+
+
+def _build_future_df(target_date: date, weather_rows: list[dict],
+                      competing_events_count: int) -> pd.DataFrame:
+    """
+    Build a future DataFrame at 15-min resolution from 4 PM to 2 AM.
+    Joins weather by hour.
+    """
+    # Build weather lookup by hour (hour of day as int)
+    weather_by_dt: dict[datetime, dict] = {}
+    for w in weather_rows:
+        wdt = w["ds"]
+        if isinstance(wdt, str):
+            wdt = datetime.fromisoformat(wdt)
+        weather_by_dt[wdt.replace(minute=0, second=0, microsecond=0)] = w
+
+    def _weather_at_hour(hour_dt: datetime) -> tuple[float, float, float]:
+        key = hour_dt.replace(minute=0, second=0, microsecond=0)
+        w = weather_by_dt.get(key)
+        if w:
+            return w.get("temp", 68.0), w.get("precip", 0.0), w.get("wind", 5.0)
+        return 68.0, 0.0, 5.0
+
+    rows = []
+    for hour_abs in range(_OPEN_HOUR, _CLOSE_HOUR):
+        hour_display = hour_abs if hour_abs < 24 else hour_abs - 24
+        for slot in range(_SLOTS_PER_HOUR):
+            slot_minute = slot * _SLOT_MINUTES
+            if hour_abs < 24:
+                slot_dt = datetime(target_date.year, target_date.month, target_date.day,
+                                   hour_display, slot_minute)
+            else:
+                next_day = target_date + timedelta(days=1)
+                slot_dt = datetime(next_day.year, next_day.month, next_day.day,
+                                   hour_display, slot_minute)
+
+            temp, precip, wind = _weather_at_hour(slot_dt)
+            rows.append({
+                "ds": slot_dt,
+                "temp": temp,
+                "precip": precip,
+                "wind": wind,
+                "competing_events_count": float(competing_events_count),
+            })
+
+    return pd.DataFrame(rows)
+
+
+def _format_hour(dt: datetime) -> str:
+    """Format a datetime as '10:00 PM' style."""
+    h = dt.hour
+    m = dt.minute
+    period = "AM" if h < 12 else "PM"
+    if h == 0:
+        h_disp = 12
+    elif h > 12:
+        h_disp = h - 12
+    else:
+        h_disp = h
+    return f"{h_disp}:{m:02d} {period}"
+
+
+def _calibration_state(venue_id: str) -> tuple[str, str]:
+    """
+    Determine calibration state and MAPE estimate for the venue.
+    Returns (calibration_state, mape_expected).
+    """
+    from core.prophet_forecast.occupancy_snapshots import get_snapshots
+    now_ts = time.time()
+    start_ts = now_ts - 400 * 86400  # look back up to 400 days
+    snapshots = get_snapshots(venue_id, start_ts, now_ts)
+
+    if not snapshots:
+        return "generic_prior", "±30%"
+
+    ts_min = snapshots[0]["snapshot_ts"]
+    ts_max = snapshots[-1]["snapshot_ts"]
+    days = (ts_max - ts_min) / 86400
+
+    return _calibration_state_from_days(days), _mape_from_days(days)
+
+
+def forecast_tonight(
+    venue_id: str,
+    target_date: Optional[date] = None,
+    lat: float = 27.9506,
+    lon: float = -82.4572,
+    city: str = "tampa",
+    avg_drink_price: float = _AVG_DRINK_PRICE,
+) -> dict:
+    """
+    Produce the Tonight's Forecast for a venue.
+
+    Steps:
+      1. Load trained model (or fall back to generic prior)
+      2. Fetch weather forecast
+      3. Fetch competing events
+      4. Compute C(t) competition drag
+      5. Build future DataFrame (4 PM – 2 AM, 15-min slots)
+      6. Run model.predict()
+      7. Apply weather multiplier W(t) and competition drag C(t)
+      8. Aggregate to final estimates
+      9. Return structured response dict
+
+    Returns the full forecast response dict (same structure as the API endpoint).
+    """
+    if target_date is None:
+        target_date = date.today()
+
+    # Step 1: Load model
+    model_type = "prior"
+    model: Optional[ForecastModel] = None
+
+    try:
+        from core.prophet_forecast.model_interface import ForecastModel
+        loaded = ForecastModel.load(venue_id)
+        if loaded is not None:
+            model = loaded
+            from core.prophet_forecast.model_interface import ProphetForecaster, GradientBoostingForecaster
+            if isinstance(model, ProphetForecaster):
+                model_type = "prophet"
+            elif isinstance(model, GradientBoostingForecaster):
+                model_type = "gbm"
+            else:
+                model_type = "prophet"
+    except Exception as e:
+        logger.warning("[forecast] Failed to load model for venue %s: %s — using prior", venue_id, e)
+
+    # Step 2: Fetch weather
+    weather_rows = []
+    try:
+        weather_rows = fetch_weather_forecast(lat, lon, target_date)
+    except Exception as e:
+        logger.warning("[forecast] Weather fetch failed: %s", e)
+
+    # Compute representative weather for the operating window (4 PM – 2 AM)
+    # Use median values across slots for the factor display
+    if weather_rows:
+        evening_weather = [
+            w for w in weather_rows
+            if isinstance(w["ds"], datetime) and 16 <= w["ds"].hour <= 23
+        ]
+        if evening_weather:
+            rep_temp = sum(w["temp"] for w in evening_weather) / len(evening_weather)
+            rep_precip = max(w["precip"] for w in evening_weather)
+            rep_wind = sum(w["wind"] for w in evening_weather) / len(evening_weather)
+        else:
+            rep_temp, rep_precip, rep_wind = 68.0, 0.0, 5.0
+    else:
+        rep_temp, rep_precip, rep_wind = 68.0, 0.0, 5.0
+
+    # Step 3: Fetch competing events
+    event_provider = get_event_provider()
+    competing_events = []
+    try:
+        window_start = datetime(target_date.year, target_date.month, target_date.day, 16, 0)
+        next_day = target_date + timedelta(days=1)
+        window_end = datetime(next_day.year, next_day.month, next_day.day, 2, 0)
+        competing_events = event_provider.get_events_within_radius(
+            lat, lon, 2.0, window_start, window_end
+        )
+    except Exception as e:
+        logger.warning("[forecast] Event fetch failed: %s", e)
+
+    # Step 4: Compute competition drag
+    c_drag = compute_competition_drag(competing_events)
+
+    # Step 5 & 6: Build future df and predict
+    competing_events_count = len(competing_events)
+
+    if model is not None:
+        future_df = _build_future_df(target_date, weather_rows, competing_events_count)
+        try:
+            forecast_df = model.predict(future_df)
+            slots_raw = forecast_df.to_dict("records")
+        except Exception as e:
+            logger.warning("[forecast] Model predict failed: %s — falling back to prior", e)
+            model_type = "prior"
+            slots_raw = _generic_prior_forecast(target_date)
+    else:
+        slots_raw = _generic_prior_forecast(target_date)
+
+    # Step 7: Apply weather multiplier W(t) per slot
+    # Compute per-slot weather multiplier (varies by hour)
+    # Build weather lookup
+    weather_by_hour: dict[int, dict] = {}
+    for w in weather_rows:
+        wdt = w["ds"]
+        if isinstance(wdt, str):
+            wdt = datetime.fromisoformat(wdt)
+        weather_by_hour[wdt.hour] = w
+
+    adjusted_slots = []
+    for slot in slots_raw:
+        ds = slot["ds"]
+        if isinstance(ds, str):
+            ds = datetime.fromisoformat(ds)
+
+        hour = ds.hour
+        w = weather_by_hour.get(hour, {})
+        w_temp = w.get("temp", rep_temp)
+        w_precip = w.get("precip", rep_precip)
+        w_wind = w.get("wind", rep_wind)
+        w_mult = weather_multiplier(w_temp, w_precip, w_wind)
+
+        yhat_adj = slot["yhat"] * w_mult * c_drag
+        ylow_adj = slot["yhat_lower"] * w_mult * c_drag
+        yhigh_adj = slot["yhat_upper"] * w_mult * c_drag
+
+        adjusted_slots.append({
+            "ds": ds,
+            "yhat": max(0.0, yhat_adj),
+            "yhat_lower": max(0.0, ylow_adj),
+            "yhat_upper": max(0.0, yhigh_adj),
+            "hour_label": _format_hour(ds),
+            "w_mult": w_mult,
+        })
+
+    # Step 8: Aggregate to hourly curve (group by hour label, take first slot per hour)
+    hourly_by_hour: dict[str, dict] = {}
+    for slot in adjusted_slots:
+        hour_key = slot["ds"].strftime("%H:00")
+        if hour_key not in hourly_by_hour:
+            hourly_by_hour[hour_key] = {
+                "hour": _format_hour(slot["ds"].replace(minute=0)),
+                "yhat": 0.0,
+                "yhat_lower": 0.0,
+                "yhat_upper": 0.0,
+                "_count": 0,
+            }
+        hourly_by_hour[hour_key]["yhat"] += slot["yhat"]
+        hourly_by_hour[hour_key]["yhat_lower"] += slot["yhat_lower"]
+        hourly_by_hour[hour_key]["yhat_upper"] += slot["yhat_upper"]
+        hourly_by_hour[hour_key]["_count"] += 1
+
+    hourly_curve = []
+    for hk in sorted(hourly_by_hour.keys()):
+        h = hourly_by_hour[hk]
+        n = max(h["_count"], 1)
+        hourly_curve.append({
+            "hour": h["hour"],
+            "yhat": round(h["yhat"] / n, 1),
+            "yhat_lower": round(h["yhat_lower"] / n, 1),
+            "yhat_upper": round(h["yhat_upper"] / n, 1),
+        })
+
+    # Step 9: Final estimates — sum yhat across all slots gives total covers
+    total_yhat = sum(s["yhat"] for s in adjusted_slots)
+    total_low = sum(s["yhat_lower"] for s in adjusted_slots)
+    total_high = sum(s["yhat_upper"] for s in adjusted_slots)
+
+    # Normalize to "covers during operating window" — peak concurrent occupancy
+    # yhat per slot is already headcount (not cumulative), so take max across slots
+    peak_yhat = max((s["yhat"] for s in adjusted_slots), default=0.0)
+    peak_low = max((s["yhat_lower"] for s in adjusted_slots), default=0.0)
+    peak_high = max((s["yhat_upper"] for s in adjusted_slots), default=0.0)
+
+    # Final estimate is total unique covers (entries), approximate as sum / avg_visit_slots
+    # Assume avg visit = 2.5 hours = 10 slots; total_entries ≈ cumulative_drinks / 2 proxy
+    # Simpler: use total_yhat / 10 as rough entry count, but clamp to reasonable range
+    avg_visit_slots = 10
+    mid_covers = max(1, int(round(total_yhat / avg_visit_slots)))
+    low_covers = max(1, int(round(total_low / avg_visit_slots)))
+    high_covers = max(1, int(round(total_high / avg_visit_slots)))
+
+    # Peak hour
+    peak_slot = max(adjusted_slots, key=lambda s: s["yhat"], default=None)
+    peak_hour_str = _format_hour(peak_slot["ds"]) if peak_slot else "10:00 PM"
+
+    # Revenue estimates (covers * avg drink price)
+    rev_mid = int(round(mid_covers * avg_drink_price))
+    rev_low = int(round(low_covers * avg_drink_price))
+    rev_high = int(round(high_covers * avg_drink_price))
+
+    # Staffing recommendation
+    bartenders_needed = max(1, math.ceil(mid_covers / 80))
+
+    # Weather description
+    def _weather_desc(temp_f, precip, wind):
+        parts = []
+        if precip >= 0.25:
+            parts.append("rainy")
+        elif precip > 0:
+            parts.append("light rain")
+        if temp_f < 35:
+            parts.append("very cold")
+        elif temp_f < 50:
+            parts.append("cold")
+        elif temp_f > 95:
+            parts.append("very hot")
+        elif temp_f > 85:
+            parts.append("hot")
+        if wind >= 35:
+            parts.append("high winds")
+        if not parts:
+            parts.append("clear")
+        return ", ".join(parts).capitalize()
+
+    weather_desc = _weather_desc(rep_temp, rep_precip, rep_wind)
+    w_overall = weather_multiplier(rep_temp, rep_precip, rep_wind)
+
+    # DOW factor
+    dow_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    dow_name = dow_names[target_date.weekday()]
+    dow_impact = "high" if target_date.weekday() >= 4 else ("medium" if target_date.weekday() == 3 else "low")
+
+    # Build factors list
+    factors = [
+        {
+            "name": "Day of week",
+            "value": dow_name,
+            "impact": dow_impact,
+        },
+        {
+            "name": "Weather",
+            "value": f"{weather_desc} ({rep_temp:.0f}°F)",
+            "impact": "low" if w_overall >= 0.90 else ("medium" if w_overall >= 0.70 else "high"),
+        },
+    ]
+    if competing_events:
+        factors.append({
+            "name": "Competing events",
+            "value": f"{len(competing_events)} nearby event(s)",
+            "impact": "medium" if c_drag >= 0.85 else "high",
+        })
+    else:
+        factors.append({
+            "name": "Competing events",
+            "value": "None detected",
+            "impact": "none",
+        })
+
+    # Calibration state and MAPE
+    cal_state, mape_str = _calibration_state(venue_id)
+    if model_type == "prior":
+        cal_state = "generic_prior"
+        mape_str = "±30%"
+
+    # Confidence pct (inverse of MAPE midpoint)
+    mape_pct_map = {
+        "±30%": 70, "±24%": 76, "±18%": 82,
+        "±12%": 88, "±8%": 92, "±5%": 95,
+    }
+    confidence_pct = mape_pct_map.get(mape_str, 70)
+
+    return {
+        "venue_id": venue_id,
+        "date": target_date.isoformat(),
+        "model_type": model_type,
+        "confidence_pct": confidence_pct,
+        "final_estimate": {
+            "low": low_covers,
+            "mid": mid_covers,
+            "high": high_covers,
+        },
+        "revenue_estimate": {
+            "low": rev_low,
+            "mid": rev_mid,
+            "high": rev_high,
+        },
+        "peak_hour": peak_hour_str,
+        "weather_multiplier": round(w_overall, 4),
+        "competition_drag": c_drag,
+        "staffing_rec": {
+            "bartenders": bartenders_needed,
+            "note": (
+                f"Estimated {mid_covers} covers at peak. "
+                f"1 bartender per 80 covers = {bartenders_needed} recommended."
+            ),
+        },
+        "hourly_curve": hourly_curve,
+        "factors": factors,
+        "calibration_state": cal_state,
+        "mape_expected": mape_str,
+    }
+
+
+# ── HTTP handler ──────────────────────────────────────────────────────────────
+
+def _parse_params(body: dict) -> tuple:
+    """Extract and validate forecast request parameters from body dict."""
+    venue_id = body.get("venue_id", os.environ.get("VENUESCOPE_VENUE_ID", "default"))
+    date_str = body.get("date")
+    if date_str:
+        try:
+            target_date = date.fromisoformat(date_str)
+        except ValueError:
+            target_date = date.today()
+    else:
+        target_date = date.today()
+
+    lat = float(body.get("lat", 27.9506))
+    lon = float(body.get("lon", -82.4572))
+    city = body.get("city", "tampa")
+
+    # If lat/lon not provided, try to look up from city
+    if "lat" not in body and city:
+        try:
+            from core.event_intelligence import CITY_LATLON
+            lat, lon = CITY_LATLON.get(city.lower(), (lat, lon))
+        except Exception:
+            pass
+
+    return venue_id, target_date, lat, lon, city
+
+
+def handle_request(method: str, path: str, query_string: str, body: dict) -> tuple[dict, int]:
+    """
+    Handle a forecast request from the API handler.
+
+    method: 'GET' or 'POST'
+    path: the request path (should be /forecast/tonight)
+    query_string: URL query string (for GET requests)
+    body: parsed JSON body (for POST requests)
+
+    Returns (response_dict, http_status_code).
+    """
+    if method == "GET":
+        qs = parse_qs(query_string)
+        body = {
+            "venue_id": qs.get("venue_id", [None])[0],
+            "date": qs.get("date", [None])[0],
+            "lat": qs.get("lat", [None])[0],
+            "lon": qs.get("lon", [None])[0],
+            "city": qs.get("city", [None])[0],
+        }
+        # Remove None values
+        body = {k: v for k, v in body.items() if v is not None}
+
+    try:
+        venue_id, target_date, lat, lon, city = _parse_params(body)
+        result = forecast_tonight(
+            venue_id=venue_id,
+            target_date=target_date,
+            lat=lat,
+            lon=lon,
+            city=city,
+        )
+        return result, 200
+    except Exception as exc:
+        logger.error("[forecast_service] Request failed: %s", exc, exc_info=True)
+        return {"error": str(exc)}, 500
