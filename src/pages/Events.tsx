@@ -157,33 +157,33 @@ function todayString(): string {
 
 // ─── Client-side prior (used when backend unreachable) ────────────────────────
 // DOW × month multipliers from forecasting.py (Lucas & Kilby baseline)
-const DOW_MULT  = [0.31, 0.35, 0.44, 0.62, 0.85, 1.00, 0.65]; // Mon=0..Sun=6
-const MON_MULT  = [0, 0.72, 0.78, 0.92, 0.88, 0.91, 0.96, 0.94, 0.93, 0.87, 0.97, 0.85, 1.12];
-// Hourly distribution across a typical bar shift (sums to 1.0)
-const HOUR_DIST = [0.06, 0.08, 0.10, 0.13, 0.15, 0.16, 0.14, 0.10, 0.05, 0.03];
-const HOURS_LBL = ['4:00 PM','5:00 PM','6:00 PM','7:00 PM','8:00 PM','9:00 PM','10:00 PM','11:00 PM','12:00 AM','1:00 AM'];
-const BASE_HEADCOUNT = 150;
-const AVG_CHECK = 33;
-const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-const MON_NAMES = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+const PRIOR_DOW_MULT  = [0.31, 0.35, 0.44, 0.62, 0.85, 1.00, 0.65]; // Mon=0..Sun=6
+const PRIOR_MON_MULT  = [0, 0.72, 0.78, 0.92, 0.88, 0.91, 0.96, 0.94, 0.93, 0.87, 0.97, 0.85, 1.12];
+const PRIOR_HOUR_DIST = [0.06, 0.08, 0.10, 0.13, 0.15, 0.16, 0.14, 0.10, 0.05, 0.03];
+const PRIOR_HOURS_LBL = ['4:00 PM','5:00 PM','6:00 PM','7:00 PM','8:00 PM','9:00 PM','10:00 PM','11:00 PM','12:00 AM','1:00 AM'];
+const PRIOR_BASE = 150;
+const PRIOR_AVG_CHECK = 33;
+const PRIOR_DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const PRIOR_MON_NAMES = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
 
 function buildClientPrior(): TonightForecast {
   const now   = new Date();
   const dow   = now.getDay();   // 0=Sun
   const mon   = now.getMonth() + 1;
-  const mult  = DOW_MULT[dow === 0 ? 6 : dow - 1] * MON_MULT[mon];
-  const mid   = Math.round(BASE_HEADCOUNT * mult);
+  const dowIdx = dow === 0 ? 6 : dow - 1;
+  const mult  = PRIOR_DOW_MULT[dowIdx] * PRIOR_MON_MULT[mon];
+  const mid   = Math.round(PRIOR_BASE * mult);
   const low   = Math.round(mid * 0.80);
   const high  = Math.round(mid * 1.20);
-  const peakIdx = HOUR_DIST.indexOf(Math.max(...HOUR_DIST));
+  const peakIdx = PRIOR_HOUR_DIST.indexOf(Math.max(...PRIOR_HOUR_DIST));
   return {
     model_type: 'prior',
     calibration_state: 'generic_prior',
     mape_expected: '±30%',
     confidence_pct: 70,
     final_estimate: { low, mid, high },
-    revenue_estimate: { low: low * AVG_CHECK, mid: mid * AVG_CHECK, high: high * AVG_CHECK },
-    peak_hour: HOURS_LBL[peakIdx],
+    revenue_estimate: { low: low * PRIOR_AVG_CHECK, mid: mid * PRIOR_AVG_CHECK, high: high * PRIOR_AVG_CHECK },
+    peak_hour: PRIOR_HOURS_LBL[peakIdx],
     weather_multiplier: 1.0,
     competition_drag: 1.0,
     staffing_rec: {
@@ -191,14 +191,14 @@ function buildClientPrior(): TonightForecast {
       note: 'Based on industry averages — improves as sensor data accumulates.',
     },
     factors: [
-      { name: 'Day of week', value: DOW_NAMES[dow], impact: `×${DOW_MULT[dow === 0 ? 6 : dow - 1].toFixed(2)}` },
-      { name: 'Month',       value: MON_NAMES[mon], impact: `×${MON_MULT[mon].toFixed(2)}` },
+      { name: 'Day of week', value: PRIOR_DOW_NAMES[dow], impact: `×${PRIOR_DOW_MULT[dowIdx].toFixed(2)}` },
+      { name: 'Month',       value: PRIOR_MON_NAMES[mon], impact: `×${PRIOR_MON_MULT[mon].toFixed(2)}` },
       { name: 'Weather',     value: 'Not fetched',  impact: '—' },
       { name: 'Competing events', value: 'Not checked', impact: '—' },
     ],
-    hourly_curve: HOUR_DIST.map((pct, i) => {
-      const yhat = Math.round(mid * pct * 10); // scale to headcount, not pct
-      return { hour: HOURS_LBL[i], yhat, yhat_lower: Math.round(yhat * 0.75), yhat_upper: Math.round(yhat * 1.25) };
+    hourly_curve: PRIOR_HOUR_DIST.map((pct, i) => {
+      const yhat = Math.round(mid * pct * 10);
+      return { hour: PRIOR_HOURS_LBL[i], yhat, yhat_lower: Math.round(yhat * 0.75), yhat_upper: Math.round(yhat * 1.25) };
     }),
   };
 }
