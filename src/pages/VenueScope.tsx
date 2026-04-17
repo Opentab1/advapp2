@@ -1482,7 +1482,7 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
 
 // ── Tonight hero numbers ──────────────────────────────────────────────────────
 
-function TonightHero({ jobs, avgDrinkPrice, barOpen = true, peopleRooms = [] }: { jobs: VenueScopeJob[]; avgDrinkPrice: number; barOpen?: boolean; peopleRooms?: RoomSummary[] }) {
+function TonightHero({ jobs, avgDrinkPrice, barOpen = true, peopleRooms = [], isDemo = false }: { jobs: VenueScopeJob[]; avgDrinkPrice: number; barOpen?: boolean; peopleRooms?: RoomSummary[]; isDemo?: boolean }) {
   const totalDrinks    = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const liveJobs       = jobs.filter(j => j.isLive);
 
@@ -1518,8 +1518,10 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true, peopleRooms = [] }: 
 
   // Sum exactly what each camera card shows (room.currentOccupancy) — guaranteed consistent.
   // peopleRooms is already deduped and computed by buildRooms with the same logic.
-  const currentOccupancy = peopleRooms.reduce((s, r) => s + (r.currentOccupancy ?? 0), 0);
-  const cameraZoneCount  = peopleRooms.length;
+  const _rawOccupancy    = peopleRooms.reduce((s, r) => s + (r.currentOccupancy ?? 0), 0);
+  // Demo: simulate 287 guests in-venue at 3.5 hrs into the shift
+  const currentOccupancy = isDemo ? 287 : _rawOccupancy;
+  const cameraZoneCount  = isDemo ? 1 : peopleRooms.length;
   const occupancyIsEntrance = false;
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
@@ -1556,9 +1558,9 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true, peopleRooms = [] }: 
       bg: 'bg-whoop-panel border-whoop-divider',
       iconColor: 'text-text-muted',
       sub: currentOccupancy > 0
-        ? `${cameraZoneCount} camera zone${cameraZoneCount !== 1 ? 's' : ''}`
+        ? (isDemo ? 'overhead camera · live count' : `${cameraZoneCount} camera zone${cameraZoneCount !== 1 ? 's' : ''}`)
         : liveJobs.length > 0 ? 'cameras live · no activity' : 'no cameras active',
-      countdown: nextCountSec > 0 ? `Next count in ${fmtCountdown(nextCountSec)}` : null,
+      countdown: (!isDemo && nextCountSec > 0) ? `Next count in ${fmtCountdown(nextCountSec)}` : null,
     },
     theftCount > 0
       ? {
@@ -3921,7 +3923,7 @@ export function VenueScope() {
           })()}
 
           {/* 1. Today's hero numbers — always shown; handles empty/closed state internally */}
-          <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} peopleRooms={allRooms.filter(r => r.mode === 'people_count')} />
+          <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} peopleRooms={allRooms.filter(r => r.mode === 'people_count')} isDemo={isDemo} />
 
           {/* POS Reconciliation */}
           <POSReconciliationPanel jobs={tonightJobs} />
