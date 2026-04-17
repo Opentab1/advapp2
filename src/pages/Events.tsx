@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles, BarChart3, TrendingUp, Minus,
@@ -9,6 +9,7 @@ import { EventROITracker } from '../components/events/EventROITracker';
 import { Forecast as ForecastPage } from './Forecast';
 import authService from '../services/auth.service';
 import venueSettingsService from '../services/venue-settings.service';
+import { isDemoAccount } from '../utils/demoData';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,68 @@ interface ConceptStat {
   avg_drink_velocity?: number;
 }
 
+// ─── Tonight Forecast Types ───────────────────────────────────────────────────
+
+interface TonightFactor {
+  name: string;
+  value: string;
+  impact: string;
+}
+
+interface HourlyPoint {
+  hour: string;
+  yhat: number;
+  yhat_lower: number;
+  yhat_upper: number;
+}
+
+interface TonightForecast {
+  model_type: 'prophet' | 'prior';
+  calibration_state: string;
+  mape_expected: string;
+  confidence_pct: number;
+  final_estimate: { low: number; mid: number; high: number };
+  revenue_estimate: { low: number; mid: number; high: number };
+  peak_hour: string;
+  weather_multiplier: number;
+  competition_drag: number;
+  staffing_rec: { bartenders: number; note: string };
+  factors: TonightFactor[];
+  hourly_curve: HourlyPoint[];
+}
+
+// ─── Demo Forecast ─────────────────────────────────────────────────────────
+
+const DEMO_FORECAST: TonightForecast = {
+  model_type: 'prophet',
+  calibration_state: 'month_6',
+  mape_expected: '±11%',
+  confidence_pct: 89,
+  final_estimate: { low: 193, mid: 235, high: 277 },
+  revenue_estimate: { low: 6360, mid: 7755, high: 9150 },
+  peak_hour: '10:00 PM',
+  weather_multiplier: 0.90,
+  competition_drag: 0.97,
+  staffing_rec: { bartenders: 3, note: '1 extra bartender recommended after 9 PM based on Friday pattern' },
+  factors: [
+    { name: 'Day of week', value: 'Friday', impact: '+80%' },
+    { name: 'Weather', value: 'Light rain forecast', impact: '-10%' },
+    { name: 'Competing events', value: 'Mid concert nearby', impact: '-3%' },
+    { name: 'Month', value: 'October', impact: '+7%' },
+  ],
+  hourly_curve: [
+    { hour: '4:00 PM', yhat: 18, yhat_lower: 12, yhat_upper: 24 },
+    { hour: '5:00 PM', yhat: 32, yhat_lower: 22, yhat_upper: 42 },
+    { hour: '6:00 PM', yhat: 51, yhat_lower: 38, yhat_upper: 64 },
+    { hour: '7:00 PM', yhat: 78, yhat_lower: 61, yhat_upper: 95 },
+    { hour: '8:00 PM', yhat: 112, yhat_lower: 90, yhat_upper: 134 },
+    { hour: '9:00 PM', yhat: 158, yhat_lower: 130, yhat_upper: 186 },
+    { hour: '10:00 PM', yhat: 201, yhat_lower: 168, yhat_upper: 234 },
+    { hour: '11:00 PM', yhat: 185, yhat_lower: 153, yhat_upper: 217 },
+    { hour: '12:00 AM', yhat: 142, yhat_lower: 115, yhat_upper: 169 },
+    { hour: '1:00 AM', yhat: 88, yhat_lower: 68, yhat_upper: 108 },
+  ],
+};
 
 const CONCEPT_EMOJIS: Record<string, string> = {
   'DJ Night': '🎧', 'Live Music': '🎸', 'Trivia Night': '🧠', 'Karaoke': '🎤',
@@ -62,7 +125,7 @@ const CONCEPT_EMOJIS: Record<string, string> = {
   'Paint & Sip': '🎨', 'Speed Dating': '💘', 'Networking Event': '🤝', 'Other': '✨',
 };
 
-type EventsTab = 'ideas' | 'attendance' | 'history';
+type EventsTab = 'tonight' | 'ideas' | 'attendance' | 'history';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -84,6 +147,253 @@ function healthColor(score?: number) {
   return 'text-red-400';
 }
 
+function todayString(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// ─── Tonight Tab ──────────────────────────────────────────────────────────────
+
+function TonightTab({ venueId }: { venueId: string }) {
+  const [forecast, setForecast] = useState<TonightForecast | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+
+    if (!venueId) {
+      setLoading(false);
+      return;
+    }
+
+    if (isDemoAccount(venueId)) {
+      setForecast(DEMO_FORECAST);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      // Attempt to get city from venue settings address
+      let lat = 27.9477;
+      let lon = -82.4584;
+      let city = 'tampa';
+
+      try {
+        const settings = await venueSettingsService.loadSettingsFromCloud(venueId);
+        if (settings?.address?.city) {
+          city = settings.address.city.toLowerCase();
+        }
+      } catch {
+        // fall back to Tampa defaults
+      }
+
+      const res = await fetch(`${getServerUrl()}/forecast/tonight`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venue_id: venueId, date: todayString(), lat, lon, city }),
+      });
+
+      if (!res.ok) throw new Error('non-2xx');
+      const data = await res.json();
+      setForecast(data);
+    } catch {
+      setError(true);
+    }
+
+    setLoading(false);
+  }, [venueId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!venueId) {
+    return (
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-6 text-center">
+        <TrendingUp className="w-8 h-8 text-warm-600 mx-auto mb-3" />
+        <p className="text-sm text-warm-400">Configure your venue to enable forecasting</p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <RefreshCw className="w-6 h-6 text-teal animate-spin" />
+      </div>
+    );
+  }
+
+  if (error || !forecast) {
+    return (
+      <div className="bg-warm-800/60 border border-warm-700 rounded-2xl p-5 text-center space-y-3">
+        <AlertTriangle className="w-7 h-7 text-amber-400 mx-auto" />
+        <p className="text-sm text-warm-300">Forecast unavailable — backend not reachable</p>
+        <motion.button
+          onClick={load}
+          whileTap={{ scale: 0.95 }}
+          className="px-4 py-2 rounded-lg bg-warm-700 border border-warm-600 text-xs font-semibold text-white hover:bg-warm-600 transition-colors inline-flex items-center gap-2"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Retry
+        </motion.button>
+      </div>
+    );
+  }
+
+  const maxYhat = Math.max(...forecast.hourly_curve.map(h => h.yhat_upper), 1);
+  const confidenceColor =
+    forecast.confidence_pct >= 80 ? 'text-green-400 bg-green-500/10 border-green-500/30'
+    : forecast.confidence_pct >= 60 ? 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+    : 'text-red-400 bg-red-500/10 border-red-500/30';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-4"
+    >
+      {/* Calibration notice — prior model */}
+      {forecast.model_type === 'prior' && (
+        <div className="bg-teal/5 border border-teal/20 rounded-xl p-4 flex items-start gap-3">
+          <TrendingUp className="w-4 h-4 text-teal flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-warm-300 leading-relaxed">
+            <span className="font-semibold text-teal">Model calibrating</span> — forecast uses industry averages.
+            Accuracy improves over the first 12 weeks as your sensor data accumulates.
+          </p>
+        </div>
+      )}
+
+      {/* Forecast Hero */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+          <TrendingUp className="w-4 h-4 text-teal" />
+          <span className="text-sm font-semibold text-white">Tonight's Forecast</span>
+          <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${confidenceColor}`}>
+            {forecast.confidence_pct}% confidence · {forecast.mape_expected}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 divide-x divide-whoop-divider">
+          {/* Covers */}
+          <div className="p-4">
+            <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-2">Predicted Covers</p>
+            <p className="text-3xl font-bold text-white">{forecast.final_estimate.mid}</p>
+            <div className="flex gap-2 mt-1">
+              <span className="text-[10px] text-warm-500">{forecast.final_estimate.low} low</span>
+              <span className="text-[10px] text-warm-600">–</span>
+              <span className="text-[10px] text-warm-500">{forecast.final_estimate.high} high</span>
+            </div>
+          </div>
+          {/* Revenue */}
+          <div className="p-4">
+            <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-2">Revenue Estimate</p>
+            <p className="text-3xl font-bold text-green-400">${forecast.revenue_estimate.mid.toLocaleString()}</p>
+            <div className="flex gap-2 mt-1">
+              <span className="text-[10px] text-warm-500">${forecast.revenue_estimate.low.toLocaleString()}</span>
+              <span className="text-[10px] text-warm-600">–</span>
+              <span className="text-[10px] text-warm-500">${forecast.revenue_estimate.high.toLocaleString()}</span>
+            </div>
+          </div>
+        </div>
+        <div className="px-4 pb-3">
+          <p className="text-[10px] text-warm-500">Peak hour: <span className="text-white font-semibold">{forecast.peak_hour}</span></p>
+        </div>
+      </div>
+
+      {/* Tonight's Factors */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+          <BarChart3 className="w-4 h-4 text-teal" />
+          <span className="text-sm font-semibold text-white">Tonight's Factors</span>
+        </div>
+        <div className="p-4">
+          <div className="flex flex-wrap gap-2">
+            {forecast.factors.map(f => {
+              const isNegative = f.impact.startsWith('-');
+              const isPositive = f.impact.startsWith('+');
+              const pillColor = isNegative
+                ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                : isPositive
+                ? 'bg-teal/10 border-teal/30 text-teal'
+                : 'bg-warm-700 border-warm-600 text-warm-300';
+              return (
+                <span
+                  key={f.name}
+                  className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-full border ${pillColor}`}
+                >
+                  <span className="text-warm-400 font-normal">{f.name}:</span>
+                  {f.value} <span className="font-bold">{f.impact}</span>
+                </span>
+              );
+            })}
+            <span className="inline-flex items-center text-[11px] px-3 py-1.5 rounded-full border bg-warm-700/50 border-warm-600 text-warm-400">
+              {forecast.calibration_state.replace(/_/g, ' ')}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Staffing Recommendation */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+          <Users className="w-4 h-4 text-teal" />
+          <span className="text-sm font-semibold text-white">Staffing Recommendation</span>
+        </div>
+        <div className="p-4 space-y-2">
+          <p className="text-base font-bold text-white">
+            Recommended: {forecast.staffing_rec.bartenders} bartender{forecast.staffing_rec.bartenders !== 1 ? 's' : ''}
+          </p>
+          <p className="text-xs text-warm-400 leading-relaxed">{forecast.staffing_rec.note}</p>
+        </div>
+      </div>
+
+      {/* Hourly Curve */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+          <BarChart3 className="w-4 h-4 text-teal" />
+          <span className="text-sm font-semibold text-white">Hourly Curve</span>
+          <span className="text-[10px] text-warm-500 ml-auto">Confidence band shown lighter</span>
+        </div>
+        <div className="p-4">
+          <div className="flex items-end gap-1.5" style={{ height: '120px' }}>
+            {forecast.hourly_curve.map(pt => {
+              const bandH = Math.round((pt.yhat_upper / maxYhat) * 100);
+              const barH  = Math.round((pt.yhat / maxYhat) * 100);
+              return (
+                <div key={pt.hour} className="flex-1 flex flex-col items-center gap-0.5 h-full justify-end">
+                  {/* Stacked bar: band behind, main in front */}
+                  <div className="relative w-full flex flex-col justify-end" style={{ height: '100px' }}>
+                    {/* Confidence band (yhat_upper) */}
+                    <div
+                      className="absolute bottom-0 left-0 right-0 rounded-sm bg-teal/20"
+                      style={{ height: `${bandH}%` }}
+                    />
+                    {/* Main bar (yhat) */}
+                    <div
+                      className="absolute bottom-0 left-0 right-0 rounded-sm bg-teal/70"
+                      style={{ height: `${barH}%` }}
+                    />
+                  </div>
+                  <span className="text-[8px] text-warm-600 leading-none text-center whitespace-nowrap rotate-45 origin-left" style={{ marginTop: '4px' }}>
+                    {pt.hour.replace(':00', '').replace(' PM', 'p').replace(' AM', 'a')}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex justify-between mt-5 text-[10px] text-warm-500">
+            <span>{forecast.hourly_curve[0]?.hour}</span>
+            <span className="font-semibold text-white">{forecast.peak_hour} peak</span>
+            <span>{forecast.hourly_curve[forecast.hourly_curve.length - 1]?.hour}</span>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
 
 // ─── Concept Optimizer ────────────────────────────────────────────────────────
 
@@ -479,7 +789,7 @@ export default function Events() {
   const user = authService.getStoredUser();
   const venueId = user?.venueId || '';
 
-  const [activeTab, setActiveTab] = useState<EventsTab>('ideas');
+  const [activeTab, setActiveTab] = useState<EventsTab>('tonight');
   const [events, setEvents] = useState<VenueEvent[]>([]);
   const [concepts, setConcepts] = useState<ConceptStat[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
@@ -512,9 +822,10 @@ export default function Events() {
 
 
   const tabs = [
+    { id: 'tonight'    as const, label: "Tonight's Forecast",   icon: TrendingUp },
     { id: 'ideas'      as const, label: 'Ideas',                icon: Sparkles },
-    { id: 'attendance' as const, label: 'Attendance Forecaster', icon: TrendingUp },
-    { id: 'history'    as const, label: 'History',              icon: BarChart3 },
+    { id: 'attendance' as const, label: 'Attendance Forecaster', icon: BarChart3 },
+    { id: 'history'    as const, label: 'History',              icon: Trophy },
   ];
 
   return (
@@ -543,6 +854,9 @@ export default function Events() {
           </motion.button>
         ))}
       </div>
+
+      {/* Tonight's Forecast Tab */}
+      {activeTab === 'tonight' && <TonightTab venueId={venueId} />}
 
       {/* Ideas Tab */}
       {activeTab === 'ideas' && <IdeasTab capacity={venueCapacity} />}
