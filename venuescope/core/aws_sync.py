@@ -456,6 +456,21 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     _ca = _wall_start  # createdAt = worker start; React adds scaled t_sec to get wall time
     update_expr += ", createdAt = :ca"
     expr_vals[":ca"] = {"N": str(_ca)}
+
+    # ── Drinks per hour (live) ────────────────────────────────────────────────
+    # _ca = wall-clock start of this job. T_push is now. The ratio gives a
+    # live dph that is accurate regardless of NVR delivery rate (no YOLO touched).
+    _live_wall_elapsed = max(T_push - float(_ca), 1.0)
+    if _live_wall_elapsed >= 60 and total_drinks > 0:
+        live_dph = round(total_drinks * 3600 / _live_wall_elapsed, 1)
+        update_expr += ", drinksPerHour = :dph"
+        expr_vals[":dph"] = {"N": str(live_dph)}
+    # topBartender = station with most drinks this segment
+    if bts:
+        top_name = max(bts, key=lambda n: bts[n].get("total_drinks", 0))
+        update_expr += ", topBartender = :tb"
+        expr_vals[":tb"] = {"S": top_name}
+
     import time as _t
     print(f"[aws_sync] push delivery_rate={delivery_rate:.3f} "
           f"createdAt_EST={_t.strftime('%H:%M:%S', _t.gmtime(_ca - 3600*4))} "
