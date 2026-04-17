@@ -27,7 +27,6 @@ const TABS: Tab[] = [
   { id: 'analytics',   label: 'Results',     icon: BarChart2 },
   { id: 'events',      label: 'Events',      icon: Sparkles },
   { id: 'staffing',    label: 'Staffing',    icon: Users },
-  { id: 'leads',       label: 'Leads',       icon: Smartphone, comingSoon: true },
   { id: 'settings',    label: 'Settings',    icon: Settings },
 ];
 
