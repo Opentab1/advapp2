@@ -1864,6 +1864,57 @@ function CameraLiveView({
   );
 }
 
+const _DEMO_CAM_IMGS = [
+  "https://images.unsplash.com/photo-1575444758702-4a6b9222336e?w=800&q=80",
+  "https://images.unsplash.com/photo-1566633806327-68e152aaf26d?w=800&q=80",
+  "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=800&q=80",
+  "https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=800&q=80",
+];
+
+function DemoCameraFeed() {
+  const [idx, setIdx] = React.useState(0);
+  // Rotate through bar images every 8 seconds to simulate a real feed
+  React.useEffect(() => {
+    const id = setInterval(() => setIdx(i => (i + 1) % _DEMO_CAM_IMGS.length), 8000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="relative rounded-xl overflow-hidden bg-black mt-1" style={{ aspectRatio: '16/9' }}>
+      <img
+        src={_DEMO_CAM_IMGS[idx]}
+        alt="Bar camera"
+        className="w-full h-full object-cover opacity-90 transition-opacity duration-1000"
+      />
+      {/* LIVE badge */}
+      <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-600/90 backdrop-blur-sm">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
+        </span>
+        <span className="text-[10px] font-bold text-white tracking-wider uppercase">Live</span>
+      </div>
+      {/* Detection dots overlay */}
+      <div className="absolute inset-0 pointer-events-none">
+        {[
+          { top: '38%', left: '28%' }, { top: '52%', left: '61%' }, { top: '44%', left: '79%' },
+        ].map((pos, i) => (
+          <div key={i} className="absolute" style={pos}>
+            <div className="relative flex h-3 w-3">
+              <div className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-60" style={{ animationDelay: `${i * 0.6}s` }} />
+              <div className="relative inline-flex rounded-full h-3 w-3 bg-teal/80 border border-teal" />
+            </div>
+          </div>
+        ))}
+      </div>
+      {/* Camera label */}
+      <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[9px] text-white/70 font-mono">
+        CAM-01 · overhead fisheye
+      </div>
+    </div>
+  );
+}
+
 function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, onConfigureTableZones }: {
   room: RoomSummary;
   camProxyUrl: string;
@@ -1881,9 +1932,10 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
   const isTableTurns = activeModes.includes('table_turns');
   const barConfig   = camera ? parseBarConfig(camera.barConfigJson) : null;
   const tableZones  = camera ? parseTableZones(camera.tableZonesJson) : null;
-  // Show feed when camProxyUrl is configured OR camera has a direct HTTPS rtspUrl
-  const hasFeed  = !!camProxyUrl || !!camera?.rtspUrl?.startsWith('https://');
-  const [feedOpen, setFeedOpen] = React.useState(isDrink || isTableTurns);
+  // Show feed when camProxyUrl is configured OR camera has a direct HTTPS rtspUrl OR demo live job
+  const isDemoJob = (room.job?.jobId ?? '').startsWith('demo-live');
+  const hasFeed  = !!camProxyUrl || !!camera?.rtspUrl?.startsWith('https://') || isDemoJob;
+  const [feedOpen, setFeedOpen] = React.useState(isDrink || isTableTurns || isDemoJob);
   const [secondsLeft, setSecondsLeft] = React.useState(0);
 
   React.useEffect(() => {
@@ -1973,19 +2025,23 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <CameraLiveView
-              label={room.label}
-              proxyBase={camProxyUrl}
-              rtspUrl={camera?.rtspUrl}
-              barConfig={barConfig}
-              tableZones={tableZones}
-              onConfigureZones={
-                isTableTurns && !isDrink
-                  ? (camera && onConfigureTableZones ? () => onConfigureTableZones(camera) : undefined)
-                  : (camera && onConfigureZones ? () => onConfigureZones(camera) : undefined)
-              }
-              cameraModes={activeModes}
-            />
+            {isDemoJob ? (
+              <DemoCameraFeed />
+            ) : (
+              <CameraLiveView
+                label={room.label}
+                proxyBase={camProxyUrl}
+                rtspUrl={camera?.rtspUrl}
+                barConfig={barConfig}
+                tableZones={tableZones}
+                onConfigureZones={
+                  isTableTurns && !isDrink
+                    ? (camera && onConfigureTableZones ? () => onConfigureTableZones(camera) : undefined)
+                    : (camera && onConfigureZones ? () => onConfigureZones(camera) : undefined)
+                }
+                cameraModes={activeModes}
+              />
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -2823,15 +2879,18 @@ function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
     }
   } catch { /* no-op */ }
 
-  // Lookup helper — find closest snapshot key within 1s of a given t_sec
+  // Lookup helper — find closest snapshot key within tolerance of a given t_sec
+  // Demo jobs use integer keys spaced ~420s apart, so use 400s tolerance for them
+  const isDemo = (job?.jobId ?? '').startsWith('demo-');
   const findSnap = (tSec: number): string | undefined => {
     const keys = Object.keys(snapshots);
     if (!keys.length) return undefined;
     let best: string | undefined;
     let bestDiff = Infinity;
+    const tolerance = isDemo ? 400 : 1.0;
     for (const k of keys) {
       const diff = Math.abs(parseFloat(k) - tSec);
-      if (diff < bestDiff && diff < 1.0) { bestDiff = diff; best = snapshots[k]; }
+      if (diff < bestDiff && diff < tolerance) { bestDiff = diff; best = snapshots[k]; }
     }
     return best;
   };
@@ -3532,6 +3591,9 @@ export function VenueScope() {
   // the "gap" between close and next open — return today's open (possibly future) so that
   // tonightJobs is empty and the UI correctly shows the bar as closed / no activity.
   const todayStart = useMemo(() => {
+    // Demo: bar is always open — always show the last 8 hours so live job is always in view
+    if (isDemo) return Math.floor(Date.now() / 1000) - 8 * 3600;
+
     const now = new Date();
     const nowSec = now.getTime() / 1000;
     const DAY_KEYS = ['sun','mon','tue','wed','thu','fri','sat'];
