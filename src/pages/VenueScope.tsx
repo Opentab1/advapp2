@@ -2282,12 +2282,13 @@ function Row({ label, value, color }: { label: string; value: React.ReactNode; c
   );
 }
 
-function HistoryAccordion({ jobs, onInvestigate, onExport }: {
+function HistoryAccordion({ jobs, onInvestigate, onExport, initialOpen = false }: {
   jobs: VenueScopeJob[];
   onInvestigate: (job: VenueScopeJob) => void;
   onExport: () => void;
+  initialOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
 
   if (jobs.length === 0) return null;
 
@@ -3964,6 +3965,16 @@ export function VenueScope() {
               });
             }}
           />
+
+          {/* 6. Shift history — older completed jobs */}
+          {historyJobs.length > 0 && (
+            <HistoryAccordion
+              jobs={historyJobs}
+              onInvestigate={setInvestigating}
+              onExport={() => exportCsv(safeJobs)}
+              initialOpen={isDemo}
+            />
+          )}
 
         </>
       )}
