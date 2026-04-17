@@ -276,11 +276,26 @@ function TonightTab({ venueId }: { venueId: string }) {
 
   if (!forecast) return null;
 
+  // Baseline = what a typical night like tonight looks like without any lift
+  const now        = new Date();
+  const dowName    = PRIOR_DOW_NAMES[now.getDay()];
+  const monName    = PRIOR_MON_NAMES[now.getMonth() + 1];
+  const baseline   = Math.round(PRIOR_BASE * PRIOR_DOW_MULT[now.getDay() === 0 ? 6 : now.getDay() - 1] * PRIOR_MON_MULT[now.getMonth() + 1]);
+  const lift       = forecast.final_estimate.mid - baseline;
+  const liftPct    = baseline > 0 ? Math.round((lift / baseline) * 100) : 0;
+
+  // Confidence label — human-readable, no formula exposed
+  const confidenceLabel: Record<string, string> = {
+    generic_prior: 'building — using industry averages',
+    week_2:        'early — 2-week pattern emerging',
+    week_4:        'growing — 4-week pattern match',
+    week_12:       'strong — 12-week pattern match',
+    month_6:       'high — 6-month venue rhythm locked in',
+    month_12:      'very high — full-year pattern',
+  };
+  const confLabel = confidenceLabel[forecast.calibration_state] ?? forecast.calibration_state.replace(/_/g, ' ');
+
   const maxYhat = Math.max(...forecast.hourly_curve.map(h => h.yhat_upper), 1);
-  const confidenceColor =
-    forecast.confidence_pct >= 80 ? 'text-green-400 bg-green-500/10 border-green-500/30'
-    : forecast.confidence_pct >= 60 ? 'text-amber-400 bg-amber-500/10 border-amber-500/30'
-    : 'text-red-400 bg-red-500/10 border-red-500/30';
 
   return (
     <motion.div
@@ -288,141 +303,119 @@ function TonightTab({ venueId }: { venueId: string }) {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-4"
     >
-      {/* Calibration notice — prior model */}
+      {/* ── Primary forecast readout ── */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5 space-y-3">
+        {/* Headline */}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold mb-1">Tonight's Forecast</p>
+            <p className="text-2xl font-bold text-white leading-tight">
+              {forecast.final_estimate.mid} covers
+              <span className="text-warm-500 font-normal mx-2">·</span>
+              <span className="text-green-400">${forecast.revenue_estimate.mid.toLocaleString()}</span>
+              <span className="text-warm-500 font-normal mx-2">·</span>
+              <span className="text-warm-400 text-lg">{forecast.mape_expected}</span>
+            </p>
+          </div>
+          <TrendingUp className="w-5 h-5 text-teal flex-shrink-0 mt-1" />
+        </div>
+
+        {/* Range */}
+        <p className="text-xs text-warm-400">
+          Range:{' '}
+          <span className="text-white font-semibold">{forecast.final_estimate.low}–{forecast.final_estimate.high} covers</span>
+          <span className="mx-2 text-warm-600">·</span>
+          <span className="text-white font-semibold">${forecast.revenue_estimate.low.toLocaleString()}–${forecast.revenue_estimate.high.toLocaleString()}</span>
+        </p>
+
+        <div className="h-px bg-whoop-divider" />
+
+        {/* Baseline + lift */}
+        <div className="space-y-1.5 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-warm-500">Baseline {dowName} {monName}</span>
+            <span className="text-white font-semibold">{baseline} covers</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-warm-500">Predicted lift</span>
+            <span className={`font-bold ${lift >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {lift >= 0 ? '+' : ''}{lift} ({liftPct >= 0 ? '+' : ''}{liftPct}%)
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-warm-500">Confidence</span>
+            <span className="text-warm-300">{confLabel}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-warm-500">Peak hour</span>
+            <span className="text-white font-semibold">{forecast.peak_hour}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Recommended actions ── */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5">
+        <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold mb-3">Recommended Actions</p>
+        <ul className="space-y-2">
+          <li className="flex items-start gap-2 text-sm text-warm-200">
+            <span className="text-teal font-bold flex-shrink-0">•</span>
+            <span>
+              <span className="font-semibold text-white">Staff:</span>{' '}
+              {forecast.staffing_rec.note}
+            </span>
+          </li>
+          {forecast.factors.map(f => {
+            const isNegative = f.impact.startsWith('-');
+            const isNeutral  = f.impact === '—' || f.impact.startsWith('×');
+            if (isNeutral) return null;
+            return (
+              <li key={f.name} className="flex items-start gap-2 text-sm text-warm-200">
+                <span className={`font-bold flex-shrink-0 ${isNegative ? 'text-red-400' : 'text-teal'}`}>•</span>
+                <span>
+                  <span className="font-semibold text-white">{f.name}:</span>{' '}
+                  {f.value}
+                  <span className={`ml-1.5 text-xs font-bold ${isNegative ? 'text-red-400' : 'text-green-400'}`}>
+                    {f.impact}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      {/* ── Hourly curve ── */}
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5">
+        <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold mb-4">Expected Crowd by Hour</p>
+        <div className="flex items-end gap-1.5" style={{ height: '96px' }}>
+          {forecast.hourly_curve.map(pt => {
+            const bandH = Math.round((pt.yhat_upper / maxYhat) * 100);
+            const barH  = Math.round((pt.yhat / maxYhat) * 100);
+            const isPeak = pt.hour === forecast.peak_hour;
+            return (
+              <div key={pt.hour} className="flex-1 flex flex-col items-center h-full justify-end gap-1">
+                <div className="relative w-full" style={{ height: '80px' }}>
+                  <div className="absolute bottom-0 left-0 right-0 rounded-t-sm bg-teal/15" style={{ height: `${bandH}%` }} />
+                  <div className={`absolute bottom-0 left-0 right-0 rounded-t-sm ${isPeak ? 'bg-teal' : 'bg-teal/60'}`} style={{ height: `${barH}%` }} />
+                </div>
+                <span className="text-[8px] text-warm-600 whitespace-nowrap">
+                  {pt.hour.replace(':00', '').replace(' PM', 'p').replace(' AM', 'a')}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Calibration notice */}
       {forecast.model_type === 'prior' && (
-        <div className="bg-teal/5 border border-teal/20 rounded-xl p-4 flex items-start gap-3">
-          <TrendingUp className="w-4 h-4 text-teal flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-warm-300 leading-relaxed">
-            <span className="font-semibold text-teal">Model calibrating</span> — forecast uses industry averages.
-            Accuracy improves over the first 12 weeks as your sensor data accumulates.
+        <div className="bg-warm-800/40 border border-warm-700/50 rounded-xl p-3 flex items-start gap-2">
+          <RefreshCw className="w-3.5 h-3.5 text-warm-500 flex-shrink-0 mt-0.5" />
+          <p className="text-[11px] text-warm-500 leading-relaxed">
+            Forecast uses industry averages for your market. Accuracy tightens automatically over the first 12 weeks as your nightly data accumulates.
           </p>
         </div>
       )}
-
-      {/* Forecast Hero */}
-      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
-          <TrendingUp className="w-4 h-4 text-teal" />
-          <span className="text-sm font-semibold text-white">Tonight's Forecast</span>
-          <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${confidenceColor}`}>
-            {forecast.confidence_pct}% confidence · {forecast.mape_expected}
-          </span>
-        </div>
-        <div className="grid grid-cols-2 divide-x divide-whoop-divider">
-          {/* Covers */}
-          <div className="p-4">
-            <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-2">Predicted Covers</p>
-            <p className="text-3xl font-bold text-white">{forecast.final_estimate.mid}</p>
-            <div className="flex gap-2 mt-1">
-              <span className="text-[10px] text-warm-500">{forecast.final_estimate.low} low</span>
-              <span className="text-[10px] text-warm-600">–</span>
-              <span className="text-[10px] text-warm-500">{forecast.final_estimate.high} high</span>
-            </div>
-          </div>
-          {/* Revenue */}
-          <div className="p-4">
-            <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-2">Revenue Estimate</p>
-            <p className="text-3xl font-bold text-green-400">${forecast.revenue_estimate.mid.toLocaleString()}</p>
-            <div className="flex gap-2 mt-1">
-              <span className="text-[10px] text-warm-500">${forecast.revenue_estimate.low.toLocaleString()}</span>
-              <span className="text-[10px] text-warm-600">–</span>
-              <span className="text-[10px] text-warm-500">${forecast.revenue_estimate.high.toLocaleString()}</span>
-            </div>
-          </div>
-        </div>
-        <div className="px-4 pb-3">
-          <p className="text-[10px] text-warm-500">Peak hour: <span className="text-white font-semibold">{forecast.peak_hour}</span></p>
-        </div>
-      </div>
-
-      {/* Tonight's Factors */}
-      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
-          <BarChart3 className="w-4 h-4 text-teal" />
-          <span className="text-sm font-semibold text-white">Tonight's Factors</span>
-        </div>
-        <div className="p-4">
-          <div className="flex flex-wrap gap-2">
-            {forecast.factors.map(f => {
-              const isNegative = f.impact.startsWith('-');
-              const isPositive = f.impact.startsWith('+');
-              const pillColor = isNegative
-                ? 'bg-red-500/10 border-red-500/30 text-red-400'
-                : isPositive
-                ? 'bg-teal/10 border-teal/30 text-teal'
-                : 'bg-warm-700 border-warm-600 text-warm-300';
-              return (
-                <span
-                  key={f.name}
-                  className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-full border ${pillColor}`}
-                >
-                  <span className="text-warm-400 font-normal">{f.name}:</span>
-                  {f.value} <span className="font-bold">{f.impact}</span>
-                </span>
-              );
-            })}
-            <span className="inline-flex items-center text-[11px] px-3 py-1.5 rounded-full border bg-warm-700/50 border-warm-600 text-warm-400">
-              {forecast.calibration_state.replace(/_/g, ' ')}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Staffing Recommendation */}
-      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
-          <Users className="w-4 h-4 text-teal" />
-          <span className="text-sm font-semibold text-white">Staffing Recommendation</span>
-        </div>
-        <div className="p-4 space-y-2">
-          <p className="text-base font-bold text-white">
-            Recommended: {forecast.staffing_rec.bartenders} bartender{forecast.staffing_rec.bartenders !== 1 ? 's' : ''}
-          </p>
-          <p className="text-xs text-warm-400 leading-relaxed">{forecast.staffing_rec.note}</p>
-        </div>
-      </div>
-
-      {/* Hourly Curve */}
-      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
-          <BarChart3 className="w-4 h-4 text-teal" />
-          <span className="text-sm font-semibold text-white">Hourly Curve</span>
-          <span className="text-[10px] text-warm-500 ml-auto">Confidence band shown lighter</span>
-        </div>
-        <div className="p-4">
-          <div className="flex items-end gap-1.5" style={{ height: '120px' }}>
-            {forecast.hourly_curve.map(pt => {
-              const bandH = Math.round((pt.yhat_upper / maxYhat) * 100);
-              const barH  = Math.round((pt.yhat / maxYhat) * 100);
-              return (
-                <div key={pt.hour} className="flex-1 flex flex-col items-center gap-0.5 h-full justify-end">
-                  {/* Stacked bar: band behind, main in front */}
-                  <div className="relative w-full flex flex-col justify-end" style={{ height: '100px' }}>
-                    {/* Confidence band (yhat_upper) */}
-                    <div
-                      className="absolute bottom-0 left-0 right-0 rounded-sm bg-teal/20"
-                      style={{ height: `${bandH}%` }}
-                    />
-                    {/* Main bar (yhat) */}
-                    <div
-                      className="absolute bottom-0 left-0 right-0 rounded-sm bg-teal/70"
-                      style={{ height: `${barH}%` }}
-                    />
-                  </div>
-                  <span className="text-[8px] text-warm-600 leading-none text-center whitespace-nowrap rotate-45 origin-left" style={{ marginTop: '4px' }}>
-                    {pt.hour.replace(':00', '').replace(' PM', 'p').replace(' AM', 'a')}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex justify-between mt-5 text-[10px] text-warm-500">
-            <span>{forecast.hourly_curve[0]?.hour}</span>
-            <span className="font-semibold text-white">{forecast.peak_hour} peak</span>
-            <span>{forecast.hourly_curve[forecast.hourly_curve.length - 1]?.hour}</span>
-          </div>
-        </div>
-      </div>
     </motion.div>
   );
 }
