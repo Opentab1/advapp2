@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import apiService from '../services/api.service';
 import { calculatePulseScore } from '../utils/scoring';
+import { getBarDayStart } from '../utils/barDay';
 import type { SensorData, TimeRange } from '../types';
 
 // ============ TYPES ============
@@ -139,11 +140,7 @@ function splitDataByPeriod(data: SensorData[], timeRange: TimeRange): {
   switch (timeRange) {
     case '24h': {
       // Today vs Yesterday (using 3am bar day start)
-      const todayStart = new Date(now);
-      todayStart.setHours(3, 0, 0, 0);
-      if (now.getHours() < 3) {
-        todayStart.setDate(todayStart.getDate() - 1);
-      }
+      const todayStart = getBarDayStart();
       const yesterdayStart = new Date(todayStart);
       yesterdayStart.setDate(yesterdayStart.getDate() - 1);
       

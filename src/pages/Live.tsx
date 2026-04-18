@@ -29,6 +29,7 @@ import { CrowdBreakdownModal } from '../components/pulse/CrowdBreakdownModal';
 import { LiveStatsModal } from '../components/pulse/LiveStatsModal';
 import { NightReportModal } from '../components/pulse/NightReportModal';
 import { PulsePageSkeleton } from '../components/common/LoadingState';
+import { getBarDayStart } from '../utils/barDay';
 
 
 // Revenue-focused components (Launch Ready)
@@ -419,10 +420,7 @@ export function Live() {
       const todayDow = new Date().getDay(); // 0=Sun..6=Sat
 
       // Ring 1 — avg drinks for today's day-of-week (exclude today's jobs)
-      // Bar day starts at 3 AM — if it's before 3 AM, "today" is yesterday
-      const todayStart = new Date();
-      if (todayStart.getHours() < 3) todayStart.setDate(todayStart.getDate() - 1);
-      todayStart.setHours(3, 0, 0, 0);
+      const todayStart = getBarDayStart();
       const sameDowJobs = nonLive.filter(j => {
         const d = new Date((j.createdAt ?? 0) * 1000);
         return d.getDay() === todayDow && d < todayStart && (j.totalDrinks ?? 0) > 0;

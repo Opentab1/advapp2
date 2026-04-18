@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import apiService from '../../services/api.service';
 import { calculatePulseScore } from '../../utils/scoring';
+import { getBarDayStart } from '../../utils/barDay';
 import type { SensorData } from '../../types';
 import venueScopeService, { VenueScopeJob } from '../../services/venuescope.service';
 
@@ -89,11 +90,7 @@ export function NightReportModal({ isOpen, onClose, venueName, venueId }: NightR
     // Also fetch VenueScope jobs for tonight
     try {
       const allJobs = await venueScopeService.listJobs(venueId, 20);
-      const now = new Date();
-      const barDayStart = new Date(now);
-      barDayStart.setHours(3, 0, 0, 0);
-      if (now.getHours() < 3) barDayStart.setDate(barDayStart.getDate() - 1);
-      const cutoff = barDayStart.getTime() / 1000;
+      const cutoff = getBarDayStart().getTime() / 1000;
       setVsNightJobs(allJobs.filter(j => j.status === 'done' && (j.createdAt ?? 0) >= cutoff));
     } catch { /* silently ignore */ }
   };

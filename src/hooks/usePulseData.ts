@@ -24,12 +24,14 @@ import googleReviewsService, { GoogleReviewsData } from '../services/google-revi
 import venueSettingsService from '../services/venue-settings.service';
 import weatherService, { WeatherData } from '../services/weather.service';
 
-// Track if we've initialized venue settings from cloud
-let venueSettingsInitialized = false;
+// Track which venue IDs have had settings initialized (keyed by venueId so logout/login
+// with a different venue triggers re-initialization)
+const venueSettingsInitialized = new Set<string>();
 // Historical scoring will be re-implemented properly
 // import { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
 import { isDemoAccount } from '../utils/demoData';
 import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
+import { getBarDayStart } from '../utils/barDay';
 import type { SensorData, OccupancyMetrics } from '../types';
 
 // ============ TYPES ============
@@ -197,14 +199,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     try {
       const now = new Date();
       
-      // Calculate 3am today (or yesterday if we're before 3am)
-      // "Bar day" runs 3am to 3am, not midnight to midnight
-      // This is because bars have people at 1am/2am - that's still "tonight"
-      const barDayStart = new Date(now);
-      barDayStart.setHours(3, 0, 0, 0);
-      if (now.getHours() < 3) {
-        barDayStart.setDate(barDayStart.getDate() - 1);
-      }
+      const barDayStart = getBarDayStart();
       
       const dynamoDBService = (await import('../services/dynamodb.service')).default;
       
@@ -343,10 +338,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       setLoading(true);
       
       // Initialize venue settings from cloud FIRST (so weather has address)
-      if (!venueSettingsInitialized) {
+      if (!venueSettingsInitialized.has(venueId)) {
         try {
           await venueSettingsService.initializeForVenue(venueId);
-          venueSettingsInitialized = true;
+          venueSettingsInitialized.add(venueId);
           console.log('✅ Venue settings initialized from cloud');
         } catch (error) {
           console.warn('⚠️ Could not initialize venue settings from cloud:', error);
@@ -366,7 +361,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     };
     
     loadAllData();
-  }, [enabled, venueId, fetchLiveData, fetchOccupancy, fetchReviews, fetchWeather]);
+  }, [enabled, venueId, fetchLiveData, fetchOccupancy, fetchReviews, fetchWeather, fetchVenueScopeData]);
   
 // ============ POLLING ============
 
@@ -456,11 +451,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   // ============ VENUESCOPE COMPUTED VALUES ============
   const vsTodayJobs = useMemo(() => {
-    const now = new Date();
-    const barDayStart = new Date(now);
-    barDayStart.setHours(3, 0, 0, 0);
-    if (now.getHours() < 3) barDayStart.setDate(barDayStart.getDate() - 1);
-    const todayTs = barDayStart.getTime() / 1000;
+    const todayTs = getBarDayStart().getTime() / 1000;
     // Always include stable live-camera records regardless of createdAt
     return vsJobs.filter(j =>
       (j.createdAt ?? 0) >= todayTs || j.isLive || (j.jobId ?? '').startsWith('~')
@@ -822,13 +813,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     const todayExits = effectiveOccupancy.todayExits;
     
     // Calculate hours since bar day start (3 AM)
-    const now = new Date();
-    const barDayStart = new Date(now);
-    barDayStart.setHours(3, 0, 0, 0);
-    if (now.getHours() < 3) {
-      barDayStart.setDate(barDayStart.getDate() - 1);
-    }
-    const hoursSinceStart = Math.max(0.5, (now.getTime() - barDayStart.getTime()) / (1000 * 60 * 60));
+    const hoursSinceStart = Math.max(0.5, (Date.now() - getBarDayStart().getTime()) / (1000 * 60 * 60));
     
     // 1. Retention Rate: What % of tonight's guests are still here
     // 100% accurate - just math on entry/exit counts
