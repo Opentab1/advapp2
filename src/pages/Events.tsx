@@ -163,14 +163,67 @@ function todayString(): string {
 
 // ─── Tonight Tab ──────────────────────────────────────────────────────────────
 
+/** Build a client-side tonight forecast using the same multiplier model as runIdeaModel */
+function buildClientForecast(capacity: number): TonightForecast {
+  const now = new Date();
+  const dow = now.getDay(); // 0=Sun
+  const month = now.getMonth() + 1;
+  const dowMult = DOW_MULT[dow] ?? 0.55;
+  const monthMult = MONTH_MULT[month] ?? 1.0;
+  const base = capacity * 0.55;
+  const mid = Math.max(5, Math.min(capacity, Math.round(base * dowMult * monthMult)));
+  const low = Math.max(1, Math.round(mid * 0.82));
+  const high = Math.min(capacity, Math.round(mid * 1.18));
+  const revPerHead = 28;
+  const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const MONTH_NAMES = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const pct = (v: number) => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`;
+
+  // Rough hourly curve: ramp up to peak around 10 PM then taper
+  const HOURS = ['6 PM','7 PM','8 PM','9 PM','10 PM','11 PM','12 AM','1 AM'];
+  const SHAPE = [0.18, 0.32, 0.52, 0.78, 1.00, 0.90, 0.68, 0.38];
+  const hourly_curve = HOURS.map((hour, i) => ({
+    hour,
+    yhat:       Math.round(mid * SHAPE[i]),
+    yhat_lower: Math.round(low * SHAPE[i]),
+    yhat_upper: Math.round(high * SHAPE[i]),
+  }));
+
+  const bartenders = Math.max(1, Math.round(mid / 60));
+  return {
+    model_type:       'prior',
+    calibration_state: 'generic_prior',
+    mape_expected:    '±20%',
+    confidence_pct:   60,
+    final_estimate:   { low, mid, high },
+    revenue_estimate: { low: low * revPerHead, mid: mid * revPerHead, high: high * revPerHead },
+    baseline_covers:  mid,
+    lift:  0,
+    lift_pct: 0,
+    peak_hour: '10:00 PM',
+    weather_multiplier: 1.0,
+    competition_drag:  1.0,
+    staffing_rec: {
+      bartenders,
+      note: `${bartenders} bartender${bartenders !== 1 ? 's' : ''} recommended based on expected crowd`,
+    },
+    factors: [
+      { name: 'Day of week', value: DOW_NAMES[dow],         impact: pct(dowMult) },
+      { name: 'Month',       value: MONTH_NAMES[month],     impact: pct(monthMult) },
+    ],
+    hourly_curve,
+  };
+}
+
 function TonightTab({ venueId }: { venueId: string }) {
   const [forecast, setForecast] = useState<TonightForecast | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [usingClientModel, setUsingClientModel] = useState(false);
+  const [venueCapacity, setVenueCapacity] = useState(150);
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(false);
+    setUsingClientModel(false);
 
     if (!venueId) {
       setLoading(false);
@@ -183,34 +236,33 @@ function TonightTab({ venueId }: { venueId: string }) {
       return;
     }
 
+    // Load capacity for client-side fallback
+    let cap = 150;
     try {
-      // Attempt to get city from venue settings address
-      let lat = 27.9477;
-      let lon = -82.4584;
-      let city = 'tampa';
+      const settings = await venueSettingsService.loadSettingsFromCloud(venueId);
+      if (settings?.capacity) { cap = settings.capacity; setVenueCapacity(settings.capacity); }
+    } catch { /* ignore */ }
 
+    const serverUrl = getServerUrl();
+    if (serverUrl) {
       try {
-        const settings = await venueSettingsService.loadSettingsFromCloud(venueId);
-        if (settings?.address?.city) {
-          city = settings.address.city.toLowerCase();
-        }
-      } catch {
-        // fall back to Tampa defaults
-      }
-
-      const res = await fetch(`${getServerUrl()}/forecast/tonight`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ venue_id: venueId, date: todayString(), lat, lon, city }),
-      });
-
-      if (!res.ok) throw new Error('non-2xx');
-      const data = await res.json();
-      setForecast(data);
-    } catch {
-      setError(true);
+        const res = await fetch(`${serverUrl}/forecast/tonight`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ venue_id: venueId, date: todayString() }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) throw new Error('non-2xx');
+        const data = await res.json();
+        setForecast(data);
+        setLoading(false);
+        return;
+      } catch { /* fall through to client model */ }
     }
 
+    // Client-side model — always works, no backend needed
+    setForecast(buildClientForecast(cap));
+    setUsingClientModel(true);
     setLoading(false);
   }, [venueId]);
 
@@ -229,19 +281,6 @@ function TonightTab({ venueId }: { venueId: string }) {
     return (
       <div className="flex items-center justify-center py-16">
         <RefreshCw className="w-6 h-6 text-teal animate-spin" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-8 text-center space-y-3">
-        <TrendingUp className="w-8 h-8 text-warm-600 mx-auto" />
-        <p className="text-sm font-semibold text-warm-300">Forecast system offline</p>
-        <p className="text-xs text-warm-500">The forecast service isn't reachable. Make sure the VenueScope worker is running.</p>
-        <button onClick={load} className="mt-2 px-4 py-2 rounded-lg bg-warm-800 border border-warm-700 text-xs font-semibold text-white hover:bg-warm-700 transition-colors">
-          Retry
-        </button>
       </div>
     );
   }
@@ -377,11 +416,11 @@ function TonightTab({ venueId }: { venueId: string }) {
       </div>
 
       {/* Calibration notice */}
-      {forecast.model_type === 'prior' && (
+      {(forecast.model_type === 'prior' || usingClientModel) && (
         <div className="bg-warm-800/40 border border-warm-700/50 rounded-xl p-3 flex items-start gap-2">
           <RefreshCw className="w-3.5 h-3.5 text-warm-500 flex-shrink-0 mt-0.5" />
           <p className="text-[11px] text-warm-500 leading-relaxed">
-            Forecast uses industry averages for your market. Accuracy tightens automatically over the first 12 weeks as your nightly data accumulates.
+            Forecast uses day-of-week and seasonal averages. Accuracy improves automatically as your venue history accumulates.
           </p>
         </div>
       )}
