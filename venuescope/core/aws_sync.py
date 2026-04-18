@@ -594,18 +594,23 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     expr_vals[":ca"] = {"N": str(_ca)}
 
     # ── Drinks per hour (live) ────────────────────────────────────────────────
-    # Prior-segment drinks are restored as negative t_sec offsets (before this
-    # segment started). Current-segment drinks have t_sec >= 0. Filter to get
-    # only new detections so the rate isn't inflated by accumulated totals.
-    _live_wall_elapsed = max(T_push - float(_ca), 1.0)
-    _seg_drinks = sum(
-        sum(1 for t in d.get("drink_timestamps", []) if t >= 0)
-        for d in bts.values()
-    )
-    if _live_wall_elapsed >= 60 and _seg_drinks > 0:
-        live_dph = round(_seg_drinks * 3600 / _live_wall_elapsed, 1)
+    # When today_drinks == 0 (e.g. bar just opened, worker restarted) always
+    # reset drinksPerHour to 0 — restored DDB timestamps are positive so the
+    # t>=0 filter below would otherwise count them as current-session drinks
+    # and produce wildly inflated rates (e.g. 2700/hr).
+    if today_drinks == 0:
         update_expr += ", drinksPerHour = :dph"
-        expr_vals[":dph"] = {"N": str(live_dph)}
+        expr_vals[":dph"] = {"N": "0"}
+    else:
+        _live_wall_elapsed = max(T_push - float(_ca), 1.0)
+        _seg_drinks = sum(
+            sum(1 for t in d.get("drink_timestamps", []) if t >= 0)
+            for d in bts.values()
+        )
+        if _live_wall_elapsed >= 60 and _seg_drinks > 0:
+            live_dph = round(_seg_drinks * 3600 / _live_wall_elapsed, 1)
+            update_expr += ", drinksPerHour = :dph"
+            expr_vals[":dph"] = {"N": str(live_dph)}
     # topBartender = station with most drinks this shift (total_drinks is cumulative)
     if bts:
         top_name = max(bts, key=lambda n: bts[n].get("total_drinks", 0))
@@ -667,37 +672,40 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
 
     # Include per-bartender breakdown if available
     if bts:
-        # Scale cumulative per-bartender counts down to today's drinks only.
-        bt_scale = (today_drinks / total_drinks) if total_drinks > 0 else 0.0
-        # Timestamps from the in-memory summary are relative to the current worker
-        # session start (t=0 at process start). Only include timestamps >= 0 so
-        # that stale timestamps from a prior session don't leak through.
-        session_start_t = 0.0  # worker always starts timestamps from 0
-        bt_compact = {}
-        for name, d in bts.items():
-            all_ts   = d.get("drink_timestamps", [])
-            all_scrs = d.get("drink_scores", [])
-            # Pair timestamps with scores, filter to current session, keep last 50
-            pairs = list(zip(all_ts, all_scrs if len(all_scrs) == len(all_ts)
-                             else [0.0] * len(all_ts)))
-            pairs = [(t, s) for t, s in pairs if t >= session_start_t][-50:]
-            ts   = [t for t, _ in pairs]
-            scrs = [s for _, s in pairs]
-            bt_compact[name] = {
-                "drinks":        max(0, round(int(d.get("total_drinks", 0)) * bt_scale)),
-                "per_hour":      round(float(d.get("drinks_per_hour", 0.0)) * bt_scale, 1),
-                # Wall-clock offsets from createdAt (= _wall_start).
-                # Divide by delivery_rate to convert NVR t_sec → real elapsed seconds.
-                "timestamps":    [round(t / delivery_rate, 1) for t in ts],
-                # Confidence scores parallel to timestamps
-                "drink_scores":  [round(s, 3) for s in scrs],
-                # Hourly breakdown so dashboard can show "drinks per hour" curve
-                "hourly_counts": {str(k): int(v) for k, v in d.get("hourly_counts", {}).items()},
-            }
-        bt_json = json.dumps(bt_compact)
-        update_expr += ", bartenderSummary = :bs, bartenderBreakdown = :bd"
-        expr_vals[":bs"] = {"S": bt_json}
-        expr_vals[":bd"] = {"S": bt_json}
+        if today_drinks == 0:
+            # No drinks yet today — write an empty breakdown so the UI shows clean
+            # state rather than stale counts/timestamps from the restored DDB record.
+            bt_json = "{}"
+            update_expr += ", bartenderSummary = :bs, bartenderBreakdown = :bd"
+            expr_vals[":bs"] = {"S": bt_json}
+            expr_vals[":bd"] = {"S": bt_json}
+        else:
+            # Scale cumulative per-bartender counts down to today's drinks only.
+            bt_scale = (today_drinks / total_drinks) if total_drinks > 0 else 0.0
+            bt_compact = {}
+            for name, d in bts.items():
+                all_ts   = d.get("drink_timestamps", [])
+                all_scrs = d.get("drink_scores", [])
+                # Pair timestamps with scores, keep last 50
+                pairs = list(zip(all_ts, all_scrs if len(all_scrs) == len(all_ts)
+                                 else [0.0] * len(all_ts)))[-50:]
+                ts   = [t for t, _ in pairs]
+                scrs = [s for _, s in pairs]
+                bt_compact[name] = {
+                    "drinks":        max(0, round(int(d.get("total_drinks", 0)) * bt_scale)),
+                    "per_hour":      round(float(d.get("drinks_per_hour", 0.0)) * bt_scale, 1),
+                    # Wall-clock offsets from createdAt (= _wall_start).
+                    # Divide by delivery_rate to convert NVR t_sec → real elapsed seconds.
+                    "timestamps":    [round(t / delivery_rate, 1) for t in ts],
+                    # Confidence scores parallel to timestamps
+                    "drink_scores":  [round(s, 3) for s in scrs],
+                    # Hourly breakdown so dashboard can show "drinks per hour" curve
+                    "hourly_counts": {str(k): int(v) for k, v in d.get("hourly_counts", {}).items()},
+                }
+            bt_json = json.dumps(bt_compact)
+            update_expr += ", bartenderSummary = :bs, bartenderBreakdown = :bd"
+            expr_vals[":bs"] = {"S": bt_json}
+            expr_vals[":bd"] = {"S": bt_json}
 
     # Push serve snapshot S3 keys so React shows frame thumbnails in the live drink log.
     # Keys are t_sec values — scale by delivery_rate so they match scaled timestamps.
