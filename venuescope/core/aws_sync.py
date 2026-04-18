@@ -667,17 +667,25 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
 
     # Include per-bartender breakdown if available
     if bts:
+        # Scale cumulative per-bartender counts down to today's drinks only.
+        bt_scale = (today_drinks / total_drinks) if total_drinks > 0 else 0.0
+        # Timestamps from the in-memory summary are relative to the current worker
+        # session start (t=0 at process start). Only include timestamps >= 0 so
+        # that stale timestamps from a prior session don't leak through.
+        session_start_t = 0.0  # worker always starts timestamps from 0
         bt_compact = {}
         for name, d in bts.items():
-            ts   = d.get("drink_timestamps", [])[-50:]
-            scrs = d.get("drink_scores", [])
-            if len(scrs) > len(ts):
-                scrs = scrs[-len(ts):]
-            elif len(scrs) < len(ts):
-                scrs = [0.0] * (len(ts) - len(scrs)) + scrs
+            all_ts   = d.get("drink_timestamps", [])
+            all_scrs = d.get("drink_scores", [])
+            # Pair timestamps with scores, filter to current session, keep last 50
+            pairs = list(zip(all_ts, all_scrs if len(all_scrs) == len(all_ts)
+                             else [0.0] * len(all_ts)))
+            pairs = [(t, s) for t, s in pairs if t >= session_start_t][-50:]
+            ts   = [t for t, _ in pairs]
+            scrs = [s for _, s in pairs]
             bt_compact[name] = {
-                "drinks":        int(d.get("total_drinks", 0)),
-                "per_hour":      round(float(d.get("drinks_per_hour", 0.0)), 1),
+                "drinks":        max(0, round(int(d.get("total_drinks", 0)) * bt_scale)),
+                "per_hour":      round(float(d.get("drinks_per_hour", 0.0)) * bt_scale, 1),
                 # Wall-clock offsets from createdAt (= _wall_start).
                 # Divide by delivery_rate to convert NVR t_sec → real elapsed seconds.
                 "timestamps":    [round(t / delivery_rate, 1) for t in ts],
@@ -693,12 +701,20 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
 
     # Push serve snapshot S3 keys so React shows frame thumbnails in the live drink log.
     # Keys are t_sec values — scale by delivery_rate so they match scaled timestamps.
+    # On first push after a worker restart (d_baseline == total_drinks means we just
+    # set baseline = all prior drinks), clear any stale snapshots from the prior session
+    # whose timestamps are relative to the old createdAt.
     serve_snaps = summary.get("serve_snapshots", {})
+    _is_first_push_reset = (last_date is None and d_baseline == total_drinks and total_drinks > 0)
     if serve_snaps:
         update_expr += ", serveSnapshots = :snaps"
         expr_vals[":snaps"] = {"S": json.dumps(
             {str(round(float(k) / delivery_rate, 1)): v for k, v in serve_snaps.items()}
         )}
+    elif _is_first_push_reset:
+        # No new snapshots yet this session — clear stale ones from prior session.
+        update_expr += ", serveSnapshots = :snaps"
+        expr_vals[":snaps"] = {"S": "{}"}
 
     # Push low-confidence review events so React can show the "low confidence" log section
     # t_sec scaled by delivery_rate (React: wallTime = createdAt + tSec)
