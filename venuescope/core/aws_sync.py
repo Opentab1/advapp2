@@ -493,16 +493,33 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     d_baseline = _shift_baseline.get(job_id, 0)
     u_baseline = _unrung_baseline.get(job_id, 0)
 
-    if last_date and last_date != today_str:
-        # Calendar day rolled over — write yesterday's shift summary.
-        midnight_ts = _dt.datetime.combine(_dt.date.today(), _dt.time(0, 0)).timestamp()
+    midnight_ts = _dt.datetime.combine(_dt.date.today(), _dt.time(0, 0)).timestamp()
+    effective_venue = venue_id or _get_venue_id()
+
+    if last_date is None and total_drinks > 0:
+        # First push in this process with pre-existing drink count.
+        # These are from a prior session (worker restart or cross-segment state restore).
+        # Write them as a shift summary for yesterday so the Results tab has data,
+        # then set baseline so today's count starts at zero.
+        yesterday_str = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
         _write_shift_summary(
-            job_id, venue_id or _get_venue_id(), summary,
+            job_id, effective_venue, summary,
+            yesterday_str, total_drinks, 0,
+            unrung, 0,
+            midnight_ts - 86400, midnight_ts,  # createdAt/finishedAt = yesterday
+        )
+        _shift_baseline[job_id]  = total_drinks
+        _unrung_baseline[job_id] = unrung
+        d_baseline = total_drinks
+        u_baseline = unrung
+    elif last_date and last_date != today_str:
+        # Calendar day rolled over during a running session.
+        _write_shift_summary(
+            job_id, effective_venue, summary,
             last_date, total_drinks, d_baseline,
             unrung, u_baseline,
             float(created_at or time.time()), midnight_ts,
         )
-        # Reset baselines so today starts from zero.
         _shift_baseline[job_id]  = total_drinks
         _unrung_baseline[job_id] = unrung
         d_baseline = total_drinks
