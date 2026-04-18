@@ -3680,11 +3680,20 @@ export function VenueScope() {
     (j.isLive !== false && j.status === 'running' &&
       ((j.updatedAt ?? 0) === 0 || (j.updatedAt ?? 0) > fiveMinAgo));
   // tonightJobs: jobs used for STATS (drinks, revenue, bartenders, detection log).
-  // Live camera jobs bypass todayStart only when the bar is actually open — this prevents
-  // yesterday's accumulated drink count from appearing in "Behind the Bar" during closed hours.
-  const tonightJobs = useMemo(() => safeJobs.filter(j =>
-    (j.createdAt ?? 0) >= todayStart || (isJobLive(j) && barIsOpen)
-  ), [safeJobs, todayStart, barIsOpen]);
+  // Live cameras accumulate totalDrinks across segments indefinitely (worker runs continuously).
+  // When a live job's createdAt predates today's opening, zero out its cumulative counters so
+  // "Drinks Today" starts fresh — drinksPerHour is computed from current-segment timestamps
+  // only (t_sec >= 0) and remains accurate. The worker also resets these at midnight (aws_sync
+  // day-boundary logic), so this is belt-and-suspenders for the first push after opening.
+  const tonightJobs = useMemo(() => safeJobs
+    .filter(j => (j.createdAt ?? 0) >= todayStart || (isJobLive(j) && barIsOpen))
+    .map(j => {
+      if (isJobLive(j) && (j.createdAt ?? 0) < todayStart) {
+        return { ...j, totalDrinks: 0, unrungDrinks: 0, hasTheftFlag: false, bartenderBreakdown: undefined };
+      }
+      return j;
+    })
+  , [safeJobs, todayStart, barIsOpen]);
   const olderJobs   = useMemo(() => safeJobs.filter(j => (j.createdAt ?? 0) < todayStart && !isJobLive(j)), [safeJobs, todayStart]);
 
   // cameraJobs: always includes live cameras regardless of open/closed status,

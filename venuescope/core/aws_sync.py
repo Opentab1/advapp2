@@ -28,6 +28,16 @@ DYNAMODB_TABLE = "VenueScopeJobs"
 # Older jobs (random UUIDs) sink to the bottom and fall outside limit=500.
 _job_ddb_key_cache: Dict[str, str] = {}
 
+# ── Shift boundary tracking ────────────────────────────────────────────────────
+# When the calendar date rolls over (midnight), emit a completed "shift summary"
+# record to DynamoDB so the Results tab has historical data. After emitting, update
+# the baseline so the live record's totalDrinks resets to today's count only.
+# These dicts are in-process only — they reset on worker restart, which is acceptable
+# since the day boundary detection only needs to fire once per calendar day.
+_shift_date:      Dict[str, str] = {}  # job_id → last push date YYYY-MM-DD
+_shift_baseline:  Dict[str, int] = {}  # job_id → total_drinks at start of current day
+_unrung_baseline: Dict[str, int] = {}  # job_id → unrung_drinks at start of current day
+
 def _ddb_sort_key(job_id: str, created_at: Optional[float] = None) -> str:
     """Return the stable DynamoDB sort key for this job within the current process."""
     if job_id in _job_ddb_key_cache:
@@ -375,6 +385,87 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
         return False
 
 
+def _write_shift_summary(
+    job_id: str,
+    venue_id: str,
+    summary: Dict[str, Any],
+    shift_date: str,         # YYYY-MM-DD of the shift that just ended
+    total_drinks: int,       # cumulative drinks at shift end
+    drink_baseline: int,     # drinks counted in prior days (subtract to get shift total)
+    unrung: int,
+    unrung_baseline: int,
+    wall_start: float,       # epoch when this camera session started (createdAt)
+    midnight_ts: float,      # epoch of midnight ending the shift (finishedAt)
+) -> None:
+    """
+    Write a completed 'done' DynamoDB record summarising the previous night's shift.
+    Called once per calendar day rollover so the Results tab has historical data.
+    """
+    import datetime as _dt
+    shift_drinks = max(0, total_drinks - drink_baseline)
+    shift_unrung = max(0, unrung - unrung_baseline)
+    if shift_drinks == 0:
+        return  # nothing to record
+
+    cam_id   = (summary.get("camera_id") or "").replace("/", "_") or job_id[:8]
+    sum_id   = f"shift_{cam_id}_{shift_date}"
+    sort_key = _ddb_sort_key(sum_id, wall_start)  # placed by shift-start time in DDB
+
+    bts      = summary.get("bartenders", {})
+    clip     = (summary.get("clip_label", "") or "").replace("🔴 LIVE", "").strip(" —").strip()
+    cam_name = summary.get("camera_id") or summary.get("camera_label", "")
+    mode     = summary.get("analysis_mode", summary.get("mode", "drink_count"))
+
+    # Build bartender breakdown for shift (drinks are cumulative; subtract baseline
+    # proportionally so per-bartender totals match shift_drinks).
+    bt_compact: Dict[str, Any] = {}
+    if bts and shift_drinks > 0 and total_drinks > 0:
+        scale = shift_drinks / total_drinks
+        for name, d in bts.items():
+            shifted = max(0, round(int(d.get("total_drinks", 0)) * scale))
+            if shifted > 0:
+                bt_compact[name] = {
+                    "drinks":   shifted,
+                    "per_hour": round(float(d.get("drinks_per_hour", 0.0)), 1),
+                }
+
+    item: Dict[str, Any] = {
+        "venueId":      {"S": venue_id},
+        "jobId":        {"S": sort_key},
+        "status":       {"S": "done"},
+        "isLive":       {"BOOL": False},
+        "createdAt":    {"N": str(wall_start)},
+        "finishedAt":   {"N": str(midnight_ts)},
+        "updatedAt":    {"N": str(time.time())},
+        "totalDrinks":  {"N": str(shift_drinks)},
+        "unrungDrinks": {"N": str(shift_unrung)},
+        "hasTheftFlag": {"BOOL": shift_unrung > 0},
+        "analysisMode": {"S": mode},
+        "clipLabel":    {"S": clip or f"Shift {shift_date}"},
+        "cameraLabel":  {"S": cam_name},
+        "confidenceLabel": {"S": "Shift Summary"},
+        "confidenceColor": {"S": "green"},
+        "confidenceScore": {"N": "85"},
+    }
+    if bt_compact:
+        bt_json = json.dumps(bt_compact)
+        item["bartenderBreakdown"] = {"S": bt_json}
+        item["bartenderSummary"]   = {"S": bt_json}
+        # topBartender = name with most shift drinks
+        top = max(bt_compact, key=lambda n: bt_compact[n].get("drinks", 0))
+        item["topBartender"] = {"S": top}
+        dph_sum = sum(d.get("per_hour", 0) for d in bt_compact.values())
+        item["drinksPerHour"] = {"N": str(round(dph_sum, 1))}
+
+    try:
+        ddb = _get_client("dynamodb")
+        _retry(lambda: ddb.put_item(TableName=DYNAMODB_TABLE, Item=item))
+        print(f"[aws_sync] Shift summary written: {shift_drinks} drinks on {shift_date} "
+              f"(cam={cam_id})", flush=True)
+    except Exception as e:
+        print(f"[aws_sync] Failed to write shift summary for {shift_date}: {e}", flush=True)
+
+
 def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
                       venue_id: str = "", created_at: Optional[float] = None) -> bool:
     """
@@ -394,6 +485,34 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     bts          = summary.get("bartenders", {})
     total_drinks = int(sum(d.get("total_drinks", 0) for d in bts.values()))
     unrung       = int(sum(d.get("unrung_drinks", 0) or 0 for d in bts.values()))
+
+    # ── Day-boundary detection — emit shift summary + reset daily baseline ─────
+    import datetime as _dt
+    today_str  = _dt.date.today().isoformat()
+    last_date  = _shift_date.get(job_id)
+    d_baseline = _shift_baseline.get(job_id, 0)
+    u_baseline = _unrung_baseline.get(job_id, 0)
+
+    if last_date and last_date != today_str:
+        # Calendar day rolled over — write yesterday's shift summary.
+        midnight_ts = _dt.datetime.combine(_dt.date.today(), _dt.time(0, 0)).timestamp()
+        _write_shift_summary(
+            job_id, venue_id or _get_venue_id(), summary,
+            last_date, total_drinks, d_baseline,
+            unrung, u_baseline,
+            float(created_at or time.time()), midnight_ts,
+        )
+        # Reset baselines so today starts from zero.
+        _shift_baseline[job_id]  = total_drinks
+        _unrung_baseline[job_id] = unrung
+        d_baseline = total_drinks
+        u_baseline = unrung
+
+    _shift_date[job_id] = today_str
+
+    # Report only today's drinks (subtract prior-day baseline).
+    today_drinks = max(0, total_drinks - d_baseline)
+    today_unrung = max(0, unrung - u_baseline)
 
     people       = summary.get("people", {})
     # people summary is flat: {total_entries: N, total_exits: N, ...}
@@ -421,8 +540,8 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         ":il":  {"BOOL": True},
         ":es":  {"N": str(round(elapsed_sec, 1))},
         ":am":  {"S": mode},
-        ":td":  {"N": str(total_drinks)},
-        ":ud":  {"N": str(unrung)},
+        ":td":  {"N": str(today_drinks)},
+        ":ud":  {"N": str(today_unrung)},
         ":pi":  {"N": str(people_in)},
         ":po":  {"N": str(people_out)},
         ":hc":  {"N": str(headcount)},
@@ -479,7 +598,7 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     import time as _t
     print(f"[aws_sync] push delivery_rate={delivery_rate:.3f} "
           f"createdAt_EST={_t.strftime('%H:%M:%S', _t.gmtime(_ca - 3600*4))} "
-          f"total_drinks={total_drinks} job={job_id[:8]}", flush=True)
+          f"today_drinks={today_drinks} (cumulative={total_drinks}) job={job_id[:8]}", flush=True)
 
     # Write clipLabel + cameraLabel on first push so React can display the camera name
     # immediately — these are immutable for the job's lifetime, so if_not_exists is safe.
