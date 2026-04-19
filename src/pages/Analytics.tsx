@@ -494,18 +494,6 @@ function snapUrl(key: string): string | null {
   return base ? `${base}/${key}` : null;
 }
 
-// Find the closest snapshot key within 1-second tolerance of tSec
-function findSnap(snapshots: Record<string, string>, tSec: number): string | undefined {
-  const keys = Object.keys(snapshots);
-  if (!keys.length) return undefined;
-  let best: string | undefined;
-  let bestDiff = Infinity;
-  for (const k of keys) {
-    const diff = Math.abs(parseFloat(k) - tSec);
-    if (diff < bestDiff && diff < 1.0) { bestDiff = diff; best = snapshots[k]; }
-  }
-  return best;
-}
 
 function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
   const events: DetectionEvent[] = [];
@@ -516,39 +504,87 @@ function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
     const isDrink = mode === 'drink_count' || (job.activeModes ?? '').includes('drink_count');
 
     // ── Individual drink serves (one row per serve with snapshot) ──────────
-    if (isDrink && job.bartenderBreakdown) {
+    if (isDrink) {
+      // Parse serveSnapshots — the authoritative per-detection source.
+      // The worker saves one snapshot per detected drink, so its key count
+      // should match totalDrinks. Use this as the primary event source so
+      // the log count and VenueScope count agree.
       const snapshots: Record<string, string> = {};
       try {
         if ((job as any).serveSnapshots) Object.assign(snapshots, JSON.parse((job as any).serveSnapshots));
       } catch { /* no-op */ }
 
-      try {
-        const bd = JSON.parse(job.bartenderBreakdown) as Record<string, {
-          drinks?: number; per_hour?: number; timestamps?: number[]; drink_scores?: number[];
-        }>;
-        for (const [name, d] of Object.entries(bd)) {
-          const ts = d.timestamps ?? [];
-          const scores = d.drink_scores ?? [];
-          for (let i = 0; i < ts.length; i++) {
-            const tSec = ts[i];
-            const wallTime = (job.createdAt ?? 0) + tSec;
-            events.push({
-              ts: wallTime,
-              type: 'drink',
-              camera: cam,
-              stat: '1 drink',
-              detail: name && name !== 'unknown' ? name : '',
-              snapshotKey: findSnap(snapshots, tSec),
-              bartender: name,
-              score: scores[i] ?? 0,
-            });
+      // Build a fast bartender lookup: tSec → { name, score }
+      // Used to attribute each snapshot to a bartender (30-second window).
+      const bdLookup = new Map<number, { name: string; score: number }>();
+      if (job.bartenderBreakdown) {
+        try {
+          const bd = JSON.parse(job.bartenderBreakdown) as Record<string, {
+            timestamps?: number[]; drink_scores?: number[];
+          }>;
+          for (const [name, d] of Object.entries(bd)) {
+            const ts = d.timestamps ?? [];
+            const scores = d.drink_scores ?? [];
+            for (let i = 0; i < ts.length; i++) {
+              bdLookup.set(ts[i], { name, score: scores[i] ?? 0 });
+            }
           }
-        }
-      } catch { /* no-op */ }
+        } catch { /* no-op */ }
+      }
 
-      // Fallback: no timestamps in breakdown — one aggregate row
-      if (events.filter(e => e.type === 'drink' && e.camera === cam && e.ts === jobTs(job)).length === 0
-          && (job.totalDrinks ?? 0) > 0 && !job.bartenderBreakdown?.includes('"timestamps"')) {
+      const snapKeys = Object.keys(snapshots);
+
+      if (snapKeys.length > 0) {
+        // ── Primary path: one event per snapshot entry ──────────────────
+        // Every detection has a snapshot → every row gets a thumbnail.
+        for (const k of snapKeys) {
+          const tSec = parseFloat(k);
+          const wallTime = (job.createdAt ?? 0) + tSec;
+          // Find closest bartender within 30-second window
+          let bestName = '';
+          let bestScore = 0;
+          let bestDiff = 30;
+          for (const [bTSec, info] of bdLookup) {
+            const diff = Math.abs(bTSec - tSec);
+            if (diff < bestDiff) { bestDiff = diff; bestName = info.name; bestScore = info.score; }
+          }
+          events.push({
+            ts: wallTime,
+            type: 'drink',
+            camera: cam,
+            stat: '1 drink',
+            detail: bestName && bestName !== 'unknown' ? bestName : '',
+            snapshotKey: snapshots[k],
+            bartender: bestName || undefined,
+            score: bestScore || undefined,
+          });
+        }
+      } else if (bdLookup.size > 0) {
+        // ── Fallback: no snapshots — use bartenderBreakdown timestamps ──
+        if (job.bartenderBreakdown) {
+          try {
+            const bd = JSON.parse(job.bartenderBreakdown) as Record<string, {
+              drinks?: number; per_hour?: number; timestamps?: number[]; drink_scores?: number[];
+            }>;
+            for (const [name, d] of Object.entries(bd)) {
+              const ts = d.timestamps ?? [];
+              const scores = d.drink_scores ?? [];
+              for (let i = 0; i < ts.length; i++) {
+                events.push({
+                  ts: (job.createdAt ?? 0) + ts[i],
+                  type: 'drink',
+                  camera: cam,
+                  stat: '1 drink',
+                  detail: name && name !== 'unknown' ? name : '',
+                  bartender: name || undefined,
+                  score: scores[i] ?? undefined,
+                });
+              }
+            }
+          } catch { /* no-op */ }
+        }
+      } else if ((job.totalDrinks ?? 0) > 0) {
+        // ── Last resort: single aggregate row ───────────────────────────
         const dph = job.drinksPerHour ? `${job.drinksPerHour.toFixed(0)}/hr` : '';
         events.push({
           ts: jobTs(job),
@@ -559,17 +595,6 @@ function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
           flag: job.hasTheftFlag,
         });
       }
-    } else if (isDrink && (job.totalDrinks ?? 0) > 0) {
-      // No breakdown — single aggregate row
-      const dph = job.drinksPerHour ? `${job.drinksPerHour.toFixed(0)}/hr` : '';
-      events.push({
-        ts: jobTs(job),
-        type: 'drink',
-        camera: cam,
-        stat: `${job.totalDrinks} drinks`,
-        detail: [dph, job.topBartender].filter(Boolean).join(' · '),
-        flag: job.hasTheftFlag,
-      });
     }
 
     // People count events
