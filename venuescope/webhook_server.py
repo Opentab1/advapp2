@@ -30,6 +30,12 @@ AWS_REGION   = os.environ.get("AWS_REGION", "us-east-2")
 # CORS origin allowed for calibration API calls from advapp2
 CORS_ORIGIN  = os.environ.get("CALIBRATION_CORS_ORIGIN", "*")
 
+# ── Ops API secret ────────────────────────────────────────────────────────────
+# Set OPS_SECRET in .env and VITE_OPS_SECRET in Amplify to the same value.
+# Requests to /ops/* must include header: X-Ops-Secret: <value>
+OPS_SECRET   = os.environ.get("OPS_SECRET", "")
+DROPLET_DIR  = os.environ.get("VENUESCOPE_DEPLOY_DIR", "/opt/venuescope")
+
 # ── Calibration job store (in-memory, survives the session) ───────────────────
 # { job_id: {"status": "running"|"done"|"failed", "progress": 0-100,
 #             "message": str, "result": dict|None, "error": str|None} }
@@ -167,8 +173,30 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def _ops_auth(self) -> bool:
+        """Return True if the ops secret header is valid (or no secret is configured)."""
+        if not OPS_SECRET:
+            return False  # No secret = ops API is disabled until configured
+        return self.headers.get("X-Ops-Secret", "") == OPS_SECRET
+
     def do_GET(self):
         parsed = urlparse(self.path)
+
+        # ── Ops API ───────────────────────────────────────────────────────────
+        if parsed.path.startswith("/ops/"):
+            if not self._ops_auth():
+                self._json(401, {"error": "X-Ops-Secret header missing or invalid"})
+                return
+            if parsed.path == "/ops/status":
+                self._handle_ops_status()
+            elif parsed.path == "/ops/logs":
+                params = parse_qs(parsed.query)
+                lines  = int(params.get("lines", ["150"])[0])
+                filt   = params.get("filter", [""])[0]
+                self._handle_ops_logs(lines, filt)
+            else:
+                self._json(404, {"error": "unknown ops route"})
+            return
 
         # Venue Tailscale callback
         if parsed.path == "/venue-connected":
@@ -229,6 +257,19 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+
+        # ── Ops API ───────────────────────────────────────────────────────────
+        if parsed.path.startswith("/ops/"):
+            if not self._ops_auth():
+                self._json(401, {"error": "X-Ops-Secret header missing or invalid"})
+                return
+            if parsed.path == "/ops/restart":
+                self._handle_ops_restart()
+            elif parsed.path == "/ops/deploy":
+                self._handle_ops_deploy()
+            else:
+                self._json(404, {"error": "unknown ops route"})
+            return
 
         # ── Calibration start ────────────────────────────────────────────────
         if parsed.path == "/calibrate":
@@ -426,6 +467,195 @@ class WebhookHandler(BaseHTTPRequestHandler):
         except Exception as e:
             log.exception("Restore failed")
             self._json(500, {"error": str(e)})
+
+
+    # ── Ops handlers ──────────────────────────────────────────────────────────
+
+    def _handle_ops_status(self):
+        """GET /ops/status — droplet health + worker status + live jobs."""
+        import subprocess, shutil
+
+        # CPU — two /proc/stat reads 300ms apart for a meaningful sample
+        def _cpu():
+            try:
+                def _read():
+                    with open("/proc/stat") as f:
+                        parts = list(map(int, f.readline().split()[1:8]))
+                    idle  = parts[3] + parts[4]
+                    total = sum(parts)
+                    return idle, total
+                i1, t1 = _read()
+                time.sleep(0.3)
+                i2, t2 = _read()
+                dt = t2 - t1 or 1
+                return round(100 * (1 - (i2 - i1) / dt), 1)
+            except Exception:
+                return -1
+
+        def _ram():
+            try:
+                mem = {}
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        k, v = line.split(":", 1)
+                        mem[k.strip()] = int(v.split()[0])
+                total = mem["MemTotal"] // 1024
+                avail = mem["MemAvailable"] // 1024
+                used  = total - avail
+                return used, total, round(100 * used / max(total, 1), 1)
+            except Exception:
+                return -1, -1, -1
+
+        def _disk():
+            try:
+                s = shutil.disk_usage("/")
+                return round(s.used / 1e9, 1), round(s.total / 1e9, 1), round(100 * s.used / max(s.total, 1), 1)
+            except Exception:
+                return -1, -1, -1
+
+        def _worker_status():
+            try:
+                r = subprocess.run(
+                    ["systemctl", "is-active", "venuescope-worker"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                status = r.stdout.strip()
+                r2 = subprocess.run(
+                    ["systemctl", "show", "venuescope-worker",
+                     "--property=ActiveEnterTimestamp,MainPID"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                props = {}
+                for line in r2.stdout.splitlines():
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        props[k] = v
+                return {
+                    "status":    status,
+                    "startedAt": props.get("ActiveEnterTimestamp", ""),
+                    "pid":       props.get("MainPID", ""),
+                }
+            except Exception as e:
+                return {"status": "unknown", "startedAt": "", "pid": "", "error": str(e)}
+
+        def _live_jobs():
+            try:
+                import boto3, os as _os
+                _r = _os.environ.get("AWS_DEFAULT_REGION") or _os.environ.get("AWS_REGION", "us-east-2")
+                c  = boto3.client("dynamodb", region_name=_r)
+                resp = c.scan(
+                    TableName="VenueScopeJobs",
+                    FilterExpression="#s = :r OR #s = :q",
+                    ExpressionAttributeNames={"#s": "status"},
+                    ExpressionAttributeValues={":r": {"S": "running"}, ":q": {"S": "queued"}},
+                    ProjectionExpression=(
+                        "venueId, jobId, cameraLabel, analysisMode, "
+                        "createdAt, drinksPerHour, progressPct"
+                    ),
+                )
+                out = []
+                for item in resp.get("Items", []):
+                    jid = item.get("jobId", {}).get("S", "")
+                    out.append({
+                        "venueId":      item.get("venueId", {}).get("S", ""),
+                        "jobId":        jid[:12],
+                        "camera":       item.get("cameraLabel", {}).get("S", ""),
+                        "mode":         item.get("analysisMode", {}).get("S", ""),
+                        "startedAt":    item.get("createdAt", {}).get("N", ""),
+                        "drinksPerHour": float(item.get("drinksPerHour", {}).get("N", "0") or "0"),
+                        "progressPct":  float(item.get("progressPct", {}).get("N", "0") or "0"),
+                    })
+                return out
+            except Exception as e:
+                log.warning("ops/status: DDB scan failed: %s", e)
+                return []
+
+        cpu_pct           = _cpu()
+        ram_used, ram_total, ram_pct = _ram()
+        disk_used, disk_total, disk_pct = _disk()
+
+        self._json(200, {
+            "worker": _worker_status(),
+            "system": {
+                "cpu_pct":       cpu_pct,
+                "ram_used_mb":   ram_used,
+                "ram_total_mb":  ram_total,
+                "ram_pct":       ram_pct,
+                "disk_used_gb":  disk_used,
+                "disk_total_gb": disk_total,
+                "disk_pct":      disk_pct,
+            },
+            "liveJobs": _live_jobs(),
+            "ts":       time.time(),
+        })
+
+    def _handle_ops_logs(self, lines: int, filter_text: str):
+        """GET /ops/logs?lines=N&filter=text — tail worker service logs."""
+        import subprocess
+        lines = max(20, min(lines, 500))
+        try:
+            r = subprocess.run(
+                ["journalctl", "-u", "venuescope-worker",
+                 f"-n{lines}", "--no-pager", "--output=short-iso"],
+                capture_output=True, text=True, timeout=15,
+            )
+            raw = (r.stdout or r.stderr or "").splitlines()
+            if filter_text:
+                fl = filter_text.lower()
+                raw = [l for l in raw if fl in l.lower()]
+            self._json(200, {"lines": raw, "count": len(raw)})
+        except Exception as e:
+            self._json(500, {"error": str(e), "lines": []})
+
+    def _handle_ops_restart(self):
+        """POST /ops/restart — restart the venuescope-worker systemd service."""
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["systemctl", "restart", "venuescope-worker"],
+                capture_output=True, text=True, timeout=20,
+            )
+            if r.returncode == 0:
+                log.info("ops/restart: worker restarted OK")
+                self._json(200, {"ok": True, "msg": "Worker restarted successfully"})
+            else:
+                msg = (r.stderr or r.stdout or "unknown error").strip()
+                log.error("ops/restart failed: %s", msg)
+                self._json(500, {"ok": False, "msg": msg})
+        except Exception as e:
+            self._json(500, {"ok": False, "msg": str(e)})
+
+    def _handle_ops_deploy(self):
+        """POST /ops/deploy — git pull latest code then restart worker."""
+        import subprocess
+        output = []
+        try:
+            # Pull latest
+            r = subprocess.run(
+                ["git", "-C", DROPLET_DIR, "pull", "origin", "main"],
+                capture_output=True, text=True, timeout=60,
+            )
+            pull_out = (r.stdout or r.stderr or "").strip()
+            output.append(f"git pull: {pull_out}")
+            log.info("ops/deploy git pull rc=%d: %s", r.returncode, pull_out)
+
+            if r.returncode != 0:
+                self._json(500, {"ok": False, "output": output})
+                return
+
+            # Restart worker
+            r2 = subprocess.run(
+                ["systemctl", "restart", "venuescope-worker"],
+                capture_output=True, text=True, timeout=20,
+            )
+            restart_msg = "OK" if r2.returncode == 0 else (r2.stderr or "").strip()
+            output.append(f"restart worker: {restart_msg}")
+            log.info("ops/deploy restart rc=%d", r2.returncode)
+
+            self._json(200, {"ok": r2.returncode == 0, "output": output})
+        except Exception as e:
+            output.append(f"error: {e}")
+            self._json(500, {"ok": False, "output": output})
 
 
 if __name__ == "__main__":

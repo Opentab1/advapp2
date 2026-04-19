@@ -10,6 +10,26 @@ import cameraService from './camera.service';
 // Admin API Lambda — set VITE_ADMIN_API_URL in Amplify environment variables
 const ADMIN_API = (import.meta.env.VITE_ADMIN_API_URL ?? '').replace(/\/$/, '');
 
+// Droplet webhook/ops server — same base URL as VITE_CALIBRATION_URL
+const OPS_URL    = (import.meta.env.VITE_CALIBRATION_URL ?? '').replace(/\/$/, '');
+const OPS_SECRET = import.meta.env.VITE_OPS_SECRET ?? '';
+
+async function opsFetch(path: string, options?: RequestInit) {
+  if (!OPS_URL)    throw new Error('VITE_CALIBRATION_URL is not configured');
+  if (!OPS_SECRET) throw new Error('VITE_OPS_SECRET is not configured — add it to Amplify env vars');
+  const res = await fetch(`${OPS_URL}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Ops-Secret': OPS_SECRET,
+      ...(options?.headers ?? {}),
+    },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((json as any).error ?? `HTTP ${res.status}`);
+  return json;
+}
+
 export async function adminFetch(path: string, options?: RequestInit) {
   if (!ADMIN_API) throw new Error('VITE_ADMIN_API_URL is not configured');
   const res = await fetch(`${ADMIN_API}${path}`, {
@@ -141,6 +161,56 @@ export interface AdminAlert {
   detail: string;
   timestamp: number;
   jobId?: string;
+}
+
+export interface OpsStatus {
+  worker: {
+    status: string;      // 'active' | 'inactive' | 'failed' | 'unknown'
+    startedAt: string;
+    pid: string;
+  };
+  system: {
+    cpu_pct: number;
+    ram_used_mb: number;
+    ram_total_mb: number;
+    ram_pct: number;
+    disk_used_gb: number;
+    disk_total_gb: number;
+    disk_pct: number;
+  };
+  liveJobs: Array<{
+    venueId: string;
+    jobId: string;
+    camera: string;
+    mode: string;
+    startedAt: string;
+    drinksPerHour: number;
+    progressPct: number;
+  }>;
+  ts: number;
+}
+
+export interface AdminSettingsData {
+  alertThresholds: {
+    offlineMinutes: number;
+    dataGapHours: number;
+    tempAnomalyDegrees: number;
+  };
+  notifications: {
+    emailOnCritical: boolean;
+    emailOnNewVenue: boolean;
+    slackWebhook?: string;
+    alertEmail?: string;
+  };
+  defaults: {
+    defaultPlan: string;
+    defaultTimezone: string;
+    autoProvisionDevice: boolean;
+  };
+  venuescope: {
+    theftThreshold: number;
+    workerCount: number;
+  };
 }
 
 // ============ SERVICE ============
@@ -608,20 +678,68 @@ class AdminService {
 
   // ============ ADMIN SETTINGS ============
 
-  async getAdminSettings(): Promise<{
-    alertThresholds: { offlineMinutes: number; dataGapHours: number; tempAnomalyDegrees: number };
-    notifications: { emailOnCritical: boolean; emailOnNewVenue: boolean; slackWebhook?: string };
-    defaults: { defaultPlan: string; defaultTimezone: string; autoProvisionDevice: boolean };
-  }> {
+  private _defaultSettings(): AdminSettingsData {
     return {
       alertThresholds: { offlineMinutes: 30, dataGapHours: 4, tempAnomalyDegrees: 20 },
-      notifications: { emailOnCritical: true, emailOnNewVenue: true },
-      defaults: { defaultPlan: 'Standard', defaultTimezone: 'America/New_York', autoProvisionDevice: true },
+      notifications:   { emailOnCritical: true, emailOnNewVenue: true, slackWebhook: '', alertEmail: '' },
+      defaults:        { defaultPlan: 'Standard', defaultTimezone: 'America/New_York', autoProvisionDevice: true },
+      venuescope:      { theftThreshold: 5, workerCount: 0 },
     };
   }
 
-  async saveAdminSettings(_settings: object): Promise<boolean> {
-    return false;
+  async getAdminSettings(): Promise<AdminSettingsData> {
+    try {
+      const data = await adminFetch('/admin/settings');
+      const saved = data.settings ?? {};
+      // Deep merge saved values over defaults so new fields always have a value
+      const defaults = this._defaultSettings();
+      return {
+        alertThresholds: { ...defaults.alertThresholds, ...(saved.alertThresholds ?? {}) },
+        notifications:   { ...defaults.notifications,   ...(saved.notifications   ?? {}) },
+        defaults:        { ...defaults.defaults,         ...(saved.defaults        ?? {}) },
+        venuescope:      { ...defaults.venuescope,       ...(saved.venuescope      ?? {}) },
+      };
+    } catch (e) {
+      console.warn('getAdminSettings: using defaults —', e);
+      return this._defaultSettings();
+    }
+  }
+
+  async saveAdminSettings(settings: AdminSettingsData): Promise<boolean> {
+    try {
+      await adminFetch('/admin/settings', {
+        method: 'POST',
+        body: JSON.stringify({ settings }),
+      });
+      return true;
+    } catch (e) {
+      console.error('saveAdminSettings failed:', e);
+      return false;
+    }
+  }
+
+  // ============ OPS API (calls droplet webhook server directly) ============
+
+  async getOpsStatus(): Promise<OpsStatus> {
+    const data = await opsFetch('/ops/status');
+    return data as OpsStatus;
+  }
+
+  async getOpsLogs(lines = 150, filter = ''): Promise<{ lines: string[]; count: number }> {
+    const qs = new URLSearchParams({ lines: String(lines) });
+    if (filter) qs.set('filter', filter);
+    const data = await opsFetch(`/ops/logs?${qs.toString()}`);
+    return data as { lines: string[]; count: number };
+  }
+
+  async restartWorker(): Promise<{ ok: boolean; msg: string }> {
+    const data = await opsFetch('/ops/restart', { method: 'POST', body: '{}' });
+    return data as { ok: boolean; msg: string };
+  }
+
+  async deployUpdate(): Promise<{ ok: boolean; output: string[] }> {
+    const data = await opsFetch('/ops/deploy', { method: 'POST', body: '{}' });
+    return data as { ok: boolean; output: string[] };
   }
 
   // ============ AUDIT LOG ============

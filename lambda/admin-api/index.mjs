@@ -146,7 +146,9 @@ function jobFromItem(item) {
 
 async function listVenues() {
   const result = await ddb.send(new ScanCommand({ TableName: VENUES_TABLE }));
-  const items  = (result.Items ?? []).map(venueFromItem);
+  const items  = (result.Items ?? [])
+    .filter(item => !s(item.venueId).startsWith('_'))  // exclude internal records (_system_settings_, etc.)
+    .map(venueFromItem);
   items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return ok({ items });
 }
@@ -812,6 +814,42 @@ async function handleStripeWebhook(rawBody, sigHeader) {
   return ok({ received: true });
 }
 
+// ─── Admin Settings (stored in VenueScopeVenues with venueId="_system_settings_") ──
+
+const SETTINGS_KEY = '_system_settings_';
+
+async function getAdminSettings() {
+  try {
+    const r = await ddb.send(new GetItemCommand({
+      TableName: VENUES_TABLE,
+      Key: { venueId: { S: SETTINGS_KEY } },
+    }));
+    const raw = r.Item?.settingsJson?.S;
+    const settings = raw ? JSON.parse(raw) : {};
+    return ok({ settings });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function saveAdminSettings(body) {
+  const { settings } = body;
+  if (!settings || typeof settings !== 'object') return err(400, 'settings object required');
+  try {
+    await ddb.send(new PutItemCommand({
+      TableName: VENUES_TABLE,
+      Item: {
+        venueId:      { S: SETTINGS_KEY },
+        settingsJson: { S: JSON.stringify(settings) },
+        updatedAt:    { S: new Date().toISOString() },
+      },
+    }));
+    return ok({ ok: true });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const handler = async (event) => {
@@ -858,6 +896,10 @@ export const handler = async (event) => {
 
     // Camera probing (NVR discovery)
     if (method === 'POST'  && rawPath === '/admin/probe-cameras')      return probeCameras(body);
+
+    // Admin Settings
+    if (method === 'GET'   && rawPath === '/admin/settings')           return getAdminSettings();
+    if (method === 'POST'  && rawPath === '/admin/settings')           return saveAdminSettings(body);
 
     // Billing
     if (method === 'GET'  && rawPath === '/billing/status')               return getBillingStatus(qs.venueId);
