@@ -138,7 +138,22 @@ async function _listJobsDirect(
       lastKey = r.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (lastKey && allItems.length < MAX_ITEMS);
 
-    return allItems;
+    // Stable live-camera records (jobId starts with '~') sort AFTER all '!' records.
+    // With 50k+ items in DDB they are never reached by the range query above.
+    // Fetch them explicitly with a begins_with query so occupancy/drinks stay live.
+    const stableR = await _directDDB.send(new QueryCommand({
+      TableName: 'VenueScopeJobs',
+      KeyConditionExpression: 'venueId = :v AND begins_with(jobId, :t)',
+      ExpressionAttributeValues: { ':v': { S: venueId }, ':t': { S: '~' } },
+    } as any));
+    const stableItems = (stableR.Items ?? []).map(item =>
+      _itemToJob(item as Record<string, Record<string, unknown>>)
+    );
+    // Merge: stable records override any duplicate jobId from the range query
+    const merged = new Map(allItems.map(j => [j.jobId, j]));
+    stableItems.forEach(j => merged.set(j.jobId, j));
+
+    return Array.from(merged.values());
   } catch (err) {
     console.warn('[venuescope] direct DynamoDB fallback failed:', err);
     return [];
