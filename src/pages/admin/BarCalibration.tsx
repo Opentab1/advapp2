@@ -1,25 +1,15 @@
 /**
  * BarCalibration — Admin tool to auto-calibrate bar line position per camera.
- *
- * Select venue → select specific camera → upload clip → enter drink count.
- * Config is saved to DDB barConfigJson for that camera and takes effect
- * on the next live segment automatically.
+ * Includes config history: every calibration snapshots the previous config.
+ * Restore any previous config with one click.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Upload,
-  Play,
-  CheckCircle,
-  XCircle,
-  Clock,
-  Sliders,
-  ChevronDown,
-  ChevronUp,
-  AlertTriangle,
-  Info,
-  Camera,
+  Upload, Play, CheckCircle, XCircle, Clock, Sliders,
+  ChevronDown, ChevronUp, AlertTriangle, Info, Camera,
+  History, RotateCcw, Loader2,
 } from 'lucide-react';
 import { useAdminVenue } from '../../contexts/AdminVenueContext';
 import adminService, { AdminCamera } from '../../services/admin.service';
@@ -51,6 +41,14 @@ interface CalibJob {
   error: string | null;
 }
 
+interface HistoryEntry {
+  ts:            string;
+  label:         string;
+  y_position:    number;
+  customer_side: number;
+  source?:       string;
+}
+
 export function BarCalibration() {
   const { venues, selectedVenueId, setSelectedVenueId, loadingVenues } = useAdminVenue();
 
@@ -65,41 +63,62 @@ export function BarCalibration() {
   const [uploading,    setUploading]    = useState(false);
   const [error,        setError]        = useState<string | null>(null);
   const [showAllRows,  setShowAllRows]  = useState(false);
+
+  // History
+  const [history,        setHistory]        = useState<HistoryEntry[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [showHistory,    setShowHistory]    = useState(false);
+  const [restoringIdx,   setRestoringIdx]   = useState<number | null>(null);
+  const [restoreMsg,     setRestoreMsg]     = useState<string | null>(null);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Sync venue with context
   useEffect(() => {
     if (selectedVenueId && !venueId) setVenueId(selectedVenueId);
   }, [selectedVenueId]);
 
   // Load cameras when venue changes
   useEffect(() => {
-    if (!venueId) { setCameras([]); setCameraId(''); return; }
+    if (!venueId) { setCameras([]); setCameraId(''); setHistory([]); return; }
     setLoadingCams(true);
     setCameraId('');
+    setHistory([]);
     adminService.listCameras(venueId)
       .then(cams => {
-        const drinkCams = cams.filter(c => c.modes.includes('drink_count') && c.enabled);
-        setCameras(drinkCams);
-        if (drinkCams.length === 1) setCameraId(drinkCams[0].cameraId);
+        const dc = cams.filter(c => c.modes.includes('drink_count') && c.enabled);
+        setCameras(dc);
+        if (dc.length === 1) setCameraId(dc[0].cameraId);
       })
       .catch(() => setCameras([]))
       .finally(() => setLoadingCams(false));
   }, [venueId]);
+
+  // Load history when camera changes
+  useEffect(() => {
+    if (!venueId || !cameraId) { setHistory([]); return; }
+    setLoadingHistory(true);
+    fetch(`${CALIBRATION_URL}/calibrate/history?venue_id=${venueId}&camera_id=${cameraId}`)
+      .then(r => r.json())
+      .then(d => setHistory(d.history ?? []))
+      .catch(() => setHistory([]))
+      .finally(() => setLoadingHistory(false));
+  }, [venueId, cameraId]);
 
   // Poll job status
   useEffect(() => {
     if (!jobId) return;
     const poll = async () => {
       try {
-        const res = await fetch(`${CALIBRATION_URL}/calibrate/status?job_id=${jobId}`);
+        const res  = await fetch(`${CALIBRATION_URL}/calibrate/status?job_id=${jobId}`);
         if (!res.ok) return;
         const data: CalibJob = await res.json();
         setJob(data);
         if (data.status === 'done' || data.status === 'failed') {
           clearInterval(pollRef.current!);
           pollRef.current = null;
+          // Refresh history after calibration completes
+          if (data.status === 'done') refreshHistory();
         }
       } catch { /* keep polling */ }
     };
@@ -107,6 +126,14 @@ export function BarCalibration() {
     poll();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [jobId]);
+
+  const refreshHistory = () => {
+    if (!venueId || !cameraId) return;
+    fetch(`${CALIBRATION_URL}/calibrate/history?venue_id=${venueId}&camera_id=${cameraId}`)
+      .then(r => r.json())
+      .then(d => setHistory(d.history ?? []))
+      .catch(() => {});
+  };
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setVideoFile(e.target.files?.[0] ?? null);
@@ -122,24 +149,24 @@ export function BarCalibration() {
   const handleVenueChange = (id: string) => {
     setVenueId(id);
     setSelectedVenueId(id);
-    setJob(null);
-    setJobId(null);
-    setError(null);
+    setJob(null); setJobId(null); setError(null); setRestoreMsg(null);
+  };
+
+  const handleCameraSelect = (id: string) => {
+    setCameraId(id);
+    setJob(null); setJobId(null); setRestoreMsg(null);
   };
 
   const handleRun = async () => {
-    setError(null);
-    if (!venueId)      { setError('Select a venue.'); return; }
-    if (!cameraId)     { setError('Select a camera.'); return; }
-    if (!videoFile)    { setError('Upload a video clip.'); return; }
+    setError(null); setRestoreMsg(null);
+    if (!venueId)   { setError('Select a venue.'); return; }
+    if (!cameraId)  { setError('Select a camera.'); return; }
+    if (!videoFile) { setError('Upload a video clip.'); return; }
     if (!actualCount || parseInt(actualCount) < 1) {
       setError('Enter the actual number of drinks served.');
       return;
     }
-    if (!CALIBRATION_URL) {
-      setError('VITE_CALIBRATION_URL is not configured.');
-      return;
-    }
+    if (!CALIBRATION_URL) { setError('VITE_CALIBRATION_URL is not configured.'); return; }
 
     const form = new FormData();
     form.append('venue_id',     venueId);
@@ -148,9 +175,7 @@ export function BarCalibration() {
     form.append('video',        videoFile);
 
     setUploading(true);
-    setJob(null);
-    setJobId(null);
-    setShowAllRows(false);
+    setJob(null); setJobId(null); setShowAllRows(false);
 
     try {
       const res  = await fetch(`${CALIBRATION_URL}/calibrate`, { method: 'POST', body: form });
@@ -162,6 +187,26 @@ export function BarCalibration() {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleRestore = async (idx: number) => {
+    setRestoringIdx(idx);
+    setRestoreMsg(null);
+    try {
+      const res = await fetch(`${CALIBRATION_URL}/calibrate/restore`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ venue_id: venueId, camera_id: cameraId, history_index: idx }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Restore failed');
+      setRestoreMsg(`Restored: ${data.restored}`);
+      refreshHistory();
+    } catch (err: unknown) {
+      setRestoreMsg(`Error: ${err instanceof Error ? err.message : 'Restore failed'}`);
+    } finally {
+      setRestoringIdx(null);
     }
   };
 
@@ -182,17 +227,16 @@ export function BarCalibration() {
           Bar Line Auto-Calibration
         </h2>
         <p className="text-gray-400 text-sm mt-1">
-          Select a venue + bar camera, upload a clip with a known drink count.
-          Config is written directly to that camera and takes effect on the next live segment.
+          Select venue + bar camera, upload a clip with a known drink count.
+          Config saves directly to that camera. Previous configs are kept — restore anytime.
         </p>
       </div>
 
-      {/* Info */}
       <div className="flex items-start gap-3 p-4 rounded-xl bg-blue-500/10 border border-blue-500/25">
         <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
         <div className="text-xs text-blue-300 space-y-1">
           <p>Runs on the venue droplet — takes <strong>3–8 minutes</strong> depending on clip length.</p>
-          <p>Only the first 5 minutes of the clip are processed. Use a <strong>raw NVR export</strong>, not a screen recording.</p>
+          <p>Use a <strong>raw NVR export</strong>, not a screen recording. Only the first 5 min are processed.</p>
         </div>
       </div>
 
@@ -209,16 +253,14 @@ export function BarCalibration() {
             className="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500/60 disabled:opacity-50"
           >
             <option value="">— Select venue —</option>
-            {venues.map(v => (
-              <option key={v.venueId} value={v.venueId}>{v.name ?? v.venueId}</option>
-            ))}
+            {venues.map(v => <option key={v.venueId} value={v.venueId}>{v.name ?? v.venueId}</option>)}
           </select>
         </div>
 
         {/* Camera */}
         <div>
           <label className="block text-xs text-gray-400 mb-1.5 font-medium">
-            Bar Camera <span className="text-gray-600">(drink_count cameras only)</span>
+            Bar Camera <span className="text-gray-600">(drink_count only)</span>
           </label>
           {loadingCams ? (
             <p className="text-xs text-gray-500 py-2">Loading cameras…</p>
@@ -231,22 +273,20 @@ export function BarCalibration() {
               {cameras.map(cam => (
                 <button
                   key={cam.cameraId}
-                  onClick={() => setCameraId(cam.cameraId)}
+                  onClick={() => handleCameraSelect(cam.cameraId)}
                   disabled={isRunning}
-                  className={`
-                    flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all text-sm
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all text-sm
                     ${cameraId === cam.cameraId
                       ? 'border-amber-500/60 bg-amber-500/10 text-white'
-                      : 'border-white/10 bg-black/20 text-gray-300 hover:border-white/25'}
-                  `}
+                      : 'border-white/10 bg-black/20 text-gray-300 hover:border-white/25'}`}
                 >
                   <Camera className="w-4 h-4 flex-shrink-0 text-gray-400" />
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-medium truncate">{cam.name}</p>
                     <p className="text-xs text-gray-500 truncate">{cam.cameraId}</p>
                   </div>
                   {cam.barConfigJson && (
-                    <span className="ml-auto text-xs text-green-400 flex-shrink-0">has config</span>
+                    <span className="text-xs text-green-400 flex-shrink-0">has config</span>
                   )}
                 </button>
               ))}
@@ -263,12 +303,8 @@ export function BarCalibration() {
             onDragOver={e => e.preventDefault()}
             onDrop={handleDrop}
             onClick={() => fileRef.current?.click()}
-            className={`
-              border-2 border-dashed rounded-xl px-4 py-8 text-center cursor-pointer transition-colors
-              ${videoFile
-                ? 'border-amber-500/50 bg-amber-500/5'
-                : 'border-white/15 bg-black/20 hover:border-white/30'}
-            `}
+            className={`border-2 border-dashed rounded-xl px-4 py-8 text-center cursor-pointer transition-colors
+              ${videoFile ? 'border-amber-500/50 bg-amber-500/5' : 'border-white/15 bg-black/20 hover:border-white/30'}`}
           >
             <input ref={fileRef} type="file" accept="video/*" className="hidden"
                    onChange={handleFileChange} disabled={isRunning} />
@@ -304,8 +340,7 @@ export function BarCalibration() {
 
         {error && (
           <div className="flex items-center gap-2 text-red-400 text-sm">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            {error}
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />{error}
           </div>
         )}
 
@@ -324,11 +359,8 @@ export function BarCalibration() {
       {/* Progress + Results */}
       <AnimatePresence>
         {job && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-card rounded-xl p-5 space-y-3"
-          >
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+            className="glass-card rounded-xl p-5 space-y-3">
             <div className="flex items-center gap-2">
               {isRunning && <Clock className="w-4 h-4 text-amber-400 animate-pulse" />}
               {isDone    && <CheckCircle className="w-4 h-4 text-green-400" />}
@@ -340,61 +372,40 @@ export function BarCalibration() {
 
             {!isFailed && (
               <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full"
-                  animate={{ width: `${job.progress}%` }}
-                  transition={{ duration: 0.5 }}
-                />
+                <motion.div className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full"
+                  animate={{ width: `${job.progress}%` }} transition={{ duration: 0.5 }} />
               </div>
             )}
 
             {isDone && best && (
               <div className="space-y-4 pt-2">
-                {/* Best result */}
                 <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/25">
                   <p className="text-xs text-green-400 font-medium mb-2 uppercase tracking-wide">
                     Best config — saved to {selectedCamera?.name ?? cameraId}
                   </p>
                   <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-2xl font-bold text-white">{best.accuracy_pct}%</p>
-                      <p className="text-xs text-gray-400">Accuracy</p>
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold text-white">{best.y_position.toFixed(2)}</p>
-                      <p className="text-xs text-gray-400">Bar line Y</p>
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold text-white">{best.customer_side === 1 ? 'Below' : 'Above'}</p>
-                      <p className="text-xs text-gray-400">Customer side</p>
-                    </div>
+                    <div><p className="text-2xl font-bold text-white">{best.accuracy_pct}%</p><p className="text-xs text-gray-400">Accuracy</p></div>
+                    <div><p className="text-2xl font-bold text-white">{best.y_position.toFixed(2)}</p><p className="text-xs text-gray-400">Bar line Y</p></div>
+                    <div><p className="text-2xl font-bold text-white">{best.customer_side === 1 ? 'Below' : 'Above'}</p><p className="text-xs text-gray-400">Customer side</p></div>
                   </div>
                   <div className="flex flex-wrap gap-4 mt-3 text-xs text-gray-400">
                     <span>Detected: <strong className="text-white">{best.detected}</strong></span>
                     <span>Actual: <strong className="text-white">{best.actual}</strong></span>
                     <span>Error: <strong className="text-white">{best.error}</strong> drinks</span>
-                    {job.result?.video_seconds && (
-                      <span>Clip: <strong className="text-white">{Math.round(job.result.video_seconds / 60)}min</strong></span>
-                    )}
+                    {job.result?.video_seconds && <span>Clip: <strong className="text-white">{Math.round(job.result.video_seconds / 60)}min</strong></span>}
                   </div>
                 </div>
 
-                <button
-                  onClick={() => setShowAllRows(v => !v)}
-                  className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors"
-                >
+                <button onClick={() => setShowAllRows(v => !v)}
+                  className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors">
                   {showAllRows ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                   {showAllRows ? 'Hide' : 'Show'} all {rows.length} configurations tested
                 </button>
 
                 <AnimatePresence>
                   {showAllRows && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="overflow-hidden"
-                    >
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="text-gray-500 border-b border-white/10">
@@ -412,9 +423,7 @@ export function BarCalibration() {
                               <td className="py-1.5 pr-3">{r.customer_side === 1 ? 'Below (+1)' : 'Above (−1)'}</td>
                               <td className="py-1.5 pr-3 text-right">{r.detected}</td>
                               <td className="py-1.5 pr-3 text-right">{r.error > 0 ? `+${r.error}` : r.error}</td>
-                              <td className="py-1.5 text-right font-semibold">
-                                <AccuracyBadge pct={r.accuracy_pct} />
-                              </td>
+                              <td className="py-1.5 text-right font-semibold"><AccuracyBadge pct={r.accuracy_pct} /></td>
                             </tr>
                           ))}
                         </tbody>
@@ -422,17 +431,81 @@ export function BarCalibration() {
                     </motion.div>
                   )}
                 </AnimatePresence>
-
-                {job.result?.bar_config_path && (
-                  <p className="text-xs text-gray-500">
-                    Disk backup: <code className="text-amber-400">{job.result.bar_config_path}</code>
-                  </p>
-                )}
               </div>
             )}
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Config History */}
+      {cameraId && (
+        <div className="glass-card rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowHistory(v => !v)}
+            className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-white/5 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <History className="w-4 h-4 text-gray-400" />
+              <span className="text-sm font-medium text-white">Config History</span>
+              {history.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-xs text-gray-400">
+                  {history.length}
+                </span>
+              )}
+              {loadingHistory && <Loader2 className="w-3.5 h-3.5 text-gray-500 animate-spin" />}
+            </div>
+            {showHistory ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
+          </button>
+
+          <AnimatePresence>
+            {showHistory && (
+              <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }}
+                exit={{ height: 0 }} className="overflow-hidden">
+                <div className="px-5 pb-4 space-y-2 border-t border-white/10 pt-4">
+
+                  {restoreMsg && (
+                    <div className={`text-xs px-3 py-2 rounded-lg ${restoreMsg.startsWith('Error') ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>
+                      {restoreMsg}
+                    </div>
+                  )}
+
+                  {history.length === 0 ? (
+                    <p className="text-xs text-gray-500 py-2">
+                      No history yet — run a calibration to start building history.
+                    </p>
+                  ) : (
+                    history.map((entry, idx) => (
+                      <div key={idx}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-black/20 border border-white/8">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-white font-medium truncate">{entry.label}</p>
+                          <div className="flex gap-3 mt-0.5 text-xs text-gray-500">
+                            <span>y={entry.y_position.toFixed(2)}</span>
+                            <span>{entry.customer_side === 1 ? 'customers below' : 'customers above'}</span>
+                            <span>{new Date(entry.ts).toLocaleDateString()} {new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                        </div>
+                        <motion.button
+                          onClick={() => handleRestore(idx)}
+                          disabled={restoringIdx !== null}
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/8 hover:bg-amber-500/20 border border-white/10 hover:border-amber-500/40 text-xs text-gray-300 hover:text-amber-300 transition-all disabled:opacity-50 flex-shrink-0"
+                        >
+                          {restoringIdx === idx
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <RotateCcw className="w-3 h-3" />}
+                          Restore
+                        </motion.button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
 
       {!CALIBRATION_URL && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/25">

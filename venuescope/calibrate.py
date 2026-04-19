@@ -234,11 +234,12 @@ class CalibrationEngine:
 
     def _write_bar_config(self, y_pos: float, customer_side: int) -> Path:
         """
-        Write winning config to disk AND push to DDB barConfigJson for the
-        specific camera so the worker picks it up on the next segment.
-        Filename: {camera_id}.json if camera_id given, else {venue_id}.json.
+        Snapshot the existing config into history, then write the new winning
+        config to disk and DDB barConfigJson for this specific camera.
+        History is stored in DDB as barConfigHistory (JSON array, max 20 entries).
         """
         from core.config import CONFIG_DIR
+        import datetime as _dt
 
         note = (
             f"Auto-calibrated: bar_line_y={y_pos:.2f}, "
@@ -246,12 +247,12 @@ class CalibrationEngine:
             + (f", camera={self.camera_id}" if self.camera_id else "")
         )
         config = {
-            "venue_id":       self.venue_id,
-            "display_name":   self.venue_id.replace("_", " ").title(),
+            "venue_id":        self.venue_id,
+            "display_name":    self.venue_id.replace("_", " ").title(),
             "overhead_camera": False,
-            "notes":          note,
-            "frame_width":    None,
-            "frame_height":   None,
+            "notes":           note,
+            "frame_width":     None,
+            "frame_height":    None,
             "stations": [{
                 "zone_id":         "bar_main",
                 "label":           "Bar",
@@ -267,25 +268,67 @@ class CalibrationEngine:
         }
         config_json = json.dumps(config, indent=2)
 
-        # ── Write to disk (backup / local jobs) ──────────────────────────────
+        # ── Write to disk ─────────────────────────────────────────────────────
         file_key = self.camera_id if self.camera_id else self.venue_id
         path = CONFIG_DIR / f"{file_key}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(config_json)
         log.info("Bar config written to disk: %s (y=%.2f, side=%+d)", path, y_pos, customer_side)
 
-        # ── Push to DDB barConfigJson for this specific camera ────────────────
-        # Worker loads barConfigJson from DDB — this is what makes it take effect live.
+        # ── DDB: snapshot existing config → history, then write new config ────
         if self.camera_id and self.venue_id:
             try:
-                from core.ddb_cameras import update_camera_bar_config_json
-                ok = update_camera_bar_config_json(self.venue_id, self.camera_id, config_json)
-                if ok:
-                    log.info("Bar config pushed to DDB: venue=%s camera=%s",
-                             self.venue_id, self.camera_id)
-                else:
-                    log.warning("DDB push returned False for %s/%s",
-                                self.venue_id, self.camera_id)
+                import boto3, os as _os
+                _region = _os.environ.get("AWS_DEFAULT_REGION") or _os.environ.get("AWS_REGION", "us-east-2")
+                _ddb    = boto3.resource("dynamodb", region_name=_region)
+                _table  = _ddb.Table("VenueScopeCameras")
+
+                # Read current record to snapshot barConfigJson into history
+                resp = _table.get_item(
+                    Key={"venueId": self.venue_id, "cameraId": self.camera_id}
+                )
+                existing = resp.get("Item", {})
+                existing_config_json = existing.get("barConfigJson", "")
+                history_json         = existing.get("barConfigHistory", "[]")
+
+                history = json.loads(history_json) if history_json else []
+
+                # Snapshot current config before overwriting
+                if existing_config_json:
+                    try:
+                        existing_cfg = json.loads(existing_config_json)
+                        ex_stations  = existing_cfg.get("stations", [{}])
+                        ex_st        = ex_stations[0] if ex_stations else {}
+                        ex_bl        = ex_st.get("bar_line_p1", [0, 0])
+                        ex_y         = ex_bl[1] if len(ex_bl) > 1 else 0
+                        ex_side      = ex_st.get("customer_side", 0)
+                        ex_note      = existing_cfg.get("notes", "")
+                    except Exception:
+                        ex_y    = 0
+                        ex_side = 0
+                        ex_note = "Unknown"
+
+                    history.insert(0, {
+                        "ts":            _dt.datetime.utcnow().isoformat(),
+                        "label":         ex_note or f"y={ex_y:.2f} side={'+1' if ex_side>0 else '-1'}",
+                        "y_position":    round(ex_y, 2),
+                        "customer_side": ex_side,
+                        "config_json":   existing_config_json,
+                        "source":        "previous",
+                    })
+                    history = history[:20]   # keep last 20
+
+                # Write new config + updated history atomically
+                _table.update_item(
+                    Key={"venueId": self.venue_id, "cameraId": self.camera_id},
+                    UpdateExpression="SET barConfigJson = :cfg, barConfigHistory = :hist",
+                    ExpressionAttributeValues={
+                        ":cfg":  config_json,
+                        ":hist": json.dumps(history),
+                    },
+                )
+                log.info("Bar config + history pushed to DDB: venue=%s camera=%s history_len=%d",
+                         self.venue_id, self.camera_id, len(history))
             except Exception as e:
                 log.warning("DDB push failed (config still saved to disk): %s", e)
 

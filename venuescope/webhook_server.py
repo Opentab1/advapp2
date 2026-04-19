@@ -197,6 +197,31 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self._json(200, job)
             return
 
+        # Config history: GET /calibrate/history?venue_id=X&camera_id=Y
+        if parsed.path == "/calibrate/history":
+            params    = parse_qs(parsed.query)
+            venue_id  = params.get("venue_id",  [""])[0]
+            camera_id = params.get("camera_id", [""])[0]
+            if not venue_id or not camera_id:
+                self._json(400, {"error": "venue_id and camera_id required"})
+                return
+            try:
+                import boto3, os as _os
+                _region = _os.environ.get("AWS_DEFAULT_REGION") or _os.environ.get("AWS_REGION", "us-east-2")
+                _ddb    = boto3.resource("dynamodb", region_name=_region)
+                _table  = _ddb.Table("VenueScopeCameras")
+                resp    = _table.get_item(Key={"venueId": venue_id, "cameraId": camera_id})
+                item    = resp.get("Item", {})
+                history_json = item.get("barConfigHistory", "[]")
+                history      = json.loads(history_json) if history_json else []
+                # Strip config_json from list view — only return metadata
+                preview = [{k: v for k, v in e.items() if k != "config_json"}
+                           for e in history]
+                self._json(200, {"history": preview, "count": len(preview)})
+            except Exception as e:
+                self._json(500, {"error": str(e)})
+            return
+
         self.send_response(200)
         self._cors()
         self.end_headers()
@@ -208,6 +233,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
         # ── Calibration start ────────────────────────────────────────────────
         if parsed.path == "/calibrate":
             self._handle_calibrate()
+            return
+
+        # ── Restore previous config ───────────────────────────────────────────
+        if parsed.path == "/calibrate/restore":
+            self._handle_restore()
             return
 
         # ── Stripe webhook ───────────────────────────────────────────────────
@@ -309,6 +339,93 @@ class WebhookHandler(BaseHTTPRequestHandler):
         t.start()
 
         self._json(200, {"job_id": job_id})
+
+    def _handle_restore(self):
+        """
+        POST /calibrate/restore  (JSON body)
+        { "venue_id": "...", "camera_id": "...", "history_index": 0 }
+
+        Restores the config at history[history_index] as the live barConfigJson.
+        The current live config is snapshotted back into history first so
+        nothing is ever permanently lost.
+        """
+        import datetime as _dt
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            body = json.loads(self.rfile.read(length))
+        except Exception:
+            self._json(400, {"error": "Invalid JSON body"})
+            return
+
+        venue_id      = (body.get("venue_id")  or "").strip()
+        camera_id     = (body.get("camera_id") or "").strip()
+        history_index = int(body.get("history_index", 0))
+
+        if not venue_id or not camera_id:
+            self._json(400, {"error": "venue_id and camera_id required"})
+            return
+
+        try:
+            import boto3, os as _os
+            _region = _os.environ.get("AWS_DEFAULT_REGION") or _os.environ.get("AWS_REGION", "us-east-2")
+            _ddb    = boto3.resource("dynamodb", region_name=_region)
+            _table  = _ddb.Table("VenueScopeCameras")
+
+            # Fetch current record
+            resp    = _table.get_item(Key={"venueId": venue_id, "cameraId": camera_id})
+            item    = resp.get("Item", {})
+            history = json.loads(item.get("barConfigHistory", "[]") or "[]")
+
+            if history_index < 0 or history_index >= len(history):
+                self._json(400, {"error": f"history_index {history_index} out of range (0–{len(history)-1})"})
+                return
+
+            target_entry    = history[history_index]
+            restore_json    = target_entry.get("config_json", "")
+            current_json    = item.get("barConfigJson", "")
+
+            if not restore_json:
+                self._json(400, {"error": "History entry has no config_json"})
+                return
+
+            # Snapshot current live config into history before overwriting
+            if current_json:
+                try:
+                    cur_cfg  = json.loads(current_json)
+                    cur_st   = (cur_cfg.get("stations") or [{}])[0]
+                    cur_y    = (cur_st.get("bar_line_p1") or [0, 0])[1]
+                    cur_side = cur_st.get("customer_side", 0)
+                    cur_note = cur_cfg.get("notes", "")
+                except Exception:
+                    cur_y = 0; cur_side = 0; cur_note = "Unknown"
+
+                history.insert(0, {
+                    "ts":            _dt.datetime.utcnow().isoformat(),
+                    "label":         cur_note or f"y={cur_y:.2f}",
+                    "y_position":    round(cur_y, 2),
+                    "customer_side": cur_side,
+                    "config_json":   current_json,
+                    "source":        "pre-restore snapshot",
+                })
+                # Remove the entry we're restoring (was at history_index, now shifted by +1)
+                del history[history_index + 1]
+                history = history[:20]
+            else:
+                del history[history_index]
+
+            _table.update_item(
+                Key={"venueId": venue_id, "cameraId": camera_id},
+                UpdateExpression="SET barConfigJson = :cfg, barConfigHistory = :hist",
+                ExpressionAttributeValues={
+                    ":cfg":  restore_json,
+                    ":hist": json.dumps(history),
+                },
+            )
+            log.info("Config restored: venue=%s camera=%s index=%d", venue_id, camera_id, history_index)
+            self._json(200, {"ok": True, "restored": target_entry.get("label", "")})
+        except Exception as e:
+            log.exception("Restore failed")
+            self._json(500, {"error": str(e)})
 
 
 if __name__ == "__main__":
