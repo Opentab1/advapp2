@@ -141,13 +141,47 @@ function buildStaff(jobs: VenueScopeJob[]): StaffStat[] {
     if (job.bartenderBreakdown) {
       try {
         const bd = JSON.parse(job.bartenderBreakdown) as Record<string, {
-          drinks: number; per_hour?: number; over_pours?: number; total_oz?: number; drink_types?: Record<string, number>;
+          drinks: number; per_hour?: number; over_pours?: number; total_oz?: number;
+          drink_types?: Record<string, number>; timestamps?: number[]; drink_scores?: number[];
         }>;
+
+        // Build tSec → bartender lookup from breakdown timestamps (for serveSnapshot attribution)
+        const bdLookup = new Map<number, string>();
+        for (const [name, d] of Object.entries(bd)) {
+          for (const t of d.timestamps ?? []) bdLookup.set(t, name);
+        }
+
+        // Count drinks per bartender from serveSnapshots when available.
+        // serveSnapshots has one entry per detected drink, matching totalDrinks.
+        const snapCounts = new Map<string, number>();
+        const snapshots: Record<string, string> = {};
+        try {
+          if ((job as any).serveSnapshots) Object.assign(snapshots, JSON.parse((job as any).serveSnapshots));
+        } catch { /* no-op */ }
+
+        const snapKeys = Object.keys(snapshots);
+        if (snapKeys.length > 0 && bdLookup.size > 0) {
+          for (const k of snapKeys) {
+            const tSec = parseFloat(k);
+            let bestName = '';
+            let bestDiff = 30;
+            for (const [bTSec, name] of bdLookup) {
+              const diff = Math.abs(bTSec - tSec);
+              if (diff < bestDiff) { bestDiff = diff; bestName = name; }
+            }
+            if (bestName && bestName !== 'unknown') {
+              snapCounts.set(bestName, (snapCounts.get(bestName) ?? 0) + 1);
+            }
+          }
+        }
+
         for (const [name, d] of Object.entries(bd)) {
           if (!name || name === 'unknown') continue;
           if (!map.has(name)) map.set(name, { name, drinks: 0, shifts: 0, perHour: 0, theftFlags: 0, overPours: 0, totalOz: 0, drinkTypes: {}, shiftDrinks: [] });
           const s = map.get(name)!;
-          s.drinks     += d.drinks ?? 0;
+          // Prefer serveSnapshot count (matches totalDrinks), fall back to d.drinks
+          const drinkCount = snapCounts.size > 0 ? (snapCounts.get(name) ?? 0) : (d.drinks ?? 0);
+          s.drinks     += drinkCount;
           s.shifts     += 1;
           s.perHour    += d.per_hour ?? 0;
           s.theftFlags += job.hasTheftFlag ? 1 : 0;
@@ -156,7 +190,7 @@ function buildStaff(jobs: VenueScopeJob[]): StaffStat[] {
           for (const [type, cnt] of Object.entries(d.drink_types ?? {})) {
             s.drinkTypes[type] = (s.drinkTypes[type] ?? 0) + cnt;
           }
-          s.shiftDrinks.push({ date: job.createdAt ?? 0, drinks: d.drinks ?? 0, flag: job.hasTheftFlag });
+          s.shiftDrinks.push({ date: job.createdAt ?? 0, drinks: drinkCount, flag: job.hasTheftFlag });
         }
         continue;
       } catch { /* fall through */ }
