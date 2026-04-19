@@ -543,12 +543,21 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     # doesn't count door crossings). Use peak_occupancy from the blob estimator instead.
     peak_occ = int(people.get("peak_occupancy", headcount)) if mode == "people_count" else headcount
 
+    # Little's Law dwell: avg_dwell = avg_occupancy / arrival_rate
+    # Only valid after ≥60s with at least 1 entry recorded.
+    _dwell_min: Optional[float] = None
+    if people_in > 0 and elapsed_sec >= 60:
+        _arrival_rate = people_in / elapsed_sec   # entries per second
+        _dwell_sec    = headcount / _arrival_rate  # L = λW → W = L/λ
+        _dwell_min    = round(min(_dwell_sec / 60.0, 240.0), 1)  # cap at 4h
+
     update_expr = (
         "SET #st = :s, updatedAt = :u, isLive = :il, "
         "elapsedSec = :es, analysisMode = :am, "
         "totalDrinks = :td, unrungDrinks = :ud, "
         "peopleIn = :pi, peopleOut = :po, currentHeadcount = :hc, "
-        "peakOccupancy = :po2"   # frontend reads peakOccupancy for live headcount
+        "peakOccupancy = :po2, "
+        "totalEntries = :te, totalExits = :tx"   # frontend reads these field names
     )
     expr_names = {"#st": "status"}
     expr_vals: Dict[str, Any] = {
@@ -563,7 +572,13 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         ":po":  {"N": str(people_out)},
         ":hc":  {"N": str(headcount)},
         ":po2": {"N": str(peak_occ)},
+        ":te":  {"N": str(people_in)},    # totalEntries
+        ":tx":  {"N": str(people_out)},   # totalExits
     }
+    # Write avgDwellMin when Little's Law has enough data
+    if _dwell_min is not None:
+        update_expr += ", avgDwellMin = :adm"
+        expr_vals[":adm"] = {"N": str(_dwell_min)}
 
     # Timestamp scaling for buffered NVR/HLS streams.
     #
