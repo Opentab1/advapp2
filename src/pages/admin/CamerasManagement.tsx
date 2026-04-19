@@ -5,7 +5,7 @@
  * The worker on the droplet reads this table every 60s to pick up changes.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Camera,
@@ -23,11 +23,15 @@ import {
   Eye,
   EyeOff,
   Wifi,
+  WifiOff,
   Search,
   Radio,
   Network,
+  Copy,
+  Check,
 } from 'lucide-react';
 import adminService, { AdminCamera, adminFetch } from '../../services/admin.service';
+import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 
 type CameraMode = 'drink_count' | 'bottle_count' | 'people_count' | 'table_turns' | 'staff_activity' | 'after_hours';
 
@@ -43,6 +47,110 @@ const MODE_LABELS: Record<CameraMode, string> = {
 const ALL_MODES: CameraMode[] = [
   'drink_count', 'bottle_count', 'people_count', 'table_turns', 'staff_activity', 'after_hours',
 ];
+
+// Direct DDB client for reading live status records
+const _ddbRegion = import.meta.env.VITE_AWS_REGION || 'us-east-2';
+const _ddbKeyId  = import.meta.env.VITE_AWS_ACCESS_KEY_ID;
+const _ddbSecret = import.meta.env.VITE_AWS_SECRET_ACCESS_KEY;
+const _directDDB: DynamoDBClient | null = (_ddbKeyId && _ddbSecret)
+  ? new DynamoDBClient({
+      region: _ddbRegion,
+      credentials: { accessKeyId: _ddbKeyId, secretAccessKey: _ddbSecret },
+    })
+  : null;
+
+// ── Parse IP and port from a stream URL ──────────────────────────────────────
+function parseNvrConn(url: string): { ip: string; port: string } {
+  try {
+    const m = url.match(/https?:\/\/([\d.]+):(\d+)/);
+    if (m) return { ip: m[1], port: m[2] };
+    const m2 = url.match(/rtsp:\/\/[^@]*@([\d.]+):(\d+)/);
+    if (m2) return { ip: m2[1], port: m2[2] };
+  } catch { /* ignore */ }
+  return { ip: '', port: '' };
+}
+
+// ── Camera status from stable DDB records (~cameraId) ───────────────────────
+type CameraStatus = 'online' | 'offline' | 'unknown';
+
+interface StatusRecord {
+  status: CameraStatus;
+  updatedAt: number;
+  totalDrinks?: number;
+  analysisMode?: string;
+  elapsedSec?: number;
+}
+
+async function fetchCameraStatuses(venueId: string): Promise<Map<string, StatusRecord>> {
+  const map = new Map<string, StatusRecord>();
+  if (!_directDDB) return map;
+  try {
+    const r = await _directDDB.send(new QueryCommand({
+      TableName: 'VenueScopeJobs',
+      KeyConditionExpression: 'venueId = :v AND begins_with(jobId, :t)',
+      ExpressionAttributeValues: { ':v': { S: venueId }, ':t': { S: '~' } },
+    } as any));
+    const now = Date.now() / 1000;
+    for (const item of r.Items ?? []) {
+      const jobId = (item.jobId as any)?.S ?? '';
+      const cameraId = jobId.replace(/^~/, '');
+      const updatedAt = Number((item.updatedAt as any)?.N ?? 0);
+      const isLive = (item.isLive as any)?.BOOL === true;
+      const age = now - updatedAt;
+      // Online = isLive + updated within last 3 minutes
+      const status: CameraStatus = (isLive && age < 180) ? 'online' : 'offline';
+      map.set(cameraId, {
+        status,
+        updatedAt,
+        totalDrinks: Number((item.totalDrinks as any)?.N ?? 0) || undefined,
+        analysisMode: (item.analysisMode as any)?.S,
+        elapsedSec: Number((item.elapsedSec as any)?.N ?? 0) || undefined,
+      });
+    }
+  } catch (e) {
+    console.warn('[cameras] status fetch failed:', e);
+  }
+  return map;
+}
+
+// ── Copy-to-clipboard button ─────────────────────────────────────────────────
+function CopyBtn({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <button onClick={copy} className="text-gray-600 hover:text-gray-300 transition-colors ml-1">
+      {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+    </button>
+  );
+}
+
+// ── Status dot ───────────────────────────────────────────────────────────────
+function StatusDot({ status, updatedAt }: { status: CameraStatus; updatedAt?: number }) {
+  const age = updatedAt ? Math.round((Date.now() / 1000 - updatedAt) / 60) : null;
+  if (status === 'online') return (
+    <span className="flex items-center gap-1 text-xs text-green-400">
+      <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+      Live
+    </span>
+  );
+  if (status === 'offline') return (
+    <span className="flex items-center gap-1 text-xs text-red-400">
+      <WifiOff className="w-3 h-3" />
+      Offline{age !== null ? ` (${age}m ago)` : ''}
+    </span>
+  );
+  return (
+    <span className="flex items-center gap-1 text-xs text-gray-500">
+      <span className="w-2 h-2 rounded-full bg-gray-500" />
+      Unknown
+    </span>
+  );
+}
 
 // ─── Cortex IQ Discovery Modal ────────────────────────────────────────────────
 
@@ -80,7 +188,6 @@ function DiscoverModal({
         body: JSON.stringify({ ip: ip.trim(), port: port.trim(), totalChannels: parseInt(totalChannels) }),
       });
       setDiscovered(data.channels ?? []);
-      // Auto-select online channels
       const onlineNums = new Set<number>((data.channels ?? []).filter((c: any) => c.online).map((c: any) => c.channel));
       setSelected(onlineNums);
     } catch (e: any) {
@@ -118,7 +225,6 @@ function DiscoverModal({
         });
         added++;
       } catch (e: any) {
-        // Skip duplicates silently
         if (!e.message?.includes('already exists')) console.error(e);
       }
     }
@@ -167,7 +273,7 @@ function DiscoverModal({
               <div>
                 <label className="block text-xs text-gray-400 mb-1">HTTP Port</label>
                 <input type="text" value={port} onChange={e => setPort(e.target.value.trim())}
-                  placeholder="37834"
+                  placeholder="58024"
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm font-mono" />
               </div>
               <div>
@@ -181,11 +287,7 @@ function DiscoverModal({
               </div>
             </div>
 
-            <button
-              onClick={discover}
-              disabled={discovering}
-              className="w-full btn-primary flex items-center justify-center gap-2"
-            >
+            <button onClick={discover} disabled={discovering} className="w-full btn-primary flex items-center justify-center gap-2">
               {discovering
                 ? <><RefreshCw className="w-4 h-4 animate-spin" /> Scanning {totalChannels} channels...</>
                 : <><Search className="w-4 h-4" /> Discover Cameras</>
@@ -198,13 +300,13 @@ function DiscoverModal({
                   <label className="block text-xs text-gray-400 mb-1">Camera Name Prefix</label>
                   <input type="text" value={namePrefix} onChange={e => setNamePrefix(e.target.value)}
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm" />
-                  <p className="text-xs text-gray-500 mt-1">Cameras will be named "{namePrefix} — CH1", "{namePrefix} — CH2", etc.</p>
+                  <p className="text-xs text-gray-500 mt-1">Cameras will be named "{namePrefix} — CH1", etc.</p>
                 </div>
 
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm text-gray-400">
-                      {discovered.filter(d => d.online).length} channels online — {selected.size} selected
+                      {discovered.filter(d => d.online).length} online — {selected.size} selected
                     </span>
                     <div className="flex gap-2 text-xs">
                       <button onClick={() => setSelected(new Set(discovered.filter(d => d.online).map(d => d.channel)))}
@@ -215,9 +317,7 @@ function DiscoverModal({
                   </div>
                   <div className="grid grid-cols-4 gap-2">
                     {discovered.map(ch => (
-                      <button
-                        key={ch.channel}
-                        onClick={() => toggleChannel(ch.channel)}
+                      <button key={ch.channel} onClick={() => toggleChannel(ch.channel)}
                         className={`p-3 rounded-lg border text-sm font-medium transition-all ${
                           selected.has(ch.channel)
                             ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
@@ -235,14 +335,11 @@ function DiscoverModal({
                   </div>
                 </div>
 
-                <button
-                  onClick={addSelected}
-                  disabled={saving || selected.size === 0}
-                  className="w-full btn-primary flex items-center justify-center gap-2"
-                >
+                <button onClick={addSelected} disabled={saving || selected.size === 0}
+                  className="w-full btn-primary flex items-center justify-center gap-2">
                   {saving
                     ? <><RefreshCw className="w-4 h-4 animate-spin" /> Adding cameras...</>
-                    : <><Plus className="w-4 h-4" /> Add {selected.size} Camera{selected.size !== 1 ? 's' : ''} to {venueName}</>
+                    : <><Plus className="w-4 h-4" /> Add {selected.size} Camera{selected.size !== 1 ? 's' : ''}</>
                   }
                 </button>
               </>
@@ -264,10 +361,7 @@ function DiscoverModal({
 // ─── Add/Edit Camera Modal ────────────────────────────────────────────────────
 
 function CameraModal({
-  venueId,
-  camera,
-  onClose,
-  onSaved,
+  venueId, camera, onClose, onSaved,
 }: {
   venueId: string;
   camera?: AdminCamera;
@@ -281,7 +375,9 @@ function CameraModal({
     ? (camera.modes.split(',').filter(Boolean) as CameraMode[])
     : ['drink_count'];
   const [modes, setModes] = useState<CameraMode[]>(cameraModes);
-  const [modelProfile, setModelProfile] = useState<'fast' | 'balanced' | 'accurate'>(camera?.modelProfile as 'fast' | 'balanced' | 'accurate' ?? 'balanced');
+  const [modelProfile, setModelProfile] = useState<'fast' | 'balanced' | 'accurate'>(
+    camera?.modelProfile as 'fast' | 'balanced' | 'accurate' ?? 'balanced'
+  );
   const [segmentSeconds, setSegmentSeconds] = useState(camera?.segmentSeconds ?? 0);
   const [segmentInterval, setSegmentInterval] = useState(camera?.segmentInterval ?? 0);
   const [notes, setNotes] = useState(camera?.notes ?? '');
@@ -289,12 +385,22 @@ function CameraModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // URL Builder state
   const [urlMode, setUrlMode] = useState<'builder' | 'manual'>(camera?.rtspUrl ? 'manual' : 'builder');
   const [nvrIp, setNvrIp] = useState('');
   const [nvrPort, setNvrPort] = useState('');
   const [nvrChannel, setNvrChannel] = useState('');
   const [streamQuality, setStreamQuality] = useState<'0' | '1'>('0');
+
+  // Pre-fill builder from existing URL when editing
+  useEffect(() => {
+    if (camera?.rtspUrl) {
+      const { ip, port } = parseNvrConn(camera.rtspUrl);
+      if (ip) setNvrIp(ip);
+      if (port) setNvrPort(port);
+      const chMatch = camera.rtspUrl.match(/\/CH(\d+)\//i);
+      if (chMatch) setNvrChannel(chMatch[1]);
+    }
+  }, [camera]);
 
   const builtUrl = nvrIp && nvrPort && nvrChannel
     ? `http://${nvrIp}:${nvrPort}/hls/live/CH${nvrChannel}/${streamQuality}/livetop.mp4`
@@ -303,9 +409,7 @@ function CameraModal({
   const effectiveUrl = urlMode === 'builder' ? builtUrl : rtspUrl;
 
   const toggleMode = (mode: CameraMode) => {
-    setModes(prev =>
-      prev.includes(mode) ? prev.filter(m => m !== mode) : [...prev, mode]
-    );
+    setModes(prev => prev.includes(mode) ? prev.filter(m => m !== mode) : [...prev, mode]);
   };
 
   const handleSave = async () => {
@@ -352,16 +456,12 @@ function CameraModal({
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
       onClick={onClose}
     >
       <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.9, opacity: 0 }}
+        initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
         className="glass-card p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
@@ -370,41 +470,27 @@ function CameraModal({
             <Camera className="w-5 h-5 text-purple-400" />
             {isEdit ? 'Edit Camera' : 'Add Camera'}
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
-            <X className="w-5 h-5" />
-          </button>
+          <button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="space-y-4">
-          {/* Name */}
           <div>
             <label className="block text-sm text-gray-400 mb-1">Camera Name *</label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
+            <input type="text" value={name} onChange={e => setName(e.target.value)}
               placeholder="e.g., Bar Camera CH7"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-            />
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50" />
           </div>
 
-          {/* Stream URL */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm text-gray-400">Stream URL *</label>
               <div className="flex rounded-lg overflow-hidden border border-white/10 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setUrlMode('builder')}
-                  className={`px-3 py-1.5 transition-colors ${urlMode === 'builder' ? 'bg-purple-500/30 text-purple-300' : 'bg-white/5 text-gray-400 hover:text-white'}`}
-                >
+                <button type="button" onClick={() => setUrlMode('builder')}
+                  className={`px-3 py-1.5 transition-colors ${urlMode === 'builder' ? 'bg-purple-500/30 text-purple-300' : 'bg-white/5 text-gray-400 hover:text-white'}`}>
                   🏗 Cortex IQ Builder
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setUrlMode('manual')}
-                  className={`px-3 py-1.5 transition-colors ${urlMode === 'manual' ? 'bg-purple-500/30 text-purple-300' : 'bg-white/5 text-gray-400 hover:text-white'}`}
-                >
+                <button type="button" onClick={() => setUrlMode('manual')}
+                  className={`px-3 py-1.5 transition-colors ${urlMode === 'manual' ? 'bg-purple-500/30 text-purple-300' : 'bg-white/5 text-gray-400 hover:text-white'}`}>
                   Manual
                 </button>
               </div>
@@ -413,50 +499,33 @@ function CameraModal({
             {urlMode === 'builder' ? (
               <div className="space-y-3 p-4 bg-purple-500/5 border border-purple-500/20 rounded-lg">
                 <p className="text-xs text-purple-300">
-                  Find these in Cortex IQ app → NVR Settings → Network → UPnP/Port Mapping
+                  Find in Cortex IQ app → NVR Settings → Network → UPnP/Port Mapping
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Public IP</label>
-                    <input
-                      type="text"
-                      value={nvrIp}
-                      onChange={e => setNvrIp(e.target.value.trim())}
-                      placeholder="e.g. 108.191.193.107"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm font-mono"
-                    />
+                    <input type="text" value={nvrIp} onChange={e => setNvrIp(e.target.value.trim())}
+                      placeholder="108.191.193.107"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm font-mono" />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">HTTP Port (UPnP)</label>
-                    <input
-                      type="text"
-                      value={nvrPort}
-                      onChange={e => setNvrPort(e.target.value.trim())}
-                      placeholder="e.g. 37834"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm font-mono"
-                    />
+                    <label className="block text-xs text-gray-400 mb-1">HTTP Port</label>
+                    <input type="text" value={nvrPort} onChange={e => setNvrPort(e.target.value.trim())}
+                      placeholder="58024"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm font-mono" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Channel Number</label>
-                    <input
-                      type="number"
-                      value={nvrChannel}
-                      onChange={e => setNvrChannel(e.target.value.trim())}
-                      placeholder="e.g. 7"
-                      min="1"
-                      max="32"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm"
-                    />
+                    <input type="number" value={nvrChannel} onChange={e => setNvrChannel(e.target.value.trim())}
+                      placeholder="7" min="1" max="32"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Quality</label>
-                    <select
-                      value={streamQuality}
-                      onChange={e => setStreamQuality(e.target.value as '0' | '1')}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm"
-                    >
+                    <select value={streamQuality} onChange={e => setStreamQuality(e.target.value as '0' | '1')}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm">
                       <option value="0">Main (1080p HD)</option>
                       <option value="1">Sub (lower res)</option>
                     </select>
@@ -470,67 +539,49 @@ function CameraModal({
               </div>
             ) : (
               <div className="relative">
-                <input
-                  type={showRtsp ? 'text' : 'password'}
-                  value={rtspUrl}
+                <input type={showRtsp ? 'text' : 'password'} value={rtspUrl}
                   onChange={e => setRtspUrl(e.target.value)}
                   placeholder="rtsp://user:pass@ip:port/stream  or  http://ip:port/hls/..."
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 pr-12 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 font-mono text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowRtsp(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
-                >
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 pr-12 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 font-mono text-sm" />
+                <button type="button" onClick={() => setShowRtsp(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
                   {showRtsp ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             )}
           </div>
 
-          {/* Analysis Modes */}
           <div>
             <label className="block text-sm text-gray-400 mb-2">Analysis Modes *</label>
             <div className="grid grid-cols-2 gap-2">
               {ALL_MODES.map(mode => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => toggleMode(mode)}
+                <button key={mode} type="button" onClick={() => toggleMode(mode)}
                   className={`px-3 py-2 rounded-lg text-sm font-medium text-left transition-all ${
                     modes.includes(mode)
                       ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40'
                       : 'bg-white/5 text-gray-400 border border-white/10 hover:text-white'
-                  }`}
-                >
+                  }`}>
                   {MODE_LABELS[mode]}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Model Profile */}
           <div>
             <label className="block text-sm text-gray-400 mb-1">Model Profile</label>
-            <select
-              value={modelProfile}
-              onChange={e => setModelProfile(e.target.value as 'fast' | 'balanced' | 'accurate')}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-            >
+            <select value={modelProfile} onChange={e => setModelProfile(e.target.value as 'fast' | 'balanced' | 'accurate')}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50">
               <option value="fast">Fast (lower accuracy, less CPU)</option>
               <option value="balanced">Balanced (recommended)</option>
               <option value="accurate">Accurate (more CPU)</option>
             </select>
           </div>
 
-          {/* Segment / Continuous */}
           <div>
             <label className="block text-sm text-gray-400 mb-1">Recording Mode</label>
-            <select
-              value={segmentSeconds}
+            <select value={segmentSeconds}
               onChange={e => { setSegmentSeconds(Number(e.target.value)); setSegmentInterval(0); }}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-            >
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50">
               <option value={0}>Continuous (Live — always running)</option>
               <option value={30}>Segments — 30 sec clips</option>
               <option value={300}>Segments — 5 min clips</option>
@@ -540,60 +591,39 @@ function CameraModal({
             </select>
           </div>
 
-          {/* Interval — only shown for segment mode */}
           {segmentSeconds > 0 && (
             <div>
-              <label className="block text-sm text-gray-400 mb-1">
-                Run Every
-                <span className="ml-1 text-xs text-gray-500">(how often to capture a new clip)</span>
-              </label>
-              <select
-                value={segmentInterval}
-                onChange={e => setSegmentInterval(Number(e.target.value))}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-              >
-                <option value={0}>Back-to-back (immediately after each clip)</option>
+              <label className="block text-sm text-gray-400 mb-1">Run Every</label>
+              <select value={segmentInterval} onChange={e => setSegmentInterval(Number(e.target.value))}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50">
+                <option value={0}>Back-to-back</option>
                 <option value={300}>Every 5 minutes</option>
                 <option value={600}>Every 10 minutes</option>
                 <option value={1200}>Every 20 minutes</option>
                 <option value={1800}>Every 30 minutes</option>
                 <option value={3600}>Every 1 hour</option>
               </select>
-              {segmentInterval > 0 && segmentInterval > segmentSeconds && (
-                <p className="text-xs text-purple-300 mt-1">
-                  {segmentSeconds}s clip · {segmentInterval / 60} min between runs
-                </p>
-              )}
             </div>
           )}
 
-          {/* Notes */}
           <div>
             <label className="block text-sm text-gray-400 mb-1">Notes (optional)</label>
-            <input
-              type="text"
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
+            <input type="text" value={notes} onChange={e => setNotes(e.target.value)}
               placeholder="e.g., Overhead fisheye, main bar"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-            />
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50" />
           </div>
 
           {error && (
             <div className="flex items-center gap-2 text-red-400 text-sm">
-              <AlertTriangle className="w-4 h-4" />
-              {error}
+              <AlertTriangle className="w-4 h-4" />{error}
             </div>
           )}
         </div>
 
         <div className="flex gap-3 mt-6 pt-4 border-t border-white/10">
           <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex-1 btn-primary flex items-center justify-center gap-2"
-          >
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 btn-primary flex items-center justify-center gap-2">
             {saving
               ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</>
               : <><Save className="w-4 h-4" /> {isEdit ? 'Save Changes' : 'Add Camera'}</>
@@ -605,15 +635,9 @@ function CameraModal({
   );
 }
 
-// ─── Venue Camera Row ─────────────────────────────────────────────────────────
+// ─── Venue Camera Section ─────────────────────────────────────────────────────
 
-function VenueCameraSection({
-  venueId,
-  venueName,
-}: {
-  venueId: string;
-  venueName: string;
-}) {
+function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName: string }) {
   const [expanded, setExpanded] = useState(false);
   const [cameras, setCameras] = useState<AdminCamera[]>([]);
   const [loading, setLoading] = useState(true);
@@ -621,9 +645,12 @@ function VenueCameraSection({
   const [showDiscover, setShowDiscover] = useState(false);
   const [editCamera, setEditCamera] = useState<AdminCamera | null>(null);
   const [error, setError] = useState('');
-  const [showPortUpdate, setShowPortUpdate] = useState(false);
+  const [statuses, setStatuses] = useState<Map<string, StatusRecord>>(new Map());
+  const [showConnPanel, setShowConnPanel] = useState(false);
+  const [newIp, setNewIp] = useState('');
   const [newPort, setNewPort] = useState('');
-  const [portUpdating, setPortUpdating] = useState(false);
+  const [connUpdating, setConnUpdating] = useState(false);
+  const statusTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -638,37 +665,60 @@ function VenueCameraSection({
     }
   }, [venueId]);
 
+  const loadStatuses = useCallback(async () => {
+    const s = await fetchCameraStatuses(venueId);
+    setStatuses(s);
+  }, [venueId]);
+
   useEffect(() => {
-    if (expanded) load();
-  }, [expanded, load]);
+    if (!expanded) return;
+    load();
+    loadStatuses();
+    statusTimer.current = setInterval(loadStatuses, 60_000);
+    return () => { if (statusTimer.current) clearInterval(statusTimer.current); };
+  }, [expanded, load, loadStatuses]);
+
+  // Pre-fill the connection panel from first camera URL
+  useEffect(() => {
+    if (cameras.length > 0 && cameras[0].rtspUrl) {
+      const { ip, port } = parseNvrConn(cameras[0].rtspUrl);
+      if (ip) setNewIp(ip);
+      if (port) setNewPort(port);
+    }
+  }, [cameras]);
 
   const handleToggle = async (cam: AdminCamera) => {
     try {
       await adminService.updateCamera(cam.cameraId, venueId, { enabled: !cam.enabled });
-      setCameras(prev => prev.map(c =>
-        c.cameraId === cam.cameraId ? { ...c, enabled: !c.enabled } : c
-      ));
+      setCameras(prev => prev.map(c => c.cameraId === cam.cameraId ? { ...c, enabled: !c.enabled } : c));
     } catch (e: any) {
       alert(`Failed to toggle camera: ${e.message}`);
     }
   };
 
-  const handlePortUpdate = async () => {
+  // Bulk update all cameras' IP and/or port
+  const handleConnUpdate = async () => {
+    const ip = newIp.trim();
     const port = newPort.trim();
-    if (!port || isNaN(Number(port))) return;
-    setPortUpdating(true);
+    if (!ip && !port) return;
+    setConnUpdating(true);
     try {
-      await adminFetch('/admin/cameras/bulk-update-port', {
-        method: 'POST',
-        body: JSON.stringify({ venueId, newPort: port }),
-      });
+      // Update each camera URL
+      await Promise.all(cameras.map(async cam => {
+        const current = cam.rtspUrl;
+        let updated = current;
+        if (ip) updated = updated.replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/, ip);
+        if (port) updated = updated.replace(/:(\d{4,5})\//, `:${port}/`);
+        if (updated !== current) {
+          await adminService.updateCamera(cam.cameraId, venueId, { rtspUrl: updated });
+        }
+      }));
       await load();
-      setShowPortUpdate(false);
-      setNewPort('');
+      setShowConnPanel(false);
     } catch (e: any) {
-      alert(`Failed to update port: ${e.message}`);
+      alert(`Failed to update connection: ${e.message}`);
     } finally {
-      setPortUpdating(false);
+      setConnUpdating(false);
     }
   };
 
@@ -682,9 +732,13 @@ function VenueCameraSection({
     }
   };
 
+  // Derive shared NVR connection info from first camera
+  const firstConn = cameras.length > 0 ? parseNvrConn(cameras[0].rtspUrl) : null;
+  const onlineCount = Array.from(statuses.values()).filter(s => s.status === 'online').length;
+  const offlineCount = cameras.filter(c => c.enabled).length - onlineCount;
+
   return (
     <div className="glass-card overflow-hidden">
-      {/* Header row — click to expand */}
       <button
         className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
         onClick={() => setExpanded(v => !v)}
@@ -696,23 +750,25 @@ function VenueCameraSection({
             <div className="text-xs text-gray-400 font-mono">{venueId}</div>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {cameras.length > 0 && (
             <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
-              {cameras.length} camera{cameras.length !== 1 ? 's' : ''}
+              {cameras.length} cameras
             </span>
           )}
-          <span className={`text-xs px-2 py-1 rounded ${
-            cameras.filter(c => c.enabled).length > 0
-              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-              : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
-          }`}>
-            {cameras.filter(c => c.enabled).length} active
-          </span>
+          {expanded && onlineCount > 0 && (
+            <span className="text-xs px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/30">
+              {onlineCount} live
+            </span>
+          )}
+          {expanded && offlineCount > 0 && (
+            <span className="text-xs px-2 py-1 rounded bg-red-500/20 text-red-400 border border-red-500/30">
+              {offlineCount} offline
+            </span>
+          )}
         </div>
       </button>
 
-      {/* Camera list */}
       <AnimatePresence>
         {expanded && (
           <motion.div
@@ -723,25 +779,94 @@ function VenueCameraSection({
             className="border-t border-white/10"
           >
             <div className="p-4 space-y-3">
+
+              {/* NVR Connection Summary */}
+              {firstConn && firstConn.ip && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
+                  <div className="flex items-center gap-3">
+                    <Network className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                    <div>
+                      <div className="text-xs text-gray-400 mb-0.5">NVR Connection</div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-sm font-mono text-white">{firstConn.ip}</span>
+                        <span className="text-gray-500">:</span>
+                        <span className="text-sm font-mono text-amber-300">{firstConn.port}</span>
+                        <CopyBtn text={`${firstConn.ip}:${firstConn.port}`} />
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowConnPanel(v => !v)}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 transition-colors"
+                  >
+                    Change IP / Port
+                  </button>
+                </div>
+              )}
+
+              {/* Connection Update Panel */}
+              <AnimatePresence>
+                {showConnPanel && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="p-4 rounded-lg bg-amber-500/8 border border-amber-500/30 space-y-3"
+                  >
+                    <p className="text-xs text-amber-300">
+                      Updates the IP and/or port across all {cameras.length} cameras for this venue. Use when the router port forwarding changes.
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">Public IP</label>
+                        <input
+                          type="text"
+                          value={newIp}
+                          onChange={e => setNewIp(e.target.value.trim())}
+                          placeholder="108.191.193.107"
+                          className="w-full bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">Port</label>
+                        <input
+                          type="text"
+                          value={newPort}
+                          onChange={e => setNewPort(e.target.value.trim())}
+                          placeholder="58024"
+                          className="w-full bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleConnUpdate}
+                        disabled={connUpdating || (!newIp && !newPort)}
+                        className="flex-1 px-4 py-2 rounded-lg bg-amber-500 text-black text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {connUpdating
+                          ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Updating...</>
+                          : `Update All ${cameras.length} Cameras`
+                        }
+                      </button>
+                      <button onClick={() => setShowConnPanel(false)} className="px-3 py-2 rounded-lg hover:bg-white/10 text-gray-400">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {loading && (
                 <div className="flex items-center gap-2 text-gray-400 py-2">
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Loading cameras...
+                  <RefreshCw className="w-4 h-4 animate-spin" />Loading cameras...
                 </div>
               )}
 
               {error && (
                 <div className="flex flex-col gap-1 text-red-400 text-sm py-2">
                   <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                    <span>{error}</span>
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0" /><span>{error}</span>
                   </div>
-                  {error.includes('not configured') && (
-                    <span className="text-amber-400 text-xs ml-6">→ Set VITE_ADMIN_API_URL in Amplify → App Settings → Environment Variables, then redeploy</span>
-                  )}
-                  {error.includes('credentials') && (
-                    <span className="text-gray-500 text-xs ml-6">→ Set VITE_AWS_ACCESS_KEY_ID in Amplify env vars</span>
-                  )}
                 </div>
               )}
 
@@ -749,142 +874,132 @@ function VenueCameraSection({
                 <p className="text-gray-400 text-sm py-2">No cameras configured. Add one below.</p>
               )}
 
-              {cameras.map(cam => (
-                <div
-                  key={cam.cameraId}
-                  className={`flex items-center justify-between p-4 rounded-lg border transition-all ${
-                    cam.enabled
-                      ? 'bg-white/5 border-white/10'
-                      : 'bg-white/2 border-white/5 opacity-60'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Wifi className={`w-4 h-4 flex-shrink-0 ${cam.enabled ? 'text-green-400' : 'text-gray-600'}`} />
-                      <span className="text-white font-medium truncate">{cam.name}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${cam.enabled ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-500'}`}>
-                        {cam.enabled ? 'enabled' : 'disabled'}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1 mb-1">
-                      {(cam.modes || 'drink_count').split(',').filter(Boolean).map(m => (
-                        <span key={m} className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                          {MODE_LABELS[m as CameraMode] ?? m}
-                        </span>
-                      ))}
-                    </div>
-                    <div className="text-xs text-gray-500 font-mono truncate">
-                      {cam.rtspUrl.replace(/:[^:@]*@/, ':***@')}
-                    </div>
-                    {cam.notes && (
-                      <div className="text-xs text-gray-500 mt-0.5">{cam.notes}</div>
-                    )}
-                  </div>
+              {cameras.map(cam => {
+                const conn = parseNvrConn(cam.rtspUrl);
+                const rec = statuses.get(cam.cameraId);
+                const camStatus: CameraStatus = !cam.enabled ? 'unknown' : (rec?.status ?? 'unknown');
 
-                  <div className="flex items-center gap-2 ml-4 flex-shrink-0">
-                    <button
-                      onClick={() => handleToggle(cam)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
-                        cam.enabled
-                          ? 'bg-green-500/20 text-green-400 border-green-500/30 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30'
-                          : 'bg-gray-500/20 text-gray-400 border-gray-500/30 hover:bg-green-500/20 hover:text-green-400 hover:border-green-500/30'
-                      }`}
-                    >
-                      {cam.enabled ? <><CheckCircle className="w-3.5 h-3.5" /> ON</> : <><XCircle className="w-3.5 h-3.5" /> OFF</>}
-                    </button>
-                    <button
-                      onClick={() => setEditCamera(cam)}
-                      className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(cam)}
-                      className="p-2 rounded-lg hover:bg-red-500/10 text-gray-400 hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                return (
+                  <div
+                    key={cam.cameraId}
+                    className={`p-4 rounded-lg border transition-all ${
+                      !cam.enabled
+                        ? 'bg-white/2 border-white/5 opacity-60'
+                        : camStatus === 'online'
+                        ? 'bg-white/5 border-green-500/20'
+                        : camStatus === 'offline'
+                        ? 'bg-white/5 border-red-500/20'
+                        : 'bg-white/5 border-white/10'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        {/* Name + status */}
+                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                          <Wifi className={`w-4 h-4 flex-shrink-0 ${cam.enabled ? 'text-green-400' : 'text-gray-600'}`} />
+                          <span className="text-white font-medium">{cam.name}</span>
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${cam.enabled ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-500'}`}>
+                            {cam.enabled ? 'enabled' : 'disabled'}
+                          </span>
+                          {cam.enabled && <StatusDot status={camStatus} updatedAt={rec?.updatedAt} />}
+                        </div>
 
+                        {/* Modes */}
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {(cam.modes || 'drink_count').split(',').filter(Boolean).map(m => (
+                            <span key={m} className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                              {MODE_LABELS[m as CameraMode] ?? m}
+                            </span>
+                          ))}
+                        </div>
+
+                        {/* IP:Port display */}
+                        {conn.ip && (
+                          <div className="flex items-center gap-2 text-xs mb-1">
+                            <span className="text-gray-500">NVR:</span>
+                            <span className="font-mono text-gray-300">{conn.ip}</span>
+                            <span className="text-gray-600">:</span>
+                            <span className="font-mono text-amber-400 font-semibold">{conn.port}</span>
+                            <CopyBtn text={`${conn.ip}:${conn.port}`} />
+                          </div>
+                        )}
+
+                        {/* Live stats if online */}
+                        {camStatus === 'online' && rec && (
+                          <div className="text-xs text-gray-500">
+                            {rec.totalDrinks != null && rec.totalDrinks > 0 && (
+                              <span className="mr-3">{rec.totalDrinks} drinks today</span>
+                            )}
+                            {rec.elapsedSec != null && rec.elapsedSec > 0 && (
+                              <span>{Math.round(rec.elapsedSec / 60)}m running</span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Offline hint */}
+                        {cam.enabled && camStatus === 'offline' && (
+                          <div className="flex items-center gap-1.5 text-xs text-red-400 mt-1">
+                            <AlertTriangle className="w-3 h-3" />
+                            Not connecting — check IP/port or NVR power
+                          </div>
+                        )}
+
+                        {cam.notes && <div className="text-xs text-gray-500 mt-1">{cam.notes}</div>}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <button
+                          onClick={() => handleToggle(cam)}
+                          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                            cam.enabled
+                              ? 'bg-green-500/20 text-green-400 border-green-500/30 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30'
+                              : 'bg-gray-500/20 text-gray-400 border-gray-500/30 hover:bg-green-500/20 hover:text-green-400 hover:border-green-500/30'
+                          }`}
+                        >
+                          {cam.enabled ? <><CheckCircle className="w-3.5 h-3.5" /> ON</> : <><XCircle className="w-3.5 h-3.5" /> OFF</>}
+                        </button>
+                        <button onClick={() => setEditCamera(cam)}
+                          className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors">
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleDelete(cam)}
+                          className="p-1.5 rounded-lg hover:bg-red-500/10 text-gray-400 hover:text-red-400 transition-colors">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Action buttons */}
               <div className="flex gap-2 mt-2">
-                <button
-                  onClick={() => setShowDiscover(true)}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border border-dashed border-green-500/30 text-green-400 hover:bg-green-500/10 transition-colors text-sm font-medium"
-                >
-                  <Radio className="w-4 h-4" />
-                  Discover Cameras (Cortex IQ)
+                <button onClick={() => setShowDiscover(true)}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border border-dashed border-green-500/30 text-green-400 hover:bg-green-500/10 transition-colors text-sm font-medium">
+                  <Radio className="w-4 h-4" />Discover Cameras (Cortex IQ)
                 </button>
-                <button
-                  onClick={() => setShowAdd(true)}
-                  className="flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed border-purple-500/30 text-purple-400 hover:bg-purple-500/10 transition-colors text-sm font-medium"
-                >
-                  <Plus className="w-4 h-4" />
-                  Manual
-                </button>
-                <button
-                  onClick={() => setShowPortUpdate(v => !v)}
-                  className="flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-colors text-sm font-medium"
-                >
-                  <Network className="w-4 h-4" />
-                  NVR Port
+                <button onClick={() => setShowAdd(true)}
+                  className="flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed border-purple-500/30 text-purple-400 hover:bg-purple-500/10 transition-colors text-sm font-medium">
+                  <Plus className="w-4 h-4" />Manual
                 </button>
               </div>
-
-              {/* NVR Port Update inline panel */}
-              {showPortUpdate && (
-                <div className="mt-3 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center gap-3 flex-wrap">
-                  <Network className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <span className="text-sm text-amber-300">Update NVR port for all cameras:</span>
-                  <input
-                    type="number"
-                    placeholder="New port (e.g. 39150)"
-                    value={newPort}
-                    onChange={e => setNewPort(e.target.value)}
-                    className="flex-1 min-w-32 px-3 py-1.5 rounded-lg bg-black/30 border border-white/20 text-white text-sm"
-                  />
-                  <button
-                    onClick={handlePortUpdate}
-                    disabled={portUpdating || !newPort}
-                    className="px-4 py-1.5 rounded-lg bg-amber-500 text-black text-sm font-semibold disabled:opacity-50"
-                  >
-                    {portUpdating ? 'Updating...' : `Update All ${cameras.length} Cameras`}
-                  </button>
-                  <button onClick={() => setShowPortUpdate(false)} className="text-gray-500 hover:text-white">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Modals */}
       <AnimatePresence>
         {showDiscover && (
-          <DiscoverModal
-            venueId={venueId}
-            venueName={venueName}
-            onClose={() => setShowDiscover(false)}
-            onSaved={load}
-          />
+          <DiscoverModal venueId={venueId} venueName={venueName}
+            onClose={() => setShowDiscover(false)} onSaved={load} />
         )}
         {showAdd && (
-          <CameraModal
-            venueId={venueId}
-            onClose={() => setShowAdd(false)}
-            onSaved={load}
-          />
+          <CameraModal venueId={venueId} onClose={() => setShowAdd(false)} onSaved={load} />
         )}
         {editCamera && (
-          <CameraModal
-            venueId={venueId}
-            camera={editCamera}
-            onClose={() => setEditCamera(null)}
-            onSaved={load}
-          />
+          <CameraModal venueId={venueId} camera={editCamera}
+            onClose={() => setEditCamera(null)} onSaved={load} />
         )}
       </AnimatePresence>
     </div>
@@ -920,42 +1035,29 @@ export function CamerasManagement() {
           <div>
             <h1 className="text-3xl font-bold gradient-text mb-2">📷 Camera Management</h1>
             <p className="text-gray-400">
-              Add and manage RTSP cameras for each venue. Changes take effect on the worker within 60 seconds.
+              Manage cameras and NVR connection settings. Live/offline status updates every 60s.
             </p>
           </div>
-          <button
-            onClick={loadVenues}
-            disabled={loading}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
+          <button onClick={loadVenues} disabled={loading} className="btn-secondary flex items-center gap-2">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />Refresh
           </button>
         </div>
 
-        {/* Info box */}
         <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg mb-6 text-sm text-blue-300">
-          <strong>How it works:</strong> Cameras are stored in DynamoDB. The worker on the droplet polls this table every 60 seconds and automatically starts or stops processing cameras. Enable/disable without deleting to pause a camera.
+          <strong>How it works:</strong> Camera changes take effect on the worker within 60 seconds.
+          If cameras go offline, check the NVR IP and port — the router may have changed the port forwarding rule.
+          Use <strong>Change IP / Port</strong> to update all cameras at once.
         </div>
 
         {error && (
           <div className="glass-card p-5 mb-6 border-red-500/30 flex items-center gap-3 text-red-400">
-            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-            <div>
-              <div>{error}</div>
-              {error.includes('VITE_ADMIN_API_URL') && (
-                <div className="text-xs text-gray-400 mt-1">
-                  Set VITE_ADMIN_API_URL in Amplify environment variables to your admin Lambda URL.
-                </div>
-              )}
-            </div>
+            <AlertTriangle className="w-5 h-5 flex-shrink-0" /><div>{error}</div>
           </div>
         )}
 
         {loading ? (
           <div className="flex items-center justify-center py-12 text-gray-400 gap-2">
-            <RefreshCw className="w-6 h-6 animate-spin" />
-            Loading venues...
+            <RefreshCw className="w-6 h-6 animate-spin" />Loading venues...
           </div>
         ) : venues.length === 0 ? (
           <div className="glass-card p-12 text-center">
