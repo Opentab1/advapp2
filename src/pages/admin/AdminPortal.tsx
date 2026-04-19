@@ -21,6 +21,7 @@ import { EmailReporting } from './EmailReporting';
 import { FeatureControls } from './FeatureControls';
 import { SalesCRM } from './SalesCRM';
 import { CamerasManagement } from './CamerasManagement';
+import { BarCalibration } from './BarCalibration';
 import { OpsMonitor } from './OpsMonitor';
 import { AlertsInbox } from './AlertsInbox';
 import authService from '../../services/auth.service';
@@ -110,6 +111,7 @@ function AdminPortalInner() {
           {activeTab === 'ops'             && <ErrorBoundary key="ops"><OpsMonitor /></ErrorBoundary>}
           {activeTab === 'venues'          && <ErrorBoundary key="venues"><VenuesManagement /></ErrorBoundary>}
           {activeTab === 'cameras'         && <ErrorBoundary key="cameras"><CamerasManagement /></ErrorBoundary>}
+          {activeTab === 'calibration'    && <ErrorBoundary key="calibration"><BarCalibration /></ErrorBoundary>}
           {activeTab === 'alerts'          && <ErrorBoundary key="alerts"><AlertsInbox /></ErrorBoundary>}
           {activeTab === 'nfc-leads'       && <ErrorBoundary key="nfc-leads"><NFCLeadsManagement /></ErrorBoundary>}
           {activeTab === 'users'           && <ErrorBoundary key="users"><UsersManagement /></ErrorBoundary>}

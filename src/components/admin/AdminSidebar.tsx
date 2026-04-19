@@ -20,6 +20,7 @@ import {
   Camera,
   Activity,
   Bell,
+  Sliders,
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -41,6 +42,7 @@ const navItems: NavItem[] = [
   { id: 'alerts',          label: 'Alerts Inbox',     icon: Bell },
   { id: 'venues',          label: 'Venues',           icon: Building2 },
   { id: 'cameras',         label: 'Cameras',          icon: Camera },
+  { id: 'calibration',    label: 'Bar Calibration',  icon: Sliders },
   { id: 'crm',             label: 'Sales CRM',        icon: Target },
   { id: 'nfc-leads',       label: 'NFC Leads',        icon: Smartphone },
   { id: 'users',           label: 'Users',            icon: Users },
