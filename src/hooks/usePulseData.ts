@@ -565,11 +565,33 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     }, 0);
 
     const peakOccupancy = Math.max(...peaplJobs.map(j => j.peakOccupancy ?? 0), 0);
+    const todayEntries = peaplJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+    const todayExits   = peaplJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
+
+    // Little's Law: avg_dwell = avg_occupancy / arrival_rate
+    // Use the best live job for elapsed time; sum entries across all cameras.
+    let dwellTimeMin: number | null = null;
+    const liveJob = peaplJobs.find(j => isJobLive(j));
+    const elapsedSec = liveJob
+      ? (liveJob.elapsedSec ?? (nowSec - (liveJob.createdAt ?? nowSec)))
+      : peaplJobs.reduce((s, j) => s + Math.max(0, (j.finishedAt ?? nowSec) - (j.createdAt ?? nowSec)), 0);
+    if (todayEntries >= 5 && elapsedSec >= 300) {
+      const avgOccupancy = liveCurrent || peakOccupancy * 0.6;
+      const arrivalRatePerSec = todayEntries / elapsedSec;
+      const dwellSec = avgOccupancy / arrivalRatePerSec;
+      const dwellMin = dwellSec / 60;
+      // Sanity: 2 min (quick stop) to 6 hrs (all-night stay)
+      if (dwellMin >= 2 && dwellMin <= 360) {
+        dwellTimeMin = Math.round(dwellMin);
+      }
+    }
+
     return {
-      todayEntries:  peaplJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
-      todayExits:    peaplJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
+      todayEntries,
+      todayExits,
       peakOccupancy,
       current: liveCurrent || peakOccupancy,
+      dwellTimeMin,
     };
   }, [vsTodayJobs, peopleCamNames]);
 
@@ -847,24 +869,27 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     return avgDwell;
   }, [todayHistory]);
   
-  // Use BLE dwell time if available, otherwise use FIFO calculation
+  // Use BLE dwell time if available, otherwise FIFO, otherwise Little's Law
   const effectiveDwellTime = useMemo(() => {
     // Priority 1: BLE device reports avg_stay_minutes directly (Pi Zero 2W)
     const bleDwellTime = sensorData?.occupancy?.avg_stay_minutes;
     if (bleDwellTime !== undefined && bleDwellTime > 0) {
       return Math.round(bleDwellTime);
     }
-    
-    // Priority 2: FIFO calculation from entries/exits (camera devices)
+
+    // Priority 2: FIFO calculation from sensor entries/exits
     if (dwellTimeMinutes !== null) return dwellTimeMinutes;
-    
-    // Priority 3: Demo fallback
+
+    // Priority 3: Little's Law from VenueScope people_count cameras
+    if (vsOccupancy?.dwellTimeMin != null) return vsOccupancy.dwellTimeMin;
+
+    // Priority 4: Demo fallback
     if (isDemoAccount(venueId)) {
       return 95 + Math.floor(Math.random() * 20); // 95-115 minutes
     }
-    
+
     return null;
-  }, [sensorData?.occupancy?.avg_stay_minutes, dwellTimeMinutes, venueId]);
+  }, [sensorData?.occupancy?.avg_stay_minutes, dwellTimeMinutes, vsOccupancy?.dwellTimeMin, venueId]);
   
   const dwellScore = getDwellTimeScore(effectiveDwellTime);
   const dwellTimeFormatted = formatDwellTime(effectiveDwellTime);
