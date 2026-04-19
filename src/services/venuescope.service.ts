@@ -272,6 +272,7 @@ const LIST_JOBS_QUERY = `
         totalTurns avgResponseSec avgDwellMin
         uniqueStaff peakHeadcount avgIdlePct
         isLive roomLabel bartenderBreakdown elapsedSec
+        currentHeadcount peopleIn peopleOut
         shrinkageOz liveTheftEvents
         posProvider posRevenue posItemCount posCameraCount posVariancePct posVarianceDrinks posLostRevenue tableVisitsByStaff
         serveSnapshots

@@ -30,7 +30,7 @@ const venueSettingsInitialized = new Set<string>();
 // Historical scoring will be re-implemented properly
 // import { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
 import { isDemoAccount } from '../utils/demoData';
-import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
+import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
 import { getBarDayStart } from '../utils/barDay';
 import type { SensorData, OccupancyMetrics } from '../types';
 
@@ -510,22 +510,29 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     // Include live jobs AND recent snapshots (done within 25 min) — snapshot cameras
     // complete as 'done' (isLive=false) but their reading is still current.
     const nowSec = Date.now() / 1000;
-    const peoplJobs   = vsTodayJobs.filter(j => j.analysisMode === 'people_count');
+    // Include jobs where any active mode is people_count (not just analysisMode)
+    const peoplJobs = vsTodayJobs.filter(j =>
+      j.analysisMode === 'people_count' || parseModes(j).includes('people_count')
+    );
+    // Include live jobs and recently-finished jobs (< 45 min ago)
     const peopleRecent = peoplJobs.filter(j =>
-      j.isLive || (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 1500
+      j.isLive || (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 2700
     );
     // Sum across cameras (each covers a different zone — same as VenueScope TonightHero).
-    // Use entries-exits when available; fall back to peakOccupancy with || (not ??)
-    // because currentHeadcount/entries may be 0 (not null) even when peakOccupancy > 0.
+    // currentHeadcount (live push every ~30s) > entries-exits > peakOccupancy fallback.
     const liveCurrent = peopleRecent.reduce((sum, j) => {
+      const headcount = j.currentHeadcount || 0;
+      if (headcount > 0) return sum + headcount;
       const ee = Math.max(0, (j.totalEntries ?? 0) - (j.totalExits ?? 0));
-      return sum + (ee || j.currentHeadcount || j.peakOccupancy || 0);
+      return sum + (ee || j.peakOccupancy || 0);
     }, 0);
+    const peakOccupancy = Math.max(...peoplJobs.map(j => j.peakOccupancy ?? 0), 0);
     return {
       todayEntries:  peoplJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
       todayExits:    peoplJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
-      peakOccupancy: Math.max(...peoplJobs.map(j => j.peakOccupancy ?? 0), 0),
-      current: liveCurrent,
+      peakOccupancy,
+      // If no live reading available, fall back to today's peak so ring isn't zero
+      current: liveCurrent || peakOccupancy,
     };
   }, [vsTodayJobs]);
 
@@ -535,7 +542,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     // cameras are updated every 15s and are more reliable than BLE/sensor estimates.
     if (vsOccupancy && (vsOccupancy.current > 0 || vsOccupancy.peakOccupancy > 0)) {
       return {
-        current:       vsOccupancy.current,
+        // Use live current; fall back to today's peak when no recent live reading
+        current:       vsOccupancy.current || vsOccupancy.peakOccupancy,
         todayEntries:  vsOccupancy.todayEntries,
         todayExits:    vsOccupancy.todayExits,
         peakOccupancy: vsOccupancy.peakOccupancy,
