@@ -551,8 +551,16 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
 
     const peaplJobs = vsTodayJobs.filter(isPeopleJob);
 
+    // Fallback: when no cameras are identified as people_count, use any live job
+    // that has actual headcount or entry data — these fields only exist on people-counting jobs.
+    const effectivePeopleJobs = peaplJobs.length > 0
+      ? peaplJobs
+      : vsTodayJobs.filter(j =>
+          isJobLive(j) && ((j.currentHeadcount ?? 0) > 0 || (j.totalEntries ?? 0) > 0)
+        );
+
     // Live/running jobs + recent snapshots (< 45 min)
-    const peopleRecent = peaplJobs.filter(j =>
+    const peopleRecent = effectivePeopleJobs.filter(j =>
       isJobLive(j) || (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 2700
     );
 
@@ -564,17 +572,17 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       return sum + (ee || j.peakOccupancy || 0);
     }, 0);
 
-    const peakOccupancy = Math.max(...peaplJobs.map(j => j.peakOccupancy ?? 0), 0);
-    const todayEntries = peaplJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
-    const todayExits   = peaplJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
+    const peakOccupancy = Math.max(...effectivePeopleJobs.map(j => j.peakOccupancy ?? 0), 0);
+    const todayEntries = effectivePeopleJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
+    const todayExits   = effectivePeopleJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0);
 
     // Little's Law: avg_dwell = avg_occupancy / arrival_rate
     // Use the best live job for elapsed time; sum entries across all cameras.
     let dwellTimeMin: number | null = null;
-    const liveJob = peaplJobs.find(j => isJobLive(j));
+    const liveJob = effectivePeopleJobs.find(j => isJobLive(j));
     const elapsedSec = liveJob
       ? (liveJob.elapsedSec ?? (nowSec - (liveJob.createdAt ?? nowSec)))
-      : peaplJobs.reduce((s, j) => s + Math.max(0, (j.finishedAt ?? nowSec) - (j.createdAt ?? nowSec)), 0);
+      : effectivePeopleJobs.reduce((s, j) => s + Math.max(0, (j.finishedAt ?? nowSec) - (j.createdAt ?? nowSec)), 0);
     if (todayEntries >= 5 && elapsedSec >= 300) {
       const avgOccupancy = liveCurrent || peakOccupancy * 0.6;
       const arrivalRatePerSec = todayEntries / elapsedSec;
@@ -592,6 +600,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
       peakOccupancy,
       current: liveCurrent || peakOccupancy,
       dwellTimeMin,
+      usingFallbackJobs: peaplJobs.length === 0 && effectivePeopleJobs.length > 0,
     };
   }, [vsTodayJobs, peopleCamNames]);
 
