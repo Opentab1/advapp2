@@ -2775,6 +2775,23 @@ interface ReviewEntry {
 
 // ── Snapshot modal ────────────────────────────────────────────────────────────
 
+function SnapshotThumb({ snapshotKey, onClick }: { snapshotKey: string; onClick: () => void }) {
+  const s3Base = (import.meta.env.VITE_S3_SUMMARY_BASE_URL || '').replace(/\/$/, '');
+  const url = snapshotKey.startsWith('https://')
+    ? snapshotKey
+    : s3Base ? `${s3Base}/${snapshotKey}` : null;
+  if (!url) return <Camera className="w-3 h-3 text-teal/70" />;
+  return (
+    <img
+      src={url}
+      alt="serve"
+      onClick={e => { e.stopPropagation(); onClick(); }}
+      className="h-7 w-10 object-cover rounded cursor-pointer border border-whoop-divider/40 hover:border-teal/60 hover:scale-105 transition-all flex-shrink-0"
+      onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+    />
+  );
+}
+
 function SnapshotModal({ snapshotKey, wallTime, onClose }: {
   snapshotKey: string;
   wallTime: number;
@@ -3005,18 +3022,21 @@ function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
               {entries.map((e, i) => (
                 <div
                   key={i}
-                  onClick={() => e.snapshotKey && setActiveSnap({ key: e.snapshotKey, wallTime: e.wallTime })}
-                  className={`flex items-center justify-between text-[11px] py-1 border-b border-whoop-divider/30 last:border-0 ${e.snapshotKey ? 'cursor-pointer hover:bg-white/5 rounded px-1 -mx-1 transition-colors' : ''}`}
+                  className="flex items-center gap-1.5 text-[11px] py-1 border-b border-whoop-divider/30 last:border-0"
                 >
-                  <span className="text-teal font-mono tabular-nums">
+                  {e.snapshotKey && (
+                    <SnapshotThumb
+                      snapshotKey={e.snapshotKey}
+                      onClick={() => setActiveSnap({ key: e.snapshotKey!, wallTime: e.wallTime })}
+                    />
+                  )}
+                  <span className="text-teal font-mono tabular-nums flex-shrink-0">
                     {new Date(e.wallTime * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
                   </span>
-                  <span className="text-text-muted truncate max-w-[80px] ml-2">{e.bartender}</span>
+                  <span className="text-text-muted truncate min-w-0 ml-1">{e.bartender}</span>
                   <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
                     {e.score > 0 && <ServeScoreBadge score={e.score} />}
-                    {e.snapshotKey
-                      ? <Camera className="w-3 h-3 text-teal/70" />
-                      : <span className="text-emerald-400">✓</span>}
+                    {!e.snapshotKey && <span className="text-emerald-400">✓</span>}
                   </div>
                 </div>
               ))}
@@ -3049,18 +3069,21 @@ function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
                         {reviewEntries.map((e, i) => (
                           <div
                             key={i}
-                            onClick={() => e.snapshotKey && setActiveSnap({ key: e.snapshotKey, wallTime: e.wallTime })}
-                            className={`flex items-center justify-between text-[11px] py-1 border-b border-whoop-divider/20 last:border-0 ${e.snapshotKey ? 'cursor-pointer hover:bg-white/5 rounded px-1 -mx-1 transition-colors' : ''}`}
+                            className="flex items-center gap-1.5 text-[11px] py-1 border-b border-whoop-divider/20 last:border-0"
                           >
-                            <span className="text-text-muted font-mono tabular-nums">
+                            {e.snapshotKey && (
+                              <SnapshotThumb
+                                snapshotKey={e.snapshotKey}
+                                onClick={() => setActiveSnap({ key: e.snapshotKey!, wallTime: e.wallTime })}
+                              />
+                            )}
+                            <span className="text-text-muted font-mono tabular-nums flex-shrink-0">
                               {new Date(e.wallTime * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
                             </span>
-                            <span className="text-text-muted/60 truncate max-w-[80px] ml-2 text-[10px]">{e.stationId || 'bar'}</span>
+                            <span className="text-text-muted/60 truncate min-w-0 ml-1 text-[10px]">{e.stationId || 'bar'}</span>
                             <div className="ml-auto flex items-center gap-1 flex-shrink-0">
                               <ServeScoreBadge score={e.score} />
-                              {e.snapshotKey
-                                ? <Camera className="w-3 h-3 text-yellow-500/60" />
-                                : <span className="text-yellow-500/60 text-[10px]">?</span>}
+                              {!e.snapshotKey && <span className="text-yellow-500/60 text-[10px]">?</span>}
                             </div>
                           </div>
                         ))}
