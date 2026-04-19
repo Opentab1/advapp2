@@ -188,6 +188,7 @@ function TripleRingHero({
   avgDwellLastWeekSameDay,
   hasTheftFlag,
   unrungDrinks,
+  alwaysOpen,
   onTap,
 }: {
   totalDrinks: number | null;
@@ -199,11 +200,12 @@ function TripleRingHero({
   avgDwellLastWeekSameDay: number | null; // minutes, same DOW last week
   hasTheftFlag: boolean;
   unrungDrinks?: number;
+  alwaysOpen?: boolean;
   onTap?: () => void;
 }) {
   const hours = getBusinessHours();
   const open = hours ? isBarOpen(hours) : null;
-  const isClosed = open === false;
+  const isClosed = alwaysOpen ? false : (open === false);
 
   // Ring 1 — Drinks % vs historical avg for this DOW (fallback: % of 150-drink scale)
   const drinksPct = (() => {
@@ -384,6 +386,54 @@ export function Live() {
   
   // Load external data (sports, holidays)
   useEffect(() => {
+    // Demo: inject realistic fake games so Today's Outlook always has content
+    if (isDemoAccount(venueId)) {
+      const tonight = new Date();
+      tonight.setHours(19, 30, 0, 0);
+      const tonight2 = new Date();
+      tonight2.setHours(20, 0, 0, 0);
+      const tonight3 = new Date();
+      tonight3.setHours(22, 30, 0, 0);
+      setTodayGames([
+        {
+          id: 'demo-nba-1',
+          sport: 'NBA',
+          homeTeam: 'Chicago Bulls',
+          awayTeam: 'Milwaukee Bucks',
+          homeScore: 0,
+          awayScore: 0,
+          status: 'live',
+          startTime: tonight.toISOString(),
+          network: 'ESPN',
+          headline: 'Bulls host Bucks in Central Division matchup',
+        },
+        {
+          id: 'demo-mlb-1',
+          sport: 'MLB',
+          homeTeam: 'Cubs',
+          awayTeam: 'Cardinals',
+          homeScore: 0,
+          awayScore: 0,
+          status: 'scheduled',
+          startTime: tonight2.toISOString(),
+          network: 'Bally Sports',
+          headline: 'Rivalry series continues at Wrigley',
+        },
+        {
+          id: 'demo-nhl-1',
+          sport: 'NHL',
+          homeTeam: 'Blackhawks',
+          awayTeam: 'Red Wings',
+          homeScore: 0,
+          awayScore: 0,
+          status: 'scheduled',
+          startTime: tonight3.toISOString(),
+          network: 'NBC Sports',
+        },
+      ]);
+      return;
+    }
+
     async function loadExternalData() {
       try {
         const games = await sportsService.getGames();
@@ -394,7 +444,7 @@ export function Live() {
       }
     }
     loadExternalData();
-  }, []);
+  }, [venueId]);
 
   // Load VenueScope job history for rings + latest job meta + venue settings
   useEffect(() => {
@@ -671,6 +721,7 @@ export function Live() {
         avgDwellLastWeekSameDay={avgDwellLastWeekSameDay}
         hasTheftFlag={pulseData.hasTheftFlag}
         unrungDrinks={latestJobMeta?.unrungDrinks}
+        alwaysOpen={isDemoAccount(venueId)}
         onTap={() => setActiveModal('livestats')}
       />
       
@@ -688,12 +739,12 @@ export function Live() {
         transition={{ delay: 0.1 }}
       >
         <LiveStats
-          decibels={pulseData.currentDecibels}
-          light={pulseData.currentLight}
+          decibels={isDemoAccount(venueId) ? null : pulseData.currentDecibels}
+          light={isDemoAccount(venueId) ? null : pulseData.currentLight}
           occupancy={pulseData.currentOccupancy}
-          currentSong={pulseData.sensorData?.currentSong}
-          artist={pulseData.sensorData?.artist}
-          albumArt={pulseData.sensorData?.albumArt}
+          currentSong={isDemoAccount(venueId) ? null : pulseData.sensorData?.currentSong}
+          artist={isDemoAccount(venueId) ? null : pulseData.sensorData?.artist}
+          albumArt={isDemoAccount(venueId) ? null : pulseData.sensorData?.albumArt}
           lastUpdated={pulseData.lastUpdated}
           onTap={() => setActiveModal('livestats')}
           totalDrinks={pulseData.totalDrinks}
