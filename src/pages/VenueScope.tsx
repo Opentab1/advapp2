@@ -3570,6 +3570,15 @@ export function VenueScope() {
     setJobs(data);
     setLastRefresh(new Date());
     if (!silent) setLoading(false);
+
+    // Update header connection status so it shows data age instead of "LOADING"
+    const latestTs = data.reduce((max, j) => Math.max(max, j.updatedAt ?? j.finishedAt ?? j.createdAt ?? 0), 0);
+    const ageSeconds = latestTs > 0 ? Math.round(Date.now() / 1000 - latestTs) : 0;
+    pulseStore.setConnectionStatus({
+      isConnected: data.length > 0,
+      lastUpdated: new Date(),
+      dataAgeSeconds: ageSeconds,
+    });
   }, [venueId, isDemo]);
 
   useEffect(() => {
@@ -4049,6 +4058,23 @@ export function VenueScope() {
               </div>
             );
           })()}
+
+          {/* Warning: no drink_count cameras configured — can't detect drinks */}
+          {!isDemo && cameras.length > 0 && allDisplayRooms.length > 0
+            && allDisplayRooms.every(r => r.mode !== 'drink_count')
+            && tonightJobs.every(j => (j.totalDrinks ?? 0) === 0) && (
+            <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-300">No bar cameras set to Drink Count mode</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  All active cameras are running in People Count mode — drinks can't be detected.
+                  Go to <strong className="text-gray-300">Admin Portal → Cameras</strong>, select your bar camera(s),
+                  and change the mode to <strong className="text-gray-300">Drink Count</strong>.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* 1. Today's hero numbers — always shown; handles empty/closed state internally */}
           <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} peopleRooms={allRooms.filter(r => r.mode === 'people_count')} isDemo={isDemo} />
