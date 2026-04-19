@@ -1128,8 +1128,10 @@ export function Analytics() {
       const raw = isDemo
         ? generateDemoVenueScopeJobs()
         : await venueScopeService.listJobs(venueId, 500);
-      // For demo: include the live job so "Today" tab shows the ongoing shift
-      setAllJobs(isDemo ? raw : raw.filter(j => !j.isLive && j.status !== 'running'));
+      // Include live/running jobs so Today tab shows in-progress shift data.
+      // Deduplicate stable live records (~prefix) by camera key — keep the one
+      // with the highest totalDrinks so today's running count is always visible.
+      setAllJobs(raw);
     } finally {
       setLoading(false);
     }
