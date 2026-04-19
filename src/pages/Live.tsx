@@ -221,9 +221,13 @@ function TripleRingHero({
     return Math.min(100, Math.round((currentOccupancy / venueCapacity) * 100));
   })();
 
-  // Ring 3 — Dwell time % vs same day last week
+  // Ring 3 — Dwell time % vs same day last week (fallback: % of 90-min reference)
   const dwellPct = (() => {
-    if (isClosed || avgDwellToday == null || !avgDwellLastWeekSameDay) return null;
+    if (isClosed || avgDwellToday == null) return null;
+    if (!avgDwellLastWeekSameDay) {
+      // No historical baseline — show raw progress toward a 90-min reference
+      return Math.min(100, Math.round((avgDwellToday / 90) * 100));
+    }
     return Math.min(150, Math.round((avgDwellToday / avgDwellLastWeekSameDay) * 100));
   })();
 
@@ -304,7 +308,8 @@ function TripleRingHero({
         <div className="mt-4 pt-3 border-t border-warm-700/50 text-[10px] text-warm-600 flex flex-wrap gap-x-3 gap-y-1">
           {drinksPct === null && <span>No drink history yet for {today}s</span>}
           {capacityPct === null && venueCapacity == null && <span>Set venue capacity in Settings</span>}
-          {dwellPct === null && <span>No dwell history for last {today}</span>}
+          {dwellPct !== null && !avgDwellLastWeekSameDay && <span>No dwell history for last {today}</span>}
+          {dwellPct === null && avgDwellToday == null && <span>Dwell time calculating…</span>}
         </div>
       )}
     </motion.div>
@@ -496,6 +501,13 @@ export function Live() {
     }
   }, [pulseData.pulseScore, pulseData.currentOccupancy]);
   
+  // When no table_turns jobs exist, use Little's Law dwell from usePulseData
+  useEffect(() => {
+    if (avgDwellToday == null && pulseData.dwellTimeMinutes != null) {
+      setAvgDwellToday(pulseData.dwellTimeMinutes);
+    }
+  }, [avgDwellToday, pulseData.dwellTimeMinutes]);
+
   // Crowd ring now shows retention rate (% of tonight's guests still here)
   // This is 100% accurate from raw entry/exit data
   const crowdScore = pulseData.retentionMetrics.retentionRate;
