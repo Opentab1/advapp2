@@ -543,11 +543,15 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 import boto3, os as _os
                 _r = _os.environ.get("AWS_DEFAULT_REGION") or _os.environ.get("AWS_REGION", "us-east-2")
                 c  = boto3.client("dynamodb", region_name=_r)
+                # Only truly live jobs: isLive=True AND updated in last 5 minutes
+                recent_cutoff = str(int(time.time()) - 300)
                 resp = c.scan(
                     TableName="VenueScopeJobs",
-                    FilterExpression="#s = :r OR #s = :q",
-                    ExpressionAttributeNames={"#s": "status"},
-                    ExpressionAttributeValues={":r": {"S": "running"}, ":q": {"S": "queued"}},
+                    FilterExpression="isLive = :live AND updatedAt > :recent",
+                    ExpressionAttributeValues={
+                        ":live":   {"BOOL": True},
+                        ":recent": {"N": recent_cutoff},
+                    },
                     ProjectionExpression=(
                         "venueId, jobId, cameraLabel, analysisMode, "
                         "createdAt, drinksPerHour, progressPct"
