@@ -609,21 +609,17 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     expr_vals[":ca"] = {"N": str(_ca)}
 
     # ── Drinks per hour (live) ────────────────────────────────────────────────
-    # When today_drinks == 0 (e.g. bar just opened, worker restarted) always
-    # reset drinksPerHour to 0 — restored DDB timestamps are positive so the
-    # t>=0 filter below would otherwise count them as current-session drinks
-    # and produce wildly inflated rates (e.g. 2700/hr).
+    # Use today_drinks (baseline-subtracted) so restored historical drink counts
+    # from prior shifts don't inflate the rate. The old _seg_drinks approach
+    # counted all timestamps >= 0, which includes restored DDB timestamps and
+    # produced wildly inflated rates (e.g. 2700/hr, 168/hr for blindgoat).
     if today_drinks == 0:
         update_expr += ", drinksPerHour = :dph"
         expr_vals[":dph"] = {"N": "0"}
     else:
         _live_wall_elapsed = max(T_push - float(_ca), 1.0)
-        _seg_drinks = sum(
-            sum(1 for t in d.get("drink_timestamps", []) if t >= 0)
-            for d in bts.values()
-        )
-        if _live_wall_elapsed >= 60 and _seg_drinks > 0:
-            live_dph = round(_seg_drinks * 3600 / _live_wall_elapsed, 1)
+        if _live_wall_elapsed >= 60:
+            live_dph = round(today_drinks * 3600 / _live_wall_elapsed, 1)
             update_expr += ", drinksPerHour = :dph"
             expr_vals[":dph"] = {"N": str(live_dph)}
     # topBartender = station with most drinks this shift (total_drinks is cumulative)
@@ -631,6 +627,20 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         top_name = max(bts, key=lambda n: bts[n].get("total_drinks", 0))
         update_expr += ", topBartender = :tb"
         expr_vals[":tb"] = {"S": top_name}
+
+    # ── Confidence score (live) ───────────────────────────────────────────────
+    # sync_result writes this post-job, but for live streams we need it in every
+    # push so the Results tab shows a real value instead of 0.
+    try:
+        from core.confidence import compute_confidence_score as _ccs
+        _conf_score, _conf_color, _conf_label = _ccs(summary)
+    except Exception:
+        _conf_score, _conf_color, _conf_label = 0, "", ""
+    if _conf_score > 0:
+        update_expr += ", confidenceScore = :csc, confidenceLabel = :csl, confidenceColor = :cscol"
+        expr_vals[":csc"]   = {"N": str(_conf_score)}
+        expr_vals[":csl"]   = {"S": _conf_label}
+        expr_vals[":cscol"] = {"S": _conf_color}
 
     import time as _t
     print(f"[aws_sync] push delivery_rate={delivery_rate:.3f} "
