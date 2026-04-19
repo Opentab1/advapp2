@@ -500,11 +500,20 @@ async function listAlerts(venueId, limit = 50) {
       Limit: lim * 3,
     }));
   } else {
-    result = await ddb.send(new ScanCommand({
-      TableName: JOBS_TABLE,
-      FilterExpression: 'createdAt > :cutoff',
-      ExpressionAttributeValues: { ':cutoff': { N: String(Date.now() / 1000 - 30 * 86400) } },
-    }));
+    const cutoff   = Date.now() / 1000 - 30 * 86400;
+    const allItems = [];
+    let lastKey;
+    do {
+      const page = await ddb.send(new ScanCommand({
+        TableName: JOBS_TABLE,
+        FilterExpression: 'createdAt > :cutoff',
+        ExpressionAttributeValues: { ':cutoff': { N: String(cutoff) } },
+        ExclusiveStartKey: lastKey,
+      }));
+      allItems.push(...(page.Items ?? []));
+      lastKey = page.LastEvaluatedKey;
+    } while (lastKey && allItems.length < 1000);
+    result = { Items: allItems };
   }
 
   const alerts = [];
