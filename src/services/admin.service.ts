@@ -11,17 +11,30 @@ import cameraService from './camera.service';
 const ADMIN_API = (import.meta.env.VITE_ADMIN_API_URL ?? '').replace(/\/$/, '');
 
 // Droplet webhook/ops server — same base URL as VITE_CALIBRATION_URL
-const OPS_URL    = (import.meta.env.VITE_CALIBRATION_URL ?? '').replace(/\/$/, '');
-const OPS_SECRET = import.meta.env.VITE_OPS_SECRET ?? '';
+const OPS_URL = (import.meta.env.VITE_CALIBRATION_URL ?? '').replace(/\/$/, '');
+
+// Ops secret: prefer VITE_OPS_SECRET env var, fall back to localStorage so
+// the user can enter it once in the UI without needing an Amplify rebuild.
+const LS_SECRET_KEY = 'vs_ops_secret';
+export function getOpsSecret(): string {
+  return (import.meta.env.VITE_OPS_SECRET ?? localStorage.getItem(LS_SECRET_KEY) ?? '').trim();
+}
+export function saveOpsSecret(secret: string): void {
+  localStorage.setItem(LS_SECRET_KEY, secret.trim());
+}
+export function clearOpsSecret(): void {
+  localStorage.removeItem(LS_SECRET_KEY);
+}
 
 async function opsFetch(path: string, options?: RequestInit) {
-  if (!OPS_URL)    throw new Error('VITE_CALIBRATION_URL is not configured');
-  if (!OPS_SECRET) throw new Error('VITE_OPS_SECRET is not configured — add it to Amplify env vars');
+  if (!OPS_URL) throw new Error('VITE_CALIBRATION_URL is not configured');
+  const secret = getOpsSecret();
+  if (!secret)  throw new Error('NO_SECRET');
   const res = await fetch(`${OPS_URL}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'X-Ops-Secret': OPS_SECRET,
+      'X-Ops-Secret': secret,
       ...(options?.headers ?? {}),
     },
   });

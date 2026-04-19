@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import adminService, {
   AdminVenue, AdminJob, AdminCamera, OpsStatus,
+  getOpsSecret, saveOpsSecret,
 } from '../../services/admin.service';
 import { useAdminVenue } from '../../contexts/AdminVenueContext';
 import { VenueSelector } from '../../components/admin/VenueSelector';
@@ -162,6 +163,11 @@ export function OpsMonitor() {
   const [loadingJobs,    setLoadingJobs]    = useState(true);
   const [loadingCameras, setLoadingCameras] = useState(true);
 
+  // Ops secret setup (one-time, stored in localStorage)
+  const [hasSecret,      setHasSecret]      = useState(() => !!getOpsSecret());
+  const [secretInput,    setSecretInput]    = useState('');
+  const [secretErr,      setSecretErr]      = useState('');
+
   // Ops / droplet data
   const [opsStatus,      setOpsStatus]      = useState<OpsStatus | null>(null);
   const [opsLoading,     setOpsLoading]     = useState(true);
@@ -204,12 +210,14 @@ export function OpsMonitor() {
   // ── Fetch droplet ops status ────────────────────────────────────────────────
 
   const fetchOpsStatus = useCallback(async () => {
+    if (!getOpsSecret()) { setOpsLoading(false); return; }
     setOpsLoading(true);
     setOpsError(null);
     try {
       const status = await adminService.getOpsStatus();
       setOpsStatus(status);
     } catch (e: any) {
+      if (e.message === 'NO_SECRET') { setOpsLoading(false); return; }
       setOpsError(e.message ?? 'Failed to reach droplet ops API');
     } finally {
       setOpsLoading(false);
@@ -356,6 +364,55 @@ export function OpsMonitor() {
           </button>
         </div>
       </motion.div>
+
+      {/* ── Ops Secret Setup (one-time) ────────────────────────────────────── */}
+      {!hasSecret && (
+        <motion.div className="glass-card p-6 border border-amber-500/30"
+          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+        >
+          <div className="flex items-start gap-3 mb-4">
+            <Server className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
+            <div>
+              <h3 className="text-white font-bold">Connect to Droplet</h3>
+              <p className="text-gray-400 text-sm mt-1">
+                Enter the ops secret once to enable live monitoring, restart controls, and log viewer.
+                It's saved in your browser — you'll only need to do this once.
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <input
+              type="password"
+              value={secretInput}
+              onChange={e => { setSecretInput(e.target.value); setSecretErr(''); }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && secretInput.trim()) {
+                  saveOpsSecret(secretInput.trim());
+                  setHasSecret(true);
+                  fetchOpsStatus();
+                }
+              }}
+              placeholder="vs_ops_..."
+              className="flex-1 px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white font-mono text-sm focus:outline-none focus:border-amber-500/50"
+            />
+            <button
+              onClick={() => {
+                if (!secretInput.trim()) { setSecretErr('Enter the secret first'); return; }
+                saveOpsSecret(secretInput.trim());
+                setHasSecret(true);
+                fetchOpsStatus();
+              }}
+              className="px-5 py-2.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-sm font-medium"
+            >
+              Connect
+            </button>
+          </div>
+          {secretErr && <p className="text-red-400 text-xs mt-2">{secretErr}</p>}
+          <p className="text-gray-600 text-xs mt-3">
+            Secret: <code className="text-gray-500">vs_ops_30564c758df59059</code> — ask your engineer if you don't have it.
+          </p>
+        </motion.div>
+      )}
 
       {/* ── Confirm Dialog ─────────────────────────────────────────────────── */}
       {confirm === 'restart' && (
