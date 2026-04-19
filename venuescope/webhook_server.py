@@ -49,7 +49,8 @@ def _get_job(job_id: str) -> dict:
         return dict(_calib_jobs.get(job_id, {}))
 
 
-def _run_calibration_bg(job_id: str, video_path: str, actual_count: int, venue_id: str):
+def _run_calibration_bg(job_id: str, video_path: str, actual_count: int,
+                        venue_id: str, camera_id: str):
     """Background thread: run CalibrationEngine and update job store."""
     try:
         from calibrate import CalibrationEngine
@@ -62,6 +63,7 @@ def _run_calibration_bg(job_id: str, video_path: str, actual_count: int, venue_i
             video_path   = video_path,
             actual_count = actual_count,
             venue_id     = venue_id,
+            camera_id    = camera_id,
             progress_cb  = _cb,
         )
         result = engine.run()
@@ -261,12 +263,16 @@ class WebhookHandler(BaseHTTPRequestHandler):
         )
 
         # Extract fields
-        venue_id     = (form.getvalue("venue_id") or "").strip()
+        venue_id     = (form.getvalue("venue_id")  or "").strip()
+        camera_id    = (form.getvalue("camera_id") or "").strip()
         actual_count = int(form.getvalue("actual_count") or "0")
         video_item   = form["video"] if "video" in form else None
 
         if not venue_id:
             self._json(400, {"error": "venue_id required"})
+            return
+        if not camera_id:
+            self._json(400, {"error": "camera_id required"})
             return
         if actual_count < 1:
             self._json(400, {"error": "actual_count must be >= 1"})
@@ -281,21 +287,23 @@ class WebhookHandler(BaseHTTPRequestHandler):
         tmp.write(video_item.file.read())
         tmp.close()
         video_path = tmp.name
-        log.info("Calibration upload saved: %s (%d bytes)", video_path, Path(video_path).stat().st_size)
+        log.info("Calibration upload saved: %s (%d bytes) venue=%s camera=%s",
+                 video_path, Path(video_path).stat().st_size, venue_id, camera_id)
 
         job_id = str(uuid.uuid4())[:8]
         _set_job(job_id,
-                 status   = "running",
-                 progress = 0,
-                 message  = "Queued…",
-                 result   = None,
-                 error    = None,
-                 venue_id = venue_id,
-                 started  = time.time())
+                 status    = "running",
+                 progress  = 0,
+                 message   = "Queued…",
+                 result    = None,
+                 error     = None,
+                 venue_id  = venue_id,
+                 camera_id = camera_id,
+                 started   = time.time())
 
         t = threading.Thread(
             target  = _run_calibration_bg,
-            args    = (job_id, video_path, actual_count, venue_id),
+            args    = (job_id, video_path, actual_count, venue_id, camera_id),
             daemon  = True,
         )
         t.start()

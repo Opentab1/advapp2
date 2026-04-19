@@ -42,12 +42,14 @@ class CalibrationEngine:
         video_path:   str,
         actual_count: int,
         venue_id:     str,
+        camera_id:    str = "",
         y_positions:  Optional[List[float]] = None,
         progress_cb:  Optional[Callable[[float, str], None]] = None,
     ):
         self.video_path   = str(video_path)
         self.actual_count = actual_count
         self.venue_id     = venue_id
+        self.camera_id    = camera_id  # specific camera this clip came from
         self.y_positions  = y_positions or Y_POSITIONS
         self.cb           = progress_cb or (lambda p, m: None)
 
@@ -222,6 +224,7 @@ class CalibrationEngine:
         self.cb(100, "Done.")
         return {
             "venue_id":        self.venue_id,
+            "camera_id":       self.camera_id,
             "actual_count":    self.actual_count,
             "video_seconds":   round(last_frame / fps, 1),
             "best":            best,
@@ -230,22 +233,28 @@ class CalibrationEngine:
         }
 
     def _write_bar_config(self, y_pos: float, customer_side: int) -> Path:
-        """Write winning config to data/configs/{venue_id}.json."""
+        """
+        Write winning config to disk AND push to DDB barConfigJson for the
+        specific camera so the worker picks it up on the next segment.
+        Filename: {camera_id}.json if camera_id given, else {venue_id}.json.
+        """
         from core.config import CONFIG_DIR
+
+        note = (
+            f"Auto-calibrated: bar_line_y={y_pos:.2f}, "
+            f"customer_side={'+1' if customer_side > 0 else '-1'}"
+            + (f", camera={self.camera_id}" if self.camera_id else "")
+        )
         config = {
             "venue_id":       self.venue_id,
             "display_name":   self.venue_id.replace("_", " ").title(),
             "overhead_camera": False,
-            "notes": (
-                f"Auto-calibrated: bar_line_y={y_pos:.2f}, "
-                f"customer_side={'+1' if customer_side > 0 else '-1'}"
-            ),
-            "frame_width":  None,
-            "frame_height": None,
+            "notes":          note,
+            "frame_width":    None,
+            "frame_height":   None,
             "stations": [{
                 "zone_id":         "bar_main",
                 "label":           "Bar",
-                # Full-width zone; bar line divides bartender / customer halves
                 "polygon": [
                     [0.0, 0.05], [1.0, 0.05],
                     [1.0, 0.95], [0.0, 0.95],
@@ -256,8 +265,28 @@ class CalibrationEngine:
                 "extra_bar_lines": [],
             }],
         }
-        path = CONFIG_DIR / f"{self.venue_id}.json"
+        config_json = json.dumps(config, indent=2)
+
+        # ── Write to disk (backup / local jobs) ──────────────────────────────
+        file_key = self.camera_id if self.camera_id else self.venue_id
+        path = CONFIG_DIR / f"{file_key}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(config, indent=2))
-        log.info("Bar config written: %s (y=%.2f, side=%+d)", path, y_pos, customer_side)
+        path.write_text(config_json)
+        log.info("Bar config written to disk: %s (y=%.2f, side=%+d)", path, y_pos, customer_side)
+
+        # ── Push to DDB barConfigJson for this specific camera ────────────────
+        # Worker loads barConfigJson from DDB — this is what makes it take effect live.
+        if self.camera_id and self.venue_id:
+            try:
+                from core.ddb_cameras import update_camera_bar_config_json
+                ok = update_camera_bar_config_json(self.venue_id, self.camera_id, config_json)
+                if ok:
+                    log.info("Bar config pushed to DDB: venue=%s camera=%s",
+                             self.venue_id, self.camera_id)
+                else:
+                    log.warning("DDB push returned False for %s/%s",
+                                self.venue_id, self.camera_id)
+            except Exception as e:
+                log.warning("DDB push failed (config still saved to disk): %s", e)
+
         return path
