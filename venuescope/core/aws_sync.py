@@ -1044,7 +1044,9 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
     if bts:
         bt_breakdown = {}
         for name, d in bts.items():
-            ts   = d.get("drink_timestamps", [])[-50:]
+            # Store ALL timestamps (no [-50:] cap) so the React detection log
+            # shows every individual drink, not just the last 50.
+            ts   = d.get("drink_timestamps", [])
             scrs = d.get("drink_scores", [])
             # Align scores with timestamps (pad with 0 if missing)
             if len(scrs) > len(ts):
@@ -1069,6 +1071,16 @@ def sync_job_to_aws(job_id: str, summary: Dict[str, Any], result_dir: Path,
                 bt_breakdown[name]["total_oz"]    = round(bar_data.get("total_oz", 0.0), 2)
                 bt_breakdown[name]["drink_types"] = dict(bar_data.get("drink_types", {}))
         item["bartenderBreakdown"] = {"S": json.dumps(bt_breakdown)}
+
+    # ── Per-serve snapshots for completed jobs ─────────────────────────────────
+    # Write serveSnapshots so the React detection log shows a thumbnail for every
+    # drink (mirrors what live jobs already push via sync_partial_to_aws).
+    # Keys are video-relative t_sec (no delivery_rate scaling for completed jobs).
+    serve_snaps = summary.get("serve_snapshots", {})
+    if serve_snaps:
+        item["serveSnapshots"] = {"S": json.dumps(
+            {str(round(float(k), 1)): v for k, v in serve_snaps.items()}
+        )}
 
     # ── Low-confidence (review bucket) events ─────────────────────────────────
     review_evs = summary.get("review_events", [])
