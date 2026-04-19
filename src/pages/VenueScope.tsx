@@ -26,6 +26,7 @@ import { isDemoAccount, generateDemoVenueScopeJobs } from '../utils/demoData';
 import cameraService, { Camera as CameraConfig } from '../services/camera.service';
 import billingService, { BillingStatus } from '../services/billing.service';
 import { PaywallOverlay, BillingBanner } from '../components/billing/PaywallOverlay';
+import { pulseStore } from '../stores/pulseStore';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -3877,6 +3878,23 @@ export function VenueScope() {
   const bartenders  = useMemo(() => { try { return aggregateBartenders(tonightJobs); } catch(e) { console.error('[VenueScope] aggregateBartenders error:', e); return []; } }, [tonightJobs]);
   // History = all older jobs (today's rooms are shown in the camera grid above)
   const historyJobs = useMemo(() => [...olderJobs], [olderJobs]);
+
+  // Publish computed occupancy to shared store so Live page can use it
+  // even when the occupancy computation in usePulseData can't determine the right cameras.
+  useEffect(() => {
+    const peopleRooms = allRooms.filter(r => r.mode === 'people_count');
+    // Also include multi-mode rooms that have people_count configured
+    const multiModeOcc = allDisplayRooms
+      .filter(r => r.mode !== 'people_count' && r.configuredModes.includes('people_count'))
+      .reduce((s, r) => s + (r.currentOccupancy ?? 0), 0);
+    const current = peopleRooms.reduce((s, r) => s + (r.currentOccupancy ?? 0), 0) + multiModeOcc;
+    const peak = Math.max(...allRooms.filter(r =>
+      r.mode === 'people_count' || r.configuredModes.includes('people_count')
+    ).map(r => r.peakOccupancy ?? 0), 0);
+    if (current > 0 || peak > 0) {
+      pulseStore.setVenueOccupancy(current, peak);
+    }
+  }, [allRooms, allDisplayRooms]);
 
   return (
     <div className="space-y-6">

@@ -31,6 +31,7 @@ const venueSettingsInitialized = new Set<string>();
 // import { HistoricalScoreResult, getTimeBlockLabel } from '../services/historical-scoring.service';
 import { isDemoAccount } from '../utils/demoData';
 import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
+import { pulseStore } from '../stores/pulseStore';
 import { getBarDayStart } from '../utils/barDay';
 import type { SensorData, OccupancyMetrics } from '../types';
 
@@ -166,6 +167,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   // VenueScope job data
   const [vsJobs, setVsJobs] = useState<VenueScopeJob[]>([]);
+  // Camera configs (for identifying people_count cameras even in multi-mode jobs)
+  const [peopleCamNames, setPeopleCamNames] = useState<Set<string>>(new Set());
 
   // BLE device tracking (for Pi Zero 2W that doesn't have entry/exit sensors)
   // We estimate entries/exits based on changes in occupancy.current
@@ -300,6 +303,22 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     }
   }, [venueId]);
 
+  const fetchCameraConfigs = useCallback(async () => {
+    if (!venueId) return;
+    try {
+      const cameraService = (await import('../services/camera.service')).default;
+      const cams = await cameraService.listCameras(venueId);
+      const peopleNames = new Set(
+        cams
+          .filter(c => c.enabled !== false && c.modes?.includes('people_count'))
+          .map(c => c.name.toLowerCase())
+      );
+      setPeopleCamNames(peopleNames);
+    } catch {
+      // Credentials not available — fall back to job analysisMode
+    }
+  }, [venueId]);
+
   const fetchWeather = useCallback(async () => {
     if (!venueId) return;
     
@@ -362,6 +381,7 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         fetchReviews(),
         fetchWeather(),
         fetchVenueScopeData(),
+        fetchCameraConfigs(),
       ]);
       
       setLoading(false);
@@ -514,41 +534,55 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
 
   const vsOccupancy = useMemo(() => {
     if (vsTodayJobs.length === 0) return null;
-    // Only people_count cameras carry meaningful occupancy data.
-    // Include live jobs AND recent snapshots (done within 25 min) — snapshot cameras
-    // complete as 'done' (isLive=false) but their reading is still current.
     const nowSec = Date.now() / 1000;
-    // Include jobs where any active mode is people_count (not just analysisMode)
-    const peoplJobs = vsTodayJobs.filter(j =>
-      j.analysisMode === 'people_count' || parseModes(j).includes('people_count')
-    );
-    // Include live/running jobs and recently-finished jobs (< 45 min ago)
-    // isJobLive handles AppSync returning isLive=null for running cameras
-    const peopleRecent = peoplJobs.filter(j =>
+
+    // Identify people_count jobs: by analysisMode, activeModes, or camera config name match
+    const isPeopleJob = (j: VenueScopeJob): boolean => {
+      if (j.analysisMode === 'people_count') return true;
+      if (parseModes(j).includes('people_count')) return true;
+      if (peopleCamNames.size > 0) {
+        const camLabel = (j.cameraLabel || j.clipLabel || '').toLowerCase();
+        return Array.from(peopleCamNames).some(n =>
+          n.length > 0 && (n.includes(camLabel) || camLabel.includes(n))
+        );
+      }
+      return false;
+    };
+
+    const peaplJobs = vsTodayJobs.filter(isPeopleJob);
+
+    // Live/running jobs + recent snapshots (< 45 min)
+    const peopleRecent = peaplJobs.filter(j =>
       isJobLive(j) || (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 2700
     );
-    // Sum across cameras (each covers a different zone — same as VenueScope TonightHero).
-    // currentHeadcount (live push every ~30s) > entries-exits > peakOccupancy fallback.
+
+    // currentHeadcount (pushed live ~30s) > entries-exits > peakOccupancy
     const liveCurrent = peopleRecent.reduce((sum, j) => {
       const headcount = j.currentHeadcount || 0;
       if (headcount > 0) return sum + headcount;
       const ee = Math.max(0, (j.totalEntries ?? 0) - (j.totalExits ?? 0));
       return sum + (ee || j.peakOccupancy || 0);
     }, 0);
-    const peakOccupancy = Math.max(...peoplJobs.map(j => j.peakOccupancy ?? 0), 0);
+
+    const peakOccupancy = Math.max(...peaplJobs.map(j => j.peakOccupancy ?? 0), 0);
     return {
-      todayEntries:  peoplJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
-      todayExits:    peoplJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
+      todayEntries:  peaplJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
+      todayExits:    peaplJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
       peakOccupancy,
-      // If no live reading available, fall back to today's peak so ring isn't zero
       current: liveCurrent || peakOccupancy,
     };
-  }, [vsTodayJobs]);
+  }, [vsTodayJobs, peopleCamNames]);
 
   // ============ OCCUPANCY CALCULATION ============
   const effectiveOccupancy = useMemo(() => {
     // VenueScope camera data always takes precedence for current occupancy —
     // cameras are updated every 15s and are more reliable than BLE/sensor estimates.
+    // Primary: use computed vsOccupancy from fetched jobs.
+    // Fallback: use pulseStore value published by VenueScope tab (computed with camera configs).
+    const storedOcc = pulseStore.getVenueOccupancy();
+    const storeAge = Date.now() - storedOcc.updatedAt; // ms since VenueScope last published
+    const storeIsRecent = storeAge < 5 * 60 * 1000; // valid for 5 min
+
     if (vsOccupancy && (vsOccupancy.current > 0 || vsOccupancy.peakOccupancy > 0)) {
       return {
         // Use live current; fall back to today's peak when no recent live reading
@@ -556,6 +590,17 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
         todayEntries:  vsOccupancy.todayEntries,
         todayExits:    vsOccupancy.todayExits,
         peakOccupancy: vsOccupancy.peakOccupancy,
+        peakTime:      null,
+        isBLEEstimated: false,
+      };
+    }
+    // Fallback to VenueScope tab's computed occupancy (available when user has visited that tab)
+    if (storeIsRecent && (storedOcc.current > 0 || storedOcc.peak > 0)) {
+      return {
+        current:       storedOcc.current,
+        todayEntries:  0,
+        todayExits:    0,
+        peakOccupancy: storedOcc.peak,
         peakTime:      null,
         isBLEEstimated: false,
       };

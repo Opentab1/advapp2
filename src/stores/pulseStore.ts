@@ -21,13 +21,23 @@ type ScoreListener = (score: number | null) => void;
 type WeatherListener = (weather: WeatherData | null) => void;
 type ConnectionListener = (status: DataConnectionStatus) => void;
 
+export interface VenueOccupancy {
+  current: number;  // live headcount from people_count cameras
+  peak: number;     // today's peak
+  updatedAt: number; // Date.now() ms
+}
+
+type OccupancyListener = (occ: VenueOccupancy) => void;
+
 class PulseStore {
   private score: number | null = null;
   private weather: WeatherData | null = null;
   private connectionStatus: DataConnectionStatus = { isConnected: false, lastUpdated: null, dataAgeSeconds: Infinity };
+  private venueOccupancy: VenueOccupancy = { current: 0, peak: 0, updatedAt: 0 };
   private scoreListeners: Set<ScoreListener> = new Set();
   private weatherListeners: Set<WeatherListener> = new Set();
   private connectionListeners: Set<ConnectionListener> = new Set();
+  private occupancyListeners: Set<OccupancyListener> = new Set();
   
   getScore(): number | null {
     return this.score;
@@ -82,6 +92,20 @@ class PulseStore {
   subscribeConnection(listener: ConnectionListener): () => void {
     this.connectionListeners.add(listener);
     return () => this.connectionListeners.delete(listener);
+  }
+
+  getVenueOccupancy(): VenueOccupancy {
+    return this.venueOccupancy;
+  }
+
+  setVenueOccupancy(current: number, peak: number): void {
+    this.venueOccupancy = { current, peak, updatedAt: Date.now() };
+    this.occupancyListeners.forEach(l => l(this.venueOccupancy));
+  }
+
+  subscribeOccupancy(listener: OccupancyListener): () => void {
+    this.occupancyListeners.add(listener);
+    return () => this.occupancyListeners.delete(listener);
   }
 }
 
