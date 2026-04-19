@@ -7,10 +7,7 @@ import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { AdminVenueProvider } from '../../contexts/AdminVenueContext';
 import { AdminDashboard } from './AdminDashboard';
 import { VenuesManagement } from './VenuesManagement';
-import { NFCLeadsManagement } from './NFCLeadsManagement';
 import { UsersManagement } from './UsersManagement';
-import { TeamManagement } from './TeamManagement';
-import { DevicesManagement } from './DevicesManagement';
 import { SystemAnalytics } from './SystemAnalytics';
 import { AdminSettings } from './AdminSettings';
 import { EmailReporting } from './EmailReporting';
@@ -108,10 +105,7 @@ function AdminPortalInner() {
           {activeTab === 'cameras'         && <ErrorBoundary key="cameras"><CamerasManagement /></ErrorBoundary>}
           {activeTab === 'calibration'    && <ErrorBoundary key="calibration"><BarCalibration /></ErrorBoundary>}
           {activeTab === 'alerts'          && <ErrorBoundary key="alerts"><AlertsInbox /></ErrorBoundary>}
-          {activeTab === 'nfc-leads'       && <ErrorBoundary key="nfc-leads"><NFCLeadsManagement /></ErrorBoundary>}
           {activeTab === 'users'           && <ErrorBoundary key="users"><UsersManagement /></ErrorBoundary>}
-          {activeTab === 'team'            && <ErrorBoundary key="team"><TeamManagement /></ErrorBoundary>}
-          {activeTab === 'devices'         && <ErrorBoundary key="devices"><DevicesManagement /></ErrorBoundary>}
           {activeTab === 'analytics'       && <ErrorBoundary key="analytics"><SystemAnalytics /></ErrorBoundary>}
           {activeTab === 'email-reporting' && <ErrorBoundary key="email-reporting"><EmailReporting /></ErrorBoundary>}
           {activeTab === 'settings'        && <ErrorBoundary key="settings"><AdminSettings /></ErrorBoundary>}
