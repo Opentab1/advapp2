@@ -79,6 +79,7 @@ const FROM_EMAIL   = process.env.SES_FROM_EMAIL || 'reports@advizia.online';
 const PORTAL_URL   = process.env.PORTAL_URL     || 'https://advizia.online/admin';
 
 const EMAIL_SETTINGS_KEY   = '_email_settings_';
+const EMAIL_LOG_KEY        = '_email_log_';
 const EMAIL_SCHEDULE_RULE  = 'VenueScopeEmailReports';
 const EMAIL_SCHEDULE_EXPR  = 'cron(0 11 * * ? *)';  // 6 AM ET daily
 
@@ -958,7 +959,16 @@ async function saveVenueEmailConfig(venueId, config) {
   }
 }
 
-function buildReportHtml({ venueName, periodLabel, totalDrinks, drinksPerHour, theftCount, theftItems, stationBreakdown, isTest }) {
+function buildReportHtml({ venueName, periodLabel, totalDrinks, drinksPerHour, theftCount, theftItems, stationBreakdown, isTest, template = {} }) {
+  const tmpl = {
+    introText:            template.introText            ?? '',
+    showStationBreakdown: template.showStationBreakdown ?? true,
+    showTheftAlerts:      template.showTheftAlerts      ?? true,
+    showCTA:              template.showCTA              ?? true,
+    ctaText:              template.ctaText              ?? 'View Full Report →',
+    footerText:           template.footerText           ?? '',
+  };
+
   const theftColor = theftCount > 0 ? '#f87171' : '#34d399';
 
   const stationRows = Object.entries(stationBreakdown)
@@ -971,7 +981,7 @@ function buildReportHtml({ venueName, periodLabel, totalDrinks, drinksPerHour, t
       </tr>`)
     .join('') || '<tr><td colspan="3" style="padding:16px 12px;color:#555;font-size:13px;text-align:center">No station data for this period</td></tr>';
 
-  const theftSection = theftCount > 0 ? `
+  const theftSection = tmpl.showTheftAlerts && theftCount > 0 ? `
     <div style="background:#1a0a0a;border:1px solid #7f1d1d;border-radius:12px;padding:20px;margin-bottom:24px">
       <h3 style="color:#f87171;margin:0 0 12px;font-size:16px">⚠️ ${theftCount} Theft Alert${theftCount !== 1 ? 's' : ''} Detected</h3>
       ${theftItems.map(j => `<div style="color:#fca5a5;font-size:13px;margin-bottom:8px">• ${j.clipLabel || 'Job'}: ${j.unrungDrinks} unrung drink${j.unrungDrinks !== 1 ? 's' : ''}</div>`).join('')}
@@ -998,6 +1008,7 @@ function buildReportHtml({ venueName, periodLabel, totalDrinks, drinksPerHour, t
 
   <div style="padding:32px">
     ${testBanner}
+    ${tmpl.introText ? `<p style="color:#aaa;font-size:14px;text-align:center;margin:0 0 24px">${tmpl.introText}</p>` : ''}
 
     <div style="display:flex;gap:12px;margin-bottom:24px">
       <div style="flex:1;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;text-align:center">
@@ -1016,6 +1027,7 @@ function buildReportHtml({ venueName, periodLabel, totalDrinks, drinksPerHour, t
 
     ${theftSection}
 
+    ${tmpl.showStationBreakdown ? `
     <p style="color:#666;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:0 0 12px">Station Breakdown</p>
     <table style="width:100%;border-collapse:collapse;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden">
       <tr>
@@ -1024,35 +1036,52 @@ function buildReportHtml({ venueName, periodLabel, totalDrinks, drinksPerHour, t
         <th style="text-align:left;color:#555;font-size:11px;text-transform:uppercase;padding:10px 12px;border-bottom:1px solid #222;font-weight:600">Rate</th>
       </tr>
       ${stationRows}
-    </table>
+    </table>` : ''}
 
+    ${tmpl.showCTA ? `
     <div style="text-align:center;margin:32px 0">
       <a href="${PORTAL_URL}" style="background:linear-gradient(135deg,#f59e0b,#ea580c);color:#000;text-decoration:none;font-weight:700;padding:14px 32px;border-radius:8px;font-size:15px;display:inline-block">
-        View Full Report →
+        ${tmpl.ctaText}
       </a>
-    </div>
+    </div>` : ''}
   </div>
 
   <div style="border-top:1px solid #1a1a1a;padding:20px 32px;text-align:center;color:#444;font-size:12px">
     VenueScope by Advizia &middot; Automated reports for ${venueName}<br>
+    ${tmpl.footerText ? `<span style="color:#555">${tmpl.footerText}</span><br>` : ''}
     <a href="${PORTAL_URL}" style="color:#f59e0b">Manage report settings</a>
   </div>
 </div>
 </body></html>`;
 }
 
-async function _sendReport(venueId, periodDays, isTest = false) {
-  // Get venue + email config
-  const venueRes = await ddb.send(new GetItemCommand({
-    TableName: VENUES_TABLE,
-    Key: { venueId: { S: venueId } },
-  }));
-  if (!venueRes.Item) throw new Error('venue not found');
-  const venue = venueFromItem(venueRes.Item);
-  if (!venue.emailConfig) throw new Error('no email config saved for this venue');
-  if (!venue.emailConfig.recipients?.length) throw new Error('no recipients configured');
+// Read email settings + template from DDB once (used by _sendReport + previewEmail)
+async function _readEmailSettings() {
+  try {
+    const r = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: EMAIL_SETTINGS_KEY } } }));
+    return r.Item?.settingsJson?.S ? JSON.parse(r.Item.settingsJson.S) : {};
+  } catch { return {}; }
+}
 
-  // Fetch recent jobs for this venue
+// Append an entry to the send log in DDB
+async function _appendEmailLog(entry) {
+  try {
+    const r = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: EMAIL_LOG_KEY } } }));
+    const entries = r.Item?.logJson?.S ? JSON.parse(r.Item.logJson.S) : [];
+    entries.unshift(entry);
+    await ddb.send(new PutItemCommand({
+      TableName: VENUES_TABLE,
+      Item: {
+        venueId:   { S: EMAIL_LOG_KEY },
+        logJson:   { S: JSON.stringify(entries.slice(0, 500)) },
+        updatedAt: { S: new Date().toISOString() },
+      },
+    }));
+  } catch { /* never fail a send because of log error */ }
+}
+
+// Build report data for a venue (shared by _sendReport and previewEmail)
+async function _buildReportData(venueId, periodDays) {
   const cutoffSec = Date.now() / 1000 - periodDays * 86400;
   const jobsRes = await ddb.send(new QueryCommand({
     TableName: JOBS_TABLE,
@@ -1068,11 +1097,9 @@ async function _sendReport(venueId, periodDays, isTest = false) {
   const totalDrinks   = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
   const ratedJobs     = jobs.filter(j => (j.drinksPerHour ?? 0) > 0);
   const drinksPerHour = ratedJobs.length
-    ? ratedJobs.reduce((s, j) => s + j.drinksPerHour, 0) / ratedJobs.length
-    : 0;
-  const theftJobs = jobs.filter(j => j.hasTheftFlag);
+    ? ratedJobs.reduce((s, j) => s + j.drinksPerHour, 0) / ratedJobs.length : 0;
+  const theftJobs     = jobs.filter(j => j.hasTheftFlag);
 
-  // Aggregate station breakdown across all jobs
   const stationBreakdown = {};
   for (const job of jobs) {
     if (!job.bartenderBreakdown) continue;
@@ -1086,30 +1113,42 @@ async function _sendReport(venueId, periodDays, isTest = false) {
           stationBreakdown[name]._count++;
         }
       }
-    } catch { /* malformed breakdown, skip */ }
+    } catch { /* skip */ }
   }
   for (const st of Object.values(stationBreakdown)) {
     st.perHour = st._count > 0 ? st.perHour / st._count : 0;
     delete st._count;
   }
 
+  return { jobs, totalDrinks, drinksPerHour, theftJobs, stationBreakdown };
+}
+
+async function _sendReport(venueId, periodDays, isTest = false) {
+  // Get venue + email config
+  const venueRes = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: venueId } } }));
+  if (!venueRes.Item) throw new Error('venue not found');
+  const venue = venueFromItem(venueRes.Item);
+  if (!venue.emailConfig) throw new Error('no email config saved for this venue');
+  if (!venue.emailConfig.recipients?.length) throw new Error('no recipients configured');
+
+  const { totalDrinks, drinksPerHour, theftJobs, stationBreakdown } = await _buildReportData(venueId, periodDays);
+
+  // Read settings (FROM email + template)
+  const emailSettings = await _readEmailSettings();
+  const fromEmail     = emailSettings.fromEmail || FROM_EMAIL;
+  const templateKey   = periodDays === 1 ? 'daily' : 'weekly';
+  const template      = emailSettings.templates?.[templateKey] ?? emailSettings.template ?? {};
+
   const periodLabel = isTest
     ? `Test Report (Last ${periodDays} Days)`
-    : periodDays === 1
-      ? 'Daily Report — Yesterday'
-      : periodDays === 7
-        ? 'Weekly Report — Last 7 Days'
-        : `Report — Last ${periodDays} Days`;
+    : periodDays === 1 ? 'Daily Report — Yesterday'
+    : periodDays === 7 ? 'Weekly Report — Last 7 Days'
+    : `Report — Last ${periodDays} Days`;
 
   const html = buildReportHtml({
-    venueName: venue.venueName,
-    periodLabel,
-    totalDrinks,
-    drinksPerHour,
-    theftCount: theftJobs.length,
-    theftItems: theftJobs.slice(0, 5),
-    stationBreakdown,
-    isTest,
+    venueName: venue.venueName, periodLabel, totalDrinks, drinksPerHour,
+    theftCount: theftJobs.length, theftItems: theftJobs.slice(0, 5),
+    stationBreakdown, isTest, template,
   });
 
   const subject = isTest
@@ -1118,14 +1157,6 @@ async function _sendReport(venueId, periodDays, isTest = false) {
       ? `VenueScope Daily Report — ${venue.venueName}`
       : `VenueScope Weekly Report — ${venue.venueName}`;
 
-  // Read FROM email from DDB settings (falls back to env var)
-  let fromEmail = FROM_EMAIL;
-  try {
-    const settingsRes = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: EMAIL_SETTINGS_KEY } } }));
-    const raw = settingsRes.Item?.settingsJson?.S;
-    if (raw) { const st = JSON.parse(raw); if (st.fromEmail) fromEmail = st.fromEmail; }
-  } catch { /* use default */ }
-
   await ses.send(new SendEmailCommand({
     Source: fromEmail,
     Destination: { ToAddresses: venue.emailConfig.recipients },
@@ -1133,26 +1164,102 @@ async function _sendReport(venueId, periodDays, isTest = false) {
       Subject: { Data: subject, Charset: 'UTF-8' },
       Body: {
         Html: { Data: html, Charset: 'UTF-8' },
-        Text: {
-          Data: `${subject}\n\nDrinks served: ${totalDrinks}\nDrinks/hr avg: ${drinksPerHour.toFixed(1)}\nTheft alerts: ${theftJobs.length}\n\nView full report: ${PORTAL_URL}`,
-          Charset: 'UTF-8',
-        },
+        Text: { Data: `${subject}\n\nDrinks: ${totalDrinks} | Per hour: ${drinksPerHour.toFixed(1)} | Theft alerts: ${theftJobs.length}\n\n${PORTAL_URL}`, Charset: 'UTF-8' },
       },
     },
   }));
 
-  // Update lastSentAt (skip for test sends)
+  const sentAt = new Date().toISOString();
+
+  // Update lastSentAt + write send log (skip for test)
   if (!isTest) {
-    const updated = { ...venue.emailConfig, lastSentAt: new Date().toISOString() };
+    const updated = { ...venue.emailConfig, lastSentAt: sentAt };
     await ddb.send(new UpdateItemCommand({
       TableName: VENUES_TABLE,
       Key: { venueId: { S: venueId } },
       UpdateExpression: 'SET emailConfigJson = :c',
       ExpressionAttributeValues: { ':c': { S: JSON.stringify(updated) } },
     }));
+    await _appendEmailLog({
+      venueId,
+      venueName: venue.venueName,
+      type: periodDays === 1 ? 'Daily' : periodDays === 7 ? 'Weekly' : `${periodDays}d`,
+      recipients: venue.emailConfig.recipients,
+      subject,
+      sentAt,
+      totalDrinks,
+      theftAlerts: theftJobs.length,
+      status: 'sent',
+    });
   }
 
   return { sent: venue.emailConfig.recipients.length, subject, totalDrinks, theftAlerts: theftJobs.length };
+}
+
+async function getEmailLog(venueId) {
+  try {
+    const r = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: EMAIL_LOG_KEY } } }));
+    const entries = r.Item?.logJson?.S ? JSON.parse(r.Item.logJson.S) : [];
+    const filtered = venueId ? entries.filter(e => e.venueId === venueId) : entries;
+    return ok({ entries: filtered.slice(0, 100) });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function getEmailTemplate() {
+  try {
+    const s = await _readEmailSettings();
+    return ok({ templates: s.templates ?? { daily: {}, weekly: {} } });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function saveEmailTemplate(body) {
+  const { type, template } = body;
+  if (!type || !template || typeof template !== 'object') return err(400, 'type and template required');
+  if (!['daily', 'weekly'].includes(type)) return err(400, 'type must be daily or weekly');
+  try {
+    const existing = await _readEmailSettings();
+    const templates = existing.templates ?? { daily: {}, weekly: {} };
+    templates[type] = template;
+    await ddb.send(new PutItemCommand({
+      TableName: VENUES_TABLE,
+      Item: {
+        venueId:      { S: EMAIL_SETTINGS_KEY },
+        settingsJson: { S: JSON.stringify({ ...existing, templates }) },
+        updatedAt:    { S: new Date().toISOString() },
+      },
+    }));
+    return ok({ ok: true });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function previewEmail(body) {
+  const { venueId, periodDays = 7 } = body;
+  if (!venueId) return err(400, 'venueId required');
+  try {
+    const venueRes = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: venueId } } }));
+    const venue = venueRes.Item ? venueFromItem(venueRes.Item) : { venueName: venueId };
+
+    const { totalDrinks, drinksPerHour, theftJobs, stationBreakdown } = await _buildReportData(venueId, periodDays);
+    const emailSettings = await _readEmailSettings();
+    const templateKey   = periodDays === 1 ? 'daily' : 'weekly';
+    const template      = emailSettings.templates?.[templateKey] ?? {};
+
+    const periodLabel = periodDays === 1 ? 'Daily Report — Yesterday' : 'Weekly Report — Last 7 Days';
+    const html = buildReportHtml({
+      venueName: venue.venueName, periodLabel, totalDrinks, drinksPerHour,
+      theftCount: theftJobs.length, theftItems: theftJobs.slice(0, 5),
+      stationBreakdown, isTest: true, template,
+    });
+    return ok({ html });
+  } catch (e) {
+    return err(500, e.message);
+  }
 }
 
 async function sendReportNow(body) {
@@ -1233,17 +1340,29 @@ async function getEmailGlobalSettings() {
     senderVerified = senderStatus === 'Success';
   } catch { /* SES check failed — IAM may not have ses:GetIdentityVerificationAttributes yet */ }
 
-  // Check EventBridge rule status
+  // Check EventBridge rule status + parse schedule details
   let scheduleEnabled    = false;
   let scheduleExpression = EMAIL_SCHEDULE_EXPR;
+  let scheduleHourET     = 6;
+  let scheduleDayOfWeek  = null; // null = daily, 0-6 = day of week (0=Sun)
   try {
     const rulesRes = await eventsClient.send(new ListRulesCommand({ NamePrefix: EMAIL_SCHEDULE_RULE }));
     const rule     = (rulesRes.Rules ?? []).find(r => r.Name === EMAIL_SCHEDULE_RULE);
     scheduleEnabled    = rule?.State === 'ENABLED';
-    if (rule?.ScheduleExpression) scheduleExpression = rule.ScheduleExpression;
+    if (rule?.ScheduleExpression) {
+      scheduleExpression = rule.ScheduleExpression;
+      // Parse cron(MIN HOUR DOM MONTH DOW YEAR)
+      const m = scheduleExpression.match(/cron\((\d+)\s+(\d+)\s+(\S+)\s+\S+\s+(\S+)/);
+      if (m) {
+        const utcHour = parseInt(m[2]);
+        scheduleHourET    = (utcHour + 19) % 24; // UTC→ET (UTC-5)
+        const dowStr      = m[4];
+        scheduleDayOfWeek = dowStr === '?' ? null : parseInt(dowStr) - 1; // EB 1=Sun→0, 2=Mon→1
+      }
+    }
   } catch { /* EventBridge check failed — IAM may not have events:ListRules yet */ }
 
-  return ok({ fromEmail, senderVerified, senderStatus, scheduleEnabled, scheduleExpression });
+  return ok({ fromEmail, senderVerified, senderStatus, scheduleEnabled, scheduleExpression, scheduleHourET, scheduleDayOfWeek });
 }
 
 async function saveEmailGlobalSettings(body) {
@@ -1292,8 +1411,18 @@ async function checkSenderStatus(email) {
   }
 }
 
+function buildCronExpr(hourET, dayOfWeek) {
+  const utcHour = (hourET + 5) % 24;
+  if (dayOfWeek !== null && dayOfWeek !== undefined) {
+    const ebDay = dayOfWeek + 1; // JS 0=Sun→EB 1=SUN, JS 1=Mon→EB 2=MON
+    return `cron(0 ${utcHour} ? * ${ebDay} *)`;
+  }
+  return `cron(0 ${utcHour} * * ? *)`;
+}
+
 async function enableAutoSchedule(body) {
-  const { scheduleExpression = EMAIL_SCHEDULE_EXPR } = body;
+  const { hourET = 6, dayOfWeek = null } = body;
+  const scheduleExpression = buildCronExpr(hourET, dayOfWeek);
   if (!_lambdaArn) return err(500, 'Lambda ARN unavailable — try again');
   try {
     await eventsClient.send(new PutRuleCommand({
@@ -1380,6 +1509,10 @@ export const handler = async (event, context) => {
     if (method === 'POST'  && rawPath === '/admin/email/schedule/disable')  return disableAutoSchedule();
     if (method === 'POST'  && rawPath === '/admin/email/send-now')          return sendReportNow(body);
     if (method === 'POST'  && rawPath === '/admin/email/send-test')         return sendTestReport(body);
+    if (method === 'GET'   && rawPath === '/admin/email/log')               return getEmailLog(qs.venueId);
+    if (method === 'GET'   && rawPath === '/admin/email/template')          return getEmailTemplate();
+    if (method === 'POST'  && rawPath === '/admin/email/template')          return saveEmailTemplate(body);
+    if (method === 'POST'  && rawPath === '/admin/email/preview')           return previewEmail(body);
 
     // Users
     if (method === 'GET'   && rawPath === '/admin/users')              return listUsers();

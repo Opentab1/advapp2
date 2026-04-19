@@ -742,6 +742,8 @@ class AdminService {
     senderStatus: string;
     scheduleEnabled: boolean;
     scheduleExpression: string;
+    scheduleHourET: number;
+    scheduleDayOfWeek: number | null;
   }> {
     return adminFetch('/admin/email/settings');
   }
@@ -765,15 +767,44 @@ class AdminService {
     return adminFetch(`/admin/email/sender-status?email=${encodeURIComponent(email)}`);
   }
 
-  async enableAutoSchedule(scheduleExpression?: string): Promise<void> {
+  async enableAutoSchedule(hourET: number, dayOfWeek: number | null): Promise<void> {
     await adminFetch('/admin/email/schedule/enable', {
       method: 'POST',
-      body: JSON.stringify({ scheduleExpression }),
+      body: JSON.stringify({ hourET, dayOfWeek }),
     });
   }
 
   async disableAutoSchedule(): Promise<void> {
     await adminFetch('/admin/email/schedule/disable', { method: 'POST' });
+  }
+
+  async getEmailLog(venueId?: string): Promise<Array<{
+    venueId: string; venueName: string; type: string; recipients: string[];
+    subject: string; sentAt: string; totalDrinks: number; theftAlerts: number; status: string;
+  }>> {
+    const q = venueId ? `?venueId=${encodeURIComponent(venueId)}` : '';
+    const data = await adminFetch(`/admin/email/log${q}`);
+    return data.entries ?? [];
+  }
+
+  async getEmailTemplate(): Promise<{ daily: Record<string, any>; weekly: Record<string, any> }> {
+    const data = await adminFetch('/admin/email/template');
+    return data.templates ?? { daily: {}, weekly: {} };
+  }
+
+  async saveEmailTemplate(type: 'daily' | 'weekly', template: Record<string, any>): Promise<void> {
+    await adminFetch('/admin/email/template', {
+      method: 'POST',
+      body: JSON.stringify({ type, template }),
+    });
+  }
+
+  async previewEmail(venueId: string, periodDays: number): Promise<string> {
+    const data = await adminFetch('/admin/email/preview', {
+      method: 'POST',
+      body: JSON.stringify({ venueId, periodDays }),
+    });
+    return data.html ?? '';
   }
 
   // ============ SYSTEM ANALYTICS ============
