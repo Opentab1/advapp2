@@ -158,6 +158,19 @@ async function createVenue(body) {
     return err(400, 'Missing: venueName, venueId, ownerEmail, ownerName, tempPassword');
   if (!USER_POOL_ID) return err(500, 'USER_POOL_ID env var not set');
 
+  // Prevent duplicate venue names — scan existing venues for a name collision
+  {
+    const existing = await ddb.send(new ScanCommand({
+      TableName: VENUES_TABLE,
+      FilterExpression: 'venueName = :n',
+      ExpressionAttributeValues: { ':n': { S: venueName } },
+    }));
+    if ((existing.Items ?? []).length > 0) {
+      const dup = existing.Items[0];
+      return err(409, `A venue named "${venueName}" already exists (id: ${dup.venueId?.S}). Use a unique name or edit the existing venue.`);
+    }
+  }
+
   await cognito.send(new AdminCreateUserCommand({
     UserPoolId: USER_POOL_ID,
     Username: ownerEmail,

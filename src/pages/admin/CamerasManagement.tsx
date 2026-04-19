@@ -1012,13 +1012,19 @@ export function CamerasManagement() {
   const [venues, setVenues] = useState<{ venueId: string; venueName: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [dupWarningDismissed, setDupWarningDismissed] = useState(false);
 
   const loadVenues = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const list = await adminService.listVenues();
-      setVenues(list.map(v => ({ venueId: v.venueId, venueName: v.venueName })));
+      // Deduplicate by venueId (primary key) — shows each venue exactly once
+      const seen = new Set<string>();
+      const deduped = list
+        .map(v => ({ venueId: v.venueId, venueName: v.venueName }))
+        .filter(v => { if (seen.has(v.venueId)) return false; seen.add(v.venueId); return true; });
+      setVenues(deduped);
     } catch (e: any) {
       setError(e.message ?? 'Failed to load venues');
     } finally {
@@ -1027,6 +1033,13 @@ export function CamerasManagement() {
   }, []);
 
   useEffect(() => { loadVenues(); }, [loadVenues]);
+
+  // Detect venues with duplicate display names (different venueId, same venueName)
+  const dupNames = (() => {
+    const nameCount: Record<string, string[]> = {};
+    venues.forEach(v => { (nameCount[v.venueName] ??= []).push(v.venueId); });
+    return Object.entries(nameCount).filter(([, ids]) => ids.length > 1);
+  })();
 
   return (
     <div className="min-h-screen p-4 md:p-6 lg:p-8">
@@ -1048,6 +1061,23 @@ export function CamerasManagement() {
           If cameras go offline, check the NVR IP and port — the router may have changed the port forwarding rule.
           Use <strong>Change IP / Port</strong> to update all cameras at once.
         </div>
+
+        {/* Duplicate venue name warning */}
+        {dupNames.length > 0 && !dupWarningDismissed && (
+          <div className="p-4 bg-yellow-500/10 border border-yellow-500/40 rounded-lg mb-6 text-sm text-yellow-300 flex gap-3">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-semibold mb-1">Duplicate venue names detected</p>
+              {dupNames.map(([name, ids]) => (
+                <p key={name} className="text-yellow-400/80">
+                  <strong>"{name}"</strong> exists {ids.length}× with IDs: {ids.join(', ')} —
+                  delete the ghost entry in the Venues tab (keep the one with more cameras).
+                </p>
+              ))}
+            </div>
+            <button onClick={() => setDupWarningDismissed(true)} className="text-yellow-500 hover:text-yellow-300 text-xs mt-0.5 flex-shrink-0">Dismiss</button>
+          </div>
+        )}
 
         {error && (
           <div className="glass-card p-5 mb-6 border-red-500/30 flex items-center gap-3 text-red-400">

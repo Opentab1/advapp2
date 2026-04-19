@@ -89,13 +89,52 @@ def _mask_url(url: str) -> str:
     return url
 
 POLL_INTERVAL     = 2
-MAX_PARALLEL      = int(os.environ.get("VENUESCOPE_WORKERS", "4"))
+# MAX_PARALLEL is set dynamically in main() — see _compute_max_parallel().
+# Override with VENUESCOPE_WORKERS env var; otherwise auto-scales to camera count.
+MAX_PARALLEL      = int(os.environ.get("VENUESCOPE_WORKERS", "0")) or 4
 # Per-venue job cap: default = MAX_PARALLEL so a single-venue deployment
 # uses all available slots. Multi-venue deployments can lower this via env.
 _MAX_PER_VENUE_ENV = os.environ.get("VENUESCOPE_MAX_PER_VENUE", "")
 STALE_JOB_SECONDS = 7200   # 2 hours
 
+# Per-NVR concurrent RTSP stream limit.
+# Cortex IQ and most consumer NVRs handle 16–32 simultaneous RTSP readers.
+# Set lower if your NVR drops connections when too many clients are open.
+MAX_STREAMS_PER_NVR = int(os.environ.get("VENUESCOPE_MAX_STREAMS_PER_NVR", "16"))
+
 _shutdown_requested = False
+
+
+def _nvr_key_from_url(url: str) -> str:
+    """Extract 'ip:port' from an RTSP/HTTP stream URL for NVR identity tracking."""
+    import re
+    m = re.search(r'(?:rtsp://[^@]*@|http://|https://)([\d\.]+):(\d+)', url or "")
+    return f"{m.group(1)}:{m.group(2)}" if m else "unknown"
+
+
+def _compute_max_parallel() -> int:
+    """
+    Auto-compute the worker process cap from the number of enabled cameras.
+    Every enabled camera needs exactly one concurrent worker process to run
+    continuously. If VENUESCOPE_WORKERS is set explicitly, honour it.
+    Falls back to 4 if DynamoDB is unreachable at startup.
+    """
+    explicit = int(os.environ.get("VENUESCOPE_WORKERS", "0"))
+    if explicit > 0:
+        log.info(f"[worker] MAX_PARALLEL={explicit} (from VENUESCOPE_WORKERS env)")
+        return explicit
+    try:
+        from core.ddb_cameras import list_cameras_ddb
+        all_cams = list_cameras_ddb()
+        n = sum(1 for c in all_cams if c.get("enabled", True))
+        # Minimum 4 slots (for file uploads / manual jobs), maximum 64
+        result = max(4, min(n, 64))
+        log.info(f"[worker] AUTO MAX_PARALLEL={result} "
+                 f"({n} enabled cameras across all venues)")
+        return result
+    except Exception as e:
+        log.warning(f"[worker] auto MAX_PARALLEL failed ({e}) — defaulting to 4")
+        return 4
 
 
 def _reap_stale_jobs():
@@ -628,8 +667,10 @@ def _camera_loop_proc_entry():
 
 
 def main():
+    global MAX_PARALLEL, MAX_JOBS_PER_VENUE
+    MAX_PARALLEL = _compute_max_parallel()
     log.info(f"VenueScope v6 worker started — polling every {POLL_INTERVAL}s, "
-             f"MAX_PARALLEL={MAX_PARALLEL}")
+             f"MAX_PARALLEL={MAX_PARALLEL}, MAX_STREAMS_PER_NVR={MAX_STREAMS_PER_NVR}")
 
     # Startup config validation — warn loudly for missing optional env vars
     # so operators see them in journalctl rather than discovering them silently.
@@ -700,6 +741,7 @@ def main():
     _active_continuous: set = set()          # job_ids that are continuous (no timeout)
     _active_venue: Dict[str, str] = {}       # job_id → venue_id (for fair scheduling)
     _active_camera: Dict[str, str] = {}      # job_id → camera_id (dedup: one job per camera)
+    _active_nvr: Dict[str, str] = {}         # job_id → "ip:port" (per-NVR stream limit)
     JOB_TIMEOUT = 600  # 10 minutes max per job — kills stuck YOLO/RTSP jobs
     # Max concurrent jobs per venue. Single-venue deployments should set this
     # equal to MAX_PARALLEL so all slots are available. Multi-venue deployments
@@ -708,6 +750,7 @@ def main():
     # Multi-venue deployments: use VENUESCOPE_MAX_PER_VENUE to cap per-venue usage.
     MAX_JOBS_PER_VENUE = (int(_MAX_PER_VENUE_ENV) if _MAX_PER_VENUE_ENV
                           else MAX_PARALLEL)
+    MAX_PARALLEL = MAX_PARALLEL  # re-bind local after global assignment above
 
     # Start camera loop manager in its OWN process (not as threads in this
     # process). This prevents background threads from holding SQLite mutexes
@@ -839,6 +882,7 @@ def main():
                     _active_continuous.discard(job_id)
                     _active_venue.pop(job_id, None)
                     _active_camera.pop(job_id, None)
+                    _active_nvr.pop(job_id, None)
                     try:
                         from core.database import _raw_update
                         _raw_update(job_id, status="failed", error_message="Job timeout — exceeded 10 minutes")
@@ -852,6 +896,7 @@ def main():
                     _active_continuous.discard(job_id)
                     _active_venue.pop(job_id, None)
                     _active_camera.pop(job_id, None)
+                    _active_nvr.pop(job_id, None)
                     log.info(f"Reaped process for job {job_id}")
 
             # Drain offline AWS sync queue (every 5 minutes)
@@ -929,6 +974,11 @@ def main():
                     _pvid = _pec.get("venue_id", "_default") or "_default"
                     _venue_pending.setdefault(_pvid, []).append((_pjob, _pec))
 
+                # Build per-NVR active stream count for capacity enforcement
+                _nvr_active_count: Dict[str, int] = {}
+                for _nvr_val in _active_nvr.values():
+                    _nvr_active_count[_nvr_val] = _nvr_active_count.get(_nvr_val, 0) + 1
+
                 # Round-robin: take one job per venue per pass until slots filled
                 _venues_rr = list(_venue_pending.keys())
                 _rr_idx    = 0
@@ -951,6 +1001,13 @@ def main():
                         except Exception:
                             pass
                         continue
+                    # Per-NVR stream cap: don't open more RTSP connections than the NVR supports
+                    _pjob_nvr = _nvr_key_from_url(_pjob.get("source_path", ""))
+                    if (_pjob.get("source_type") == "rtsp"
+                            and _nvr_active_count.get(_pjob_nvr, 0) >= MAX_STREAMS_PER_NVR):
+                        log.debug(f"NVR {_pjob_nvr} at capacity "
+                                  f"({MAX_STREAMS_PER_NVR}) — deferring job {job_id}")
+                        continue
                     p = multiprocessing.Process(
                         target=run_job, args=(job_id,), daemon=True
                     )
@@ -960,6 +1017,9 @@ def main():
                     _active_venue[job_id] = _vid
                     if _cam_id:
                         _active_camera[job_id] = _cam_id
+                    if _pjob.get("source_type") == "rtsp":
+                        _active_nvr[job_id] = _pjob_nvr
+                        _nvr_active_count[_pjob_nvr] = _nvr_active_count.get(_pjob_nvr, 0) + 1
                     _venue_active_count[_vid] = _venue_active_count.get(_vid, 0) + 1
                     # Mark continuous jobs so timeout reaper skips them
                     try:
@@ -967,7 +1027,7 @@ def main():
                             _active_continuous.add(job_id)
                     except Exception:
                         pass
-                    log.info(f"Launched job {job_id} venue={_vid} (pid={p.pid})")
+                    log.info(f"Launched job {job_id} venue={_vid} nvr={_pjob_nvr} (pid={p.pid})")
                     launched += 1
 
                 if launched == 0:
