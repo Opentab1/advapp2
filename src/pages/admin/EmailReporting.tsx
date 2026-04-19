@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   Mail, Send, Clock, Users, CheckCircle, XCircle, RefreshCw,
-  Plus, Trash2, ChevronDown, Calendar, AlertCircle, Zap
+  Plus, Trash2, ChevronDown, Calendar, AlertCircle, Zap,
+  Settings, Shield, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import adminService, { EmailConfig } from '../../services/admin.service';
 
@@ -13,6 +14,14 @@ interface VenueWithEmail {
   emailConfig?: EmailConfig;
 }
 
+interface GlobalEmailSettings {
+  fromEmail: string;
+  senderVerified: boolean;
+  senderStatus: string;
+  scheduleEnabled: boolean;
+  scheduleExpression: string;
+}
+
 export function EmailReporting() {
   const [venues, setVenues] = useState<VenueWithEmail[]>([]);
   const [loading, setLoading] = useState(true);
@@ -20,6 +29,92 @@ export function EmailReporting() {
   const [sendingNow, setSendingNow] = useState<string | null>(null);
   const [expandedVenue, setExpandedVenue] = useState<string | null>(null);
   const [newEmail, setNewEmail] = useState<{ [venueId: string]: string }>({});
+
+  // Global settings state
+  const [globalSettings, setGlobalSettings] = useState<GlobalEmailSettings | null>(null);
+  const [globalLoading, setGlobalLoading] = useState(true);
+  const [fromEmailInput, setFromEmailInput] = useState('');
+  const [savingGlobal, setSavingGlobal] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [togglingSchedule, setTogglingSchedule] = useState(false);
+  const [globalMsg, setGlobalMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const loadGlobalSettings = useCallback(async () => {
+    setGlobalLoading(true);
+    try {
+      const s = await adminService.getEmailGlobalSettings();
+      setGlobalSettings(s);
+      setFromEmailInput(s.fromEmail);
+    } catch (e) {
+      console.error('Failed to load email settings:', e);
+    } finally {
+      setGlobalLoading(false);
+    }
+  }, []);
+
+  const showMsg = (ok: boolean, text: string) => {
+    setGlobalMsg({ ok, text });
+    setTimeout(() => setGlobalMsg(null), 4000);
+  };
+
+  const handleSaveFromEmail = async () => {
+    if (!fromEmailInput.includes('@')) return;
+    setSavingGlobal(true);
+    try {
+      await adminService.saveEmailGlobalSettings(fromEmailInput);
+      await loadGlobalSettings();
+      showMsg(true, 'From email saved.');
+    } catch (e: any) {
+      showMsg(false, e.message);
+    } finally {
+      setSavingGlobal(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    if (!fromEmailInput.includes('@')) return;
+    setVerifying(true);
+    try {
+      const msg = await adminService.verifySenderEmail(fromEmailInput);
+      showMsg(true, msg);
+    } catch (e: any) {
+      showMsg(false, e.message);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleCheckStatus = async () => {
+    if (!globalSettings?.fromEmail) return;
+    setGlobalLoading(true);
+    try {
+      const res = await adminService.checkSenderStatus(globalSettings.fromEmail);
+      setGlobalSettings(prev => prev ? { ...prev, senderVerified: res.verified, senderStatus: res.status } : prev);
+    } catch (e: any) {
+      showMsg(false, e.message);
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
+  const handleToggleSchedule = async () => {
+    if (!globalSettings) return;
+    setTogglingSchedule(true);
+    try {
+      if (globalSettings.scheduleEnabled) {
+        await adminService.disableAutoSchedule();
+        showMsg(true, 'Auto-schedule disabled.');
+      } else {
+        await adminService.enableAutoSchedule();
+        showMsg(true, 'Auto-schedule enabled — reports will send daily at 6 AM ET.');
+      }
+      await loadGlobalSettings();
+    } catch (e: any) {
+      showMsg(false, `Failed: ${e.message}. Make sure Lambda IAM role has events:PutRule and lambda:AddPermission.`);
+    } finally {
+      setTogglingSchedule(false);
+    }
+  };
 
   const loadVenues = useCallback(async () => {
     setLoading(true);
@@ -45,7 +140,8 @@ export function EmailReporting() {
 
   useEffect(() => {
     loadVenues();
-  }, [loadVenues]);
+    loadGlobalSettings();
+  }, [loadVenues, loadGlobalSettings]);
 
   const handleToggleEnabled = async (venueId: string) => {
     const venue = venues.find(v => v.venueId === venueId);
@@ -186,15 +282,97 @@ export function EmailReporting() {
           </div>
         </div>
 
-        {/* Info Banner */}
-        <div className="glass-card p-4 mb-6 border-l-4 border-primary">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
+        {/* Global Email System Settings */}
+        <div className="glass-card p-5 mb-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Settings className="w-5 h-5 text-amber-400" />
+            <h2 className="font-semibold text-white">Email System Settings</h2>
+          </div>
+
+          {globalMsg && (
+            <div className={`mb-4 px-4 py-2.5 rounded-lg text-sm flex items-center gap-2 ${
+              globalMsg.ok ? 'bg-green-500/10 border border-green-500/30 text-green-400' : 'bg-red-500/10 border border-red-500/30 text-red-400'
+            }`}>
+              {globalMsg.ok ? <CheckCircle className="w-4 h-4 flex-shrink-0" /> : <XCircle className="w-4 h-4 flex-shrink-0" />}
+              {globalMsg.text}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* FROM Email */}
             <div>
-              <h3 className="font-medium text-white">How Email Reports Work</h3>
-              <p className="text-sm text-warm-400 mt-1">
-                Reports are sent automatically based on each venue's schedule. All data in emails
-                is 100% based on real sensor data — no fabricated metrics.
+              <label className="block text-xs font-semibold text-warm-400 uppercase tracking-wider mb-2">
+                <Shield className="w-3.5 h-3.5 inline mr-1.5" />
+                Send Reports From
+              </label>
+              <div className="flex gap-2 mb-2">
+                <input
+                  type="email"
+                  value={fromEmailInput}
+                  onChange={e => setFromEmailInput(e.target.value)}
+                  placeholder="reports@yourdomain.com"
+                  className="flex-1 bg-warm-700 rounded-lg px-3 py-2 text-sm text-white placeholder-warm-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                <button
+                  onClick={handleSaveFromEmail}
+                  disabled={savingGlobal || !fromEmailInput.includes('@')}
+                  className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm hover:bg-amber-500/20 transition-colors disabled:opacity-40"
+                >
+                  {savingGlobal ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Save'}
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                {globalLoading ? (
+                  <span className="text-xs text-warm-500 flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" /> Checking…</span>
+                ) : globalSettings?.senderVerified ? (
+                  <span className="text-xs text-green-400 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Verified in SES</span>
+                ) : (
+                  <span className="text-xs text-amber-400 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {globalSettings?.senderStatus === 'Pending' ? 'Verification pending — check inbox' : 'Not verified'}</span>
+                )}
+                <button onClick={handleCheckStatus} disabled={globalLoading} className="text-xs text-warm-500 hover:text-warm-300 underline">refresh</button>
+                {!globalSettings?.senderVerified && (
+                  <button
+                    onClick={handleVerify}
+                    disabled={verifying || !fromEmailInput.includes('@')}
+                    className="ml-auto px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-xs text-warm-300 hover:bg-white/10 transition-colors disabled:opacity-40"
+                  >
+                    {verifying ? 'Sending…' : 'Send Verification Email →'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Auto-Schedule */}
+            <div>
+              <label className="block text-xs font-semibold text-warm-400 uppercase tracking-wider mb-2">
+                <Calendar className="w-3.5 h-3.5 inline mr-1.5" />
+                Auto-Schedule
+              </label>
+              <button
+                onClick={handleToggleSchedule}
+                disabled={togglingSchedule}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border transition-all ${
+                  globalSettings?.scheduleEnabled
+                    ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                    : 'bg-white/5 border-white/10 text-warm-400'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {togglingSchedule
+                    ? <RefreshCw className="w-4 h-4 animate-spin" />
+                    : globalSettings?.scheduleEnabled
+                      ? <ToggleRight className="w-5 h-5" />
+                      : <ToggleLeft className="w-5 h-5" />}
+                  <span className="text-sm font-medium">
+                    {globalSettings?.scheduleEnabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </div>
+                <span className="text-xs opacity-70">
+                  {globalSettings?.scheduleEnabled ? 'Sends daily at 6 AM ET' : 'Click to enable'}
+                </span>
+              </button>
+              <p className="text-xs text-warm-500 mt-2">
+                When enabled, daily reports send every morning. Weekly/monthly based on per-venue frequency setting.
               </p>
             </div>
           </div>

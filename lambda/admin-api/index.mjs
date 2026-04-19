@@ -53,7 +53,9 @@ import {
   DeleteItemCommand,
   GetItemCommand,
 } from '@aws-sdk/client-dynamodb';
-import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { SESClient, SendEmailCommand, VerifyEmailIdentityCommand, GetIdentityVerificationAttributesCommand } from '@aws-sdk/client-ses';
+import { EventBridgeClient, PutRuleCommand, PutTargetsCommand, DeleteRuleCommand, RemoveTargetsCommand, ListRulesCommand } from '@aws-sdk/client-eventbridge';
+import { LambdaClient, AddPermissionCommand, RemovePermissionCommand } from '@aws-sdk/client-lambda';
 import { createHmac, timingSafeEqual } from 'crypto';
 
 const REGION       = process.env.REGION || 'us-east-2';
@@ -68,11 +70,20 @@ const STRIPE_PRICE  = process.env.STRIPE_PRICE_ID   ?? '';
 const STRIPE_WH_SEC = process.env.STRIPE_WEBHOOK_SECRET ?? '';
 const TRIAL_DAYS    = 14;
 
-const cognito    = new CognitoIdentityProviderClient({ region: REGION });
-const ddb        = new DynamoDBClient({ region: REGION });
-const ses        = new SESClient({ region: REGION });
-const FROM_EMAIL = process.env.SES_FROM_EMAIL || 'reports@advizia.online';
-const PORTAL_URL = process.env.PORTAL_URL     || 'https://advizia.online/admin';
+const cognito      = new CognitoIdentityProviderClient({ region: REGION });
+const ddb          = new DynamoDBClient({ region: REGION });
+const ses          = new SESClient({ region: REGION });
+const eventsClient = new EventBridgeClient({ region: REGION });
+const lambdaClient = new LambdaClient({ region: REGION });
+const FROM_EMAIL   = process.env.SES_FROM_EMAIL || 'reports@advizia.online';
+const PORTAL_URL   = process.env.PORTAL_URL     || 'https://advizia.online/admin';
+
+const EMAIL_SETTINGS_KEY   = '_email_settings_';
+const EMAIL_SCHEDULE_RULE  = 'VenueScopeEmailReports';
+const EMAIL_SCHEDULE_EXPR  = 'cron(0 11 * * ? *)';  // 6 AM ET daily
+
+// Set at handler invocation — used for EventBridge → Lambda permission grant
+let _lambdaArn = '';
 
 const cors = {
   'Content-Type': 'application/json',
@@ -1107,8 +1118,16 @@ async function _sendReport(venueId, periodDays, isTest = false) {
       ? `VenueScope Daily Report — ${venue.venueName}`
       : `VenueScope Weekly Report — ${venue.venueName}`;
 
+  // Read FROM email from DDB settings (falls back to env var)
+  let fromEmail = FROM_EMAIL;
+  try {
+    const settingsRes = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: EMAIL_SETTINGS_KEY } } }));
+    const raw = settingsRes.Item?.settingsJson?.S;
+    if (raw) { const st = JSON.parse(raw); if (st.fromEmail) fromEmail = st.fromEmail; }
+  } catch { /* use default */ }
+
   await ses.send(new SendEmailCommand({
-    Source: FROM_EMAIL,
+    Source: fromEmail,
     Destination: { ToAddresses: venue.emailConfig.recipients },
     Message: {
       Subject: { Data: subject, Charset: 'UTF-8' },
@@ -1192,9 +1211,143 @@ async function runScheduledReports() {
   return { statusCode: 200, body: JSON.stringify({ sent, errors }) };
 }
 
+// ─── Email Global Settings + SES + EventBridge ────────────────────────────────
+
+async function getEmailGlobalSettings() {
+  // Read stored settings
+  let settings = {};
+  try {
+    const r = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: EMAIL_SETTINGS_KEY } } }));
+    if (r.Item?.settingsJson?.S) settings = JSON.parse(r.Item.settingsJson.S);
+  } catch { /* use defaults */ }
+
+  const fromEmail = settings.fromEmail || FROM_EMAIL;
+
+  // Check SES verification status
+  let senderVerified = false;
+  let senderStatus   = 'NotStarted';
+  try {
+    const sesRes = await ses.send(new GetIdentityVerificationAttributesCommand({ Identities: [fromEmail] }));
+    const attr   = sesRes.VerificationAttributes?.[fromEmail];
+    senderStatus   = attr?.VerificationStatus ?? 'NotStarted';
+    senderVerified = senderStatus === 'Success';
+  } catch { /* SES check failed — IAM may not have ses:GetIdentityVerificationAttributes yet */ }
+
+  // Check EventBridge rule status
+  let scheduleEnabled    = false;
+  let scheduleExpression = EMAIL_SCHEDULE_EXPR;
+  try {
+    const rulesRes = await eventsClient.send(new ListRulesCommand({ NamePrefix: EMAIL_SCHEDULE_RULE }));
+    const rule     = (rulesRes.Rules ?? []).find(r => r.Name === EMAIL_SCHEDULE_RULE);
+    scheduleEnabled    = rule?.State === 'ENABLED';
+    if (rule?.ScheduleExpression) scheduleExpression = rule.ScheduleExpression;
+  } catch { /* EventBridge check failed — IAM may not have events:ListRules yet */ }
+
+  return ok({ fromEmail, senderVerified, senderStatus, scheduleEnabled, scheduleExpression });
+}
+
+async function saveEmailGlobalSettings(body) {
+  const { fromEmail } = body;
+  if (!fromEmail || !fromEmail.includes('@')) return err(400, 'valid fromEmail required');
+  try {
+    let existing = {};
+    try {
+      const r = await ddb.send(new GetItemCommand({ TableName: VENUES_TABLE, Key: { venueId: { S: EMAIL_SETTINGS_KEY } } }));
+      if (r.Item?.settingsJson?.S) existing = JSON.parse(r.Item.settingsJson.S);
+    } catch { /* ignore */ }
+    await ddb.send(new PutItemCommand({
+      TableName: VENUES_TABLE,
+      Item: {
+        venueId:      { S: EMAIL_SETTINGS_KEY },
+        settingsJson: { S: JSON.stringify({ ...existing, fromEmail }) },
+        updatedAt:    { S: new Date().toISOString() },
+      },
+    }));
+    return ok({ ok: true });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function verifySenderEmail(body) {
+  const { email } = body;
+  if (!email || !email.includes('@')) return err(400, 'valid email required');
+  try {
+    await ses.send(new VerifyEmailIdentityCommand({ EmailAddress: email }));
+    return ok({ ok: true, message: `Verification email sent to ${email} — click the link in your inbox to complete.` });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function checkSenderStatus(email) {
+  if (!email) return err(400, 'email query param required');
+  try {
+    const res  = await ses.send(new GetIdentityVerificationAttributesCommand({ Identities: [email] }));
+    const attr = res.VerificationAttributes?.[email];
+    const status   = attr?.VerificationStatus ?? 'NotStarted';
+    return ok({ email, status, verified: status === 'Success' });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function enableAutoSchedule(body) {
+  const { scheduleExpression = EMAIL_SCHEDULE_EXPR } = body;
+  if (!_lambdaArn) return err(500, 'Lambda ARN unavailable — try again');
+  try {
+    await eventsClient.send(new PutRuleCommand({
+      Name:               EMAIL_SCHEDULE_RULE,
+      ScheduleExpression: scheduleExpression,
+      State:              'ENABLED',
+      Description:        'VenueScope automated email reports',
+    }));
+    await eventsClient.send(new PutTargetsCommand({
+      Rule:    EMAIL_SCHEDULE_RULE,
+      Targets: [{ Id: 'VenueScopeLambdaTarget', Arn: _lambdaArn }],
+    }));
+    // Grant EventBridge permission to invoke this Lambda
+    const accountId = _lambdaArn.split(':')[4];
+    const sourceArn = `arn:aws:events:${REGION}:${accountId}:rule/${EMAIL_SCHEDULE_RULE}`;
+    try {
+      await lambdaClient.send(new AddPermissionCommand({
+        FunctionName: _lambdaArn,
+        StatementId:  'VenueScopeEventBridgeEmailReports',
+        Action:       'lambda:InvokeFunction',
+        Principal:    'events.amazonaws.com',
+        SourceArn:    sourceArn,
+      }));
+    } catch (e) {
+      if (!e.message?.includes('already exists')) throw e;
+    }
+    return ok({ ok: true, scheduleExpression });
+  } catch (e) {
+    return err(500, `Schedule failed: ${e.message}`);
+  }
+}
+
+async function disableAutoSchedule() {
+  try {
+    try { await eventsClient.send(new RemoveTargetsCommand({ Rule: EMAIL_SCHEDULE_RULE, Ids: ['VenueScopeLambdaTarget'] })); } catch { /* ok */ }
+    try { await eventsClient.send(new DeleteRuleCommand({ Name: EMAIL_SCHEDULE_RULE })); } catch { /* ok */ }
+    try {
+      await lambdaClient.send(new RemovePermissionCommand({
+        FunctionName: _lambdaArn || process.env.AWS_LAMBDA_FUNCTION_NAME,
+        StatementId:  'VenueScopeEventBridgeEmailReports',
+      }));
+    } catch { /* ok */ }
+    return ok({ ok: true });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
-export const handler = async (event) => {
+export const handler = async (event, context) => {
+  // Capture Lambda ARN for EventBridge permission grants
+  if (context?.invokedFunctionArn) _lambdaArn = context.invokedFunctionArn;
+
   // EventBridge scheduled trigger (daily/weekly auto-send)
   if (event.source === 'aws.events' || event['detail-type'] === 'Scheduled Event') {
     return runScheduledReports();
@@ -1218,9 +1371,15 @@ export const handler = async (event) => {
     const deleteVenueMatch = rawPath.match(/^\/admin\/venues\/([^/]+)$/);
     if (method === 'DELETE' && deleteVenueMatch)                       return deleteVenue(deleteVenueMatch[1]);
 
-    // Email reports
-    if (method === 'POST'  && rawPath === '/admin/email/send-now')     return sendReportNow(body);
-    if (method === 'POST'  && rawPath === '/admin/email/send-test')    return sendTestReport(body);
+    // Email reports + global settings
+    if (method === 'GET'   && rawPath === '/admin/email/settings')          return getEmailGlobalSettings();
+    if (method === 'POST'  && rawPath === '/admin/email/settings')          return saveEmailGlobalSettings(body);
+    if (method === 'POST'  && rawPath === '/admin/email/verify-sender')     return verifySenderEmail(body);
+    if (method === 'GET'   && rawPath === '/admin/email/sender-status')     return checkSenderStatus(qs.email);
+    if (method === 'POST'  && rawPath === '/admin/email/schedule/enable')   return enableAutoSchedule(body);
+    if (method === 'POST'  && rawPath === '/admin/email/schedule/disable')  return disableAutoSchedule();
+    if (method === 'POST'  && rawPath === '/admin/email/send-now')          return sendReportNow(body);
+    if (method === 'POST'  && rawPath === '/admin/email/send-test')         return sendTestReport(body);
 
     // Users
     if (method === 'GET'   && rawPath === '/admin/users')              return listUsers();

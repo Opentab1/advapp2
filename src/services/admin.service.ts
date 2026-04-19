@@ -736,6 +736,46 @@ class AdminService {
     }
   }
 
+  async getEmailGlobalSettings(): Promise<{
+    fromEmail: string;
+    senderVerified: boolean;
+    senderStatus: string;
+    scheduleEnabled: boolean;
+    scheduleExpression: string;
+  }> {
+    return adminFetch('/admin/email/settings');
+  }
+
+  async saveEmailGlobalSettings(fromEmail: string): Promise<void> {
+    await adminFetch('/admin/email/settings', {
+      method: 'POST',
+      body: JSON.stringify({ fromEmail }),
+    });
+  }
+
+  async verifySenderEmail(email: string): Promise<string> {
+    const data = await adminFetch('/admin/email/verify-sender', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+    return data.message;
+  }
+
+  async checkSenderStatus(email: string): Promise<{ status: string; verified: boolean }> {
+    return adminFetch(`/admin/email/sender-status?email=${encodeURIComponent(email)}`);
+  }
+
+  async enableAutoSchedule(scheduleExpression?: string): Promise<void> {
+    await adminFetch('/admin/email/schedule/enable', {
+      method: 'POST',
+      body: JSON.stringify({ scheduleExpression }),
+    });
+  }
+
+  async disableAutoSchedule(): Promise<void> {
+    await adminFetch('/admin/email/schedule/disable', { method: 'POST' });
+  }
+
   // ============ SYSTEM ANALYTICS ============
 
   async getSystemAnalytics(): Promise<{
