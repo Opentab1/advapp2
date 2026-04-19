@@ -2,17 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   Mail, Send, Clock, Users, CheckCircle, XCircle, RefreshCw,
-  Plus, Trash2, Eye, ChevronDown, Calendar, AlertCircle
+  Plus, Trash2, ChevronDown, Calendar, AlertCircle, Zap
 } from 'lucide-react';
-import adminService from '../../services/admin.service';
-
-interface EmailConfig {
-  enabled: boolean;
-  frequency: 'daily' | 'weekly' | 'monthly';
-  recipients: string[];
-  reportType: 'full' | 'summary' | 'alerts';
-  lastSentAt?: string;
-}
+import adminService, { EmailConfig } from '../../services/admin.service';
 
 interface VenueWithEmail {
   venueId: string;
@@ -25,10 +17,9 @@ export function EmailReporting() {
   const [venues, setVenues] = useState<VenueWithEmail[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [sendingNow, setSendingNow] = useState<string | null>(null);
   const [expandedVenue, setExpandedVenue] = useState<string | null>(null);
   const [newEmail, setNewEmail] = useState<{ [venueId: string]: string }>({});
-  // Preview modal state (to be implemented)
-  const [, setPreviewVenue] = useState<string | null>(null);
 
   const loadVenues = useCallback(async () => {
     setLoading(true);
@@ -38,12 +29,12 @@ export function EmailReporting() {
         venueId: v.venueId,
         venueName: v.venueName,
         ownerEmail: v.ownerEmail,
-        emailConfig: v.emailConfig || {
+        emailConfig: v.emailConfig ?? {
           enabled: false,
-          frequency: 'weekly',
+          frequency: 'weekly' as const,
           recipients: v.ownerEmail ? [v.ownerEmail] : [],
-          reportType: 'full'
-        }
+          reportType: 'full' as const,
+        },
       })));
     } catch (error) {
       console.error('Error loading venues:', error);
@@ -128,16 +119,32 @@ export function EmailReporting() {
       alert('Please add at least one recipient first');
       return;
     }
-
     setSaving(venueId);
     try {
       await adminService.sendTestEmail(venueId);
-      alert('Test email sent successfully!');
-    } catch (error) {
-      console.error('Error sending test email:', error);
-      alert('Failed to send test email. Check console for details.');
+      alert('Test email sent! Check your inbox.');
+    } catch (error: any) {
+      alert(`Failed to send test email: ${error.message}\n\nMake sure SES_FROM_EMAIL is verified in AWS SES.`);
     } finally {
       setSaving(null);
+    }
+  };
+
+  const handleSendNow = async (venueId: string, periodDays: number) => {
+    const venue = venues.find(v => v.venueId === venueId);
+    if (!venue?.emailConfig?.recipients.length) {
+      alert('Please add at least one recipient first');
+      return;
+    }
+    setSendingNow(venueId);
+    try {
+      await adminService.sendReportNow(venueId, periodDays);
+      alert(`Report sent to ${venue.emailConfig.recipients.join(', ')}`);
+      loadVenues(); // refresh lastSentAt
+    } catch (error: any) {
+      alert(`Failed to send report: ${error.message}`);
+    } finally {
+      setSendingNow(null);
     }
   };
 
@@ -376,29 +383,46 @@ export function EmailReporting() {
                       </div>
 
                       {/* Actions */}
-                      <div className="md:col-span-2 flex items-center justify-between pt-4 border-t border-warm-700">
-                        <div className="text-xs text-warm-500">
-                          {venue.emailConfig?.lastSentAt ? (
-                            <>Last sent: {new Date(venue.emailConfig.lastSentAt).toLocaleDateString()}</>
-                          ) : (
-                            'No reports sent yet'
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setPreviewVenue(venue.venueId)}
-                            className="btn-secondary flex items-center gap-2 text-sm"
-                          >
-                            <Eye className="w-4 h-4" />
-                            Preview
-                          </button>
+                      <div className="md:col-span-2 pt-4 border-t border-warm-700">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="text-xs text-warm-500">
+                            {venue.emailConfig?.lastSentAt ? (
+                              <>Last sent: {new Date(venue.emailConfig.lastSentAt).toLocaleString()}</>
+                            ) : (
+                              'No reports sent yet'
+                            )}
+                          </div>
                           <button
                             onClick={() => handleSendTestEmail(venue.venueId)}
                             disabled={saving === venue.venueId || !venue.emailConfig?.recipients.length}
-                            className="btn-primary flex items-center gap-2 text-sm"
+                            className="btn-secondary flex items-center gap-2 text-sm"
                           >
-                            <Send className="w-4 h-4" />
+                            {saving === venue.venueId
+                              ? <RefreshCw className="w-4 h-4 animate-spin" />
+                              : <Send className="w-4 h-4" />}
                             Send Test
+                          </button>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleSendNow(venue.venueId, 1)}
+                            disabled={sendingNow === venue.venueId || !venue.emailConfig?.recipients.length}
+                            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm hover:bg-amber-500/20 transition-colors disabled:opacity-40"
+                          >
+                            {sendingNow === venue.venueId
+                              ? <RefreshCw className="w-4 h-4 animate-spin" />
+                              : <Zap className="w-4 h-4" />}
+                            Send Daily Now
+                          </button>
+                          <button
+                            onClick={() => handleSendNow(venue.venueId, 7)}
+                            disabled={sendingNow === venue.venueId || !venue.emailConfig?.recipients.length}
+                            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm hover:bg-amber-500/20 transition-colors disabled:opacity-40"
+                          >
+                            {sendingNow === venue.venueId
+                              ? <RefreshCw className="w-4 h-4 animate-spin" />
+                              : <Calendar className="w-4 h-4" />}
+                            Send Weekly Now
                           </button>
                         </div>
                       </div>

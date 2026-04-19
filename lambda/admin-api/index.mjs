@@ -53,6 +53,7 @@ import {
   DeleteItemCommand,
   GetItemCommand,
 } from '@aws-sdk/client-dynamodb';
+import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { createHmac, timingSafeEqual } from 'crypto';
 
 const REGION       = process.env.REGION || 'us-east-2';
@@ -67,8 +68,11 @@ const STRIPE_PRICE  = process.env.STRIPE_PRICE_ID   ?? '';
 const STRIPE_WH_SEC = process.env.STRIPE_WEBHOOK_SECRET ?? '';
 const TRIAL_DAYS    = 14;
 
-const cognito = new CognitoIdentityProviderClient({ region: REGION });
-const ddb     = new DynamoDBClient({ region: REGION });
+const cognito    = new CognitoIdentityProviderClient({ region: REGION });
+const ddb        = new DynamoDBClient({ region: REGION });
+const ses        = new SESClient({ region: REGION });
+const FROM_EMAIL = process.env.SES_FROM_EMAIL || 'reports@advizia.online';
+const PORTAL_URL = process.env.PORTAL_URL     || 'https://advizia.online/admin';
 
 const cors = {
   'Content-Type': 'application/json',
@@ -87,6 +91,7 @@ const b = (v) => v?.BOOL ?? false;
 // ─── DynamoDB helpers ──────────────────────────────────────────────────────────
 
 function venueFromItem(item) {
+  const emailConfigRaw = item.emailConfigJson?.S;
   return {
     venueId:      s(item.venueId),
     venueName:    s(item.venueName),
@@ -99,6 +104,7 @@ function venueFromItem(item) {
     plan:         s(item.plan)         || 'standard',
     userCount:    parseInt(item.userCount?.N ?? '1'),
     deviceCount:  parseInt(item.deviceCount?.N ?? '0'),
+    emailConfig:  emailConfigRaw ? JSON.parse(emailConfigRaw) : null,
   };
 }
 
@@ -922,9 +928,278 @@ async function saveAdminSettings(body) {
   }
 }
 
+// ─── Email Reporting ──────────────────────────────────────────────────────────
+
+async function saveVenueEmailConfig(venueId, config) {
+  if (!venueId || venueId.startsWith('_')) return err(400, 'invalid venueId');
+  const { enabled, frequency, recipients, reportType } = config;
+  if (!Array.isArray(recipients)) return err(400, 'recipients must be an array');
+  try {
+    await ddb.send(new UpdateItemCommand({
+      TableName: VENUES_TABLE,
+      Key: { venueId: { S: venueId } },
+      UpdateExpression: 'SET emailConfigJson = :c',
+      ExpressionAttributeValues: { ':c': { S: JSON.stringify({ enabled, frequency, recipients, reportType }) } },
+    }));
+    return ok({ ok: true });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+function buildReportHtml({ venueName, periodLabel, totalDrinks, drinksPerHour, theftCount, theftItems, stationBreakdown, isTest }) {
+  const theftColor = theftCount > 0 ? '#f87171' : '#34d399';
+
+  const stationRows = Object.entries(stationBreakdown)
+    .sort(([, a], [, b]) => b.drinks - a.drinks)
+    .map(([name, d]) => `
+      <tr>
+        <td style="padding:10px 12px;color:#ccc;font-size:14px;border-bottom:1px solid #1a1a1a">${name}</td>
+        <td style="padding:10px 12px;color:#f59e0b;font-size:14px;font-weight:700;border-bottom:1px solid #1a1a1a">${d.drinks}</td>
+        <td style="padding:10px 12px;color:#888;font-size:13px;border-bottom:1px solid #1a1a1a">${d.perHour.toFixed(1)}/hr</td>
+      </tr>`)
+    .join('') || '<tr><td colspan="3" style="padding:16px 12px;color:#555;font-size:13px;text-align:center">No station data for this period</td></tr>';
+
+  const theftSection = theftCount > 0 ? `
+    <div style="background:#1a0a0a;border:1px solid #7f1d1d;border-radius:12px;padding:20px;margin-bottom:24px">
+      <h3 style="color:#f87171;margin:0 0 12px;font-size:16px">⚠️ ${theftCount} Theft Alert${theftCount !== 1 ? 's' : ''} Detected</h3>
+      ${theftItems.map(j => `<div style="color:#fca5a5;font-size:13px;margin-bottom:8px">• ${j.clipLabel || 'Job'}: ${j.unrungDrinks} unrung drink${j.unrungDrinks !== 1 ? 's' : ''}</div>`).join('')}
+    </div>` : '';
+
+  const testBanner = isTest ? `
+    <div style="background:#1a1200;border:1px solid #854d0e;border-radius:8px;padding:12px 16px;margin-bottom:24px;text-align:center">
+      <span style="color:#fbbf24;font-size:13px;font-weight:600">TEST EMAIL — This is a preview of your report format</span>
+    </div>` : '';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<div style="max-width:600px;margin:0 auto;background:#0a0a0a">
+
+  <div style="background:linear-gradient(135deg,#f59e0b,#ea580c);padding:32px;text-align:center">
+    <div style="display:inline-block;background:rgba(0,0,0,0.2);border-radius:10px;padding:8px 16px;margin-bottom:12px">
+      <span style="color:#000;font-weight:800;font-size:18px;letter-spacing:-0.5px">VS</span>
+      <span style="color:rgba(0,0,0,0.7);font-weight:600;font-size:18px;margin-left:6px">VenueScope</span>
+    </div>
+    <h1 style="color:#000;margin:0;font-size:22px;font-weight:800">${periodLabel}</h1>
+    <p style="color:rgba(0,0,0,0.65);margin:6px 0 0;font-size:15px">${venueName}</p>
+  </div>
+
+  <div style="padding:32px">
+    ${testBanner}
+
+    <div style="display:flex;gap:12px;margin-bottom:24px">
+      <div style="flex:1;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;text-align:center">
+        <div style="font-size:36px;font-weight:800;color:#f59e0b">${totalDrinks}</div>
+        <div style="font-size:11px;color:#666;margin-top:4px;text-transform:uppercase;letter-spacing:0.5px">Drinks Served</div>
+      </div>
+      <div style="flex:1;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;text-align:center">
+        <div style="font-size:36px;font-weight:800;color:#f59e0b">${drinksPerHour.toFixed(1)}</div>
+        <div style="font-size:11px;color:#666;margin-top:4px;text-transform:uppercase;letter-spacing:0.5px">Per Hour Avg</div>
+      </div>
+      <div style="flex:1;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;text-align:center">
+        <div style="font-size:36px;font-weight:800;color:${theftColor}">${theftCount}</div>
+        <div style="font-size:11px;color:#666;margin-top:4px;text-transform:uppercase;letter-spacing:0.5px">Theft Alerts</div>
+      </div>
+    </div>
+
+    ${theftSection}
+
+    <p style="color:#666;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:0 0 12px">Station Breakdown</p>
+    <table style="width:100%;border-collapse:collapse;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden">
+      <tr>
+        <th style="text-align:left;color:#555;font-size:11px;text-transform:uppercase;padding:10px 12px;border-bottom:1px solid #222;font-weight:600">Station</th>
+        <th style="text-align:left;color:#555;font-size:11px;text-transform:uppercase;padding:10px 12px;border-bottom:1px solid #222;font-weight:600">Drinks</th>
+        <th style="text-align:left;color:#555;font-size:11px;text-transform:uppercase;padding:10px 12px;border-bottom:1px solid #222;font-weight:600">Rate</th>
+      </tr>
+      ${stationRows}
+    </table>
+
+    <div style="text-align:center;margin:32px 0">
+      <a href="${PORTAL_URL}" style="background:linear-gradient(135deg,#f59e0b,#ea580c);color:#000;text-decoration:none;font-weight:700;padding:14px 32px;border-radius:8px;font-size:15px;display:inline-block">
+        View Full Report →
+      </a>
+    </div>
+  </div>
+
+  <div style="border-top:1px solid #1a1a1a;padding:20px 32px;text-align:center;color:#444;font-size:12px">
+    VenueScope by Advizia &middot; Automated reports for ${venueName}<br>
+    <a href="${PORTAL_URL}" style="color:#f59e0b">Manage report settings</a>
+  </div>
+</div>
+</body></html>`;
+}
+
+async function _sendReport(venueId, periodDays, isTest = false) {
+  // Get venue + email config
+  const venueRes = await ddb.send(new GetItemCommand({
+    TableName: VENUES_TABLE,
+    Key: { venueId: { S: venueId } },
+  }));
+  if (!venueRes.Item) throw new Error('venue not found');
+  const venue = venueFromItem(venueRes.Item);
+  if (!venue.emailConfig) throw new Error('no email config saved for this venue');
+  if (!venue.emailConfig.recipients?.length) throw new Error('no recipients configured');
+
+  // Fetch recent jobs for this venue
+  const cutoffSec = Date.now() / 1000 - periodDays * 86400;
+  const jobsRes = await ddb.send(new QueryCommand({
+    TableName: JOBS_TABLE,
+    KeyConditionExpression: 'venueId = :v',
+    ExpressionAttributeValues: { ':v': { S: venueId } },
+    ScanIndexForward: false,
+    Limit: 200,
+  }));
+  const jobs = (jobsRes.Items ?? [])
+    .map(jobFromItem)
+    .filter(j => j.status === 'done' && j.createdAt >= cutoffSec);
+
+  const totalDrinks   = jobs.reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
+  const ratedJobs     = jobs.filter(j => (j.drinksPerHour ?? 0) > 0);
+  const drinksPerHour = ratedJobs.length
+    ? ratedJobs.reduce((s, j) => s + j.drinksPerHour, 0) / ratedJobs.length
+    : 0;
+  const theftJobs = jobs.filter(j => j.hasTheftFlag);
+
+  // Aggregate station breakdown across all jobs
+  const stationBreakdown = {};
+  for (const job of jobs) {
+    if (!job.bartenderBreakdown) continue;
+    try {
+      const bd = JSON.parse(job.bartenderBreakdown);
+      for (const [name, d] of Object.entries(bd)) {
+        if (!stationBreakdown[name]) stationBreakdown[name] = { drinks: 0, perHour: 0, _count: 0 };
+        stationBreakdown[name].drinks += d.drinks || 0;
+        if ((d.per_hour ?? d.perHour ?? 0) > 0) {
+          stationBreakdown[name].perHour += (d.per_hour ?? d.perHour ?? 0);
+          stationBreakdown[name]._count++;
+        }
+      }
+    } catch { /* malformed breakdown, skip */ }
+  }
+  for (const st of Object.values(stationBreakdown)) {
+    st.perHour = st._count > 0 ? st.perHour / st._count : 0;
+    delete st._count;
+  }
+
+  const periodLabel = isTest
+    ? `Test Report (Last ${periodDays} Days)`
+    : periodDays === 1
+      ? 'Daily Report — Yesterday'
+      : periodDays === 7
+        ? 'Weekly Report — Last 7 Days'
+        : `Report — Last ${periodDays} Days`;
+
+  const html = buildReportHtml({
+    venueName: venue.venueName,
+    periodLabel,
+    totalDrinks,
+    drinksPerHour,
+    theftCount: theftJobs.length,
+    theftItems: theftJobs.slice(0, 5),
+    stationBreakdown,
+    isTest,
+  });
+
+  const subject = isTest
+    ? `[TEST] VenueScope Report — ${venue.venueName}`
+    : periodDays === 1
+      ? `VenueScope Daily Report — ${venue.venueName}`
+      : `VenueScope Weekly Report — ${venue.venueName}`;
+
+  await ses.send(new SendEmailCommand({
+    Source: FROM_EMAIL,
+    Destination: { ToAddresses: venue.emailConfig.recipients },
+    Message: {
+      Subject: { Data: subject, Charset: 'UTF-8' },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: {
+          Data: `${subject}\n\nDrinks served: ${totalDrinks}\nDrinks/hr avg: ${drinksPerHour.toFixed(1)}\nTheft alerts: ${theftJobs.length}\n\nView full report: ${PORTAL_URL}`,
+          Charset: 'UTF-8',
+        },
+      },
+    },
+  }));
+
+  // Update lastSentAt (skip for test sends)
+  if (!isTest) {
+    const updated = { ...venue.emailConfig, lastSentAt: new Date().toISOString() };
+    await ddb.send(new UpdateItemCommand({
+      TableName: VENUES_TABLE,
+      Key: { venueId: { S: venueId } },
+      UpdateExpression: 'SET emailConfigJson = :c',
+      ExpressionAttributeValues: { ':c': { S: JSON.stringify(updated) } },
+    }));
+  }
+
+  return { sent: venue.emailConfig.recipients.length, subject, totalDrinks, theftAlerts: theftJobs.length };
+}
+
+async function sendReportNow(body) {
+  const { venueId, periodDays = 1 } = body;
+  if (!venueId) return err(400, 'venueId required');
+  try {
+    const result = await _sendReport(venueId, periodDays, false);
+    return ok(result);
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function sendTestReport(body) {
+  const { venueId } = body;
+  if (!venueId) return err(400, 'venueId required');
+  try {
+    const result = await _sendReport(venueId, 7, true);
+    return ok(result);
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function runScheduledReports() {
+  const now        = new Date();
+  const dayOfWeek  = now.getUTCDay();  // 0=Sun, 1=Mon
+  const dayOfMonth = now.getUTCDate();
+  const errors     = [];
+  let   sent       = 0;
+
+  const result = await ddb.send(new ScanCommand({ TableName: VENUES_TABLE }));
+  for (const item of result.Items ?? []) {
+    if (s(item.venueId).startsWith('_')) continue;
+    const configRaw = item.emailConfigJson?.S;
+    if (!configRaw) continue;
+    let config;
+    try { config = JSON.parse(configRaw); } catch { continue; }
+    if (!config.enabled || !config.recipients?.length) continue;
+
+    const venueId = s(item.venueId);
+    let   days    = 0;
+    if      (config.frequency === 'daily')                   days = 1;
+    else if (config.frequency === 'weekly'  && dayOfWeek  === 1) days = 7;
+    else if (config.frequency === 'monthly' && dayOfMonth === 1) days = 30;
+    if (!days) continue;
+
+    try {
+      await _sendReport(venueId, days, false);
+      sent++;
+    } catch (e) {
+      errors.push(`${venueId}: ${e.message}`);
+    }
+  }
+
+  return { statusCode: 200, body: JSON.stringify({ sent, errors }) };
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const handler = async (event) => {
+  // EventBridge scheduled trigger (daily/weekly auto-send)
+  if (event.source === 'aws.events' || event['detail-type'] === 'Scheduled Event') {
+    return runScheduledReports();
+  }
+
   const method  = event.requestContext?.http?.method ?? event.httpMethod ?? 'GET';
   const rawPath = event.requestContext?.http?.path   ?? event.path       ?? '/';
   const qs      = event.queryStringParameters ?? {};
@@ -938,8 +1213,14 @@ export const handler = async (event) => {
     if (method === 'POST'  && rawPath === '/admin/venues')             return createVenue(body);
     const statusMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/status$/);
     if (method === 'PATCH'  && statusMatch)                            return updateVenueStatus(statusMatch[1], body.status);
+    const emailConfigMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/email-config$/);
+    if (method === 'POST'   && emailConfigMatch)                       return saveVenueEmailConfig(decodeURIComponent(emailConfigMatch[1]), body);
     const deleteVenueMatch = rawPath.match(/^\/admin\/venues\/([^/]+)$/);
     if (method === 'DELETE' && deleteVenueMatch)                       return deleteVenue(deleteVenueMatch[1]);
+
+    // Email reports
+    if (method === 'POST'  && rawPath === '/admin/email/send-now')     return sendReportNow(body);
+    if (method === 'POST'  && rawPath === '/admin/email/send-test')    return sendTestReport(body);
 
     // Users
     if (method === 'GET'   && rawPath === '/admin/users')              return listUsers();

@@ -56,6 +56,14 @@ export async function adminFetch(path: string, options?: RequestInit) {
 
 // ============ TYPES ============
 
+export interface EmailConfig {
+  enabled: boolean;
+  frequency: 'daily' | 'weekly' | 'monthly';
+  recipients: string[];
+  reportType: 'full' | 'summary' | 'alerts';
+  lastSentAt?: string;
+}
+
 export interface AdminVenue {
   venueId: string;
   venueName: string;
@@ -71,6 +79,7 @@ export interface AdminVenue {
   ownerEmail?: string;
   ownerName?: string;
   mqttTopic?: string;
+  emailConfig?: EmailConfig | null;
 }
 
 export interface AdminUser {
@@ -677,41 +686,54 @@ class AdminService {
     venueId: string;
     venueName: string;
     ownerEmail?: string;
-    emailConfig?: {
-      enabled: boolean;
-      frequency: 'daily' | 'weekly' | 'monthly';
-      recipients: string[];
-      reportType: 'full' | 'summary' | 'alerts';
-      lastSentAt?: string;
-    };
+    emailConfig?: EmailConfig | null;
   }>> {
     const venues = await this.listVenues();
     return venues.map(v => ({
       venueId: v.venueId,
       venueName: v.venueName,
       ownerEmail: v.ownerEmail,
+      emailConfig: v.emailConfig ?? null,
     }));
   }
 
-  async updateVenueEmailConfig(venueId: string, config: {
-    enabled: boolean;
-    frequency: 'daily' | 'weekly' | 'monthly';
-    recipients: string[];
-    reportType: 'full' | 'summary' | 'alerts';
-  }): Promise<boolean> {
-    // Persist to localStorage as fallback until endpoint is deployed
+  async updateVenueEmailConfig(venueId: string, config: EmailConfig): Promise<boolean> {
     try {
-      const stored = localStorage.getItem('venueEmailConfigs') || '{}';
-      const configs = JSON.parse(stored);
-      configs[venueId] = config;
-      localStorage.setItem('venueEmailConfigs', JSON.stringify(configs));
-    } catch (_) { /* */ }
-    return true;
+      await adminFetch(`/admin/venues/${encodeURIComponent(venueId)}/email-config`, {
+        method: 'POST',
+        body: JSON.stringify(config),
+      });
+      return true;
+    } catch (error: any) {
+      console.error('updateVenueEmailConfig failed:', error);
+      return false;
+    }
   }
 
-  async sendTestEmail(_venueId: string): Promise<boolean> {
-    console.log('Test email would be sent (endpoint not yet deployed)');
-    return true;
+  async sendTestEmail(venueId: string): Promise<boolean> {
+    try {
+      await adminFetch('/admin/email/send-test', {
+        method: 'POST',
+        body: JSON.stringify({ venueId }),
+      });
+      return true;
+    } catch (error: any) {
+      console.error('sendTestEmail failed:', error);
+      throw error;
+    }
+  }
+
+  async sendReportNow(venueId: string, periodDays: number = 1): Promise<boolean> {
+    try {
+      await adminFetch('/admin/email/send-now', {
+        method: 'POST',
+        body: JSON.stringify({ venueId, periodDays }),
+      });
+      return true;
+    } catch (error: any) {
+      console.error('sendReportNow failed:', error);
+      throw error;
+    }
   }
 
   // ============ SYSTEM ANALYTICS ============
