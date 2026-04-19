@@ -438,9 +438,10 @@ export function Live() {
       const oneWeekAgoStart = new Date(todayStart); oneWeekAgoStart.setDate(oneWeekAgoStart.getDate() - 7);
       const oneWeekAgoEnd   = new Date(oneWeekAgoStart); oneWeekAgoEnd.setDate(oneWeekAgoEnd.getDate() + 1);
 
-      const todayDwellJobs = nonLive.filter(j => {
+      // Include live jobs for dwell — table_turns live cameras report avgDwellMin
+      const todayDwellJobs = jobs.filter(j => {
         const d = new Date((j.createdAt ?? 0) * 1000);
-        return d >= todayStart && j.avgDwellMin != null;
+        return d >= todayStart && (j.avgDwellMin ?? 0) > 0;
       });
       if (todayDwellJobs.length > 0) {
         setAvgDwellToday(Math.round(

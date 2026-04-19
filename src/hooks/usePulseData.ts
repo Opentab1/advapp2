@@ -514,11 +514,13 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     const peopleRecent = peoplJobs.filter(j =>
       j.isLive || (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 1500
     );
-    // Use highest single-camera value (cameras overlap; don't sum).
-    // Prefer currentHeadcount (live reading) over peakOccupancy (shift peak).
-    const liveCurrent = peopleRecent.length > 0
-      ? Math.max(...peopleRecent.map(j => j.currentHeadcount ?? j.peakOccupancy ?? 0))
-      : 0;
+    // Sum across cameras (each covers a different zone — same as VenueScope TonightHero).
+    // Use entries-exits when available; fall back to peakOccupancy with || (not ??)
+    // because currentHeadcount/entries may be 0 (not null) even when peakOccupancy > 0.
+    const liveCurrent = peopleRecent.reduce((sum, j) => {
+      const ee = Math.max(0, (j.totalEntries ?? 0) - (j.totalExits ?? 0));
+      return sum + (ee || j.currentHeadcount || j.peakOccupancy || 0);
+    }, 0);
     return {
       todayEntries:  peoplJobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0),
       todayExits:    peoplJobs.reduce((s, j) => s + (j.totalExits   ?? 0), 0),
