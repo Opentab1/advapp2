@@ -2585,16 +2585,37 @@ function TonightSection() {
 // ── Drink pace chart ──────────────────────────────────────────────────────────
 
 function PaceChart({ jobs }: { jobs: VenueScopeJob[] }) {
-  // Bucket completed drink_count jobs into 15-min windows over last 60 min
+  // Bucket drink events into 15-min windows over last 60 min.
+  // For live camera jobs: parse per-drink timestamps from bartenderBreakdown.
+  // For completed snapshot jobs: use job createdAt as the event time.
   const now = Date.now() / 1000;
+
+  const drinkWallTimes: number[] = [];
+  for (const j of jobs) {
+    const created = j.createdAt ?? 0;
+    if (j.isLive && j.bartenderBreakdown) {
+      try {
+        const bd = JSON.parse(j.bartenderBreakdown) as Record<string, { timestamps?: number[] }>;
+        for (const d of Object.values(bd)) {
+          for (const tSec of d.timestamps ?? []) {
+            const wall = created + tSec;
+            if (wall >= now - 3600) drinkWallTimes.push(wall);
+          }
+        }
+      } catch { /* no-op */ }
+    } else if (!j.isLive && j.status === 'done') {
+      const count = j.totalDrinks ?? 0;
+      if (count > 0 && created >= now - 3600) {
+        for (let k = 0; k < count; k++) drinkWallTimes.push(created);
+      }
+    }
+  }
+
   const buckets = [45, 30, 15, 0].map(minsAgo => {
     const bucketStart = now - (minsAgo + 15) * 60;
     const bucketEnd   = now - minsAgo * 60;
     const label = minsAgo === 0 ? 'Now' : `-${minsAgo + 15}m`;
-    const drinks = jobs
-      .filter(j => !j.isLive && j.status === 'done')
-      .filter(j => (j.createdAt ?? 0) >= bucketStart && (j.createdAt ?? 0) < bucketEnd)
-      .reduce((s, j) => s + (j.totalDrinks ?? 0), 0);
+    const drinks = drinkWallTimes.filter(t => t >= bucketStart && t < bucketEnd).length;
     return { label, drinks };
   });
 

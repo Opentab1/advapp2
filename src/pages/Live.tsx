@@ -205,9 +205,13 @@ function TripleRingHero({
   const open = hours ? isBarOpen(hours) : null;
   const isClosed = open === false;
 
-  // Ring 1 — Drinks % vs historical avg for this DOW
+  // Ring 1 — Drinks % vs historical avg for this DOW (fallback: % of 150-drink scale)
   const drinksPct = (() => {
-    if (isClosed || totalDrinks == null || !avgDrinksForDow) return null;
+    if (isClosed || totalDrinks == null) return null;
+    if (!avgDrinksForDow) {
+      // No historical baseline yet — show raw progress toward a 150-drink reference
+      return totalDrinks > 0 ? Math.min(100, Math.round((totalDrinks / 150) * 100)) : null;
+    }
     return Math.min(120, Math.round((totalDrinks / avgDrinksForDow) * 100));
   })();
 
