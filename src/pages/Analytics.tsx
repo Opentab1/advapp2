@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   RefreshCw, AlertTriangle, ShieldCheck, TrendingUp,
   ChevronDown, ChevronUp, User, Video, DollarSign,
-  Wine, Users, Activity, Search, X,
+  Wine, Users, Activity, Search, X, Camera,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
@@ -475,12 +475,36 @@ function TheftSection({ jobs }: { jobs: VenueScopeJob[] }) {
 // ── Detection Event Log ───────────────────────────────────────────────────────
 
 interface DetectionEvent {
-  ts: number;           // epoch seconds
+  ts: number;           // epoch seconds (wall clock)
   type: 'drink' | 'people' | 'bottle' | 'pour' | 'theft';
   camera: string;
-  stat: string;         // human-readable value
-  detail: string;       // secondary detail
+  stat: string;
+  detail: string;
   flag?: boolean;
+  snapshotKey?: string; // presigned URL or S3 key for frame snapshot
+  bartender?: string;
+  score?: number;
+}
+
+// Resolve a snapshot URL from a key (presigned URL or raw S3 key)
+function snapUrl(key: string): string | null {
+  if (!key) return null;
+  if (key.startsWith('https://')) return key;
+  const base = (import.meta.env.VITE_S3_SUMMARY_BASE_URL || '').replace(/\/$/, '');
+  return base ? `${base}/${key}` : null;
+}
+
+// Find the closest snapshot key within 1-second tolerance of tSec
+function findSnap(snapshots: Record<string, string>, tSec: number): string | undefined {
+  const keys = Object.keys(snapshots);
+  if (!keys.length) return undefined;
+  let best: string | undefined;
+  let bestDiff = Infinity;
+  for (const k of keys) {
+    const diff = Math.abs(parseFloat(k) - tSec);
+    if (diff < bestDiff && diff < 1.0) { bestDiff = diff; best = snapshots[k]; }
+  }
+  return best;
 }
 
 function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
@@ -488,19 +512,62 @@ function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
 
   for (const job of jobs) {
     const cam  = cameraName(job);
-    const ts   = jobTs(job);
     const mode = job.analysisMode ?? '';
+    const isDrink = mode === 'drink_count' || (job.activeModes ?? '').includes('drink_count');
 
-    // Drink detection events
-    if ((mode === 'drink_count' || (job.activeModes ?? '').includes('drink_count')) && (job.totalDrinks ?? 0) > 0) {
-      const dph  = job.drinksPerHour ? `${job.drinksPerHour.toFixed(0)}/hr` : '';
-      const bartender = job.topBartender ? ` · ${job.topBartender}` : '';
+    // ── Individual drink serves (one row per serve with snapshot) ──────────
+    if (isDrink && job.bartenderBreakdown) {
+      const snapshots: Record<string, string> = {};
+      try {
+        if ((job as any).serveSnapshots) Object.assign(snapshots, JSON.parse((job as any).serveSnapshots));
+      } catch { /* no-op */ }
+
+      try {
+        const bd = JSON.parse(job.bartenderBreakdown) as Record<string, {
+          drinks?: number; per_hour?: number; timestamps?: number[]; drink_scores?: number[];
+        }>;
+        for (const [name, d] of Object.entries(bd)) {
+          const ts = d.timestamps ?? [];
+          const scores = d.drink_scores ?? [];
+          for (let i = 0; i < ts.length; i++) {
+            const tSec = ts[i];
+            const wallTime = (job.createdAt ?? 0) + tSec;
+            events.push({
+              ts: wallTime,
+              type: 'drink',
+              camera: cam,
+              stat: '1 drink',
+              detail: name && name !== 'unknown' ? name : '',
+              snapshotKey: findSnap(snapshots, tSec),
+              bartender: name,
+              score: scores[i] ?? 0,
+            });
+          }
+        }
+      } catch { /* no-op */ }
+
+      // Fallback: no timestamps in breakdown — one aggregate row
+      if (events.filter(e => e.type === 'drink' && e.camera === cam && e.ts === jobTs(job)).length === 0
+          && (job.totalDrinks ?? 0) > 0 && !job.bartenderBreakdown?.includes('"timestamps"')) {
+        const dph = job.drinksPerHour ? `${job.drinksPerHour.toFixed(0)}/hr` : '';
+        events.push({
+          ts: jobTs(job),
+          type: 'drink',
+          camera: cam,
+          stat: `${job.totalDrinks} drinks`,
+          detail: [dph, job.topBartender].filter(Boolean).join(' · '),
+          flag: job.hasTheftFlag,
+        });
+      }
+    } else if (isDrink && (job.totalDrinks ?? 0) > 0) {
+      // No breakdown — single aggregate row
+      const dph = job.drinksPerHour ? `${job.drinksPerHour.toFixed(0)}/hr` : '';
       events.push({
-        ts,
+        ts: jobTs(job),
         type: 'drink',
         camera: cam,
-        stat: `${job.totalDrinks} drink${(job.totalDrinks ?? 0) !== 1 ? 's' : ''}`,
-        detail: [dph, bartender].filter(Boolean).join(''),
+        stat: `${job.totalDrinks} drinks`,
+        detail: [dph, job.topBartender].filter(Boolean).join(' · '),
         flag: job.hasTheftFlag,
       });
     }
@@ -509,7 +576,7 @@ function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
     if ((mode === 'people_count' || (job.activeModes ?? '').includes('people_count')) && (job.peakOccupancy ?? 0) > 0) {
       const entries = job.totalEntries ?? 0;
       events.push({
-        ts,
+        ts: jobTs(job),
         type: 'people',
         camera: cam,
         stat: `${job.peakOccupancy} in frame`,
@@ -521,7 +588,7 @@ function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
     if ((mode === 'bottle_count' || (job.activeModes ?? '').includes('bottle_count')) && (job.bottleCount ?? 0) > 0) {
       const pours = job.pourCount ? ` · ${job.pourCount} pours` : '';
       events.push({
-        ts,
+        ts: jobTs(job),
         type: 'bottle',
         camera: cam,
         stat: `${job.bottleCount} bottle${(job.bottleCount ?? 1) !== 1 ? 's' : ''}`,
@@ -529,10 +596,10 @@ function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
       });
     }
 
-    // Pour / over-pour events (from bottle_count jobs)
+    // Over-pour events
     if ((job.overPours ?? 0) > 0) {
       events.push({
-        ts,
+        ts: jobTs(job),
         type: 'pour',
         camera: cam,
         stat: `${job.overPours} over-pour${(job.overPours ?? 1) !== 1 ? 's' : ''}`,
@@ -544,17 +611,16 @@ function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
     // Theft / unrung events
     if (job.hasTheftFlag && (job.unrungDrinks ?? 0) > 0) {
       events.push({
-        ts,
+        ts: jobTs(job),
         type: 'theft',
         camera: cam,
-        stat: `${job.unrungDrinks} unrung drink${(job.unrungDrinks ?? 1) !== 1 ? 's' : ''}`,
+        stat: `${job.unrungDrinks} unrung`,
         detail: 'Pull NVR footage to verify',
         flag: true,
       });
     }
   }
 
-  // Sort newest first
   return events.sort((a, b) => b.ts - a.ts);
 }
 
@@ -574,6 +640,127 @@ const FILTER_OPTIONS: Array<{ key: DetectionEvent['type'] | 'all'; label: string
   { key: 'pour',   label: 'Mispours' },
   { key: 'theft',  label: 'Theft' },
 ];
+
+// ── Snap row + modal ──────────────────────────────────────────────────────────
+
+function SnapRow({
+  ev,
+  meta,
+  url,
+}: {
+  ev: DetectionEvent;
+  meta: { label: string; color: string; icon: React.ReactNode };
+  url: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Wall-clock time of this serve
+  const d = new Date(ev.ts * 1000);
+  const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+  // NVR reference: show wall-clock time so the owner can pull footage
+  const nvrRef = timeStr;
+
+  return (
+    <>
+      {/* Row */}
+      <div
+        className="grid items-center gap-2 px-4 py-2.5 hover:bg-whoop-bg/40 transition-colors"
+        style={{ gridTemplateColumns: '2.5rem 4.5rem 1fr 1fr auto' }}
+      >
+        {/* Thumbnail */}
+        <div className="w-10 h-7 rounded overflow-hidden bg-whoop-bg border border-whoop-divider flex-shrink-0 flex items-center justify-center">
+          {url ? (
+            <button onClick={() => setOpen(true)} className="w-full h-full">
+              <img src={url} alt="serve" className="w-full h-full object-cover" />
+            </button>
+          ) : (
+            <Camera className={`w-3.5 h-3.5 ${meta.color} opacity-50`} />
+          )}
+        </div>
+
+        {/* Time */}
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold text-white tabular-nums leading-tight">{timeStr}</div>
+          <div className="text-[9px] text-text-muted">{dateStr}</div>
+        </div>
+
+        {/* Camera */}
+        <div className="min-w-0">
+          <div className="text-[11px] text-white truncate">{ev.camera}</div>
+          {ev.flag && <span className="text-[9px] text-red-400">⚠ flagged</span>}
+        </div>
+
+        {/* Bartender */}
+        <div className="min-w-0">
+          {ev.bartender && ev.bartender !== 'unknown' ? (
+            <div className="text-[11px] text-white truncate">{ev.bartender}</div>
+          ) : (
+            <div className="text-[11px] text-text-muted/50 italic">—</div>
+          )}
+          {ev.score != null && ev.score > 0 && (
+            <div className="text-[9px] text-text-muted">{Math.round(ev.score * 100)}% conf</div>
+          )}
+        </div>
+
+        {/* NVR ref */}
+        <div className="text-right flex-shrink-0">
+          {url ? (
+            <button
+              onClick={() => setOpen(true)}
+              className="text-[10px] text-teal hover:text-teal/80 transition-colors font-semibold tabular-nums"
+            >
+              {nvrRef}
+            </button>
+          ) : (
+            <span className="text-[10px] text-text-muted tabular-nums">{nvrRef}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Expanded snapshot modal */}
+      {open && url && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="relative max-w-2xl w-full mx-4 bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-whoop-divider">
+              <div>
+                <div className="text-sm font-semibold text-white">{ev.camera}</div>
+                <div className="text-[11px] text-text-muted">
+                  {dateStr} · {timeStr}
+                  {ev.bartender && ev.bartender !== 'unknown' && ` · ${ev.bartender}`}
+                </div>
+              </div>
+              <button onClick={() => setOpen(false)} className="text-text-muted hover:text-white transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Image */}
+            <img src={url} alt="serve snapshot" className="w-full object-contain max-h-[60vh]" />
+            {/* Footer */}
+            <div className="px-4 py-3 border-t border-whoop-divider flex items-center justify-between">
+              <span className="text-[11px] text-text-muted">
+                Pull NVR footage at <span className="text-white font-semibold">{nvrRef}</span> to verify
+              </span>
+              {ev.score != null && ev.score > 0 && (
+                <span className="text-[10px] text-text-muted">
+                  {Math.round(ev.score * 100)}% confidence
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
   const [expanded, setExpanded]   = useState(false);
@@ -672,10 +859,11 @@ function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
 
       {/* Column headers */}
       <div className="grid gap-0 px-4 py-2 border-b border-whoop-divider/40 text-[9px] text-text-muted uppercase tracking-wider font-semibold"
-        style={{ gridTemplateColumns: '4.5rem 1fr auto auto' }}>
+        style={{ gridTemplateColumns: '2.5rem 4rem 1fr 1fr auto' }}>
+        <span></span>
         <span>Time</span>
         <span>Camera</span>
-        <span className="text-right pr-4">Event · Stat</span>
+        <span>Bartender</span>
         <span className="text-right">NVR ref</span>
       </div>
 
@@ -689,38 +877,9 @@ function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
         <div className="divide-y divide-whoop-divider/40">
           {visible.map((ev, i) => {
             const meta = EVENT_META[ev.type];
+            const url  = ev.snapshotKey ? snapUrl(ev.snapshotKey) : null;
             return (
-              <div key={i} className="grid items-center gap-3 px-4 py-3 hover:bg-whoop-bg/40 transition-colors"
-                style={{ gridTemplateColumns: '4.5rem 1fr auto auto' }}>
-
-                {/* Time */}
-                <div>
-                  <div className="text-[10px] font-semibold text-white tabular-nums">{fmtTime(ev.ts)}</div>
-                  <div className="text-[9px] text-text-muted">{fmtDate(ev.ts)}</div>
-                </div>
-
-                {/* Camera */}
-                <div className="min-w-0">
-                  <div className="text-xs text-text-secondary truncate">{ev.camera}</div>
-                  {ev.detail && <div className="text-[9px] text-text-muted/70 truncate mt-0.5">{ev.detail}</div>}
-                </div>
-
-                {/* Event type + stat */}
-                <div className="text-right pr-2">
-                  <div className={`flex items-center gap-1 justify-end text-[10px] font-medium ${meta.color}`}>
-                    {meta.icon}
-                    <span>{meta.label}</span>
-                    {ev.flag && <AlertTriangle className="w-2.5 h-2.5 text-red-400 ml-0.5" />}
-                  </div>
-                  <div className="text-sm font-bold text-white tabular-nums mt-0.5">{ev.stat}</div>
-                </div>
-
-                {/* NVR timestamp */}
-                <div className="text-right">
-                  <div className="text-[9px] text-text-muted/50 font-mono tabular-nums leading-tight">{fmtTime(ev.ts)}</div>
-                  <div className="text-[8px] text-text-muted/30 uppercase tracking-wide">NVR</div>
-                </div>
-              </div>
+              <SnapRow key={i} ev={ev} meta={meta} url={url} />
             );
           })}
         </div>
