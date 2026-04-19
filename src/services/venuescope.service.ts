@@ -300,6 +300,21 @@ const venueScopeService = {
     // camera grid shows them, but keep them out of the non-live history bucket.
     const isLive  = (j: VenueScopeJob) => j.isLive === true || j.status === 'running';
 
+    // Normalize a camera label to a stable dedup key:
+    // - Extract explicit channel ID (ch8, ch9, cam3…) when present — it's the unique HW identifier
+    // - Otherwise strip LIVE/seg suffixes and lower-case
+    const cameraKey = (j: VenueScopeJob): string => {
+      const raw = j.cameraLabel || j.clipLabel || j.jobId;
+      const ch = raw.match(/\b(ch\d+|cam\d+)\b/i);
+      if (ch) return ch[1].toLowerCase();
+      return raw
+        .replace(/^📡\s*/, '')
+        .replace(/\s*—\s*🔴\s*LIVE\s*$/i, '')
+        .replace(/\s*—\s*seg\s*\d+\s*$/i, '')
+        .trim()
+        .toLowerCase();
+    };
+
     const dedupeAndSort = (items: VenueScopeJob[]) => {
       const ts = (j: VenueScopeJob) => j.finishedAt || j.updatedAt || j.createdAt || 0;
       const live = items.filter(j => isLive(j));
@@ -307,7 +322,7 @@ const venueScopeService = {
         live
           .sort((a, b) => ts(b) - ts(a))
           .reduce((map, j) => {
-            const key = j.cameraLabel || j.clipLabel || j.jobId;
+            const key = cameraKey(j);
             if (!map.has(key)) map.set(key, j);
             return map;
           }, new Map<string, VenueScopeJob>())

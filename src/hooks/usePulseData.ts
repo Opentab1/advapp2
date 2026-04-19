@@ -268,6 +268,13 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     }
   }, [venueId, venueName]);
   
+  // isLive=null returned by AppSync for running jobs that haven't set the flag yet.
+  // Match VenueScope's isJobLive logic: true if isLive===true OR (isLive!==false && running & recent).
+  const isJobLive = (j: VenueScopeJob) =>
+    j.isLive === true ||
+    (j.isLive !== false && j.status === 'running' &&
+      ((j.updatedAt ?? 0) === 0 || (j.updatedAt ?? 0) > Date.now() / 1000 - 300));
+
   const fetchVenueScopeData = useCallback(async () => {
     if (!venueId) return;
     // Demo account: inject demo jobs so rings and stats populate correctly
@@ -282,9 +289,9 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     }
     try {
       const jobs = await venueScopeService.listJobs(venueId, 20);
-      // Include done, running, and live-stream jobs (stable '~' IDs always included)
+      // Include done jobs, any live/running job (isLive may be null from AppSync)
       setVsJobs(jobs.filter(j =>
-        j.status === 'done' || j.isLive === true || j.status === 'running' ||
+        j.status === 'done' || isJobLive(j) || j.status === 'running' ||
         (j.jobId ?? '').startsWith('~')
       ));
       setLastUpdated(new Date());
@@ -452,9 +459,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   // ============ VENUESCOPE COMPUTED VALUES ============
   const vsTodayJobs = useMemo(() => {
     const todayTs = getBarDayStart().getTime() / 1000;
-    // Always include stable live-camera records regardless of createdAt
+    // Always include stable live-camera records and any running/live job regardless of createdAt.
+    // isJobLive handles AppSync returning isLive=null for running cameras.
     return vsJobs.filter(j =>
-      (j.createdAt ?? 0) >= todayTs || j.isLive || (j.jobId ?? '').startsWith('~')
+      (j.createdAt ?? 0) >= todayTs || isJobLive(j) || (j.jobId ?? '').startsWith('~')
     );
   }, [vsJobs]);
 
@@ -514,9 +522,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     const peoplJobs = vsTodayJobs.filter(j =>
       j.analysisMode === 'people_count' || parseModes(j).includes('people_count')
     );
-    // Include live jobs and recently-finished jobs (< 45 min ago)
+    // Include live/running jobs and recently-finished jobs (< 45 min ago)
+    // isJobLive handles AppSync returning isLive=null for running cameras
     const peopleRecent = peoplJobs.filter(j =>
-      j.isLive || (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 2700
+      isJobLive(j) || (nowSec - (j.finishedAt ?? j.updatedAt ?? j.createdAt ?? 0)) < 2700
     );
     // Sum across cameras (each covers a different zone — same as VenueScope TonightHero).
     // currentHeadcount (live push every ~30s) > entries-exits > peakOccupancy fallback.

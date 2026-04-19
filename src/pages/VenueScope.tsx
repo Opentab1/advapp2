@@ -3817,6 +3817,8 @@ export function VenueScope() {
     // First pass: include all job-based rooms, tag which cameras they cover.
     // If the admin-portal camera config specifies a mode that differs from the
     // job's analysisMode, the camera config wins — it reflects the owner's intent.
+    // Skip duplicate rooms that match an already-covered camera (prevents showing
+    // the same physical camera twice when multiple job records share the same camera).
     for (const room of liveRooms) {
       const cam = enabledCams.find(c => {
         const label = room.label.toLowerCase();
@@ -3826,6 +3828,8 @@ export function VenueScope() {
         return ch ? channelFromSources(room.label, null) === ch : false;
       });
       if (cam) {
+        // If this camera was already covered by a better (live) room, skip the duplicate
+        if (coveredCamIds.has(cam.cameraId)) continue;
         coveredCamIds.add(cam.cameraId);
         const camModes: string[] = Array.isArray(cam.modes) && cam.modes.length ? cam.modes : [];
         const camMode = camModes.includes('drink_count') ? 'drink_count'
