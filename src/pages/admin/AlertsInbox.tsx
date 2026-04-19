@@ -107,6 +107,19 @@ export function AlertsInbox() {
     }
   }, [selectedVenueId]);
 
+  // Sync reviewed state from DynamoDB on mount (merge with localStorage)
+  useEffect(() => {
+    adminService.getReviewedAlerts().then(ids => {
+      if (ids.length > 0) {
+        setReviewed(prev => {
+          const merged = new Set([...prev, ...ids]);
+          saveReviewed(merged); // update localStorage cache
+          return merged;
+        });
+      }
+    }).catch(() => { /* DDB unavailable — localStorage still works */ });
+  }, []);
+
   useEffect(() => { fetchAlerts(); }, [fetchAlerts]);
 
   const filtered = alerts.filter(a => {
@@ -122,6 +135,7 @@ export function AlertsInbox() {
     filtered.forEach(a => next.add(a.id));
     setReviewed(next);
     saveReviewed(next);
+    adminService.saveReviewedAlerts([...next]); // background DDB sync
   };
 
   const markReviewed = (id: string) => {
@@ -129,6 +143,7 @@ export function AlertsInbox() {
     next.add(id);
     setReviewed(next);
     saveReviewed(next);
+    adminService.saveReviewedAlerts([...next]); // background DDB sync
   };
 
   const copyJobId = (jobId: string) => {

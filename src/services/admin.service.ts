@@ -264,6 +264,16 @@ class AdminService {
     }
   }
 
+  async deleteVenue(venueId: string): Promise<boolean> {
+    try {
+      await adminFetch(`/admin/venues/${encodeURIComponent(venueId)}`, { method: 'DELETE' });
+      return true;
+    } catch (error: any) {
+      console.error('deleteVenue failed:', error);
+      return false;
+    }
+  }
+
   async updateVenueStatus(venueId: string, status: 'active' | 'suspended'): Promise<boolean> {
     console.log(`Updating venue ${venueId} status to ${status}`);
     try {
@@ -513,6 +523,25 @@ class AdminService {
     }
   }
 
+  async restartCamera(cameraId: string, venueId: string): Promise<void> {
+    await this.updateCamera(cameraId, venueId, { enabled: false });
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    await this.updateCamera(cameraId, venueId, { enabled: true });
+  }
+
+  async cancelJob(venueId: string, jobId: string): Promise<boolean> {
+    try {
+      await adminFetch('/admin/jobs/cancel', {
+        method: 'POST',
+        body: JSON.stringify({ venueId, jobId }),
+      });
+      return true;
+    } catch (error: any) {
+      console.error('cancelJob failed:', error);
+      return false;
+    }
+  }
+
   // ============ JOB OPERATIONS ============
 
   async listJobs(venueId?: string, limit = 50): Promise<AdminJob[]> {
@@ -563,6 +592,26 @@ class AdminService {
     } catch (error) {
       console.error('listAlerts failed:', error);
       return [];
+    }
+  }
+
+  async getReviewedAlerts(): Promise<string[]> {
+    try {
+      const data = await adminFetch('/admin/alerts/reviewed');
+      return data.ids ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async saveReviewedAlerts(ids: string[]): Promise<void> {
+    try {
+      await adminFetch('/admin/alerts/reviewed', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      });
+    } catch (e) {
+      console.error('saveReviewedAlerts failed:', e);
     }
   }
 

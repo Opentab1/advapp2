@@ -29,6 +29,7 @@ import {
   Network,
   Copy,
   Check,
+  RotateCcw,
 } from 'lucide-react';
 import adminService, { AdminCamera, adminFetch } from '../../services/admin.service';
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
@@ -385,6 +386,16 @@ function CameraModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Bar line quick editor — only shown when editing a drink_count camera with barConfigJson
+  const [barLineY, setBarLineY] = useState<number | null>(() => {
+    if (!camera?.barConfigJson) return null;
+    try {
+      const cfg = JSON.parse(camera.barConfigJson);
+      const y = cfg?.stations?.[0]?.bar_line_p1?.[1];
+      return typeof y === 'number' ? y : null;
+    } catch { return null; }
+  });
+
   const [urlMode, setUrlMode] = useState<'builder' | 'manual'>(camera?.rtspUrl ? 'manual' : 'builder');
   const [nvrIp, setNvrIp] = useState('');
   const [nvrPort, setNvrPort] = useState('');
@@ -421,6 +432,21 @@ function CameraModal({
     setError('');
     try {
       if (isEdit && camera) {
+        // Build updated barConfigJson if bar line was adjusted
+        let barConfigJson: string | undefined;
+        if (barLineY !== null && camera.barConfigJson) {
+          try {
+            const cfg = JSON.parse(camera.barConfigJson);
+            if (cfg?.stations?.[0]) {
+              const x1 = cfg.stations[0].bar_line_p1?.[0] ?? 0.0;
+              const x2 = cfg.stations[0].bar_line_p2?.[0] ?? 1.0;
+              cfg.stations[0].bar_line_p1 = [x1, barLineY];
+              cfg.stations[0].bar_line_p2 = [x2, barLineY];
+              barConfigJson = JSON.stringify(cfg);
+            }
+          } catch { /* malformed JSON — skip */ }
+        }
+
         const ok = await adminService.updateCamera(camera.cameraId, venueId, {
           name: name.trim(),
           rtspUrl: effectiveUrl.trim(),
@@ -429,6 +455,7 @@ function CameraModal({
           segmentSeconds,
           segmentInterval: segmentSeconds > 0 ? segmentInterval : 0,
           notes: notes.trim() || '',
+          ...(barConfigJson !== undefined ? { barConfigJson } : {}),
         });
         if (!ok) throw new Error('Update failed');
       } else {
@@ -613,6 +640,32 @@ function CameraModal({
               className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50" />
           </div>
 
+          {/* Bar line quick editor — only when editing a calibrated drink_count camera */}
+          {isEdit && barLineY !== null && modes.includes('drink_count') && (
+            <div className="p-4 bg-amber-500/5 border border-amber-500/20 rounded-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm text-amber-300 font-medium">Bar Line Position</label>
+                <span className="text-xs font-mono text-amber-400">{(barLineY * 100).toFixed(1)}% from top</span>
+              </div>
+              <input
+                type="range"
+                min={0.10} max={0.90} step={0.005}
+                value={barLineY}
+                onChange={e => setBarLineY(parseFloat(e.target.value))}
+                className="w-full accent-amber-500"
+              />
+              <div className="flex justify-between text-xs text-gray-500">
+                <span>Top (10%)</span>
+                <span className="text-gray-400">Drag to move bar line ↑↓</span>
+                <span>Bottom (90%)</span>
+              </div>
+              <p className="text-xs text-gray-500">
+                Move up if customer detections are being counted as bartender. Move down if bartender is missed.
+                Worker picks up the new value within 60 seconds.
+              </p>
+            </div>
+          )}
+
           {error && (
             <div className="flex items-center gap-2 text-red-400 text-sm">
               <AlertTriangle className="w-4 h-4" />{error}
@@ -650,6 +703,7 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
   const [newIp, setNewIp] = useState('');
   const [newPort, setNewPort] = useState('');
   const [connUpdating, setConnUpdating] = useState(false);
+  const [restartingCams, setRestartingCams] = useState<Set<string>>(new Set());
   const statusTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -729,6 +783,20 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
       setCameras(prev => prev.filter(c => c.cameraId !== cam.cameraId));
     } catch (e: any) {
       alert(`Failed to delete camera: ${e.message}`);
+    }
+  };
+
+  const handleRestart = async (cam: AdminCamera) => {
+    if (restartingCams.has(cam.cameraId)) return;
+    setRestartingCams(prev => new Set(prev).add(cam.cameraId));
+    try {
+      await adminService.restartCamera(cam.cameraId, venueId);
+      // Reload statuses after restart
+      setTimeout(loadStatuses, 5000);
+    } catch (e: any) {
+      alert(`Failed to restart camera: ${e.message}`);
+    } finally {
+      setRestartingCams(prev => { const s = new Set(prev); s.delete(cam.cameraId); return s; });
     }
   };
 
@@ -959,6 +1027,16 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                         >
                           {cam.enabled ? <><CheckCircle className="w-3.5 h-3.5" /> ON</> : <><XCircle className="w-3.5 h-3.5" /> OFF</>}
                         </button>
+                        {cam.enabled && (
+                          <button
+                            onClick={() => handleRestart(cam)}
+                            disabled={restartingCams.has(cam.cameraId)}
+                            title="Restart camera (disable → 3s → enable)"
+                            className="p-1.5 rounded-lg hover:bg-cyan-500/10 text-gray-400 hover:text-cyan-400 transition-colors disabled:opacity-40"
+                          >
+                            <RotateCcw className={`w-4 h-4 ${restartingCams.has(cam.cameraId) ? 'animate-spin' : ''}`} />
+                          </button>
+                        )}
                         <button onClick={() => setEditCamera(cam)}
                           className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors">
                           <Edit2 className="w-4 h-4" />

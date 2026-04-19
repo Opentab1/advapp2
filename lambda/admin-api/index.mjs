@@ -814,6 +814,69 @@ async function handleStripeWebhook(rawBody, sigHeader) {
   return ok({ received: true });
 }
 
+// ─── Venue Delete ─────────────────────────────────────────────────────────────
+
+async function deleteVenue(venueId) {
+  if (!venueId) return err(400, 'venueId required');
+  // Safety: never delete internal records
+  if (venueId.startsWith('_')) return err(400, 'Cannot delete internal records');
+  await ddb.send(new DeleteItemCommand({
+    TableName: VENUES_TABLE,
+    Key: { venueId: { S: venueId } },
+  }));
+  return ok({ success: true });
+}
+
+// ─── Cancel Job ───────────────────────────────────────────────────────────────
+
+async function cancelJob(body) {
+  const { venueId, jobId } = body;
+  if (!venueId || !jobId) return err(400, 'venueId and jobId required');
+  await ddb.send(new UpdateItemCommand({
+    TableName: JOBS_TABLE,
+    Key: { venueId: { S: venueId }, jobId: { S: jobId } },
+    UpdateExpression: 'SET #s = :s, isLive = :f',
+    ExpressionAttributeNames: { '#s': 'status' },
+    ExpressionAttributeValues: { ':s': { S: 'cancelled' }, ':f': { BOOL: false } },
+  }));
+  return ok({ success: true });
+}
+
+// ─── Alert Reviews (stored in VenueScopeVenues with venueId="_alert_reviews_") ─
+
+const REVIEWS_KEY = '_alert_reviews_';
+
+async function getReviewedAlerts() {
+  try {
+    const r = await ddb.send(new GetItemCommand({
+      TableName: VENUES_TABLE,
+      Key: { venueId: { S: REVIEWS_KEY } },
+    }));
+    const raw = r.Item?.reviewedJson?.S;
+    return ok({ ids: raw ? JSON.parse(raw) : [] });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function saveReviewedAlerts(body) {
+  const { ids } = body;
+  if (!Array.isArray(ids)) return err(400, 'ids array required');
+  try {
+    await ddb.send(new PutItemCommand({
+      TableName: VENUES_TABLE,
+      Item: {
+        venueId:      { S: REVIEWS_KEY },
+        reviewedJson: { S: JSON.stringify(ids.slice(-500)) },
+        updatedAt:    { S: new Date().toISOString() },
+      },
+    }));
+    return ok({ ok: true });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
 // ─── Admin Settings (stored in VenueScopeVenues with venueId="_system_settings_") ──
 
 const SETTINGS_KEY = '_system_settings_';
@@ -865,7 +928,9 @@ export const handler = async (event) => {
     if (method === 'GET'   && rawPath === '/admin/venues')             return listVenues();
     if (method === 'POST'  && rawPath === '/admin/venues')             return createVenue(body);
     const statusMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/status$/);
-    if (method === 'PATCH' && statusMatch)                             return updateVenueStatus(statusMatch[1], body.status);
+    if (method === 'PATCH'  && statusMatch)                            return updateVenueStatus(statusMatch[1], body.status);
+    const deleteVenueMatch = rawPath.match(/^\/admin\/venues\/([^/]+)$/);
+    if (method === 'DELETE' && deleteVenueMatch)                       return deleteVenue(deleteVenueMatch[1]);
 
     // Users
     if (method === 'GET'   && rawPath === '/admin/users')              return listUsers();
@@ -887,12 +952,15 @@ export const handler = async (event) => {
 
     // Jobs
     if (method === 'GET'   && rawPath === '/admin/jobs')               return listJobs(qs.venueId, qs.limit);
+    if (method === 'POST'  && rawPath === '/admin/jobs/cancel')        return cancelJob(body);
 
     // Stats
     if (method === 'GET'   && rawPath === '/admin/stats')              return getStats();
 
     // Alerts
     if (method === 'GET'   && rawPath === '/admin/alerts')             return listAlerts(qs.venueId, qs.limit);
+    if (method === 'GET'   && rawPath === '/admin/alerts/reviewed')    return getReviewedAlerts();
+    if (method === 'POST'  && rawPath === '/admin/alerts/reviewed')    return saveReviewedAlerts(body);
 
     // Camera probing (NVR discovery)
     if (method === 'POST'  && rawPath === '/admin/probe-cameras')      return probeCameras(body);

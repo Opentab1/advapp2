@@ -39,7 +39,8 @@ import {
   Smartphone,
   Zap,
   CreditCard,
-  CalendarPlus
+  CalendarPlus,
+  Trash2,
 } from 'lucide-react';
 import { CreateVenueModal, VenueFormData } from '../../components/admin/CreateVenueModal';
 import { RPiConfigGenerator } from '../../components/admin/RPiConfigGenerator';
@@ -250,6 +251,25 @@ export function VenuesManagement() {
         {s.label}
       </span>
     );
+  };
+
+  // Handle venue deletion
+  const handleDeleteVenue = async (venue: AdminVenue) => {
+    const confirmText = `DELETE ${venue.venueName}`;
+    const input = window.prompt(
+      `This will permanently delete "${venue.venueName}" from DynamoDB.\n\nType  ${confirmText}  to confirm:`
+    );
+    if (input !== confirmText) {
+      if (input !== null) alert('Cancelled — text did not match.');
+      return;
+    }
+    const ok = await adminService.deleteVenue(venue.venueId);
+    if (ok) {
+      alert(`Deleted "${venue.venueName}".`);
+      fetchVenues();
+    } else {
+      alert('Delete failed — check console.');
+    }
   };
 
   // Handle venue status update
@@ -571,6 +591,14 @@ export function VenuesManagement() {
                       Activate
                     </button>
                   )}
+                  <button
+                    onClick={() => handleDeleteVenue(venue)}
+                    className="btn-secondary text-sm flex items-center gap-1 text-red-500 border-red-600/30 hover:bg-red-600/10 ml-auto"
+                    title="Permanently delete venue"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
                 </div>
               </motion.div>
             ))}

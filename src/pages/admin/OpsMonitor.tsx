@@ -185,6 +185,7 @@ export function OpsMonitor() {
   const [deployOutput,   setDeployOutput]   = useState<string[] | null>(null);
   const [actionMsg,      setActionMsg]      = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm,        setConfirm]        = useState<'restart' | 'deploy' | null>(null);
+  const [cancellingJobs, setCancellingJobs] = useState<Set<string>>(new Set());
 
   const [lastUpdated,    setLastUpdated]    = useState<Date | null>(null);
   const [countdown,      setCountdown]      = useState(30);
@@ -274,6 +275,23 @@ export function OpsMonitor() {
       setActionMsg({ ok: false, text: e.message });
     } finally {
       setRestarting(false);
+    }
+  };
+
+  const doCancelJob = async (venueId: string, jobId: string) => {
+    setCancellingJobs(prev => new Set(prev).add(jobId));
+    try {
+      const ok = await adminService.cancelJob(venueId, jobId);
+      if (ok) {
+        setActionMsg({ ok: true, text: `Job ${jobId.slice(0, 12)}… cancelled` });
+        setTimeout(fetchOpsStatus, 2000);
+      } else {
+        setActionMsg({ ok: false, text: 'Cancel failed — check console' });
+      }
+    } catch (e: any) {
+      setActionMsg({ ok: false, text: e.message });
+    } finally {
+      setCancellingJobs(prev => { const s = new Set(prev); s.delete(jobId); return s; });
     }
   };
 
@@ -641,6 +659,7 @@ export function OpsMonitor() {
                   <th className="text-left px-4 py-3">Venue</th>
                   <th className="text-right px-4 py-3">Running</th>
                   <th className="text-right px-4 py-3">Drinks/hr</th>
+                  <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -660,6 +679,19 @@ export function OpsMonitor() {
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-green-400">
                       {job.drinksPerHour > 0 ? job.drinksPerHour.toFixed(1) : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => doCancelJob(job.venueId, job.jobId)}
+                        disabled={cancellingJobs.has(job.jobId)}
+                        title="Mark job as cancelled in DynamoDB (worker stops within 60s)"
+                        className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-medium disabled:opacity-40 transition-colors flex items-center gap-1"
+                      >
+                        {cancellingJobs.has(job.jobId)
+                          ? <Loader2 className="w-3 h-3 animate-spin" />
+                          : <XCircle className="w-3 h-3" />}
+                        Cancel
+                      </button>
                     </td>
                   </tr>
                 ))}
