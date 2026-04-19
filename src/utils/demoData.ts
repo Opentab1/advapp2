@@ -1591,11 +1591,15 @@ export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
   // ── Live job: tonight's ongoing shift ──
   // Always simulate as if we're 3.5 hours into an evening shift (9:30 PM equivalent).
   // "The bar is never closed" per demo spec — always shows active data.
-  const DEMO_HOURS_IN    = 3.5;
+  // Use actual wall-clock time from 6 PM start, minimum 3.5h so demo always looks active
+  const shiftStartHour   = 18; // 6 PM
+  const _todayStart      = new Date(); _todayStart.setHours(shiftStartHour, 0, 0, 0);
+  const _wallElapsedSec  = Math.max(3.5 * 3600, (Date.now() - _todayStart.getTime()) / 1000);
+  const DEMO_HOURS_IN    = Math.min(8, _wallElapsedSec / 3600);
   const shiftTotalHours  = 8;
-  const shiftProgress    = Math.round((DEMO_HOURS_IN / shiftTotalHours) * 100); // 44%
-  const liveElapsedSec   = Math.round(DEMO_HOURS_IN * 3600);                    // 12600s
-  const liveDrinksSoFar  = Math.round(DEMO_HOURS_IN * 9.5);                     // 33 drinks
+  const shiftProgress    = Math.round((DEMO_HOURS_IN / shiftTotalHours) * 100);
+  const liveElapsedSec   = Math.round(DEMO_HOURS_IN * 3600);
+  const liveDrinksSoFar  = Math.round(DEMO_HOURS_IN * 11.2); // 11.2 drinks/hr = busy bar
 
   // Shift started 3.5 hours ago regardless of wall clock
   const tonightShiftStart = now - liveElapsedSec;
@@ -1643,6 +1647,114 @@ export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
         per_hour: 4.0,
         timestamps: makeTimestamps(Math.round(liveDrinksSoFar * 0.42), 0, liveElapsedSec),
         drink_scores: Array.from({ length: Math.round(liveDrinksSoFar * 0.42) }, () => parseFloat((0.77 + Math.random() * 0.18).toFixed(2))),
+      },
+    }),
+  } as unknown as VenueScopeJob;
+
+  // ── Entrance Camera: Live People Count ──
+  // Shows 430 live occupants, 847 entries today. Little's Law gives ~107 min dwell.
+  const entranceLiveJob: VenueScopeJob = {
+    venueId,
+    jobId:            'demo-live-entrance',
+    clipLabel:        'Entrance — Live',
+    cameraLabel:      'Entrance Cam',
+    analysisMode:     'people_count',
+    activeModes:      JSON.stringify(['people_count']),
+    totalDrinks:      0,
+    drinksPerHour:    0,
+    topBartender:     '',
+    confidenceScore:  91,
+    confidenceLabel:  'High confidence',
+    confidenceColor:  'green',
+    hasTheftFlag:     false,
+    unrungDrinks:     0,
+    createdAt:        tonightShiftStart,
+    finishedAt:       undefined,
+    status:           'running',
+    isLive:           true,
+    elapsedSec:       liveElapsedSec,
+    currentHeadcount: 430 + Math.floor(Math.random() * 20 - 10), // 420–440, fluctuates
+    totalEntries:     Math.round(DEMO_HOURS_IN * 242), // ~242 entries/hr at peak
+    totalExits:       Math.round(DEMO_HOURS_IN * 242) - (430 + Math.floor(Math.random() * 10 - 5)),
+    peakOccupancy:    462,
+    bottleCount:      0, peakBottleCount: 0, pourCount: 0, totalPouredOz: 0, overPours: 0,
+    cameraAngle:      'overhead',
+    reviewCount:      0,
+  } as unknown as VenueScopeJob;
+
+  // ── Dining Room Camera: Table Turns (dwell tracking) ──
+  // Shows 24 tables currently occupied, 95 min avg dwell, 18 turns tonight
+  const diningLiveJob: VenueScopeJob = {
+    venueId,
+    jobId:            'demo-live-dining',
+    clipLabel:        'Dining Room — Live',
+    cameraLabel:      'Dining Cam',
+    analysisMode:     'table_turns',
+    activeModes:      JSON.stringify(['table_turns']),
+    totalDrinks:      0,
+    drinksPerHour:    0,
+    topBartender:     '',
+    confidenceScore:  89,
+    confidenceLabel:  'High confidence',
+    confidenceColor:  'green',
+    hasTheftFlag:     false,
+    unrungDrinks:     0,
+    createdAt:        tonightShiftStart,
+    finishedAt:       undefined,
+    status:           'running',
+    isLive:           true,
+    elapsedSec:       liveElapsedSec,
+    currentHeadcount: 24,
+    peakOccupancy:    28,
+    totalEntries:     0,
+    totalExits:       0,
+    avgDwellMin:      95,
+    totalTurns:       18,
+    avgResponseSec:   0,
+    bottleCount:      0, peakBottleCount: 0, pourCount: 0, totalPouredOz: 0, overPours: 0,
+    cameraAngle:      'overhead',
+    reviewCount:      0,
+  } as unknown as VenueScopeJob;
+
+  // ── Back Bar Camera: Bottle Pour Detection ──
+  // Shows 14 bottles tracked, 2 over-pours flagged, 41 pours tonight
+  const backBarLiveJob: VenueScopeJob = {
+    venueId,
+    jobId:            'demo-live-backbar',
+    clipLabel:        'Back Bar — Live',
+    cameraLabel:      'Back Bar Cam',
+    analysisMode:     'drink_count',
+    activeModes:      JSON.stringify(['drink_count']),
+    totalDrinks:      Math.round(DEMO_HOURS_IN * 4.2),
+    drinksPerHour:    4.2,
+    topBartender:     'Priya',
+    confidenceScore:  86,
+    confidenceLabel:  'High confidence',
+    confidenceColor:  'green',
+    hasTheftFlag:     false,
+    unrungDrinks:     0,
+    createdAt:        tonightShiftStart,
+    finishedAt:       undefined,
+    status:           'running',
+    isLive:           true,
+    elapsedSec:       liveElapsedSec,
+    currentHeadcount: 0,
+    peakOccupancy:    0,
+    totalEntries:     0,
+    totalExits:       0,
+    bottleCount:      14,
+    peakBottleCount:  18,
+    pourCount:        Math.round(DEMO_HOURS_IN * 11.7),
+    totalPouredOz:    parseFloat((Math.round(DEMO_HOURS_IN * 11.7) * 1.3).toFixed(1)),
+    overPours:        2,
+    cameraAngle:      'overhead',
+    reviewCount:      0,
+    bartenderBreakdown: JSON.stringify({
+      Priya: {
+        drinks: Math.round(DEMO_HOURS_IN * 4.2),
+        per_hour: 4.2,
+        timestamps: makeTimestamps(Math.round(DEMO_HOURS_IN * 4.2), 0, liveElapsedSec),
+        drink_scores: Array.from({ length: Math.round(DEMO_HOURS_IN * 4.2) }, () => parseFloat((0.76 + Math.random() * 0.18).toFixed(2))),
       },
     }),
   } as unknown as VenueScopeJob;
@@ -1760,6 +1872,6 @@ export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
 
   const historicJobs = historicShifts.map((s, i) => makeHistoricJob(s, i + 200));
 
-  return [liveJob, lastNightJob, ...historicJobs]
+  return [liveJob, entranceLiveJob, diningLiveJob, backBarLiveJob, lastNightJob, ...historicJobs]
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }

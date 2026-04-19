@@ -403,12 +403,12 @@ export function Live() {
     // Demo account: inject ring data directly — no real jobs in DB
     if (isDemoAccount(venueId)) {
       const dow = new Date().getDay();
-      // Realistic DOW-aware avg drinks for a 500-cap venue
-      const dowDrinkAvg: Record<number, number> = { 0: 72, 1: 58, 2: 66, 3: 94, 4: 148, 5: 162, 6: 131 };
-      setAvgDrinksForDow(dowDrinkAvg[dow] ?? 120);
+      // DOW-aware avg drinks for a 500-cap premium venue (Fri/Sat are huge)
+      const dowDrinkAvg: Record<number, number> = { 0: 84, 1: 67, 2: 78, 3: 112, 4: 162, 5: 198, 6: 178 };
+      setAvgDrinksForDow(dowDrinkAvg[dow] ?? 140);
       setVenueCapacity(500);
-      setAvgDwellToday(47);
-      setAvgDwellLastWeekSameDay(44);
+      setAvgDwellToday(95);           // 95 min — premium lounge guests linger
+      setAvgDwellLastWeekSameDay(87); // 9% better than last week same day
       setLatestJobMeta({ topBartender: 'Marcus', unrungDrinks: 4, avgDrinkPrice: 14 });
       return;
     }
