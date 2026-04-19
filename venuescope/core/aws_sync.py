@@ -634,7 +634,9 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     else:
         _live_wall_elapsed = max(T_push - float(_ca), 1.0)
         if _live_wall_elapsed >= 60:
-            live_dph = round(today_drinks * 3600 / _live_wall_elapsed, 1)
+            # Divide by delivery_rate: NVR may deliver faster than real-time,
+            # so actual bar-time elapsed = wall_elapsed * delivery_rate.
+            live_dph = round(today_drinks * 3600 / (_live_wall_elapsed * delivery_rate), 1)
             update_expr += ", drinksPerHour = :dph"
             expr_vals[":dph"] = {"N": str(live_dph)}
     # topBartender = station with most drinks this shift (total_drinks is cumulative)
@@ -733,7 +735,7 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
                 scrs = [s for _, s in pairs]
                 bt_compact[name] = {
                     "drinks":        max(0, round(int(d.get("total_drinks", 0)) * bt_scale)),
-                    "per_hour":      round(float(d.get("drinks_per_hour", 0.0)) * bt_scale, 1),
+                    "per_hour":      round(float(d.get("drinks_per_hour", 0.0)) * bt_scale / delivery_rate, 1),
                     # Wall-clock offsets from createdAt (= _wall_start).
                     # Divide by delivery_rate to convert NVR t_sec → real elapsed seconds.
                     "timestamps":    [round(t / delivery_rate, 1) for t in ts],
