@@ -11,14 +11,9 @@ import { NFCLeadsManagement } from './NFCLeadsManagement';
 import { UsersManagement } from './UsersManagement';
 import { TeamManagement } from './TeamManagement';
 import { DevicesManagement } from './DevicesManagement';
-import { DataTransparency } from './DataTransparency';
-import { DataAccuracy } from './DataAccuracy';
-import { DataValidator } from './DataValidator';
-import { AuditLog } from './AuditLog';
 import { SystemAnalytics } from './SystemAnalytics';
 import { AdminSettings } from './AdminSettings';
 import { EmailReporting } from './EmailReporting';
-import { FeatureControls } from './FeatureControls';
 import { SalesCRM } from './SalesCRM';
 import { CamerasManagement } from './CamerasManagement';
 import { BarCalibration } from './BarCalibration';
@@ -117,11 +112,6 @@ function AdminPortalInner() {
           {activeTab === 'users'           && <ErrorBoundary key="users"><UsersManagement /></ErrorBoundary>}
           {activeTab === 'team'            && <ErrorBoundary key="team"><TeamManagement /></ErrorBoundary>}
           {activeTab === 'devices'         && <ErrorBoundary key="devices"><DevicesManagement /></ErrorBoundary>}
-          {activeTab === 'feature-controls' && <ErrorBoundary key="feature-controls"><FeatureControls /></ErrorBoundary>}
-          {activeTab === 'transparency'    && <ErrorBoundary key="transparency"><DataTransparency /></ErrorBoundary>}
-          {activeTab === 'data-health'     && <ErrorBoundary key="data-health"><DataAccuracy /></ErrorBoundary>}
-          {activeTab === 'data-validator'  && <ErrorBoundary key="data-validator"><DataValidator /></ErrorBoundary>}
-          {activeTab === 'audit'           && <ErrorBoundary key="audit"><AuditLog /></ErrorBoundary>}
           {activeTab === 'analytics'       && <ErrorBoundary key="analytics"><SystemAnalytics /></ErrorBoundary>}
           {activeTab === 'email-reporting' && <ErrorBoundary key="email-reporting"><EmailReporting /></ErrorBoundary>}
           {activeTab === 'settings'        && <ErrorBoundary key="settings"><AdminSettings /></ErrorBoundary>}
