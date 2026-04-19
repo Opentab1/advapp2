@@ -3879,20 +3879,43 @@ export function VenueScope() {
   // History = all older jobs (today's rooms are shown in the camera grid above)
   const historyJobs = useMemo(() => [...olderJobs], [olderJobs]);
 
-  // Publish computed occupancy to shared store so Live page can use it
-  // even when the occupancy computation in usePulseData can't determine the right cameras.
+  // Publish computed occupancy + Little's Law dwell to shared store so Live page can use it.
   useEffect(() => {
+    const nowSec = Date.now() / 1000;
     const peopleRooms = allRooms.filter(r => r.mode === 'people_count');
-    // Also include multi-mode rooms that have people_count configured
-    const multiModeOcc = allDisplayRooms
-      .filter(r => r.mode !== 'people_count' && r.configuredModes.includes('people_count'))
-      .reduce((s, r) => s + (r.currentOccupancy ?? 0), 0);
+    const multiModeRooms = allDisplayRooms.filter(
+      r => r.mode !== 'people_count' && r.configuredModes.includes('people_count')
+    );
+    const allPeopleRooms = [...peopleRooms, ...multiModeRooms];
+
+    const multiModeOcc = multiModeRooms.reduce((s, r) => s + (r.currentOccupancy ?? 0), 0);
     const current = peopleRooms.reduce((s, r) => s + (r.currentOccupancy ?? 0), 0) + multiModeOcc;
-    const peak = Math.max(...allRooms.filter(r =>
-      r.mode === 'people_count' || r.configuredModes.includes('people_count')
-    ).map(r => r.peakOccupancy ?? 0), 0);
-    if (current > 0 || peak > 0) {
-      pulseStore.setVenueOccupancy(current, peak);
+    const peak = Math.max(...allPeopleRooms.map(r => r.peakOccupancy ?? 0), 0);
+
+    // Little's Law: avg_dwell = avg_occupancy / arrival_rate
+    // Aggregate entries and elapsed across all people_count rooms
+    let dwellTimeMin: number | null = null;
+    let totalEntries = 0;
+    let totalElapsedSec = 0;
+    for (const room of allPeopleRooms) {
+      const job = room.job;
+      if (!job) continue;
+      totalEntries += job.totalEntries ?? 0;
+      const elapsed = job.elapsedSec ?? Math.max(0, nowSec - (job.createdAt ?? nowSec));
+      totalElapsedSec += elapsed;
+    }
+    if (totalEntries >= 5 && totalElapsedSec >= 300) {
+      const avgOcc = current || peak * 0.6;
+      const arrivalRate = totalEntries / totalElapsedSec; // per second
+      const dwellSec = avgOcc / arrivalRate;
+      const dwellMin = dwellSec / 60;
+      if (dwellMin >= 2 && dwellMin <= 360) {
+        dwellTimeMin = Math.round(dwellMin);
+      }
+    }
+
+    if (current > 0 || peak > 0 || dwellTimeMin != null) {
+      pulseStore.setVenueOccupancy(current, peak, dwellTimeMin);
     }
   }, [allRooms, allDisplayRooms]);
 

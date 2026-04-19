@@ -880,8 +880,14 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     // Priority 2: FIFO calculation from sensor entries/exits
     if (dwellTimeMinutes !== null) return dwellTimeMinutes;
 
-    // Priority 3: Little's Law from VenueScope people_count cameras
+    // Priority 3: Little's Law from vsOccupancy (own computation)
     if (vsOccupancy?.dwellTimeMin != null) return vsOccupancy.dwellTimeMin;
+
+    // Priority 4: Little's Law published by VenueScope tab (has camera configs)
+    const storedDwell = pulseStore.getVenueOccupancy();
+    if (Date.now() - storedDwell.updatedAt < 5 * 60 * 1000 && storedDwell.dwellTimeMin != null) {
+      return storedDwell.dwellTimeMin;
+    }
 
     // Priority 4: Demo fallback
     if (isDemoAccount(venueId)) {
