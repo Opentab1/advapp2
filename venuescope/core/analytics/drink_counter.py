@@ -842,7 +842,12 @@ class DrinkCounter:
         # Cooldown state (always restore regardless of date — safe for resets)
         for sid, serve_wall in state.get("station_serve_walls", {}).items():
             elapsed = now - serve_wall
-            self._station_last_serve_tsec[sid] = -elapsed
+            # If serve_wall is in the future (e.g. from NVR buffer overshoot),
+            # treat it as expired — no cooldown needed
+            if elapsed < 0:
+                self._station_last_serve_tsec[sid] = -(now - 0)  # very old, no block
+            else:
+                self._station_last_serve_tsec[sid] = -elapsed
 
         # Drink count accumulation — only if saved today (same shift)
         if state.get("saved_date") != today:
