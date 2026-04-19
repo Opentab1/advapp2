@@ -409,7 +409,14 @@ def _write_shift_summary(
 
     cam_id   = (summary.get("camera_id") or "").replace("/", "_") or job_id[:8]
     sum_id   = f"shift_{cam_id}_{shift_date}"
-    sort_key = _ddb_sort_key(sum_id, wall_start)  # placed by shift-start time in DDB
+    # Use current time for the sort key so the record floats to the top of the
+    # React query (which fetches the 3000 most recent items). Historical timestamps
+    # would bury the record under 50k+ table_turns/people_count segments.
+    # createdAt/finishedAt still store the correct historical shift times for display.
+    _now_ts = time.time()
+    old_key = _job_ddb_key_cache.get(sum_id)
+    sort_key = f"!{int(9999999999 - _now_ts):010d}_{sum_id}"
+    _job_ddb_key_cache[sum_id] = sort_key
 
     bts      = summary.get("bartenders", {})
     clip     = (summary.get("clip_label", "") or "").replace("🔴 LIVE", "").strip(" —").strip()
@@ -459,6 +466,14 @@ def _write_shift_summary(
 
     try:
         ddb = _get_client("dynamodb")
+        # Remove previous record for this shift date if the sort key changed
+        # (happens on worker restart when a fresh sort key is computed)
+        if old_key and old_key != sort_key:
+            try:
+                ddb.delete_item(TableName=DYNAMODB_TABLE,
+                                Key={"venueId": {"S": venue_id}, "jobId": {"S": old_key}})
+            except Exception:
+                pass
         _retry(lambda: ddb.put_item(TableName=DYNAMODB_TABLE, Item=item))
         print(f"[aws_sync] Shift summary written: {shift_drinks} drinks on {shift_date} "
               f"(cam={cam_id})", flush=True)
