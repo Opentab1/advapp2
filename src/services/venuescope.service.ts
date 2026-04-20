@@ -6,7 +6,7 @@
  * Full summary JSON is fetched from S3 on demand for the detail view.
  */
 import { generateClient } from '@aws-amplify/api';
-import { DynamoDBClient, QueryCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
 
 const client = generateClient();
 
@@ -385,10 +385,134 @@ const venueScopeService = {
       if (forecastDate !== target) return null; // stale
       const raw = (item.forecastJson as { S: string } | undefined)?.S;
       if (!raw) return null;
-      return JSON.parse(raw) as Record<string, unknown>;
+      const forecast = JSON.parse(raw) as Record<string, unknown>;
+      // Merge actuals written by backfill (separate DynamoDB attributes)
+      if (item.actualCovers)      forecast.actualCovers      = Number((item.actualCovers      as { N: string }).N);
+      if (item.actualRevenue)     forecast.actualRevenue     = Number((item.actualRevenue     as { N: string }).N);
+      if (item.actualAccuracyPct) forecast.actualAccuracyPct = Number((item.actualAccuracyPct as { N: string }).N);
+      return forecast;
     } catch (err) {
       console.warn('[venuescope] getForecast failed:', err);
       return null;
+    }
+  },
+
+  /** Read the bartender capacity model stored by forecast_cron.py at 6 AM */
+  async getCapacityModel(venueId: string): Promise<Record<string, unknown> | null> {
+    if (!_directDDB) return null;
+    try {
+      const r = await _directDDB.send(new GetItemCommand({
+        TableName: 'VenueScopeJobs',
+        Key: { venueId: { S: venueId }, jobId: { S: 'staffing#capacity_model' } },
+      }));
+      const item = r.Item;
+      if (!item) return null;
+      const raw = (item.capacityJson as { S: string } | undefined)?.S;
+      if (!raw) return null;
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      console.warn('[venuescope] getCapacityModel failed:', err);
+      return null;
+    }
+  },
+
+  /** Read venue physics config (concept type, bar stations, thresholds) */
+  async getVenuePhysics(venueId: string): Promise<Record<string, unknown> | null> {
+    if (!_directDDB) return null;
+    try {
+      const r = await _directDDB.send(new GetItemCommand({
+        TableName: 'VenueScopeJobs',
+        Key: { venueId: { S: venueId }, jobId: { S: 'config#venue_physics' } },
+      }));
+      const item = r.Item;
+      if (!item) return null;
+      const raw = (item.configJson as { S: string } | undefined)?.S;
+      if (!raw) return null;
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      console.warn('[venuescope] getVenuePhysics failed:', err);
+      return null;
+    }
+  },
+
+  /** Save venue physics config to DynamoDB */
+  async saveVenuePhysics(venueId: string, config: Record<string, unknown>): Promise<boolean> {
+    if (!_directDDB) return false;
+    try {
+      await _directDDB.send(new PutItemCommand({
+        TableName: 'VenueScopeJobs',
+        Item: {
+          venueId:    { S: venueId },
+          jobId:      { S: 'config#venue_physics' },
+          configJson: { S: JSON.stringify(config) },
+          updatedAt:  { N: String(Math.floor(Date.now() / 1000)) },
+        },
+      }));
+      return true;
+    } catch (err) {
+      console.warn('[venuescope] saveVenuePhysics failed:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Fetch the last N days of forecast records from DynamoDB.
+   * Uses a range query on jobId: forecast#YYYY-MM-DD (lexicographic sort).
+   */
+  async getForecastHistory(venueId: string, days = 30): Promise<Array<Record<string, unknown>>> {
+    if (!_directDDB) return [];
+    try {
+      const today  = new Date();
+      const oldest = new Date(today);
+      oldest.setDate(oldest.getDate() - days);
+      const skLow  = `forecast#${oldest.toISOString().slice(0, 10)}`;
+      const skHigh = `forecast#${today.toISOString().slice(0, 10)}z`;
+
+      const r = await _directDDB.send(new QueryCommand({
+        TableName: 'VenueScopeJobs',
+        KeyConditionExpression: 'venueId = :v AND jobId BETWEEN :lo AND :hi',
+        ExpressionAttributeValues: {
+          ':v':  { S: venueId },
+          ':lo': { S: skLow },
+          ':hi': { S: skHigh },
+        },
+      } as any));
+
+      const results: Array<Record<string, unknown>> = [];
+      for (const item of r.Items ?? []) {
+        const raw   = (item.forecastJson  as { S: string } | undefined)?.S;
+        const dateS = (item.forecastDate  as { S: string } | undefined)?.S;
+        if (!raw) continue;
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        parsed._date = dateS ?? '';
+        if (item.actualCovers)      parsed.actualCovers      = Number((item.actualCovers      as { N: string }).N);
+        if (item.actualRevenue)     parsed.actualRevenue     = Number((item.actualRevenue     as { N: string }).N);
+        if (item.actualAccuracyPct) parsed.actualAccuracyPct = Number((item.actualAccuracyPct as { N: string }).N);
+        results.push(parsed);
+      }
+      return results.sort((a, b) => String(a._date).localeCompare(String(b._date)));
+    } catch (err) {
+      console.warn('[venuescope] getForecastHistory failed:', err);
+      return [];
+    }
+  },
+
+  /** Log a manager staffing override (adding/removing staff vs AI suggestion) */
+  async logStaffingOverride(venueId: string, date: string, diff: Record<string, unknown>): Promise<void> {
+    if (!_directDDB) return;
+    const ts = Math.floor(Date.now() / 1000);
+    try {
+      await _directDDB.send(new PutItemCommand({
+        TableName: 'VenueScopeJobs',
+        Item: {
+          venueId:   { S: venueId },
+          jobId:     { S: `override#${date}#${ts}` },
+          diffJson:  { S: JSON.stringify(diff) },
+          createdAt: { N: String(ts) },
+        },
+      }));
+    } catch (err) {
+      console.warn('[venuescope] logStaffingOverride failed:', err);
     }
   },
 

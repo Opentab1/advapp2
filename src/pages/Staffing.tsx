@@ -17,6 +17,22 @@ import { isDemoAccount } from '../utils/demoData';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+interface BartenderCapModel {
+  bartenders: Record<string, { dph_median: number; dph_p60: number; shifts: number }>;
+  venue_dph: number;
+  drinks_per_cover_per_hour: number;
+  covers_per_bartender: number;
+  shifts_analyzed?: number;
+  source: 'learned' | 'no_data';
+}
+
+interface HourlyRates {
+  bartender: number;
+  server: number;
+  door: number;
+  manager: number;
+}
+
 interface StaffMember {
   id: string;
   name: string;
@@ -137,6 +153,23 @@ function _lsGetShifts(venueId: string): Shift[] {
 }
 function _lsSaveShifts(venueId: string, data: Shift[]) {
   localStorage.setItem(_lsKey(venueId, 'shifts'), JSON.stringify(data));
+}
+
+function _lsGetRates(venueId: string): HourlyRates {
+  try {
+    const raw = localStorage.getItem(`vs_hourly_rates_${venueId}`);
+    if (raw) return { ...{ bartender: 18, server: 15, door: 16, manager: 22 }, ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+  return { bartender: 18, server: 15, door: 16, manager: 22 };
+}
+
+// Shift hours (start → end, crossing midnight counted as 8 hrs default)
+function shiftHours(start: string, end: string): number {
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  let h = (eh + (em / 60)) - (sh + (sm / 60));
+  if (h <= 0) h += 24; // crosses midnight
+  return Math.round(h * 10) / 10;
 }
 
 // ── Demo data ──────────────────────────────────────────────────────────────
@@ -333,6 +366,8 @@ function MonthScheduleView({
   setShifts,
   venueId,
   bartenderStats,
+  capacityModel,
+  hourlyRates,
   onAddStaff,
   onDeleteStaff,
   onAddShift,
@@ -345,6 +380,8 @@ function MonthScheduleView({
   setShifts: React.Dispatch<React.SetStateAction<Shift[]>>;
   venueId: string;
   bartenderStats: Record<string, { drinks: number; shifts: number; theftFlags: number }>;
+  capacityModel: BartenderCapModel | null;
+  hourlyRates: HourlyRates;
   onAddStaff: () => void;
   onDeleteStaff: (id: string) => void;
   onAddShift: (date: string) => void;
@@ -356,10 +393,16 @@ function MonthScheduleView({
   const [autoFilling, setAutoFilling] = useState(false);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
-  // Physics config (simplified — reads from localStorage or uses defaults)
-  const capacity           = 150;
-  const covers_per_bartender = 35;
-  const door_threshold     = 0.55;
+  // Physics config — use learned capacity model if available, else defaults
+  const capacity             = 150;
+  const covers_per_bartender = capacityModel?.source === 'learned' ? capacityModel.covers_per_bartender : 35;
+  const door_threshold       = 0.55;
+
+  // Build bartender dph ranking from capacity model (highest dph first = fastest bartenders)
+  const bartenderDph = (name: string): number => {
+    const entry = capacityModel?.bartenders?.[name];
+    return entry?.dph_p60 ?? entry?.dph_median ?? 0;
+  };
 
   // Build calendar grid: full weeks covering the month
   const monthStart = startOfMonth(viewMonth);
@@ -382,6 +425,8 @@ function MonthScheduleView({
 
     // Round-robin indices per role
     const byRole = (role: string) => staff.filter(s => s.role === role);
+    // Sort bartenders by dph descending (fastest first) for busy nights
+    const sortedBartenders = byRole('bartender').sort((a, b) => bartenderDph(b.name) - bartenderDph(a.name));
     let bartIdx = 0, doorIdx = 0;
 
     days.forEach(day => {
@@ -391,11 +436,13 @@ function MonthScheduleView({
 
       const rec = clientForecastForDate(day, capacity, covers_per_bartender, door_threshold);
 
-      // Bartenders
-      const bartenders = byRole('bartender');
-      if (bartenders.length > 0) {
-        for (let i = 0; i < Math.min(rec.bartenders, bartenders.length); i++) {
-          const b = bartenders[(bartIdx + i) % bartenders.length];
+      // Bartenders — on busy nights (isWeekend), start from highest-dph; on slow nights rotate
+      const bartenderPool = rec.isWeekend ? sortedBartenders : byRole('bartender');
+      if (bartenderPool.length > 0) {
+        for (let i = 0; i < Math.min(rec.bartenders, bartenderPool.length); i++) {
+          const b = rec.isWeekend
+            ? bartenderPool[i % bartenderPool.length]           // best bartenders on busy nights
+            : bartenderPool[(bartIdx + i) % bartenderPool.length]; // rotate on slow nights
           const startHr = rec.isWeekend ? '18:00' : '20:00';
           newShifts.push({
             id: `auto-${dateStr}-bart-${i}`,
@@ -404,7 +451,7 @@ function MonthScheduleView({
             suggested: true,
           });
         }
-        bartIdx = (bartIdx + rec.bartenders) % Math.max(bartenders.length, 1);
+        if (!rec.isWeekend) bartIdx = (bartIdx + rec.bartenders) % Math.max(bartenderPool.length, 1);
       }
 
       // Door staff (if needed)
@@ -521,11 +568,19 @@ function MonthScheduleView({
               Confirm all ({suggestedCount})
             </button>
           )}
-          <button onClick={handleAutoFill} disabled={autoFilling}
-            className="btn-primary text-sm flex items-center gap-2">
-            {autoFilling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            Auto-fill Month
-          </button>
+          <div className="flex flex-col items-end gap-1">
+            <button onClick={handleAutoFill} disabled={autoFilling}
+              className="btn-primary text-sm flex items-center gap-2">
+              {autoFilling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              Auto-fill Month
+            </button>
+            {capacityModel?.source === 'learned' && (
+              <span className="text-[9px] text-teal/70 flex items-center gap-0.5">
+                <Zap className="w-2.5 h-2.5" />
+                venue-learned · {capacityModel.shifts_analyzed ?? 0} shifts · {capacityModel.covers_per_bartender} guests/bartender
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -633,6 +688,15 @@ function MonthScheduleView({
           const day      = parseISO(expandedDay);
           const dayShifts = getShiftsForDay(expandedDay);
           const rec       = clientForecastForDate(day, capacity, covers_per_bartender, door_threshold);
+
+          // Labor cost estimate
+          const laborCost = dayShifts.reduce((sum, s) => {
+            const hrs  = shiftHours(s.startTime, s.endTime);
+            const rate = hourlyRates[s.role as keyof HourlyRates] ?? hourlyRates.bartender;
+            return sum + hrs * rate;
+          }, 0);
+          const revEstimate = rec.expectedPeople * 28; // ~$28/head avg
+
           return (
             <motion.div key={expandedDay}
               initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
@@ -644,6 +708,17 @@ function MonthScheduleView({
                     Forecast: ~{rec.expectedPeople} people · need {rec.bartenders} bartender{rec.bartenders !== 1 ? 's' : ''}
                     {rec.door > 0 ? ` · door` : ''}
                   </p>
+                  {dayShifts.length > 0 && (
+                    <div className="flex items-center gap-3 mt-1.5 text-xs">
+                      <span className="text-warm-500">Labor est.</span>
+                      <span className="text-amber-400 font-semibold">${Math.round(laborCost)}</span>
+                      <span className="text-warm-600">vs</span>
+                      <span className="text-green-400 font-semibold">${revEstimate.toLocaleString()} rev</span>
+                      <span className={`font-semibold ${laborCost / revEstimate <= 0.30 ? 'text-green-400' : 'text-amber-400'}`}>
+                        ({Math.round((laborCost / revEstimate) * 100)}% labor cost)
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => onAddShift(expandedDay)} className="btn-primary text-xs flex items-center gap-1 px-3 py-1.5">
@@ -822,6 +897,8 @@ export function Staffing() {
   const [showAddShift,   setShowAddShift]   = useState<string | null>(null);
   const [showCSVImport,  setShowCSVImport]  = useState(false);
   const [bartenderStats, setBartenderStats] = useState<Record<string, { drinks: number; shifts: number; theftFlags: number }>>({});
+  const [capacityModel,  setCapacityModel]  = useState<BartenderCapModel | null>(null);
+  const [hourlyRates,    setHourlyRates]    = useState<HourlyRates>({ bartender: 18, server: 15, door: 16, manager: 22 });
 
   const user    = authService.getStoredUser();
   const venueId = user?.venueId ?? '';
@@ -912,6 +989,13 @@ export function Staffing() {
         })
         .sort((a, b) => b.drinks - a.drinks);
       setCamPerf(perfArr);
+
+      // Load capacity model + hourly rates
+      setHourlyRates(_lsGetRates(venueId));
+      venueScopeService.getCapacityModel(venueId).then(cm => {
+        if (cm) setCapacityModel(cm as unknown as BartenderCapModel);
+      }).catch(() => {});
+
     } catch (err) {
       console.error('Staff load error', err);
     } finally {
@@ -971,6 +1055,16 @@ export function Staffing() {
 
   const handleDeleteShift = (shiftId: string) => {
     if (!venueId) return;
+    const deleted = shifts.find(s => s.id === shiftId);
+    // Log override when manager removes an AI-suggested shift
+    if (deleted?.suggested) {
+      venueScopeService.logStaffingOverride(venueId, deleted.date, {
+        action: 'removed_suggestion',
+        role: deleted.role,
+        staffName: deleted.staffName,
+        date: deleted.date,
+      }).catch(() => {});
+    }
     const updated = shifts.filter(s => s.id !== shiftId);
     setShifts(updated);
     _lsSaveShifts(venueId, updated);
@@ -1090,6 +1184,8 @@ export function Staffing() {
               setShifts={setShifts}
               venueId={venueId}
               bartenderStats={bartenderStats}
+              capacityModel={capacityModel}
+              hourlyRates={hourlyRates}
               onAddStaff={() => setShowAddStaff(true)}
               onDeleteStaff={handleDeleteStaff}
               onAddShift={date => setShowAddShift(date)}

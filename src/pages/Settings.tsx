@@ -6,6 +6,7 @@ import {
   Camera, Download, Wifi, WifiOff, RefreshCw, Circle, Clock, Pencil, X,
   Eye, EyeOff, AlertCircle, Search, Globe, Radio,
   ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Loader2, Plus, Trash2,
+  Zap,
 } from 'lucide-react';
 import connectService, { ConnectStatus, VenueOS, detectOS } from '../services/connect.service';
 import alertsService, { AlertPreferences } from '../services/alerts.service';
@@ -20,9 +21,10 @@ import { POSIntegration } from '../components/settings/POSIntegration';
 import { haptic } from '../utils/haptics';
 import { useDisplayName } from '../hooks/useDisplayName';
 import squarePosService, { SquareCredentials } from '../services/square-pos.service';
+import venueScopeService from '../services/venuescope.service';
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'cameras' | 'billing' | 'about'>('account');
+  const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'cameras' | 'billing' | 'staffing' | 'about'>('account');
   const [connectStatus, setConnectStatus] = useState<ConnectStatus | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -63,6 +65,18 @@ export function Settings() {
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingError, setBillingError]   = useState('');
   const [billingActionLoading, setBillingActionLoading] = useState(false);
+
+  // Staffing physics config
+  const [physicsForm, setPhysicsForm] = useState({
+    concept_type: 'bar',
+    bar_stations: 1,
+    covers_per_bartender: 35,
+    door_threshold_pct: 55,
+    barback_threshold_pct: 40,
+  });
+  const [hourlyRates, setHourlyRates] = useState({ bartender: 18, server: 15, door: 16, manager: 22 });
+  const [physicsSaving, setPhysicsSaving] = useState(false);
+  const [physicsSaved, setPhysicsSaved]   = useState(false);
 
   const user = authService.getStoredUser();
 
@@ -394,6 +408,42 @@ export function Settings() {
     }
   }, [user?.venueId]);
 
+  // Load staffing physics when on staffing tab
+  useEffect(() => {
+    if (activeTab !== 'staffing') return;
+    const venueId = user?.venueId;
+    if (!venueId) return;
+    // Load saved rates from localStorage
+    const savedRates = localStorage.getItem(`vs_hourly_rates_${venueId}`);
+    if (savedRates) { try { setHourlyRates(JSON.parse(savedRates)); } catch { /* ignore */ } }
+    // Load physics from DynamoDB
+    venueScopeService.getVenuePhysics(venueId).then(p => {
+      if (!p) return;
+      setPhysicsForm(f => ({
+        ...f,
+        concept_type:          (p.concept_type          as string)  ?? f.concept_type,
+        bar_stations:          (p.bar_stations           as number)  ?? f.bar_stations,
+        covers_per_bartender:  (p.covers_per_bartender   as number)  ?? f.covers_per_bartender,
+        door_threshold_pct:    (p.door_threshold_pct     as number)  ?? f.door_threshold_pct,
+        barback_threshold_pct: (p.barback_threshold_pct  as number)  ?? f.barback_threshold_pct,
+      }));
+    }).catch(() => {});
+  }, [activeTab, user?.venueId]);
+
+  const handleSavePhysics = async () => {
+    const venueId = user?.venueId;
+    if (!venueId) return;
+    setPhysicsSaving(true);
+    try {
+      await venueScopeService.saveVenuePhysics(venueId, physicsForm as unknown as Record<string, unknown>);
+      localStorage.setItem(`vs_hourly_rates_${venueId}`, JSON.stringify(hourlyRates));
+      setPhysicsSaved(true);
+      setTimeout(() => setPhysicsSaved(false), 2500);
+    } finally {
+      setPhysicsSaving(false);
+    }
+  };
+
   // Load billing status when on billing tab
   useEffect(() => {
     if (activeTab !== 'billing') return;
@@ -513,6 +563,7 @@ export function Settings() {
             { id: 'alerts' as const, label: 'Alerts', icon: Bell },
             { id: 'cameras' as const, label: 'Cameras', icon: Camera },
             { id: 'billing' as const, label: 'Billing', icon: CreditCard },
+            { id: 'staffing' as const, label: 'Staffing', icon: Zap },
             { id: 'about' as const, label: 'About', icon: Info },
           ].map((tab) => (
             <motion.button
@@ -1994,6 +2045,121 @@ export function Settings() {
                   Accounts that are past due have a 7-day grace period before access is suspended.
                 </p>
               </div>
+            </motion.div>
+          )}
+
+          {/* Staffing Tab */}
+          {activeTab === 'staffing' && (
+            <motion.div
+              className="space-y-6"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              {/* Venue Physics */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <h3 className="text-xl font-semibold text-white mb-1 flex items-center gap-2">
+                  <Sliders className="w-5 h-5 text-teal" />Venue Physics
+                </h3>
+                <p className="text-sm text-warm-400 mb-6">Controls how the forecast converts crowd size into staffing headcounts. These update the droplet's capacity model.</p>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Concept Type</label>
+                    <select
+                      value={physicsForm.concept_type}
+                      onChange={e => setPhysicsForm(p => ({ ...p, concept_type: e.target.value }))}
+                      className="w-full px-4 py-2 bg-warm-900 border border-warm-700 rounded-lg text-white focus:outline-none focus:border-teal/50"
+                    >
+                      <option value="bar">Bar</option>
+                      <option value="cocktail">Cocktail Lounge</option>
+                      <option value="nightclub">Nightclub</option>
+                      <option value="sports_bar">Sports Bar</option>
+                      <option value="restaurant">Restaurant</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Bar Stations</label>
+                    <input
+                      type="number" min="1" max="8"
+                      value={physicsForm.bar_stations}
+                      onChange={e => setPhysicsForm(p => ({ ...p, bar_stations: Number(e.target.value) }))}
+                      className="w-full px-4 py-2 bg-warm-900 border border-warm-700 rounded-lg text-white focus:outline-none focus:border-teal/50"
+                    />
+                    <p className="text-[11px] text-warm-500 mt-1">Caps max bartenders at 2× bar stations</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Guests per Bartender</label>
+                    <input
+                      type="number" min="10" max="80"
+                      value={physicsForm.covers_per_bartender}
+                      onChange={e => setPhysicsForm(p => ({ ...p, covers_per_bartender: Number(e.target.value) }))}
+                      className="w-full px-4 py-2 bg-warm-900 border border-warm-700 rounded-lg text-white focus:outline-none focus:border-teal/50"
+                    />
+                    <p className="text-[11px] text-warm-500 mt-1">Overrides the learned value from camera data</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Door Staff Threshold</label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range" min="25" max="85" step="5"
+                        value={physicsForm.door_threshold_pct}
+                        onChange={e => setPhysicsForm(p => ({ ...p, door_threshold_pct: Number(e.target.value) }))}
+                        className="flex-1"
+                      />
+                      <span className="text-white font-semibold w-10 text-right">{physicsForm.door_threshold_pct}%</span>
+                    </div>
+                    <p className="text-[11px] text-warm-500 mt-1">Occupancy % that triggers door staff</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-warm-300 mb-2">Barback Threshold</label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range" min="20" max="70" step="5"
+                        value={physicsForm.barback_threshold_pct}
+                        onChange={e => setPhysicsForm(p => ({ ...p, barback_threshold_pct: Number(e.target.value) }))}
+                        className="flex-1"
+                      />
+                      <span className="text-white font-semibold w-10 text-right">{physicsForm.barback_threshold_pct}%</span>
+                    </div>
+                    <p className="text-[11px] text-warm-500 mt-1">Occupancy % that triggers barback</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Hourly Rates */}
+              <div className="bg-warm-800/50 border border-warm-700 rounded-2xl p-6">
+                <h3 className="text-xl font-semibold text-white mb-1 flex items-center gap-2">
+                  <DollarSign className="w-5 h-5 text-green-400" />Hourly Labor Rates
+                </h3>
+                <p className="text-sm text-warm-400 mb-6">Used to estimate shift cost vs forecast revenue in the Schedule tab.</p>
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    { key: 'bartender', label: 'Bartender' },
+                    { key: 'server',    label: 'Server'    },
+                    { key: 'door',      label: 'Door Staff' },
+                    { key: 'manager',   label: 'Manager'   },
+                  ].map(({ key, label }) => (
+                    <div key={key}>
+                      <label className="block text-sm font-medium text-warm-300 mb-2">{label} ($/hr)</label>
+                      <input
+                        type="number" min="10" max="80"
+                        value={hourlyRates[key as keyof typeof hourlyRates]}
+                        onChange={e => setHourlyRates(r => ({ ...r, [key]: Number(e.target.value) }))}
+                        className="w-full px-4 py-2 bg-warm-900 border border-warm-700 rounded-lg text-white focus:outline-none focus:border-teal/50"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={handleSavePhysics}
+                disabled={physicsSaving}
+                className="btn-primary flex items-center gap-2 px-6"
+              >
+                {physicsSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : physicsSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                {physicsSaved ? 'Saved!' : 'Save Staffing Settings'}
+              </button>
             </motion.div>
           )}
 

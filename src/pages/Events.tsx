@@ -432,8 +432,131 @@ async function buildDemoForecast(): Promise<TonightForecast> {
   };
 }
 
+// ─── Forecast Accuracy History (for History tab) ──────────────────────────────
+
+interface ForecastRecord {
+  _date: string;
+  final_estimate?: { mid: number };
+  actualCovers?: number;
+  actualRevenue?: number;
+  actualAccuracyPct?: number;
+}
+
+function ForecastAccuracySection({ venueId }: { venueId: string }) {
+  const [history, setHistory] = useState<ForecastRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!venueId || isDemoAccount(venueId)) { setLoading(false); return; }
+    venueScopeService.getForecastHistory(venueId, 30).then(h => {
+      setHistory(h as ForecastRecord[]);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [venueId]);
+
+  if (loading) return (
+    <div className="flex justify-center py-6"><RefreshCw className="w-5 h-5 text-warm-600 animate-spin" /></div>
+  );
+
+  const withActuals = history.filter(h => h.actualAccuracyPct != null && h.actualCovers != null);
+  if (withActuals.length === 0) return (
+    <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5 text-center">
+      <BarChart3 className="w-8 h-8 text-warm-600 mx-auto mb-2" />
+      <p className="text-sm text-warm-400">No forecast accuracy data yet</p>
+      <p className="text-xs text-warm-500 mt-1">Accuracy is logged nightly after 6 AM when actuals are backfilled</p>
+    </div>
+  );
+
+  // DOW breakdown
+  const DOW_SHORT = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const dowGroups: Record<number, number[]> = {};
+  withActuals.forEach(h => {
+    const d   = new Date(h._date + 'T12:00:00');
+    const dow = (d.getDay() + 6) % 7; // Mon=0
+    dowGroups[dow] = dowGroups[dow] ?? [];
+    dowGroups[dow].push(h.actualAccuracyPct!);
+  });
+  const dowAvg = DOW_SHORT.map((label, i) => {
+    const vals = dowGroups[i] ?? [];
+    const avg  = vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+    return { label, avg, n: vals.length };
+  });
+
+  const maxAcc = 100;
+  const last14 = withActuals.slice(-14);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5">
+        <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold mb-4">
+          Forecast Accuracy — Last {last14.length} Nights
+        </p>
+        <div className="flex items-end gap-1" style={{ height: '80px' }}>
+          {last14.map(h => {
+            const acc  = Math.max(0, h.actualAccuracyPct ?? 0);
+            const barH = Math.round((acc / maxAcc) * 100);
+            const color = acc >= 85 ? 'bg-green-500' : acc >= 70 ? 'bg-amber-500' : 'bg-red-500';
+            const label = h._date.slice(5); // MM-DD
+            return (
+              <div key={h._date} className="flex-1 flex flex-col items-center justify-end gap-1 h-full">
+                <div className="relative w-full flex-1 flex flex-col justify-end">
+                  <div className={`w-full rounded-t-sm ${color}/30`} style={{ height: '100%', position: 'absolute', bottom: 0 }} />
+                  <div className={`w-full rounded-t-sm ${color} absolute bottom-0`} style={{ height: `${barH}%` }} />
+                </div>
+                <span className="text-[7px] text-warm-600 whitespace-nowrap">{label}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-4 mt-3 text-[10px] text-warm-500">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-500 inline-block" />≥85% accurate</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-500 inline-block" />70–84%</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-500 inline-block" />&lt;70%</span>
+        </div>
+      </div>
+
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5">
+        <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold mb-3">Accuracy by Day of Week</p>
+        <div className="grid grid-cols-7 gap-1">
+          {dowAvg.map(({ label, avg, n }) => (
+            <div key={label} className="flex flex-col items-center gap-1">
+              <span className="text-[10px] text-warm-500">{label}</span>
+              <div className={`text-sm font-bold ${avg == null ? 'text-warm-600' : avg >= 85 ? 'text-green-400' : avg >= 70 ? 'text-amber-400' : 'text-red-400'}`}>
+                {avg != null ? `${avg}%` : '—'}
+              </div>
+              <span className="text-[9px] text-warm-600">{n > 0 ? `${n}n` : ''}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
+          <TrendingUp className="w-4 h-4 text-teal" />
+          <span className="text-sm font-semibold text-white">Recent Nights</span>
+        </div>
+        <div className="divide-y divide-whoop-divider">
+          {withActuals.slice(-10).reverse().map(h => {
+            const acc = h.actualAccuracyPct ?? 0;
+            const ok  = acc >= 85 ? 'text-green-400' : acc >= 70 ? 'text-amber-400' : 'text-red-400';
+            return (
+              <div key={h._date} className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-sm text-warm-300">{h._date}</span>
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="text-warm-400">predicted {h.final_estimate?.mid ?? '?'} · actual {h.actualCovers}</span>
+                  <span className={`font-bold ${ok}`}>{acc.toFixed(1)}%</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TonightTab({ venueId }: { venueId: string }) {
   const [forecast, setForecast] = useState<TonightForecast | null>(null);
+  const [lastNight, setLastNight] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [usingClientModel, setUsingClientModel] = useState(false);
   const [venueCapacity, setVenueCapacity] = useState(150);
@@ -464,16 +587,22 @@ function TonightTab({ venueId }: { venueId: string }) {
     let historicalJobs: VenueScopeJob[] = [];
     let storedForecast: Record<string, unknown> | null = null;
     const ninetyDaysAgo = Math.floor(Date.now() / 1000) - 90 * 86400;
+    // yesterday date string for Last Night card
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayStr = yesterdayDate.toISOString().slice(0, 10);
     try {
-      const [settings, jobs, stored] = await Promise.all([
+      const [settings, jobs, stored, yesterday] = await Promise.all([
         venueSettingsService.loadSettingsFromCloud(venueId),
         venueScopeService.listJobs(venueId, 200, ninetyDaysAgo),
         venueScopeService.getForecast(venueId),
+        venueScopeService.getForecast(venueId, yesterdayStr),
       ]);
       if (settings?.capacity)      { cap = settings.capacity; setVenueCapacity(settings.capacity); }
       if (settings?.avgDrinkPrice) { avgDrinkPrice = settings.avgDrinkPrice; }
       historicalJobs = jobs;
       storedForecast = stored;
+      if (yesterday) setLastNight(yesterday);
     } catch { /* ignore — fall through with client model */ }
 
     // Use pre-computed Prophet forecast written by forecast_cron.py at 6 AM
@@ -525,12 +654,48 @@ function TonightTab({ venueId }: { venueId: string }) {
 
   const maxYhat = Math.max(...forecast.hourly_curve.map(h => h.yhat_upper), 1);
 
+  // Last Night card data
+  const lastNightActual   = lastNight?.actualCovers    as number | undefined;
+  const lastNightRevenue  = lastNight?.actualRevenue   as number | undefined;
+  const lastNightAccuracy = lastNight?.actualAccuracyPct as number | undefined;
+  const lastNightPredicted = (lastNight?.final_estimate as { mid?: number } | undefined)?.mid;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       className="space-y-4"
     >
+      {/* ── Last Night card (when actuals exist) ── */}
+      {lastNight && lastNightActual != null && (
+        <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-4">
+          <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold mb-3">Last Night</p>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <p className="text-[10px] text-warm-500 mb-0.5">Actual covers</p>
+              <p className="text-xl font-bold text-white">{lastNightActual}</p>
+              {lastNightPredicted != null && (
+                <p className="text-[10px] text-warm-500">predicted {lastNightPredicted}</p>
+              )}
+            </div>
+            {lastNightRevenue != null && (
+              <div>
+                <p className="text-[10px] text-warm-500 mb-0.5">Actual revenue</p>
+                <p className="text-xl font-bold text-green-400">${lastNightRevenue.toLocaleString()}</p>
+              </div>
+            )}
+            {lastNightAccuracy != null && (
+              <div>
+                <p className="text-[10px] text-warm-500 mb-0.5">Forecast accuracy</p>
+                <p className={`text-xl font-bold ${lastNightAccuracy >= 85 ? 'text-green-400' : lastNightAccuracy >= 70 ? 'text-amber-400' : 'text-red-400'}`}>
+                  {lastNightAccuracy.toFixed(1)}%
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Primary forecast readout ── */}
       <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5 space-y-3">
         {/* Headline */}
@@ -1206,6 +1371,7 @@ export default function Events() {
       {/* History Tab */}
       {activeTab === 'history' && (
         <div className="space-y-4">
+          <ForecastAccuracySection venueId={venueId} />
           <ConceptOptimizer concepts={concepts} events={events} />
           <div className="mt-6">
             <p className="text-[10px] text-warm-500 uppercase tracking-wider font-semibold mb-3">Past Event Performance</p>
