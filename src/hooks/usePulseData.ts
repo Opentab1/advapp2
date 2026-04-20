@@ -470,9 +470,10 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
   
   // Data freshness
   const dataAgeSeconds = useMemo(() => {
+    if (isDemoAccount(venueId)) return 5; // always show LIVE for demo
     if (!lastUpdated) return Infinity;
     return Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
-  }, [lastUpdated]);
+  }, [lastUpdated, venueId]);
   
   const isConnected = dataAgeSeconds < DATA_FRESHNESS.disconnected;
   

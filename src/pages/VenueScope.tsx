@@ -1875,7 +1875,8 @@ function CameraLiveView({
   );
 }
 
-const _DEMO_CAM_IMGS = [
+// ── Demo camera image sets per mode ──────────────────────────────────────────
+const _DEMO_IMGS_BAR = [
   "https://images.unsplash.com/photo-1575444758702-4a6b9222336e?w=800&q=80",
   "https://images.unsplash.com/photo-1566633806327-68e152aaf26d?w=800&q=80",
   "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=800&q=80",
@@ -1883,9 +1884,21 @@ const _DEMO_CAM_IMGS = [
   "https://images.unsplash.com/photo-1519671482749-fd09be7ccebf?w=800&q=80",
   "https://images.unsplash.com/photo-1541643600914-78b084683702?w=800&q=80",
 ];
+const _DEMO_IMGS_ENTRANCE = [
+  "https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=800&q=80",
+  "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=800&q=80",
+  "https://images.unsplash.com/photo-1504680177321-2e6a879aac86?w=800&q=80",
+  "https://images.unsplash.com/photo-1531058020387-3be344556be6?w=800&q=80",
+];
+const _DEMO_IMGS_DINING = [
+  "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&q=80",
+  "https://images.unsplash.com/photo-1552566626-52f8b828add9?w=800&q=80",
+  "https://images.unsplash.com/photo-1544148103-0773bf10d330?w=800&q=80",
+  "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&q=80",
+];
 
-// Bartender detection boxes — realistic positions per image index
-const _DEMO_DETECTIONS: Array<Array<{ name: string; top: string; left: string; w: string; h: string; conf: number }>> = [
+// Bartender detection boxes — bar camera only
+const _DEMO_BAR_DETS: Array<Array<{ name: string; top: string; left: string; w: string; h: string; conf: number }>> = [
   [{ name: 'Marcus', top: '32%', left: '22%', w: '18%', h: '38%', conf: 0.94 }, { name: 'Priya', top: '40%', left: '58%', w: '16%', h: '34%', conf: 0.91 }],
   [{ name: 'Marcus', top: '28%', left: '48%', w: '20%', h: '42%', conf: 0.96 }, { name: 'Priya', top: '36%', left: '18%', w: '17%', h: '36%', conf: 0.88 }],
   [{ name: 'Priya',  top: '34%', left: '30%', w: '18%', h: '40%', conf: 0.92 }, { name: 'Marcus', top: '30%', left: '62%', w: '19%', h: '38%', conf: 0.95 }],
@@ -1893,63 +1906,124 @@ const _DEMO_DETECTIONS: Array<Array<{ name: string; top: string; left: string; w
   [{ name: 'Priya',  top: '38%', left: '25%', w: '17%', h: '36%', conf: 0.90 }, { name: 'Marcus', top: '32%', left: '55%', w: '20%', h: '40%', conf: 0.97 }],
   [{ name: 'Marcus', top: '30%', left: '40%', w: '21%', h: '42%', conf: 0.95 }, { name: 'Priya', top: '36%', left: '68%', w: '16%', h: '34%', conf: 0.89 }],
 ];
+// Person silhouette boxes for entrance camera
+const _DEMO_ENTRANCE_DETS = [
+  [{ id: '#14', top: '30%', left: '18%', w: '12%', h: '42%' }, { id: '#15', top: '35%', left: '55%', w: '11%', h: '38%' }, { id: '#16', top: '28%', left: '72%', w: '13%', h: '44%' }],
+  [{ id: '#17', top: '32%', left: '30%', w: '12%', h: '40%' }, { id: '#18', top: '38%', left: '62%', w: '11%', h: '36%' }],
+  [{ id: '#19', top: '28%', left: '22%', w: '13%', h: '44%' }, { id: '#20', top: '34%', left: '48%', w: '12%', h: '40%' }, { id: '#21', top: '30%', left: '70%', w: '11%', h: '38%' }],
+  [{ id: '#22', top: '36%', left: '35%', w: '12%', h: '38%' }],
+];
+// Table zones for dining camera — fixed layout
+const _DINING_TABLES = [
+  { id: 'T1', top: '20%', left: '8%',  w: '18%', h: '24%', occupied: true  },
+  { id: 'T2', top: '20%', left: '32%', w: '18%', h: '24%', occupied: true  },
+  { id: 'T3', top: '20%', left: '56%', w: '18%', h: '24%', occupied: false },
+  { id: 'T4', top: '20%', left: '76%', w: '18%', h: '24%', occupied: true  },
+  { id: 'T5', top: '60%', left: '8%',  w: '18%', h: '24%', occupied: true  },
+  { id: 'T6', top: '60%', left: '32%', w: '18%', h: '24%', occupied: false },
+  { id: 'T7', top: '60%', left: '56%', w: '18%', h: '24%', occupied: true  },
+  { id: 'T8', top: '60%', left: '76%', w: '18%', h: '24%', occupied: true  },
+];
 
 interface _DemoEvent { ts: string; name: string; event: string; conf: number }
 
-function DemoCameraFeed() {
-  const [idx, setIdx] = React.useState(0);
+function DemoCameraFeed({ mode = 'drink_count', jobId = '' }: { mode?: string; jobId?: string }) {
+  const isEntrance  = mode === 'people_count';
+  const isDining    = mode === 'table_turns';
+  const isBackBar   = jobId === 'demo-live-backbar';
+
+  const imgs = isEntrance ? _DEMO_IMGS_ENTRANCE : isDining ? _DEMO_IMGS_DINING : _DEMO_IMGS_BAR;
+
+  const [idx, setIdx]           = React.useState(0);
   const [drinkCount, setDrinkCount] = React.useState(() => {
-    // Seed initial count based on hour so it feels live
     const h = new Date().getHours();
-    return Math.max(0, (h >= 18 ? (h - 18) * 14 : 0) + Math.floor(Math.random() * 8));
+    const hoursIn = Math.min(8, Math.max(0, h >= 18 ? h - 18 : h < 4 ? h + 6 : 0));
+    return isEntrance ? Math.round(hoursIn * 242) : isBackBar
+      ? Math.round(hoursIn * 4.2)
+      : Math.max(8, Math.round(hoursIn * 11.2) + Math.floor(Math.random() * 6));
   });
-  const [events, setEvents] = React.useState<_DemoEvent[]>([]);
-  const [frameMs, setFrameMs] = React.useState(Date.now());
+  const [entryCount, setEntryCount] = React.useState(() => {
+    const h = new Date().getHours();
+    const hoursIn = Math.min(8, Math.max(0, h >= 18 ? h - 18 : h < 4 ? h + 6 : 0));
+    return Math.round(hoursIn * 242);
+  });
+  const [turns, setTurns]       = React.useState(18);
+  const [events, setEvents]     = React.useState<_DemoEvent[]>([]);
+  const [tableOcc, setTableOcc] = React.useState(_DINING_TABLES.map(t => t.occupied));
 
-  // Rotate image every 6 s
   React.useEffect(() => {
-    const id = setInterval(() => {
-      setIdx(i => (i + 1) % _DEMO_CAM_IMGS.length);
-      setFrameMs(Date.now());
-    }, 6000);
+    const id = setInterval(() => setIdx(i => (i + 1) % imgs.length), 7000);
     return () => clearInterval(id);
-  }, []);
+  }, [imgs.length]);
 
-  // Increment drink count + add event log entry every ~9 s
+  // Live increment logic per mode
   React.useEffect(() => {
     const id = setInterval(() => {
-      const names = ['Marcus', 'Priya', 'Marcus', 'Priya', 'Marcus'];
-      const name  = names[Math.floor(Math.random() * names.length)];
-      const conf  = parseFloat((0.85 + Math.random() * 0.13).toFixed(2));
-      const now   = new Date();
-      const ts    = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-      setDrinkCount(c => c + 1);
-      setEvents(prev => [{ ts, name, event: 'drink served', conf }, ...prev].slice(0, 6));
+      const now = new Date();
+      const ts  = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      if (isEntrance) {
+        const n = Math.floor(Math.random() * 3) + 1;
+        setEntryCount(c => c + n);
+        setEvents(prev => [{ ts, name: `${n} person${n > 1 ? 's' : ''}`, event: 'entered', conf: 0.96 }, ...prev].slice(0, 6));
+      } else if (isDining) {
+        // Occasionally flip a table
+        if (Math.random() > 0.7) {
+          setTurns(t => t + 1);
+          const tIdx = Math.floor(Math.random() * _DINING_TABLES.length);
+          setTableOcc(prev => { const next = [...prev]; next[tIdx] = !next[tIdx]; return next; });
+          const tbl = _DINING_TABLES[tIdx];
+          const dwell = 75 + Math.floor(Math.random() * 40);
+          setEvents(prev => [{ ts, name: tbl.id, event: `cleared · ${dwell}m dwell`, conf: 0.92 }, ...prev].slice(0, 6));
+        }
+      } else {
+        const names  = isBackBar ? ['Priya', 'Priya', 'Priya'] : ['Marcus', 'Priya', 'Marcus', 'Priya', 'Marcus'];
+        const name   = names[Math.floor(Math.random() * names.length)];
+        const conf   = parseFloat((0.85 + Math.random() * 0.12).toFixed(2));
+        setDrinkCount(c => c + 1);
+        setEvents(prev => [{ ts, name, event: 'drink served', conf }, ...prev].slice(0, 6));
+      }
     }, 9000);
     return () => clearInterval(id);
-  }, []);
+  }, [isEntrance, isDining, isBackBar]);
 
-  const detections = _DEMO_DETECTIONS[idx] ?? _DEMO_DETECTIONS[0];
-  void frameMs; // suppress unused warning
+  const barDets    = _DEMO_BAR_DETS[idx % _DEMO_BAR_DETS.length] ?? [];
+  const entDets    = _DEMO_ENTRANCE_DETS[idx % _DEMO_ENTRANCE_DETS.length] ?? [];
+  const camLabel   = isEntrance ? 'CAM-02 · entrance wide' : isDining ? 'CAM-03 · overhead fisheye' : isBackBar ? 'CAM-04 · back bar' : 'CAM-01 · overhead fisheye';
+  const counterLabel = isEntrance ? `${entryCount} entries` : isDining ? `${turns} turns` : `${drinkCount} drinks`;
+  const counterColor = isEntrance ? 'bg-amber-500/90' : isDining ? 'bg-purple-500/90' : 'bg-teal/90';
+  const logBorderColor = isEntrance ? 'border-amber-500/20' : isDining ? 'border-purple-500/20' : 'border-teal/20';
+  const logNameColor   = isEntrance ? 'text-amber-400' : isDining ? 'text-purple-400' : 'text-teal';
 
   return (
     <div className="mt-1 space-y-2">
-      {/* Camera feed */}
       <div className="relative rounded-xl overflow-hidden bg-black" style={{ aspectRatio: '16/9' }}>
-        <img
-          key={idx}
-          src={_DEMO_CAM_IMGS[idx]}
-          alt="Bar camera"
-          className="w-full h-full object-cover opacity-90"
-          style={{ transition: 'opacity 0.8s' }}
-        />
+        <img key={idx} src={imgs[idx]} alt="camera" className="w-full h-full object-cover opacity-85"
+          style={{ transition: 'opacity 0.8s' }} />
 
-        {/* Detection boxes */}
-        {detections.map((d, i) => (
+        {/* Bar/BackBar: bartender detection boxes */}
+        {!isEntrance && !isDining && barDets.map((d, i) => (
           <div key={i} className="absolute border-2 border-teal/80 rounded-sm" style={{ top: d.top, left: d.left, width: d.w, height: d.h }}>
             <div className="absolute -top-5 left-0 px-1 py-0.5 rounded text-[8px] font-bold text-black bg-teal/90 whitespace-nowrap">
-              {d.name} · {(d.conf * 100).toFixed(0)}%
+              {isBackBar && d.name === 'Marcus' ? 'Priya' : d.name} · {(d.conf * 100).toFixed(0)}%
             </div>
+          </div>
+        ))}
+
+        {/* Entrance: person bounding boxes */}
+        {isEntrance && entDets.map((d, i) => (
+          <div key={i} className="absolute border-2 border-amber-400/70 rounded-sm" style={{ top: d.top, left: d.left, width: d.w, height: d.h }}>
+            <div className="absolute -top-5 left-0 px-1 py-0.5 rounded text-[8px] font-bold text-black bg-amber-400/90 whitespace-nowrap">
+              {d.id}
+            </div>
+          </div>
+        ))}
+
+        {/* Dining: table zone overlays */}
+        {isDining && _DINING_TABLES.map((t, i) => (
+          <div key={t.id} className={`absolute rounded border-2 flex items-center justify-center ${
+            tableOcc[i] ? 'border-green-400/70 bg-green-400/10' : 'border-warm-600/50 bg-black/20'
+          }`} style={{ top: t.top, left: t.left, width: t.w, height: t.h }}>
+            <span className={`text-[8px] font-bold ${tableOcc[i] ? 'text-green-300' : 'text-warm-600'}`}>{t.id}</span>
           </div>
         ))}
 
@@ -1962,26 +2036,26 @@ function DemoCameraFeed() {
           <span className="text-[10px] font-bold text-white tracking-wider uppercase">Live</span>
         </div>
 
-        {/* Drink counter */}
-        <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 rounded-md bg-teal/90 backdrop-blur-sm">
-          <span className="text-[10px] font-bold text-black">{drinkCount} drinks</span>
+        {/* Mode counter badge */}
+        <div className={`absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 rounded-md ${counterColor} backdrop-blur-sm`}>
+          <span className="text-[10px] font-bold text-black">{counterLabel}</span>
         </div>
 
         {/* Camera label */}
         <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[9px] text-white/70 font-mono">
-          CAM-01 · overhead fisheye
+          {camLabel}
         </div>
       </div>
 
       {/* Detection event log */}
       {events.length > 0 && (
-        <div className="bg-black/40 border border-teal/20 rounded-xl p-2 max-h-24 overflow-hidden">
-          <p className="text-[9px] text-teal/60 uppercase tracking-wider mb-1">Detection log</p>
+        <div className={`bg-black/40 border ${logBorderColor} rounded-xl p-2 max-h-24 overflow-hidden`}>
+          <p className="text-[9px] text-warm-600 uppercase tracking-wider mb-1">Detection log</p>
           <div className="space-y-0.5">
             {events.map((ev, i) => (
               <div key={i} className="flex items-center gap-2 text-[9px] font-mono" style={{ opacity: 1 - i * 0.15 }}>
                 <span className="text-warm-600">{ev.ts}</span>
-                <span className="text-teal font-semibold">{ev.name}</span>
+                <span className={`font-semibold ${logNameColor}`}>{ev.name}</span>
                 <span className="text-warm-400">{ev.event}</span>
                 <span className="text-warm-600 ml-auto">{(ev.conf * 100).toFixed(0)}%</span>
               </div>
@@ -2104,7 +2178,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
             className="overflow-hidden"
           >
             {isDemoJob ? (
-              <DemoCameraFeed />
+              <DemoCameraFeed mode={room.mode} jobId={room.job?.jobId ?? ''} />
             ) : (
               <CameraLiveView
                 label={room.label}
