@@ -1880,48 +1880,115 @@ const _DEMO_CAM_IMGS = [
   "https://images.unsplash.com/photo-1566633806327-68e152aaf26d?w=800&q=80",
   "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=800&q=80",
   "https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=800&q=80",
+  "https://images.unsplash.com/photo-1519671482749-fd09be7ccebf?w=800&q=80",
+  "https://images.unsplash.com/photo-1541643600914-78b084683702?w=800&q=80",
 ];
+
+// Bartender detection boxes — realistic positions per image index
+const _DEMO_DETECTIONS: Array<Array<{ name: string; top: string; left: string; w: string; h: string; conf: number }>> = [
+  [{ name: 'Marcus', top: '32%', left: '22%', w: '18%', h: '38%', conf: 0.94 }, { name: 'Priya', top: '40%', left: '58%', w: '16%', h: '34%', conf: 0.91 }],
+  [{ name: 'Marcus', top: '28%', left: '48%', w: '20%', h: '42%', conf: 0.96 }, { name: 'Priya', top: '36%', left: '18%', w: '17%', h: '36%', conf: 0.88 }],
+  [{ name: 'Priya',  top: '34%', left: '30%', w: '18%', h: '40%', conf: 0.92 }, { name: 'Marcus', top: '30%', left: '62%', w: '19%', h: '38%', conf: 0.95 }],
+  [{ name: 'Marcus', top: '26%', left: '35%', w: '22%', h: '44%', conf: 0.93 }],
+  [{ name: 'Priya',  top: '38%', left: '25%', w: '17%', h: '36%', conf: 0.90 }, { name: 'Marcus', top: '32%', left: '55%', w: '20%', h: '40%', conf: 0.97 }],
+  [{ name: 'Marcus', top: '30%', left: '40%', w: '21%', h: '42%', conf: 0.95 }, { name: 'Priya', top: '36%', left: '68%', w: '16%', h: '34%', conf: 0.89 }],
+];
+
+interface _DemoEvent { ts: string; name: string; event: string; conf: number }
 
 function DemoCameraFeed() {
   const [idx, setIdx] = React.useState(0);
-  // Rotate through bar images every 8 seconds to simulate a real feed
+  const [drinkCount, setDrinkCount] = React.useState(() => {
+    // Seed initial count based on hour so it feels live
+    const h = new Date().getHours();
+    return Math.max(0, (h >= 18 ? (h - 18) * 14 : 0) + Math.floor(Math.random() * 8));
+  });
+  const [events, setEvents] = React.useState<_DemoEvent[]>([]);
+  const [frameMs, setFrameMs] = React.useState(Date.now());
+
+  // Rotate image every 6 s
   React.useEffect(() => {
-    const id = setInterval(() => setIdx(i => (i + 1) % _DEMO_CAM_IMGS.length), 8000);
+    const id = setInterval(() => {
+      setIdx(i => (i + 1) % _DEMO_CAM_IMGS.length);
+      setFrameMs(Date.now());
+    }, 6000);
     return () => clearInterval(id);
   }, []);
 
+  // Increment drink count + add event log entry every ~9 s
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      const names = ['Marcus', 'Priya', 'Marcus', 'Priya', 'Marcus'];
+      const name  = names[Math.floor(Math.random() * names.length)];
+      const conf  = parseFloat((0.85 + Math.random() * 0.13).toFixed(2));
+      const now   = new Date();
+      const ts    = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      setDrinkCount(c => c + 1);
+      setEvents(prev => [{ ts, name, event: 'drink served', conf }, ...prev].slice(0, 6));
+    }, 9000);
+    return () => clearInterval(id);
+  }, []);
+
+  const detections = _DEMO_DETECTIONS[idx] ?? _DEMO_DETECTIONS[0];
+  void frameMs; // suppress unused warning
+
   return (
-    <div className="relative rounded-xl overflow-hidden bg-black mt-1" style={{ aspectRatio: '16/9' }}>
-      <img
-        src={_DEMO_CAM_IMGS[idx]}
-        alt="Bar camera"
-        className="w-full h-full object-cover opacity-90 transition-opacity duration-1000"
-      />
-      {/* LIVE badge */}
-      <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-600/90 backdrop-blur-sm">
-        <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
-        </span>
-        <span className="text-[10px] font-bold text-white tracking-wider uppercase">Live</span>
-      </div>
-      {/* Detection dots overlay */}
-      <div className="absolute inset-0 pointer-events-none">
-        {[
-          { top: '38%', left: '28%' }, { top: '52%', left: '61%' }, { top: '44%', left: '79%' },
-        ].map((pos, i) => (
-          <div key={i} className="absolute" style={pos}>
-            <div className="relative flex h-3 w-3">
-              <div className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-60" style={{ animationDelay: `${i * 0.6}s` }} />
-              <div className="relative inline-flex rounded-full h-3 w-3 bg-teal/80 border border-teal" />
+    <div className="mt-1 space-y-2">
+      {/* Camera feed */}
+      <div className="relative rounded-xl overflow-hidden bg-black" style={{ aspectRatio: '16/9' }}>
+        <img
+          key={idx}
+          src={_DEMO_CAM_IMGS[idx]}
+          alt="Bar camera"
+          className="w-full h-full object-cover opacity-90"
+          style={{ transition: 'opacity 0.8s' }}
+        />
+
+        {/* Detection boxes */}
+        {detections.map((d, i) => (
+          <div key={i} className="absolute border-2 border-teal/80 rounded-sm" style={{ top: d.top, left: d.left, width: d.w, height: d.h }}>
+            <div className="absolute -top-5 left-0 px-1 py-0.5 rounded text-[8px] font-bold text-black bg-teal/90 whitespace-nowrap">
+              {d.name} · {(d.conf * 100).toFixed(0)}%
             </div>
           </div>
         ))}
+
+        {/* LIVE badge */}
+        <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-600/90 backdrop-blur-sm">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
+          </span>
+          <span className="text-[10px] font-bold text-white tracking-wider uppercase">Live</span>
+        </div>
+
+        {/* Drink counter */}
+        <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 rounded-md bg-teal/90 backdrop-blur-sm">
+          <span className="text-[10px] font-bold text-black">{drinkCount} drinks</span>
+        </div>
+
+        {/* Camera label */}
+        <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[9px] text-white/70 font-mono">
+          CAM-01 · overhead fisheye
+        </div>
       </div>
-      {/* Camera label */}
-      <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[9px] text-white/70 font-mono">
-        CAM-01 · overhead fisheye
-      </div>
+
+      {/* Detection event log */}
+      {events.length > 0 && (
+        <div className="bg-black/40 border border-teal/20 rounded-xl p-2 max-h-24 overflow-hidden">
+          <p className="text-[9px] text-teal/60 uppercase tracking-wider mb-1">Detection log</p>
+          <div className="space-y-0.5">
+            {events.map((ev, i) => (
+              <div key={i} className="flex items-center gap-2 text-[9px] font-mono" style={{ opacity: 1 - i * 0.15 }}>
+                <span className="text-warm-600">{ev.ts}</span>
+                <span className="text-teal font-semibold">{ev.name}</span>
+                <span className="text-warm-400">{ev.event}</span>
+                <span className="text-warm-600 ml-auto">{(ev.conf * 100).toFixed(0)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

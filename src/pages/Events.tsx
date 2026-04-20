@@ -9,7 +9,7 @@ import { EventROITracker } from '../components/events/EventROITracker';
 import { Forecast as ForecastPage } from './Forecast';
 import authService from '../services/auth.service';
 import venueSettingsService from '../services/venue-settings.service';
-import { isDemoAccount, generateDemoVenueScopeJobs, DEMO_VENUE } from '../utils/demoData';
+import { isDemoAccount, generateDemoVenueScopeJobs, generateDemoForecastHistory, DEMO_VENUE } from '../utils/demoData';
 import weatherService from '../services/weather.service';
 import venueScopeService, { type VenueScopeJob } from '../services/venuescope.service';
 
@@ -410,6 +410,35 @@ async function buildDemoForecast(): Promise<TonightForecast> {
   const mape         = n >= 4 ? '±11%'    : n >= 2 ? '±15%'   : '±20%';
   const confPct      = n >= 4 ? 88        : n >= 2 ? 75        : 60;
 
+  // ── Compute staffing_hourly from hourly curve ──
+  // Showcase Lounge: CPB=42 (learned), 2 bar stations → max 4 bartenders, capacity 500
+  const DEMO_CPB = 42;
+  const DEMO_MAX_BART = 4;
+  const DEMO_CAP = 500;
+  const _hk = (h: string): string => {
+    const m = h.match(/(\d+)(?::00)?\s*(AM|PM)/i);
+    if (!m) return '22';
+    let n2 = parseInt(m[1]);
+    const ampm = m[2].toUpperCase();
+    if (ampm === 'PM' && n2 !== 12) n2 += 12;
+    else if (ampm === 'AM' && n2 === 12) n2 = 24;
+    else if (ampm === 'AM' && n2 < 4) n2 += 24;
+    return String(n2);
+  };
+  const staffing_hourly: Record<string, { bartenders: number; servers: number; door: number; barback: number; concurrent: number }> = {};
+  for (const pt of hourly_curve) {
+    const concurrent = pt.yhat;
+    const barts = Math.max(1, Math.min(Math.ceil(concurrent / DEMO_CPB), DEMO_MAX_BART));
+    const occ   = concurrent / DEMO_CAP;
+    staffing_hourly[_hk(pt.hour)] = {
+      bartenders: barts,
+      servers:    0,
+      door:       occ >= 0.55 ? 1 : 0,
+      barback:    occ >= 0.40 ? 1 : 0,
+      concurrent,
+    };
+  }
+
   return {
     model_type:        n > 0 ? 'gbm' : 'prior',
     calibration_state: calibState,
@@ -427,6 +456,7 @@ async function buildDemoForecast(): Promise<TonightForecast> {
       bartenders,
       note: `${bartenders} bartenders recommended based on ${DOW_NAMES[dow]} night pattern`,
     },
+    staffing_hourly,
     factors,
     hourly_curve,
   };
@@ -447,7 +477,12 @@ function ForecastAccuracySection({ venueId }: { venueId: string }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!venueId || isDemoAccount(venueId)) { setLoading(false); return; }
+    if (!venueId) { setLoading(false); return; }
+    if (isDemoAccount(venueId)) {
+      setHistory(generateDemoForecastHistory() as ForecastRecord[]);
+      setLoading(false);
+      return;
+    }
     venueScopeService.getForecastHistory(venueId, 30).then(h => {
       setHistory(h as ForecastRecord[]);
     }).catch(() => {}).finally(() => setLoading(false));
@@ -577,6 +612,22 @@ function TonightTab({ venueId }: { venueId: string }) {
       } catch {
         setForecast(DEMO_FORECAST); // fallback to static if anything fails
       }
+      // Inject realistic last-night actuals for demo
+      const _DEMO_DOW_MULT   = [0.40, 0.45, 0.50, 0.65, 1.00, 0.95, 0.55];
+      const _DEMO_MONTH_MULT = [0, 0.72, 0.78, 0.92, 0.88, 0.91, 0.96, 0.94, 0.93, 0.87, 0.97, 0.85, 1.12];
+      const _yesterday = new Date();
+      _yesterday.setDate(_yesterday.getDate() - 1);
+      const _yDow   = _yesterday.getDay();
+      const _yMonth = _yesterday.getMonth() + 1;
+      const _pred   = Math.round(500 * 0.55 * _DEMO_DOW_MULT[_yDow] * (_DEMO_MONTH_MULT[_yMonth] ?? 1.0));
+      const _actual = Math.round(_pred * 0.94);
+      setLastNight({
+        _date:              _yesterday.toISOString().slice(0, 10),
+        final_estimate:     { mid: _pred },
+        actualCovers:       _actual,
+        actualRevenue:      _actual * 33,
+        actualAccuracyPct:  Math.round(100 - (Math.abs(_actual - _pred) / Math.max(1, _pred)) * 100),
+      });
       setLoading(false);
       return;
     }
@@ -868,6 +919,33 @@ function TonightTab({ venueId }: { venueId: string }) {
           </p>
         </div>
       )}
+
+      {/* ── Demo Tonight's Events card ── */}
+      {isDemoAccount(venueId) && (() => {
+        const now = new Date();
+        const dow = now.getDay();
+        const isWeekend = dow === 5 || dow === 6;
+        const events = isWeekend
+          ? [{ emoji: '🎧', name: 'DJ Phantom — Electronic Night', time: '10 PM – 2 AM', lift: '+18%', cover: '$15' }]
+          : dow === 4
+          ? [{ emoji: '🎤', name: 'Open Mic Thursday', time: '8 PM – 12 AM', lift: '+9%', cover: 'Free' }]
+          : [{ emoji: '🥂', name: 'Happy Hour Special', time: '4 PM – 7 PM', lift: '+4%', cover: 'No cover' }];
+        return (
+          <div className="bg-whoop-panel border border-teal/20 rounded-2xl p-4">
+            <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold mb-3">Tonight's Events</p>
+            {events.map(ev => (
+              <div key={ev.name} className="flex items-center gap-3">
+                <span className="text-2xl">{ev.emoji}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-white">{ev.name}</p>
+                  <p className="text-[11px] text-warm-400">{ev.time} · {ev.cover}</p>
+                </div>
+                <span className="text-xs font-bold text-green-400 flex-shrink-0">{ev.lift} attendance</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Calibration notice */}
       {(forecast.model_type === 'prior' || usingClientModel) && (

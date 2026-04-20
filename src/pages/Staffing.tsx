@@ -13,7 +13,7 @@ import venueScopeService from '../services/venuescope.service';
 import type { VenueScopeJob } from '../services/venuescope.service';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { CSVImport } from '../components/common/CSVImport';
-import { isDemoAccount } from '../utils/demoData';
+import { isDemoAccount, generateDemoCapacityModel } from '../utils/demoData';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -913,6 +913,8 @@ export function Staffing() {
         setShifts(generateDemoShifts());
         setCamPerf(DEMO_CAM_PERF);
         setAllJobs([]);
+        setCapacityModel(generateDemoCapacityModel() as unknown as BartenderCapModel);
+        setHourlyRates({ bartender: 22, server: 18, door: 18, manager: 28 });
         setLoading(false);
         return;
       }

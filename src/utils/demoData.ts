@@ -1875,3 +1875,65 @@ export function generateDemoVenueScopeJobs(): VenueScopeJob[] {
   return [liveJob, entranceLiveJob, diningLiveJob, backBarLiveJob, lastNightJob, ...historicJobs]
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }
+
+/**
+ * Generate demo forecast accuracy history — 30 nights of realistic data
+ * Used by ForecastAccuracySection in the History tab
+ */
+export function generateDemoForecastHistory(): Array<{
+  _date: string;
+  final_estimate: { mid: number };
+  actualCovers: number;
+  actualRevenue: number;
+  actualAccuracyPct: number;
+}> {
+  const DOW_MULT   = [0.40, 0.45, 0.50, 0.65, 1.00, 0.95, 0.55]; // Mon–Sun
+  const MONTH_MULT = [0, 0.72, 0.78, 0.92, 0.88, 0.91, 0.96, 0.94, 0.93, 0.87, 0.97, 0.85, 1.12];
+  const history: Array<{ _date: string; final_estimate: { mid: number }; actualCovers: number; actualRevenue: number; actualAccuracyPct: number }> = [];
+  const today = new Date();
+
+  for (let daysAgo = 1; daysAgo <= 30; daysAgo++) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - daysAgo);
+    const dow   = date.getDay();
+    const month = date.getMonth() + 1;
+
+    const predicted = Math.round(500 * 0.55 * DOW_MULT[dow] * (MONTH_MULT[month] ?? 1.0));
+    // Deterministic noise: accuracy ranges 78–95% based on day index
+    const seed    = daysAgo * 7919 + dow * 31;
+    const errPct  = 0.02 + ((seed % 16) / 200); // 2–10% error
+    const sign    = (seed % 3) === 0 ? -1 : 1;
+    const actual  = Math.max(5, Math.round(predicted * (1 + sign * errPct)));
+    const accuracy = Math.min(100, Math.round(100 - (Math.abs(actual - predicted) / Math.max(1, predicted)) * 100));
+
+    history.push({
+      _date:          date.toISOString().slice(0, 10),
+      final_estimate: { mid: predicted },
+      actualCovers:   actual,
+      actualRevenue:  Math.round(actual * 33),
+      actualAccuracyPct: accuracy,
+    });
+  }
+  return history.sort((a, b) => a._date.localeCompare(b._date));
+}
+
+/**
+ * Generate demo bartender capacity model — simulates 24 analyzed shifts
+ * Used by Staffing.tsx MonthScheduleView for dph-sorted auto-fill
+ */
+export function generateDemoCapacityModel() {
+  return {
+    bartenders: {
+      Marcus:  { dph_median: 21.8, dph_p60: 24.2, shifts: 18 },
+      Priya:   { dph_median: 19.4, dph_p60: 21.1, shifts: 15 },
+      Jordan:  { dph_median: 14.2, dph_p60: 16.8, shifts: 12 },
+      Sabrina: { dph_median: 22.1, dph_p60: 24.8, shifts: 14 },
+      Jake:    { dph_median: 18.7, dph_p60: 20.3, shifts: 11 },
+    },
+    venue_dph:                   33.4,
+    drinks_per_cover_per_hour:   0.80,
+    covers_per_bartender:        42,
+    shifts_analyzed:             24,
+    source: 'learned' as const,
+  };
+}
