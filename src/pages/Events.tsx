@@ -315,7 +315,7 @@ function TonightTab({ venueId }: { venueId: string }) {
           <div>
             <p className="text-[11px] text-warm-500 uppercase tracking-wider font-semibold mb-1">Tonight's Forecast</p>
             <p className="text-2xl font-bold text-white leading-tight">
-              {forecast.final_estimate.mid} covers
+              {forecast.final_estimate.mid} expected people
               <span className="text-warm-500 font-normal mx-2">·</span>
               <span className="text-green-400">${forecast.revenue_estimate.mid.toLocaleString()}</span>
               <span className="text-warm-500 font-normal mx-2">·</span>
@@ -328,7 +328,7 @@ function TonightTab({ venueId }: { venueId: string }) {
         {/* Range */}
         <p className="text-xs text-warm-400">
           Range:{' '}
-          <span className="text-white font-semibold">{forecast.final_estimate.low}–{forecast.final_estimate.high} covers</span>
+          <span className="text-white font-semibold">{forecast.final_estimate.low}–{forecast.final_estimate.high} people</span>
           <span className="mx-2 text-warm-600">·</span>
           <span className="text-white font-semibold">${forecast.revenue_estimate.low.toLocaleString()}–${forecast.revenue_estimate.high.toLocaleString()}</span>
         </p>
@@ -342,7 +342,7 @@ function TonightTab({ venueId }: { venueId: string }) {
               Baseline {forecast.factors.find(f => f.name === 'Day of week')?.value ?? ''}{' '}
               {forecast.factors.find(f => f.name === 'Month')?.value ?? ''}
             </span>
-            <span className="text-white font-semibold">{baseline_covers} covers</span>
+            <span className="text-white font-semibold">{baseline_covers} people</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-warm-500">Predicted lift</span>
