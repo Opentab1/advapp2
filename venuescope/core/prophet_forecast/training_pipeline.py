@@ -67,6 +67,54 @@ def _check_shape_magnitude(df: pd.DataFrame) -> bool:
     return True
 
 
+def _validate_capacity_bounds(df: pd.DataFrame, venue_capacity: int = 2000) -> list[str]:
+    """Check for headcounts exceeding venue capacity — suggests re-entry double counting."""
+    warnings = []
+    over = df[df["y"] > venue_capacity]
+    if not over.empty:
+        warnings.append(
+            f"[validator] {len(over)} snapshots exceed venue capacity ({venue_capacity}). "
+            f"Max seen: {df['y'].max():.0f}. Possible re-entry double counting."
+        )
+    return warnings
+
+
+def _validate_snapshot_continuity(df: pd.DataFrame, max_gap_hours: float = 4.0) -> list[str]:
+    """Check for long gaps in snapshot data — suggests camera offline periods."""
+    warnings = []
+    if df.empty or len(df) < 2:
+        return warnings
+    df_sorted = df.sort_values("ds")
+    gaps = df_sorted["ds"].diff().dt.total_seconds() / 3600
+    long_gaps = gaps[gaps > max_gap_hours]
+    if not long_gaps.empty:
+        worst_gap = long_gaps.max()
+        warnings.append(
+            f"[validator] {len(long_gaps)} gaps > {max_gap_hours}h in snapshot data. "
+            f"Longest gap: {worst_gap:.1f}h. Camera may have been offline — "
+            f"model may learn false low-traffic patterns."
+        )
+    return warnings
+
+
+def _validate_dow_coverage(df: pd.DataFrame) -> list[str]:
+    """Check that training data covers all 7 days of the week."""
+    warnings = []
+    if df.empty:
+        return warnings
+    covered_dows = set(pd.to_datetime(df["ds"]).dt.dayofweek.unique())
+    all_dows = set(range(7))
+    missing = all_dows - covered_dows
+    dow_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    if missing:
+        missing_names = [dow_names[d] for d in sorted(missing)]
+        warnings.append(
+            f"[validator] Training data missing DOW(s): {', '.join(missing_names)}. "
+            f"Forecasts for those days will use prior, not learned pattern."
+        )
+    return warnings
+
+
 # ── Training data builder ─────────────────────────────────────────────────────
 
 def _build_training_df(venue_id: str, lat: float, lon: float,
@@ -231,6 +279,15 @@ def train_venue_model(
 
     # Step 5: Shape vs magnitude check
     _check_shape_magnitude(df)
+
+    # Data quality validators
+    all_warnings = (
+        _validate_capacity_bounds(df) +
+        _validate_snapshot_continuity(df) +
+        _validate_dow_coverage(df)
+    )
+    for w in all_warnings:
+        logger.warning(w)
 
     # Determine calibration state and MAPE estimate
     mape_estimate = _mape_from_days(days_span)

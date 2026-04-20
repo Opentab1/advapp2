@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 _MODEL_DIR = Path.home() / ".venuescope" / "models"
 
+_S3_BUCKET = os.environ.get("S3_BUCKET", "")
+_S3_MODEL_PREFIX = "venuescope-models"
+
 
 def _ensure_model_dir() -> None:
     _MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -25,6 +28,20 @@ def _ensure_model_dir() -> None:
 
 def _model_path(venue_id: str) -> Path:
     return _MODEL_DIR / f"{venue_id}_forecaster.pkl"
+
+
+def _s3_model_key(venue_id: str) -> str:
+    return f"{_S3_MODEL_PREFIX}/{venue_id}_forecaster.pkl"
+
+
+def _s3_client():
+    import boto3
+    return boto3.client(
+        "s3",
+        region_name=os.environ.get("AWS_REGION", "us-east-2"),
+        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+    )
 
 
 # ── Abstract interface ────────────────────────────────────────────────────────
@@ -55,23 +72,48 @@ class ForecastModel(ABC):
 
     def save(self, venue_id: str) -> None:
         _ensure_model_dir()
-        with open(_model_path(venue_id), "wb") as f:
+        local_path = _model_path(venue_id)
+        with open(local_path, "wb") as f:
             pickle.dump(self, f)
-        logger.info("[model] Saved %s model to %s", type(self).__name__, _model_path(venue_id))
+        logger.info("[model] Saved %s model locally to %s", type(self).__name__, local_path)
+
+        # Upload to S3 if configured
+        if _S3_BUCKET:
+            try:
+                s3 = _s3_client()
+                s3.upload_file(str(local_path), _S3_BUCKET, _s3_model_key(venue_id))
+                logger.info("[model] Uploaded model to s3://%s/%s", _S3_BUCKET, _s3_model_key(venue_id))
+            except Exception as e:
+                logger.warning("[model] S3 upload failed (local copy kept): %s", e)
 
     @classmethod
     def load(cls, venue_id: str) -> Optional["ForecastModel"]:
-        p = _model_path(venue_id)
-        if not p.exists():
-            return None
-        try:
-            with open(p, "rb") as f:
-                model = pickle.load(f)
-            logger.info("[model] Loaded model for venue %s", venue_id)
-            return model
-        except Exception as e:
-            logger.warning("[model] Failed to load model for venue %s: %s", venue_id, e)
-            return None
+        local_path = _model_path(venue_id)
+
+        # Try local first (fastest)
+        if local_path.exists():
+            try:
+                with open(local_path, "rb") as f:
+                    model = pickle.load(f)
+                logger.info("[model] Loaded model from local cache: %s", local_path)
+                return model
+            except Exception as e:
+                logger.warning("[model] Local load failed: %s — trying S3", e)
+                local_path.unlink(missing_ok=True)
+
+        # Fall back to S3
+        if _S3_BUCKET:
+            try:
+                _ensure_model_dir()
+                s3 = _s3_client()
+                s3.download_file(_S3_BUCKET, _s3_model_key(venue_id), str(local_path))
+                logger.info("[model] Downloaded model from S3: %s", _s3_model_key(venue_id))
+                with open(local_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception as e:
+                logger.warning("[model] S3 download failed: %s", e)
+
+        return None
 
 
 # ── DOW indicator helper ──────────────────────────────────────────────────────

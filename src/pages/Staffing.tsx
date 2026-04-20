@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Users, Calendar, Clock, Plus, X, Save, Trash2,
-  TrendingUp, TrendingDown, RefreshCw, BarChart3, User, Upload,
-  ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Camera
+  TrendingUp, RefreshCw, BarChart3, User, Upload,
+  ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Camera,
+  Sparkles, ChevronLeft, Zap,
 } from 'lucide-react';
-import { format, parseISO, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks } from 'date-fns';
-import dynamoDBService from '../services/dynamodb.service';
+import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval,
+         addMonths, subMonths, startOfWeek, endOfWeek, isSameMonth, isToday, getDay } from 'date-fns';
 import authService from '../services/auth.service';
 import venueScopeService from '../services/venuescope.service';
 import type { VenueScopeJob } from '../services/venuescope.service';
@@ -31,6 +32,7 @@ interface Shift {
   date: string;
   startTime: string;
   endTime: string;
+  suggested?: boolean;   // AI-generated, not yet confirmed
 }
 
 interface CamPerf {
@@ -39,30 +41,88 @@ interface CamPerf {
   shifts: number;
   theftFlags: number;
   drinksPerShift: number;
+  dph?: number;    // drinks per hour (from per_hour field)
+}
+
+// Per-day staffing recommendation from the forecast engine
+interface DayStaffing {
+  date: string;             // YYYY-MM-DD
+  expectedPeople: number;
+  bartenders: number;
+  servers: number;
+  door: number;
+  barback: number;
+  isWeekend: boolean;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const ROLE_COLORS: Record<string, string> = {
   bartender: 'bg-purple-500',
-  server: 'bg-cyan-500',
-  door: 'bg-amber-500',
-  manager: 'bg-emerald-500',
-  other: 'bg-warm-500'
+  server:    'bg-cyan-500',
+  door:      'bg-amber-500',
+  manager:   'bg-emerald-500',
+  other:     'bg-warm-500',
 };
 
 const ROLE_LABELS: Record<string, string> = {
   bartender: 'Bartender',
-  server: 'Server',
-  door: 'Door Staff',
-  manager: 'Manager',
-  other: 'Other'
+  server:    'Server',
+  door:      'Door Staff',
+  manager:   'Manager',
+  other:     'Other',
 };
+
+const ROLE_TEXT: Record<string, string> = {
+  bartender: 'text-purple-400',
+  server:    'text-cyan-400',
+  door:      'text-amber-400',
+  manager:   'text-emerald-400',
+  other:     'text-warm-400',
+};
+
+// ── Forecast engine (client-side) ─────────────────────────────────────────
+// Mirrors the Python staffing_engine formula so the month view is consistent
+// with the Prophet forecast when real data isn't available.
+
+const DOW_MULT  = [0.40, 0.45, 0.50, 0.65, 1.00, 0.95, 0.55]; // Mon–Sun (date-fns: 0=Sun)
+const MONTH_MULT = [0, 0.72, 0.78, 0.92, 0.88, 0.91, 0.96, 0.94, 0.93, 0.87, 0.97, 0.85, 1.12];
+const GENERIC_PEAK = 120;   // concurrent headcount at Friday peak
+const AVG_VISIT_SLOTS = 10; // 15-min slots per visit (2.5 hours)
+const SLOT_SHAPE_SUM  = 6.60; // sum of hour shapes × 1 slot-per-hour
+
+// Returns Monday-indexed DOW (Mon=0 .. Sun=6) from a JS Date
+function mondayDOW(d: Date): number { return (getDay(d) + 6) % 7; }
+
+function clientForecastForDate(
+  d: Date,
+  capacity: number,
+  covers_per_bartender: number,
+  door_threshold: number,
+): DayStaffing {
+  const dow   = mondayDOW(d);
+  const month = d.getMonth() + 1;
+  const concurrent_peak = GENERIC_PEAK * DOW_MULT[dow] * MONTH_MULT[month];
+  const total_yhat  = 4 * concurrent_peak * SLOT_SHAPE_SUM;
+  const mid_covers  = Math.max(1, Math.round(total_yhat / AVG_VISIT_SLOTS));
+  const bartenders  = Math.max(1, Math.ceil(concurrent_peak / covers_per_bartender));
+  const door        = concurrent_peak / Math.max(capacity, 1) >= door_threshold ? 1 : 0;
+  const barback     = concurrent_peak / Math.max(capacity, 1) >= 0.40 ? 1 : 0;
+  return {
+    date:          format(d, 'yyyy-MM-dd'),
+    expectedPeople: mid_covers,
+    bartenders,
+    servers: 0,
+    door,
+    barback,
+    isWeekend: dow >= 4, // Thu/Fri/Sat count as "busy"
+  };
+}
 
 // ── Persistence helpers ────────────────────────────────────────────────────
 
-const API_BASE = import.meta.env.VITE_STAFFING_API_URL || '';
-const STAFF_API = API_BASE ? `${API_BASE}/staff` : '';
+const API_BASE  = import.meta.env.VITE_STAFFING_API_URL || '';
+const STAFF_API = API_BASE ? `${API_BASE}/staff`  : '';
 const SHIFTS_API = API_BASE ? `${API_BASE}/shifts` : '';
 
 const _lsKey = (venueId: string, type: 'staff' | 'shifts') => `vs_staffing_${type}_${venueId}`;
@@ -83,61 +143,51 @@ function _lsSaveShifts(venueId: string, data: Shift[]) {
 
 const DEMO_STAFF: StaffMember[] = [
   { id: 'demo-1', name: 'Sabrina Martinez', role: 'bartender', color: 'bg-purple-500' },
-  { id: 'demo-2', name: 'Jake Thompson', role: 'bartender', color: 'bg-purple-500' },
-  { id: 'demo-3', name: 'Ashley Chen', role: 'server', color: 'bg-cyan-500' },
-  { id: 'demo-4', name: 'Marcus Williams', role: 'server', color: 'bg-cyan-500' },
-  { id: 'demo-5', name: 'Tyler Johnson', role: 'door', color: 'bg-amber-500' },
-  { id: 'demo-6', name: 'Rachel Kim', role: 'manager', color: 'bg-emerald-500' },
+  { id: 'demo-2', name: 'Jake Thompson',    role: 'bartender', color: 'bg-purple-500' },
+  { id: 'demo-3', name: 'Ashley Chen',      role: 'server',    color: 'bg-cyan-500'   },
+  { id: 'demo-4', name: 'Marcus Williams',  role: 'server',    color: 'bg-cyan-500'   },
+  { id: 'demo-5', name: 'Tyler Johnson',    role: 'door',      color: 'bg-amber-500'  },
+  { id: 'demo-6', name: 'Rachel Kim',       role: 'manager',   color: 'bg-emerald-500'},
 ];
 
 const DEMO_CAM_PERF: CamPerf[] = [
-  { name: 'Sabrina Martinez', drinks: 284, shifts: 12, theftFlags: 1, drinksPerShift: 23.7 },
-  { name: 'Jake Thompson', drinks: 241, shifts: 11, theftFlags: 0, drinksPerShift: 21.9 },
-  { name: 'Rachel Kim', drinks: 188, shifts: 8, theftFlags: 0, drinksPerShift: 23.5 },
+  { name: 'Sabrina Martinez', drinks: 284, shifts: 12, theftFlags: 1, drinksPerShift: 23.7, dph: 24.2 },
+  { name: 'Jake Thompson',    drinks: 241, shifts: 11, theftFlags: 0, drinksPerShift: 21.9, dph: 19.8 },
+  { name: 'Rachel Kim',       drinks: 188, shifts:  8, theftFlags: 0, drinksPerShift: 23.5, dph: 21.1 },
 ];
 
-const generateDemoShifts = (): Shift[] => {
-  const shifts: Shift[] = [];
+function generateDemoShifts(): Shift[] {
   const today = new Date();
-  const weekStart = startOfWeek(today, { weekStartsOn: 1 });
-  for (let weekOffset = -1; weekOffset <= 1; weekOffset++) {
-    const week = addWeeks(weekStart, weekOffset);
-    const days = eachDayOfInterval({ start: week, end: endOfWeek(week, { weekStartsOn: 1 }) });
-    days.forEach((day, dayIndex) => {
-      const dateStr = format(day, 'yyyy-MM-dd');
-      const isWeekend = dayIndex >= 4;
-      if (isWeekend) {
-        shifts.push({ id: `s-${dateStr}-1`, staffId: 'demo-1', staffName: 'Sabrina Martinez', role: 'bartender', date: dateStr, startTime: '18:00', endTime: '02:00' });
-        shifts.push({ id: `s-${dateStr}-2`, staffId: 'demo-2', staffName: 'Jake Thompson', role: 'bartender', date: dateStr, startTime: '20:00', endTime: '02:00' });
-        shifts.push({ id: `s-${dateStr}-3`, staffId: 'demo-3', staffName: 'Ashley Chen', role: 'server', date: dateStr, startTime: '18:00', endTime: '01:00' });
-        shifts.push({ id: `s-${dateStr}-5`, staffId: 'demo-5', staffName: 'Tyler Johnson', role: 'door', date: dateStr, startTime: '21:00', endTime: '02:00' });
-      }
-      if (dayIndex >= 4 && dayIndex <= 5) {
-        shifts.push({ id: `s-${dateStr}-6`, staffId: 'demo-6', staffName: 'Rachel Kim', role: 'manager', date: dateStr, startTime: '18:00', endTime: '02:00' });
-      }
-    });
-  }
+  const monthStart = startOfMonth(today);
+  const monthEnd   = endOfMonth(today);
+  const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+  const shifts: Shift[] = [];
+  days.forEach(day => {
+    const dateStr  = format(day, 'yyyy-MM-dd');
+    const dow      = mondayDOW(day);
+    const isWeekend = dow >= 4;
+    if (isWeekend) {
+      shifts.push({ id: `d-${dateStr}-1`, staffId: 'demo-1', staffName: 'Sabrina Martinez', role: 'bartender', date: dateStr, startTime: '18:00', endTime: '02:00' });
+      shifts.push({ id: `d-${dateStr}-2`, staffId: 'demo-2', staffName: 'Jake Thompson',    role: 'bartender', date: dateStr, startTime: '20:00', endTime: '02:00' });
+      shifts.push({ id: `d-${dateStr}-5`, staffId: 'demo-5', staffName: 'Tyler Johnson',    role: 'door',      date: dateStr, startTime: '21:00', endTime: '02:00' });
+    } else {
+      shifts.push({ id: `d-${dateStr}-1`, staffId: 'demo-1', staffName: 'Sabrina Martinez', role: 'bartender', date: dateStr, startTime: '18:00', endTime: '02:00' });
+    }
+    if (dow >= 3) {
+      shifts.push({ id: `d-${dateStr}-6`, staffId: 'demo-6', staffName: 'Rachel Kim', role: 'manager', date: dateStr, startTime: '18:00', endTime: '02:00' });
+    }
+  });
   return shifts;
-};
+}
 
-// ── Sub-components ─────────────────────────────────────────────────────────
+// ── Camera Performance View ────────────────────────────────────────────────
 
-function CameraPerformanceView({
-  camPerf,
-  staff,
-  shifts,
-  jobs,
-}: {
-  camPerf: CamPerf[];
-  staff: StaffMember[];
-  shifts: Shift[];
-  jobs: VenueScopeJob[];
+function CameraPerformanceView({ camPerf, staff, shifts, jobs }: {
+  camPerf: CamPerf[]; staff: StaffMember[]; shifts: Shift[]; jobs: VenueScopeJob[];
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
-
   const today = new Date();
 
-  // Find next scheduled shift for a staff name
   const nextShift = (name: string): Shift | undefined => {
     const todayStr = format(today, 'yyyy-MM-dd');
     return shifts
@@ -145,9 +195,8 @@ function CameraPerformanceView({
       .sort((a, b) => a.date.localeCompare(b.date))[0];
   };
 
-  // Get job history where this bartender appears
-  const jobsForPerson = (name: string): VenueScopeJob[] => {
-    return jobs.filter(j => {
+  const jobsForPerson = (name: string): VenueScopeJob[] =>
+    jobs.filter(j => {
       if (j.topBartender?.toLowerCase() === name.toLowerCase()) return true;
       if (j.bartenderBreakdown) {
         try {
@@ -157,9 +206,8 @@ function CameraPerformanceView({
       }
       return false;
     }).slice(0, 8);
-  };
 
-  const roleFor = (name: string): string => {
+  const roleFor = (name: string) => {
     const m = staff.find(s => s.name.toLowerCase() === name.toLowerCase());
     return m ? ROLE_LABELS[m.role] || m.role : 'Bartender';
   };
@@ -179,99 +227,67 @@ function CameraPerformanceView({
   return (
     <div className="space-y-3">
       {camPerf.map((perf, i) => {
-        const isOpen = expanded === perf.name;
-        const ns = nextShift(perf.name);
+        const isOpen  = expanded === perf.name;
+        const ns      = nextShift(perf.name);
         const history = jobsForPerson(perf.name);
-
         return (
-          <motion.div
-            key={perf.name}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.04 }}
-            className="glass-card overflow-hidden"
-          >
-            {/* Row */}
-            <button
-              className="w-full flex items-center gap-4 p-4 text-left"
-              onClick={() => setExpanded(isOpen ? null : perf.name)}
-            >
-              {/* Rank */}
+          <motion.div key={perf.name} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.04 }} className="glass-card overflow-hidden">
+            <button className="w-full flex items-center gap-4 p-4 text-left"
+              onClick={() => setExpanded(isOpen ? null : perf.name)}>
               <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0 ${
-                i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-warm-500' : i === 2 ? 'bg-orange-700' : 'bg-warm-700'
-              }`}>
+                i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-warm-500' : i === 2 ? 'bg-orange-700' : 'bg-warm-700'}`}>
                 {i + 1}
               </div>
-
-              {/* Name + bar */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="font-semibold text-white truncate">{perf.name}</span>
-                  <span className="text-[10px] text-warm-500 bg-warm-800 px-1.5 py-0.5 rounded flex-shrink-0">
-                    {roleFor(perf.name)}
-                  </span>
+                  <span className="text-[10px] text-warm-500 bg-warm-800 px-1.5 py-0.5 rounded flex-shrink-0">{roleFor(perf.name)}</span>
                   {perf.theftFlags > 0 && (
                     <span className="text-[10px] text-red-400 flex items-center gap-0.5 flex-shrink-0">
-                      <AlertTriangle className="w-3 h-3" />
-                      {perf.theftFlags} flag{perf.theftFlags > 1 ? 's' : ''}
+                      <AlertTriangle className="w-3 h-3" />{perf.theftFlags} flag{perf.theftFlags > 1 ? 's' : ''}
                     </span>
                   )}
                 </div>
                 <div className="w-full bg-warm-700 rounded-full h-1.5">
-                  <div
-                    className="h-1.5 rounded-full bg-teal"
-                    style={{ width: `${(perf.drinks / maxDrinks) * 100}%` }}
-                  />
+                  <div className="h-1.5 rounded-full bg-teal" style={{ width: `${(perf.drinks / maxDrinks) * 100}%` }} />
                 </div>
               </div>
-
-              {/* Stats */}
               <div className="grid grid-cols-3 gap-4 text-center flex-shrink-0">
                 <div>
                   <div className="text-lg font-bold text-white">{perf.drinks}</div>
-                  <div className="text-[10px] text-warm-500">Total Drinks</div>
+                  <div className="text-[10px] text-warm-500">Drinks</div>
                 </div>
                 <div>
                   <div className="text-lg font-bold text-white">{perf.shifts}</div>
                   <div className="text-[10px] text-warm-500">Shifts</div>
                 </div>
                 <div>
-                  <div className={`text-lg font-bold ${perf.drinksPerShift > 0 ? 'text-teal' : 'text-text-muted'}`}>{perf.drinksPerShift.toFixed(1)}</div>
-                  <div className="text-[10px] text-warm-500">Avg/Shift</div>
+                  <div className={`text-lg font-bold ${perf.dph ? 'text-teal' : 'text-text-muted'}`}>
+                    {perf.dph ? perf.dph.toFixed(1) : perf.drinksPerShift.toFixed(1)}
+                  </div>
+                  <div className="text-[10px] text-warm-500">{perf.dph ? 'Avg dph' : 'Avg/Shift'}</div>
                 </div>
               </div>
-
               {isOpen ? <ChevronDown className="w-4 h-4 text-warm-500 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-warm-500 flex-shrink-0" />}
             </button>
 
-            {/* Expanded detail */}
             <AnimatePresence>
               {isOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="overflow-hidden border-t border-warm-700"
-                >
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}
+                  className="overflow-hidden border-t border-warm-700">
                   <div className="p-4 space-y-4">
-                    {/* Next shift */}
                     <div>
                       <p className="text-xs text-warm-500 uppercase tracking-wider mb-2">Next Scheduled Shift</p>
                       {ns ? (
                         <div className="flex items-center gap-3 bg-warm-800 rounded-lg px-3 py-2">
                           <Calendar className="w-4 h-4 text-teal flex-shrink-0" />
-                          <span className="text-white text-sm font-medium">
-                            {format(parseISO(ns.date), 'EEE, MMM d')}
-                          </span>
+                          <span className="text-white text-sm font-medium">{format(parseISO(ns.date), 'EEE, MMM d')}</span>
                           <span className="text-warm-400 text-sm">{ns.startTime}–{ns.endTime}</span>
                         </div>
-                      ) : (
-                        <p className="text-warm-500 text-sm">No upcoming shifts scheduled</p>
-                      )}
+                      ) : <p className="text-warm-500 text-sm">No upcoming shifts scheduled</p>}
                     </div>
-
-                    {/* Shift history from camera */}
                     {history.length > 0 && (
                       <div>
                         <p className="text-xs text-warm-500 uppercase tracking-wider mb-2">Recent Camera Sessions</p>
@@ -287,14 +303,11 @@ function CameraPerformanceView({
                             }
                             return (
                               <div key={job.jobId} className="flex items-center justify-between text-sm bg-warm-800/50 rounded px-3 py-1.5">
-                                <span className="text-warm-400">
-                                  {job.createdAt ? format(new Date(job.createdAt * 1000), 'EEE MMM d') : '—'}
-                                </span>
+                                <span className="text-warm-400">{job.createdAt ? format(new Date(job.createdAt * 1000), 'EEE MMM d') : '—'}</span>
                                 <span className="text-white font-medium">{drinks} drinks</span>
                                 {job.hasTheftFlag
                                   ? <span className="text-red-400 text-xs flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> flagged</span>
-                                  : <span className="text-emerald-400 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> clean</span>
-                                }
+                                  : <span className="text-emerald-400 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> clean</span>}
                               </div>
                             );
                           })}
@@ -312,59 +325,150 @@ function CameraPerformanceView({
   );
 }
 
-function ScheduleView({
+// ── Month Schedule View ────────────────────────────────────────────────────
+
+function MonthScheduleView({
   staff,
   shifts,
-  weekOffset,
-  setWeekOffset,
+  setShifts,
+  venueId,
   bartenderStats,
   onAddStaff,
   onDeleteStaff,
   onAddShift,
   onDeleteShift,
+  onConfirmSuggested,
   onImportCSV,
 }: {
   staff: StaffMember[];
   shifts: Shift[];
-  weekOffset: number;
-  setWeekOffset: React.Dispatch<React.SetStateAction<number>>;
+  setShifts: React.Dispatch<React.SetStateAction<Shift[]>>;
+  venueId: string;
   bartenderStats: Record<string, { drinks: number; shifts: number; theftFlags: number }>;
   onAddStaff: () => void;
   onDeleteStaff: (id: string) => void;
   onAddShift: (date: string) => void;
   onDeleteShift: (id: string) => void;
+  onConfirmSuggested: (date?: string) => void;
   onImportCSV: () => void;
 }) {
-  const currentWeekStart = startOfWeek(addWeeks(new Date(), weekOffset), { weekStartsOn: 1 });
-  const currentWeekEnd = endOfWeek(currentWeekStart, { weekStartsOn: 1 });
-  const weekDays = eachDayOfInterval({ start: currentWeekStart, end: currentWeekEnd });
+  const [viewMonth, setViewMonth] = useState(new Date());
+  const [autoFilling, setAutoFilling] = useState(false);
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
-  const getShiftsForDay = (day: Date) => {
-    const dateStr = format(day, 'yyyy-MM-dd');
-    return shifts.filter(s => s.date === dateStr);
+  // Physics config (simplified — reads from localStorage or uses defaults)
+  const capacity           = 150;
+  const covers_per_bartender = 35;
+  const door_threshold     = 0.55;
+
+  // Build calendar grid: full weeks covering the month
+  const monthStart = startOfMonth(viewMonth);
+  const monthEnd   = endOfMonth(viewMonth);
+  const calStart   = startOfWeek(monthStart, { weekStartsOn: 1 });
+  const calEnd     = endOfWeek(monthEnd,   { weekStartsOn: 1 });
+  const calDays    = eachDayOfInterval({ start: calStart, end: calEnd });
+
+  const getShiftsForDay = (dateStr: string) => shifts.filter(s => s.date === dateStr);
+
+  const suggestedCount = shifts.filter(s => s.suggested).length;
+
+  // Generate AI-suggested shifts for the entire displayed month
+  const handleAutoFill = () => {
+    if (!staff.length) { alert('Add staff members first.'); return; }
+    setAutoFilling(true);
+
+    const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+    const newShifts: Shift[] = [];
+
+    // Round-robin indices per role
+    const byRole = (role: string) => staff.filter(s => s.role === role);
+    let bartIdx = 0, doorIdx = 0;
+
+    days.forEach(day => {
+      const dateStr  = format(day, 'yyyy-MM-dd');
+      const existing = shifts.filter(s => s.date === dateStr && !s.suggested);
+      if (existing.length > 0) return; // don't overwrite confirmed shifts
+
+      const rec = clientForecastForDate(day, capacity, covers_per_bartender, door_threshold);
+
+      // Bartenders
+      const bartenders = byRole('bartender');
+      if (bartenders.length > 0) {
+        for (let i = 0; i < Math.min(rec.bartenders, bartenders.length); i++) {
+          const b = bartenders[(bartIdx + i) % bartenders.length];
+          const startHr = rec.isWeekend ? '18:00' : '20:00';
+          newShifts.push({
+            id: `auto-${dateStr}-bart-${i}`,
+            staffId: b.id, staffName: b.name, role: 'bartender',
+            date: dateStr, startTime: startHr, endTime: '02:00',
+            suggested: true,
+          });
+        }
+        bartIdx = (bartIdx + rec.bartenders) % Math.max(bartenders.length, 1);
+      }
+
+      // Door staff (if needed)
+      if (rec.door > 0) {
+        const doors = byRole('door');
+        if (doors.length > 0) {
+          const d = doors[doorIdx % doors.length];
+          newShifts.push({
+            id: `auto-${dateStr}-door-0`,
+            staffId: d.id, staffName: d.name, role: 'door',
+            date: dateStr, startTime: '21:00', endTime: '02:00',
+            suggested: true,
+          });
+          doorIdx++;
+        }
+      }
+
+      // Manager (always schedule one if available, on busy nights)
+      if (rec.isWeekend) {
+        const managers = byRole('manager');
+        if (managers.length > 0) {
+          const m = managers[0];
+          newShifts.push({
+            id: `auto-${dateStr}-mgr-0`,
+            staffId: m.id, staffName: m.name, role: 'manager',
+            date: dateStr, startTime: '18:00', endTime: '02:00',
+            suggested: true,
+          });
+        }
+      }
+    });
+
+    // Remove previous suggestions for this month, keep confirmed + other months
+    const kept = shifts.filter(s => {
+      if (!s.suggested) return true;
+      const d = parseISO(s.date);
+      return !isSameMonth(d, viewMonth);
+    });
+
+    const merged = [...kept, ...newShifts];
+    setShifts(merged);
+    _lsSaveShifts(venueId, merged);
+    setAutoFilling(false);
   };
 
+  const weekDayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Team Roster */}
       <div className="glass-card p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-white flex items-center gap-2">
-            <User className="w-4 h-4 text-primary" />
-            Team Members
+            <User className="w-4 h-4 text-primary" />Team Members
           </h2>
           <div className="flex items-center gap-2">
             <button onClick={onImportCSV} className="btn-secondary text-sm flex items-center gap-1">
-              <Upload className="w-4 h-4" />
-              Import CSV
+              <Upload className="w-4 h-4" />Import CSV
             </button>
             <button onClick={onAddStaff} className="btn-primary text-sm flex items-center gap-1">
-              <Plus className="w-4 h-4" />
-              Add Staff
+              <Plus className="w-4 h-4" />Add Staff
             </button>
           </div>
         </div>
-
         {staff.length === 0 ? (
           <p className="text-warm-400 text-center py-4 text-sm">No staff yet. Add your team to start tracking schedules.</p>
         ) : (
@@ -395,47 +499,203 @@ function ScheduleView({
         )}
       </div>
 
-      {/* Week Navigation */}
-      <div className="flex items-center justify-between">
-        <button onClick={() => setWeekOffset(w => w - 1)} className="btn-secondary text-sm">← Prev</button>
-        <span className="text-white font-medium text-sm">
-          {format(currentWeekStart, 'MMM d')} – {format(currentWeekEnd, 'MMM d, yyyy')}
-        </span>
-        <button onClick={() => setWeekOffset(w => w + 1)} className="btn-secondary text-sm">Next →</button>
+      {/* Month navigation + auto-fill */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button onClick={() => setViewMonth(subMonths(viewMonth, 1))} className="btn-secondary p-2">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="text-white font-semibold min-w-[130px] text-center">
+            {format(viewMonth, 'MMMM yyyy')}
+          </span>
+          <button onClick={() => setViewMonth(addMonths(viewMonth, 1))} className="btn-secondary p-2">
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {suggestedCount > 0 && (
+            <button onClick={() => onConfirmSuggested()}
+              className="text-sm px-3 py-2 rounded-lg bg-teal/20 border border-teal/40 text-teal hover:bg-teal/30 transition-colors flex items-center gap-1.5">
+              <CheckCircle2 className="w-4 h-4" />
+              Confirm all ({suggestedCount})
+            </button>
+          )}
+          <button onClick={handleAutoFill} disabled={autoFilling}
+            className="btn-primary text-sm flex items-center gap-2">
+            {autoFilling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            Auto-fill Month
+          </button>
+        </div>
       </div>
 
-      {/* Week Grid */}
-      <div className="grid grid-cols-7 gap-2">
-        {weekDays.map(day => {
-          const dayShifts = getShiftsForDay(day);
-          const isToday = format(day, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
-          const dateStr = format(day, 'yyyy-MM-dd');
-          return (
-            <div key={dateStr} className={`glass-card p-3 min-h-[150px] ${isToday ? 'ring-2 ring-primary' : ''}`}>
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <div className={`text-xs ${isToday ? 'text-primary' : 'text-warm-400'}`}>{format(day, 'EEE')}</div>
-                  <div className="text-lg font-bold text-white">{format(day, 'd')}</div>
+      {/* AI suggestion legend */}
+      {suggestedCount > 0 && (
+        <div className="flex items-center gap-3 text-xs text-warm-400 px-1">
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded border-2 border-dashed border-teal/60 bg-teal/10" />
+            <span>AI suggested — click shift to confirm or remove</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded bg-purple-500/30 border border-purple-500/50" />
+            <span>Confirmed</span>
+          </div>
+        </div>
+      )}
+
+      {/* Month Calendar Grid */}
+      <div>
+        {/* DOW headers */}
+        <div className="grid grid-cols-7 gap-1 mb-1">
+          {weekDayLabels.map(d => (
+            <div key={d} className="text-center text-[10px] text-warm-500 font-medium py-1">{d}</div>
+          ))}
+        </div>
+
+        {/* Weeks */}
+        <div className="grid grid-cols-7 gap-1">
+          {calDays.map(day => {
+            const dateStr      = format(day, 'yyyy-MM-dd');
+            const inMonth      = isSameMonth(day, viewMonth);
+            const today        = isToday(day);
+            const dayShifts    = getShiftsForDay(dateStr);
+            const confirmed    = dayShifts.filter(s => !s.suggested);
+            const suggested    = dayShifts.filter(s => s.suggested);
+            const rec          = inMonth ? clientForecastForDate(day, capacity, covers_per_bartender, door_threshold) : null;
+            const isExpanded   = expandedDay === dateStr;
+
+            return (
+              <div key={dateStr}
+                className={`relative rounded-lg border transition-colors cursor-pointer
+                  ${inMonth ? 'bg-warm-800/60' : 'bg-warm-900/20 opacity-40'}
+                  ${today ? 'border-primary ring-1 ring-primary/30' : 'border-warm-700/50'}
+                  ${isExpanded ? 'ring-2 ring-teal/40' : ''}
+                `}
+                style={{ minHeight: '80px' }}
+                onClick={() => inMonth && setExpandedDay(isExpanded ? null : dateStr)}
+              >
+                {/* Date number + forecast summary */}
+                <div className="flex items-start justify-between p-2">
+                  <span className={`text-sm font-bold leading-none ${today ? 'text-primary' : inMonth ? 'text-white' : 'text-warm-600'}`}>
+                    {format(day, 'd')}
+                  </span>
+                  {rec && (
+                    <div className="text-right">
+                      <div className="text-[9px] text-warm-500 leading-none">{rec.expectedPeople}p</div>
+                      <div className="flex items-center gap-0.5 justify-end mt-0.5">
+                        <span className="text-[9px] text-purple-400">🍺{rec.bartenders}</span>
+                        {rec.door > 0 && <span className="text-[9px] text-amber-400">🚪{rec.door}</span>}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <button onClick={() => onAddShift(dateStr)} className="text-warm-500 hover:text-primary transition-colors">
-                  <Plus className="w-4 h-4" />
-                </button>
+
+                {/* Shift dots / names */}
+                <div className="px-1.5 pb-1.5 space-y-0.5">
+                  {/* Show first 2 confirmed */}
+                  {confirmed.slice(0, 2).map(s => (
+                    <div key={s.id}
+                      className={`text-[9px] px-1 py-0.5 rounded truncate ${ROLE_COLORS[s.role]} bg-opacity-25 text-white`}
+                      onClick={e => { e.stopPropagation(); onDeleteShift(s.id); }}>
+                      {s.staffName.split(' ')[0]}
+                    </div>
+                  ))}
+                  {/* Show suggested count */}
+                  {suggested.length > 0 && (
+                    <div className="text-[9px] px-1 py-0.5 rounded border border-dashed border-teal/50 text-teal bg-teal/5">
+                      <Zap className="w-2 h-2 inline mr-0.5" />{suggested.length} suggested
+                    </div>
+                  )}
+                  {/* Overflow */}
+                  {confirmed.length > 2 && (
+                    <div className="text-[9px] text-warm-500 px-1">+{confirmed.length - 2} more</div>
+                  )}
+                </div>
+
+                {/* Add button */}
+                {inMonth && (
+                  <button
+                    className="absolute top-1.5 right-1.5 opacity-0 hover:opacity-100 group-hover:opacity-100 text-warm-500 hover:text-primary transition-all"
+                    onClick={e => { e.stopPropagation(); onAddShift(dateStr); }}
+                  >
+                    <Plus className="w-3 h-3" />
+                  </button>
+                )}
               </div>
-              <div className="space-y-1">
-                {dayShifts.map(shift => (
-                  <div key={shift.id} className={`text-xs p-1.5 rounded ${ROLE_COLORS[shift.role]} bg-opacity-20 group relative`}>
-                    <div className="font-medium text-white truncate">{shift.staffName}</div>
-                    <div className="text-warm-300">{shift.startTime}–{shift.endTime}</div>
-                    <button onClick={() => onDeleteShift(shift.id)} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-red-400">
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
+
+      {/* Expanded day detail panel */}
+      <AnimatePresence>
+        {expandedDay && (() => {
+          const day      = parseISO(expandedDay);
+          const dayShifts = getShiftsForDay(expandedDay);
+          const rec       = clientForecastForDate(day, capacity, covers_per_bartender, door_threshold);
+          return (
+            <motion.div key={expandedDay}
+              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+              className="glass-card p-4">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h3 className="text-white font-bold text-base">{format(day, 'EEEE, MMMM d')}</h3>
+                  <p className="text-warm-400 text-xs mt-0.5">
+                    Forecast: ~{rec.expectedPeople} people · need {rec.bartenders} bartender{rec.bartenders !== 1 ? 's' : ''}
+                    {rec.door > 0 ? ` · door` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => onAddShift(expandedDay)} className="btn-primary text-xs flex items-center gap-1 px-3 py-1.5">
+                    <Plus className="w-3 h-3" />Add Shift
+                  </button>
+                  <button onClick={() => setExpandedDay(null)} className="text-warm-500 hover:text-white">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {dayShifts.length === 0 ? (
+                <p className="text-warm-500 text-sm text-center py-4">No shifts yet. Click "Auto-fill Month" to generate suggestions.</p>
+              ) : (
+                <div className="space-y-2">
+                  {dayShifts.map(s => (
+                    <div key={s.id}
+                      className={`flex items-center justify-between px-3 py-2 rounded-lg border
+                        ${s.suggested
+                          ? 'border-dashed border-teal/40 bg-teal/5'
+                          : `${ROLE_COLORS[s.role]} bg-opacity-10 border-opacity-30`
+                        }`}>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${ROLE_COLORS[s.role]}`} />
+                        <span className="text-white text-sm font-medium">{s.staffName}</span>
+                        <span className="text-warm-500 text-xs">({ROLE_LABELS[s.role] ?? s.role})</span>
+                        {s.suggested && (
+                          <span className="text-[10px] text-teal flex items-center gap-0.5">
+                            <Zap className="w-3 h-3" />AI
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-warm-400 text-sm">{s.startTime}–{s.endTime}</span>
+                        {s.suggested && (
+                          <button onClick={() => onConfirmSuggested(s.id)}
+                            className="text-[10px] text-teal hover:text-white transition-colors">
+                            Confirm
+                          </button>
+                        )}
+                        <button onClick={() => onDeleteShift(s.id)} className="text-warm-600 hover:text-red-400 transition-colors">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
     </div>
   );
 }
@@ -445,7 +705,6 @@ function ScheduleView({
 function AddStaffModal({ onClose, onSave }: { onClose: () => void; onSave: (name: string, role: StaffMember['role']) => void }) {
   const [name, setName] = useState('');
   const [role, setRole] = useState<StaffMember['role']>('bartender');
-
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -468,8 +727,7 @@ function AddStaffModal({ onClose, onSave }: { onClose: () => void; onSave: (name
               {Object.entries(ROLE_LABELS).map(([key, label]) => (
                 <button key={key} type="button" onClick={() => setRole(key as StaffMember['role'])}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                    role === key ? 'bg-primary/20 border border-primary/30 text-white' : 'bg-warm-800 text-warm-400 hover:text-white'
-                  }`}>
+                    role === key ? 'bg-primary/20 border border-primary/30 text-white' : 'bg-warm-800 text-warm-400 hover:text-white'}`}>
                   <div className={`w-3 h-3 rounded-full ${ROLE_COLORS[key]}`} />
                   <span className="text-sm">{label}</span>
                 </button>
@@ -479,7 +737,7 @@ function AddStaffModal({ onClose, onSave }: { onClose: () => void; onSave: (name
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
             <button type="submit" className="flex-1 btn-primary flex items-center justify-center gap-2">
-              <Save className="w-4 h-4" /> Add Staff
+              <Save className="w-4 h-4" />Add Staff
             </button>
           </div>
         </form>
@@ -493,10 +751,9 @@ function AddShiftModal({ date, staff, onClose, onSave }: {
   onClose: () => void;
   onSave: (staffId: string, date: string, startTime: string, endTime: string) => void;
 }) {
-  const [staffId, setStaffId] = useState(staff[0]?.id || '');
+  const [staffId,   setStaffId]   = useState(staff[0]?.id || '');
   const [startTime, setStartTime] = useState('18:00');
-  const [endTime, setEndTime] = useState('02:00');
-
+  const [endTime,   setEndTime]   = useState('02:00');
   if (staff.length === 0) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -510,7 +767,6 @@ function AddShiftModal({ date, staff, onClose, onSave }: {
       </motion.div>
     );
   }
-
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -531,12 +787,12 @@ function AddShiftModal({ date, staff, onClose, onSave }: {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm text-warm-400 mb-2">Start Time</label>
+              <label className="block text-sm text-warm-400 mb-2">Start</label>
               <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)}
                 className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary" />
             </div>
             <div>
-              <label className="block text-sm text-warm-400 mb-2">End Time</label>
+              <label className="block text-sm text-warm-400 mb-2">End</label>
               <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)}
                 className="w-full bg-warm-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary" />
             </div>
@@ -544,7 +800,7 @@ function AddShiftModal({ date, staff, onClose, onSave }: {
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
             <button type="submit" className="flex-1 btn-primary flex items-center justify-center gap-2">
-              <Save className="w-4 h-4" /> Add Shift
+              <Save className="w-4 h-4" />Add Shift
             </button>
           </div>
         </form>
@@ -556,20 +812,19 @@ function AddShiftModal({ date, staff, onClose, onSave }: {
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Staffing() {
-  const [activeTab, setActiveTab] = useState<'performance' | 'schedule'>('performance');
-  const [staff, setStaff] = useState<StaffMember[]>([]);
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [camPerf, setCamPerf] = useState<CamPerf[]>([]);
-  const [allJobs, setAllJobs] = useState<VenueScopeJob[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [showAddStaff, setShowAddStaff] = useState(false);
-  const [showAddShift, setShowAddShift] = useState<string | null>(null);
-  const [showCSVImport, setShowCSVImport] = useState(false);
+  const [activeTab,      setActiveTab]      = useState<'performance' | 'schedule'>('performance');
+  const [staff,          setStaff]          = useState<StaffMember[]>([]);
+  const [shifts,         setShifts]         = useState<Shift[]>([]);
+  const [camPerf,        setCamPerf]        = useState<CamPerf[]>([]);
+  const [allJobs,        setAllJobs]        = useState<VenueScopeJob[]>([]);
+  const [loading,        setLoading]        = useState(true);
+  const [showAddStaff,   setShowAddStaff]   = useState(false);
+  const [showAddShift,   setShowAddShift]   = useState<string | null>(null);
+  const [showCSVImport,  setShowCSVImport]  = useState(false);
   const [bartenderStats, setBartenderStats] = useState<Record<string, { drinks: number; shifts: number; theftFlags: number }>>({});
 
-  const user = authService.getStoredUser();
-  const venueId = user?.venueId;
+  const user    = authService.getStoredUser();
+  const venueId = user?.venueId ?? '';
 
   const loadData = useCallback(async () => {
     if (!venueId) return;
@@ -589,17 +844,21 @@ export function Staffing() {
       let mappedStaff: StaffMember[] = [];
       let mappedShifts: Shift[] = [];
       if (API_BASE) {
-        const [sr, shr] = await Promise.all([fetch(`${STAFF_API}/${venueId}`), fetch(`${SHIFTS_API}/${venueId}`)]);
-        const sd = sr.ok ? await sr.json() : [];
+        const [sr, shr] = await Promise.all([
+          fetch(`${STAFF_API}/${venueId}`),
+          fetch(`${SHIFTS_API}/${venueId}`),
+        ]);
+        const sd  = sr.ok  ? await sr.json()  : [];
         const shd = shr.ok ? await shr.json() : [];
-        mappedStaff = sd.map((s: { staffId: string; name: string; role: string; color?: string }) => ({
+        mappedStaff  = sd.map((s: { staffId: string; name: string; role: string; color?: string }) => ({
           id: s.staffId, name: s.name, role: s.role as StaffMember['role'], color: s.color || ROLE_COLORS[s.role] || ROLE_COLORS.other
         }));
-        mappedShifts = shd.map((s: { shiftId: string; staffId: string; staffName: string; role: string; date: string; startTime: string; endTime: string }) => ({
-          id: s.shiftId, staffId: s.staffId, staffName: s.staffName, role: s.role, date: s.date, startTime: s.startTime, endTime: s.endTime
+        mappedShifts = shd.map((s: { shiftId: string; staffId: string; staffName: string; role: string; date: string; startTime: string; endTime: string; suggested?: boolean }) => ({
+          id: s.shiftId, staffId: s.staffId, staffName: s.staffName, role: s.role,
+          date: s.date, startTime: s.startTime, endTime: s.endTime, suggested: s.suggested,
         }));
       } else {
-        mappedStaff = _lsGetStaff(venueId);
+        mappedStaff  = _lsGetStaff(venueId);
         mappedShifts = _lsGetShifts(venueId);
       }
       setStaff(mappedStaff);
@@ -610,39 +869,47 @@ export function Staffing() {
       const relevantJobs = jobs.filter(j => j.status === 'done' || j.isLive);
       setAllJobs(relevantJobs);
 
-      // Build camera performance aggregates
-      const stats: Record<string, { drinks: number; shifts: number; theftFlags: number }> = {};
+      // Build camera perf aggregates
+      const stats: Record<string, { drinks: number; shifts: number; theftFlags: number; dphs: number[] }> = {};
       relevantJobs.forEach(job => {
         if (job.bartenderBreakdown) {
           try {
-            const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks?: number }>;
+            const bd = JSON.parse(job.bartenderBreakdown) as Record<string, { drinks?: number; per_hour?: number }>;
             Object.entries(bd).forEach(([name, data]) => {
-              if (!stats[name]) stats[name] = { drinks: 0, shifts: 0, theftFlags: 0 };
+              if (!stats[name]) stats[name] = { drinks: 0, shifts: 0, theftFlags: 0, dphs: [] };
               stats[name].drinks += data.drinks ?? 0;
               stats[name].shifts += 1;
               if (job.hasTheftFlag) stats[name].theftFlags += 1;
+              if (data.per_hour && data.per_hour > 0 && data.per_hour <= 100) {
+                stats[name].dphs.push(data.per_hour);
+              }
             });
             return;
           } catch { /* fall through */ }
         }
         if (job.topBartender) {
           const n = job.topBartender;
-          if (!stats[n]) stats[n] = { drinks: 0, shifts: 0, theftFlags: 0 };
+          if (!stats[n]) stats[n] = { drinks: 0, shifts: 0, theftFlags: 0, dphs: [] };
           stats[n].drinks += job.totalDrinks ?? 0;
           stats[n].shifts += 1;
           if (job.hasTheftFlag) stats[n].theftFlags += 1;
         }
       });
-      setBartenderStats(stats);
+
+      setBartenderStats(Object.fromEntries(
+        Object.entries(stats).map(([n, s]) => [n, { drinks: s.drinks, shifts: s.shifts, theftFlags: s.theftFlags }])
+      ));
 
       const perfArr: CamPerf[] = Object.entries(stats)
-        .map(([name, s]) => ({
-          name,
-          drinks: s.drinks,
-          shifts: s.shifts,
-          theftFlags: s.theftFlags,
-          drinksPerShift: s.shifts > 0 ? s.drinks / s.shifts : 0,
-        }))
+        .map(([name, s]) => {
+          const dphs = [...s.dphs].sort((a, b) => a - b);
+          const dph  = dphs.length > 0 ? dphs[Math.floor(dphs.length / 2)] : undefined;
+          return {
+            name, drinks: s.drinks, shifts: s.shifts, theftFlags: s.theftFlags,
+            drinksPerShift: s.shifts > 0 ? s.drinks / s.shifts : 0,
+            dph,
+          };
+        })
         .sort((a, b) => b.drinks - a.drinks);
       setCamPerf(perfArr);
     } catch (err) {
@@ -654,7 +921,7 @@ export function Staffing() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // ── Handlers ──
+  // ── Shift CRUD ──
 
   const handleAddStaff = async (name: string, role: StaffMember['role']) => {
     if (!venueId) return;
@@ -687,31 +954,45 @@ export function Staffing() {
     if (!venueId) return;
     const staffMember = staff.find(s => s.id === staffId);
     if (!staffMember) return;
+    const newShift: Shift = {
+      id: `shift-${Date.now()}`, staffId, staffName: staffMember.name,
+      role: staffMember.role, date, startTime, endTime, suggested: false,
+    };
     if (API_BASE) {
-      await fetch(`${SHIFTS_API}/${venueId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId, staffName: staffMember.name, role: staffMember.role, date, startTime, endTime }) });
+      await fetch(`${SHIFTS_API}/${venueId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newShift) });
     } else {
       const existing = _lsGetShifts(venueId);
-      existing.push({ id: `shift-${Date.now()}`, staffId, staffName: staffMember.name, role: staffMember.role, date, startTime, endTime });
+      existing.push(newShift);
       _lsSaveShifts(venueId, existing);
     }
     setShowAddShift(null);
     loadData();
   };
 
-  const handleDeleteShift = async (shiftId: string) => {
+  const handleDeleteShift = (shiftId: string) => {
     if (!venueId) return;
-    if (API_BASE) {
-      await fetch(`${SHIFTS_API}/${venueId}/${shiftId}`, { method: 'DELETE' });
-    } else {
-      _lsSaveShifts(venueId, _lsGetShifts(venueId).filter(s => s.id !== shiftId));
-    }
-    loadData();
+    const updated = shifts.filter(s => s.id !== shiftId);
+    setShifts(updated);
+    _lsSaveShifts(venueId, updated);
+    if (API_BASE) fetch(`${SHIFTS_API}/${venueId}/${shiftId}`, { method: 'DELETE' });
+  };
+
+  // Confirm one or all AI-suggested shifts
+  const handleConfirmSuggested = (shiftIdOrAll?: string) => {
+    const updated = shifts.map(s => {
+      if (shiftIdOrAll === undefined || s.id === shiftIdOrAll) {
+        return { ...s, suggested: false };
+      }
+      return s;
+    });
+    setShifts(updated);
+    _lsSaveShifts(venueId, updated);
   };
 
   const handleCSVImport = async (data: Record<string, string>[]): Promise<{ success: number; failed: number }> => {
     if (!venueId) return { success: 0, failed: data.length };
     let success = 0, failed = 0;
-    const lsStaff = API_BASE ? null : _lsGetStaff(venueId);
+    const lsStaff  = API_BASE ? null : _lsGetStaff(venueId);
     const lsShifts = API_BASE ? null : _lsGetShifts(venueId);
     for (const row of data) {
       try {
@@ -742,10 +1023,11 @@ export function Staffing() {
               const parts = row.date.split('/');
               if (parts.length === 3) formattedDate = `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`;
             }
+            const shift: Shift = { id: `shift-${Date.now()}-${Math.random()}`, staffId: staffMember.id, staffName: staffMember.name, role: staffMember.role, date: formattedDate, startTime: row.starttime, endTime: row.endtime };
             if (API_BASE) {
-              await fetch(`${SHIFTS_API}/${venueId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId: staffMember.id, staffName: staffMember.name, role: staffMember.role, date: formattedDate, startTime: row.starttime, endTime: row.endtime }) });
+              await fetch(`${SHIFTS_API}/${venueId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(shift) });
             } else {
-              lsShifts!.push({ id: `shift-${Date.now()}-${Math.random()}`, staffId: staffMember.id, staffName: staffMember.name, role: staffMember.role, date: formattedDate, startTime: row.starttime, endTime: row.endtime });
+              lsShifts!.push(shift);
             }
             success++;
           } else { failed++; }
@@ -753,7 +1035,7 @@ export function Staffing() {
       } catch { failed++; }
     }
     if (!API_BASE && venueId) {
-      if (lsStaff) _lsSaveStaff(venueId, lsStaff);
+      if (lsStaff)  _lsSaveStaff(venueId, lsStaff);
       if (lsShifts) _lsSaveShifts(venueId, lsShifts);
     }
     await loadData();
@@ -773,15 +1055,15 @@ export function Staffing() {
                 <Users className="w-8 h-8 text-primary" />
                 Staff
               </h1>
-              <p className="text-warm-400 mt-1">Camera performance + schedule — full picture</p>
+              <p className="text-warm-400 mt-1">Camera performance · forecast-driven schedule</p>
             </div>
           </div>
 
           {/* Tabs */}
           <div className="flex gap-2 mb-6">
             {[
-              { id: 'performance' as const, label: 'Performance', icon: Camera },
-              { id: 'schedule' as const, label: 'Schedule', icon: Calendar },
+              { id: 'performance' as const, label: 'Performance',  icon: Camera   },
+              { id: 'schedule'    as const, label: 'Schedule',     icon: Calendar },
             ].map(tab => (
               <motion.button key={tab.id} onClick={() => setActiveTab(tab.id)} whileTap={{ scale: 0.95 }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
@@ -800,23 +1082,19 @@ export function Staffing() {
               <RefreshCw className="w-8 h-8 text-primary animate-spin" />
             </div>
           ) : activeTab === 'performance' ? (
-            <CameraPerformanceView
-              camPerf={camPerf}
-              staff={staff}
-              shifts={shifts}
-              jobs={allJobs}
-            />
+            <CameraPerformanceView camPerf={camPerf} staff={staff} shifts={shifts} jobs={allJobs} />
           ) : (
-            <ScheduleView
+            <MonthScheduleView
               staff={staff}
               shifts={shifts}
-              weekOffset={weekOffset}
-              setWeekOffset={setWeekOffset}
+              setShifts={setShifts}
+              venueId={venueId}
               bartenderStats={bartenderStats}
               onAddStaff={() => setShowAddStaff(true)}
               onDeleteStaff={handleDeleteStaff}
               onAddShift={date => setShowAddShift(date)}
               onDeleteShift={handleDeleteShift}
+              onConfirmSuggested={handleConfirmSuggested}
               onImportCSV={() => setShowCSVImport(true)}
             />
           )}
@@ -837,7 +1115,7 @@ export function Staffing() {
               templateColumns={['staffname', 'role', 'date', 'starttime', 'endtime']}
               templateExample={[
                 ['Sarah Johnson', 'bartender', '2026-01-20', '18:00', '02:00'],
-                ['Mike Smith', 'server', '2026-01-20', '17:00', '23:00'],
+                ['Mike Smith',    'server',    '2026-01-20', '17:00', '23:00'],
               ]}
               onImport={handleCSVImport}
               onClose={() => setShowCSVImport(false)}

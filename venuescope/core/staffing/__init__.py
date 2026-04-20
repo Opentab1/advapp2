@@ -1,0 +1,1 @@
+# VenueScope staffing module

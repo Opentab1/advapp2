@@ -62,6 +62,40 @@ _HOUR_SHAPE_PRIOR = {
 # Typical weekend peak occupancy for generic prior (before DOW multiplier)
 _GENERIC_PEAK = 120
 
+# Default avg visit duration in 15-min slots by venue concept type
+_AVG_VISIT_SLOTS_BY_CONCEPT = {
+    "bar":         8,   # 2.0 hours
+    "cocktail":    8,   # 2.0 hours
+    "nightclub":  10,   # 2.5 hours
+    "sports_bar": 14,   # 3.5 hours
+    "restaurant":  6,   # 1.5 hours
+    "default":    10,   # 2.5 hours fallback
+}
+
+
+def _get_hospitality_holidays(year: int) -> dict[date, tuple[str, float]]:
+    """
+    Returns {date: (name, multiplier)} for key hospitality dates.
+    Multiplier > 1.0 = venue gets busier. < 1.0 = venue gets quieter.
+    """
+    return {
+        date(year, 1, 1):   ("New Year's Day",       1.10),
+        date(year, 2, 14):  ("Valentine's Day",      1.35),
+        date(year, 3, 17):  ("St. Patrick's Day",    1.80),
+        date(year, 4, 20):  ("Easter Sunday",        0.70),  # bars quieter
+        date(year, 5, 5):   ("Cinco de Mayo",        1.60),
+        date(year, 5, 26):  ("Memorial Day Weekend", 1.30),  # approximate Mon
+        date(year, 7, 4):   ("July 4th",             1.40),
+        date(year, 9, 7):   ("Labor Day",            1.20),
+        date(year, 10, 31): ("Halloween",            1.70),
+        date(year, 11, 25): ("Thanksgiving Eve",     1.50),  # "Blackout Wednesday" approx
+        date(year, 11, 26): ("Thanksgiving",         0.60),  # bars quiet
+        date(year, 12, 24): ("Christmas Eve",        0.65),
+        date(year, 12, 25): ("Christmas Day",        0.50),
+        date(year, 12, 26): ("Day After Christmas",  1.20),
+        date(year, 12, 31): ("New Year's Eve",       2.20),
+    }
+
 
 def _generic_prior_forecast(target_date: date) -> list[dict]:
     """
@@ -185,6 +219,8 @@ def forecast_tonight(
     lon: float = -82.4572,
     city: str = "tampa",
     avg_drink_price: float = _AVG_DRINK_PRICE,
+    concept_type: str = "default",
+    venue_capacity: int = 150,
 ) -> dict:
     """
     Produce the Tonight's Forecast for a venue.
@@ -197,13 +233,20 @@ def forecast_tonight(
       5. Build future DataFrame (4 PM – 2 AM, 15-min slots)
       6. Run model.predict()
       7. Apply weather multiplier W(t) and competition drag C(t)
-      8. Aggregate to final estimates
-      9. Return structured response dict
+      8. Apply holiday multiplier if applicable
+      9. Aggregate to final estimates
+     10. Return structured response dict
 
     Returns the full forecast response dict (same structure as the API endpoint).
     """
     if target_date is None:
         target_date = date.today()
+
+    # Resolve avg_visit_slots from concept type
+    avg_visit_slots = _AVG_VISIT_SLOTS_BY_CONCEPT.get(
+        concept_type.lower().replace(" ", "_").replace("-", "_"),
+        _AVG_VISIT_SLOTS_BY_CONCEPT["default"]
+    )
 
     # Step 1: Load model
     model_type = "prior"
@@ -314,7 +357,19 @@ def forecast_tonight(
             "w_mult": w_mult,
         })
 
-    # Step 8: Aggregate to hourly curve (group by hour label, take first slot per hour)
+    # Step 8: Apply holiday multiplier
+    holidays = _get_hospitality_holidays(target_date.year)
+    holiday_info = holidays.get(target_date)
+    holiday_mult = holiday_info[1] if holiday_info else 1.0
+    holiday_name = holiday_info[0] if holiday_info else None
+
+    if holiday_mult != 1.0:
+        for slot in adjusted_slots:
+            slot["yhat"]       *= holiday_mult
+            slot["yhat_lower"] *= holiday_mult
+            slot["yhat_upper"] *= holiday_mult
+
+    # Step 9: Aggregate to hourly curve (group by hour label, take first slot per hour)
     hourly_by_hour: dict[str, dict] = {}
     for slot in adjusted_slots:
         hour_key = slot["ds"].strftime("%H:00")
@@ -342,7 +397,7 @@ def forecast_tonight(
             "yhat_upper": round(h["yhat_upper"] / n, 1),
         })
 
-    # Step 9: Final estimates — sum yhat across all slots gives total covers
+    # Step 10: Final estimates — sum yhat across all slots gives total covers
     total_yhat = sum(s["yhat"] for s in adjusted_slots)
     total_low = sum(s["yhat_lower"] for s in adjusted_slots)
     total_high = sum(s["yhat_upper"] for s in adjusted_slots)
@@ -354,9 +409,7 @@ def forecast_tonight(
     peak_high = max((s["yhat_upper"] for s in adjusted_slots), default=0.0)
 
     # Final estimate is total unique covers (entries), approximate as sum / avg_visit_slots
-    # Assume avg visit = 2.5 hours = 10 slots; total_entries ≈ cumulative_drinks / 2 proxy
-    # Simpler: use total_yhat / 10 as rough entry count, but clamp to reasonable range
-    avg_visit_slots = 10
+    # avg_visit_slots is resolved from concept_type at the top of this function
     mid_covers = max(1, int(round(total_yhat / avg_visit_slots)))
     low_covers = max(1, int(round(total_low / avg_visit_slots)))
     high_covers = max(1, int(round(total_high / avg_visit_slots)))
@@ -370,8 +423,27 @@ def forecast_tonight(
     rev_low = int(round(low_covers * avg_drink_price))
     rev_high = int(round(high_covers * avg_drink_price))
 
-    # Staffing recommendation
-    bartenders_needed = max(1, math.ceil(mid_covers / 80))
+    # ── Staffing: per-hour schedule via staffing engine ───────────────────────
+    staffing_hourly: dict = {}
+    try:
+        from core.staffing.venue_physics    import get_venue_physics
+        from core.staffing.bartender_learner import load_capacity_model
+        from core.staffing.staffing_engine  import compute_hourly_staffing, peak_staffing
+
+        physics       = get_venue_physics(venue_id, concept_type)
+        learned_model = load_capacity_model(venue_id)
+
+        staffing_hourly = compute_hourly_staffing(
+            hourly_curve  = hourly_curve,
+            physics       = physics,
+            learned_model = learned_model,
+            capacity      = venue_capacity,
+        )
+        _peak = peak_staffing(staffing_hourly)
+        bartenders_needed = max(1, _peak["bartenders"])
+    except Exception as exc:
+        logger.warning("[forecast] Staffing engine failed (using cover ratio): %s", exc)
+        bartenders_needed = max(1, math.ceil(mid_covers / 80))
 
     # Weather description
     def _weather_desc(temp_f, precip, wind):
@@ -418,12 +490,18 @@ def forecast_tonight(
     c_impact_str = f"{c_impact_pct:+d}%" if c_impact_pct != 0 else "no impact"
 
     # Baseline covers (DOW × month shape, no weather or event effects)
+    # Use same slot-sum aggregation as mid_covers so lift_pct is on the same scale
     _month_mult = {
         1: 0.72, 2: 0.78, 3: 0.92, 4: 0.88, 5: 0.91, 6: 0.96,
         7: 0.94, 8: 0.93, 9: 0.87, 10: 0.97, 11: 0.85, 12: 1.12,
     }
     month_mult = _month_mult.get(target_date.month, 1.0)
-    baseline_covers = max(1, int(round(_GENERIC_PEAK * dow_mult * month_mult)))
+    baseline_peak = _GENERIC_PEAK * dow_mult * month_mult
+    baseline_slots_sum = sum(
+        baseline_peak * _HOUR_SHAPE_PRIOR.get(h, 0.30) * _SLOTS_PER_HOUR
+        for h in range(_OPEN_HOUR, _CLOSE_HOUR)
+    )
+    baseline_covers = max(1, int(round(baseline_slots_sum / avg_visit_slots)))
     lift = mid_covers - baseline_covers
     lift_pct = round((lift / baseline_covers) * 100) if baseline_covers > 0 else 0
 
@@ -456,6 +534,16 @@ def forecast_tonight(
             "name": "Competing events",
             "value": "None detected",
             "impact": "no impact",
+        })
+
+    # Holiday factor
+    if holiday_name:
+        h_impact_pct = round((holiday_mult - 1.0) * 100)
+        h_impact_str = f"{h_impact_pct:+d}%"
+        factors.append({
+            "name": "Holiday",
+            "value": holiday_name,
+            "impact": h_impact_str,
         })
 
     # Calibration state and MAPE
@@ -499,6 +587,7 @@ def forecast_tonight(
                 f"{bartenders_needed} bartender{'s' if bartenders_needed != 1 else ''} recommended."
             ),
         },
+        "staffing_hourly": staffing_hourly,
         "hourly_curve": hourly_curve,
         "factors": factors,
         "calibration_state": cal_state,

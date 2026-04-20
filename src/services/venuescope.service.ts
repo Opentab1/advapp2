@@ -6,7 +6,7 @@
  * Full summary JSON is fetched from S3 on demand for the detail view.
  */
 import { generateClient } from '@aws-amplify/api';
-import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, QueryCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
 
 const client = generateClient();
 
@@ -358,6 +358,38 @@ const venueScopeService = {
   async getLatestJob(venueId: string): Promise<VenueScopeJob | null> {
     const jobs = await venueScopeService.listJobs(venueId, 1);
     return jobs[0] ?? null;
+  },
+
+  /**
+   * Read the pre-computed tonight's forecast written by forecast_cron.py at 6 AM.
+   * Returns the parsed forecast JSON or null if not found / stale.
+   *
+   * DynamoDB key: { venueId, jobId: "forecast#YYYY-MM-DD" }
+   * Staleness check: forecastDate must match dateStr (default = today).
+   */
+  async getForecast(venueId: string, dateStr?: string): Promise<Record<string, unknown> | null> {
+    if (!_directDDB) return null;
+    const target = dateStr ?? new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const jobId  = `forecast#${target}`;
+    try {
+      const r = await _directDDB.send(new GetItemCommand({
+        TableName: 'VenueScopeJobs',
+        Key: {
+          venueId: { S: venueId },
+          jobId:   { S: jobId },
+        },
+      }));
+      const item = r.Item;
+      if (!item) return null;
+      const forecastDate = (item.forecastDate as { S: string } | undefined)?.S;
+      if (forecastDate !== target) return null; // stale
+      const raw = (item.forecastJson as { S: string } | undefined)?.S;
+      if (!raw) return null;
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      console.warn('[venuescope] getForecast failed:', err);
+      return null;
+    }
   },
 
   /**
