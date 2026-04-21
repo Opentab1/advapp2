@@ -933,6 +933,21 @@ class AdminService {
     return data as OpsMetrics;
   }
 
+  /**
+   * Probe a set of RTSP URLs from the droplet's network vantage point.
+   * Returns per-camera {ok, reason, width, height, fps}. Returns null if the
+   * endpoint isn't deployed yet (wizard degrades gracefully).
+   */
+  async probeCameras(
+    cameras: Array<{ name: string; rtspUrl: string }>,
+  ): Promise<Array<{ ok: boolean; reason: string; width?: number; height?: number; fps?: number }>> {
+    const res = await opsFetch('/ops/probe-cameras', {
+      method: 'POST',
+      body:   JSON.stringify({ cameras }),
+    });
+    return res?.results ?? [];
+  }
+
   async restartWorker(): Promise<{ ok: boolean; msg: string }> {
     const data = await opsFetch('/ops/restart', { method: 'POST', body: '{}' });
     return data as { ok: boolean; msg: string };
