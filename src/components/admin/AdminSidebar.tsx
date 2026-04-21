@@ -34,6 +34,7 @@ const navItems: NavItem[] = [
   { id: 'ops',             label: 'Ops Monitor',      icon: Activity },
   { id: 'alerts',          label: 'Alerts Inbox',     icon: Bell },
   { id: 'review-queue',    label: 'Review Queue',     icon: ClipboardList },
+  { id: 'accuracy',        label: 'Accuracy SLA',     icon: Target },
   { id: 'venues',          label: 'Venues',           icon: Building2 },
   { id: 'cameras',         label: 'Cameras',          icon: Camera },
   { id: 'calibration',    label: 'Bar Calibration',  icon: Sliders },
