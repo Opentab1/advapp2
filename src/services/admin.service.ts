@@ -212,6 +212,43 @@ export interface OpsStatus {
   ts: number;
 }
 
+/**
+ * Curated Prometheus snapshot from the droplet. Returned by /ops/metrics.
+ * All fields are optional since the droplet may be offline or node_exporter
+ * may be restarting — UI renders "—" when a field is missing.
+ */
+export interface OpsMetrics {
+  ts: number;                       // server timestamp (seconds since epoch)
+
+  // CPU — raw 1/5/15-minute load averages plus derived % (load1 / cores * 100)
+  load1?: number;
+  load5?: number;
+  load15?: number;
+  load1_pct?: number;
+  cpu_cores?: number;
+
+  // Memory — bytes + derived used%
+  mem_total_bytes?: number;
+  mem_available_bytes?: number;
+  mem_free_bytes?: number;
+  mem_used_pct?: number;
+
+  // Root filesystem — bytes + derived used%
+  fs_size_bytes?: number;
+  fs_avail_bytes?: number;
+  disk_used_pct?: number;
+
+  // Worker state (from venuescope textfile exporter)
+  worker_up?: number;               // 1 | 0
+  active_jobs?: number;
+  queue_depth?: number;
+  offline_queue?: number;
+  max_parallel?: number;
+  max_per_venue?: number;
+  venues_count?: number;
+  venues_active?: string[];
+}
+
 export interface AdminSettingsData {
   alertThresholds: {
     offlineMinutes: number;
@@ -885,6 +922,30 @@ class AdminService {
     if (filter) qs.set('filter', filter);
     const data = await opsFetch(`/ops/logs?${qs.toString()}`);
     return data as { lines: string[]; count: number };
+  }
+
+  /**
+   * Curated Prometheus metrics from the droplet. Parsed server-side so the
+   * payload is small (~1 KB) and ready to plot.
+   */
+  async getOpsMetrics(): Promise<OpsMetrics> {
+    const data = await opsFetch('/ops/metrics');
+    return data as OpsMetrics;
+  }
+
+  /**
+   * Probe a set of RTSP URLs from the droplet's network vantage point.
+   * Returns per-camera {ok, reason, width, height, fps}. Returns null if the
+   * endpoint isn't deployed yet (wizard degrades gracefully).
+   */
+  async probeCameras(
+    cameras: Array<{ name: string; rtspUrl: string }>,
+  ): Promise<Array<{ ok: boolean; reason: string; width?: number; height?: number; fps?: number }>> {
+    const res = await opsFetch('/ops/probe-cameras', {
+      method: 'POST',
+      body:   JSON.stringify({ cameras }),
+    });
+    return res?.results ?? [];
   }
 
   async restartWorker(): Promise<{ ok: boolean; msg: string }> {

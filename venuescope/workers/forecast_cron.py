@@ -119,11 +119,19 @@ def _write_forecast_to_ddb(venue_id: str, target_date: date, forecast: dict) -> 
     Write the forecast dict to DynamoDB.
 
     Item layout:
-      venueId      = venue_id                         (partition key)
-      jobId        = "forecast#YYYY-MM-DD"            (sort key)
-      forecastJson = json.dumps(forecast)             (full result)
-      forecastDate = "YYYY-MM-DD"                     (for freshness check)
-      generatedAt  = unix timestamp                   (for TTL / display)
+      venueId               = venue_id                      (partition key)
+      jobId                 = "forecast#YYYY-MM-DD"         (sort key)
+      forecastJson          = json.dumps(forecast)          (full result)
+      forecastDate          = "YYYY-MM-DD"                  (for freshness check)
+      generatedAt           = unix timestamp                (for TTL / display)
+      modelType             = "trained" | "prior"           (for learning %)
+      trainingSnapshotCount = N                             (for learning %)
+      trainingThreshold     = 100                           (hardcoded target)
+
+    The two new training-signal fields drive the PWA's "Learning mode — N%
+    trained" banner. Learning % = min(100, snapshotCount / threshold * 100).
+    When modelType == "trained" we're at 100%. When "prior", percent reflects
+    progress toward the threshold.
 
     The "forecast#" prefix keeps these items well away from the "!" reverse-ts
     job items and "~" live-camera items — they sort naturally to the end of the
@@ -140,17 +148,30 @@ def _write_forecast_to_ddb(venue_id: str, target_date: date, forecast: dict) -> 
         date_str = target_date.isoformat()
         job_id   = f"forecast#{date_str}"
 
+        # Mirror two key fields to top-level attrs so the PWA doesn't have to
+        # JSON-parse forecastJson just to render the learning banner.
+        model_type        = str(forecast.get("model_type", "unknown"))
+        snapshot_count    = int(forecast.get("training_snapshots")
+                                or forecast.get("snapshot_count") or 0)
+        training_target   = int(forecast.get("training_target", 100))
+
         ddb.put_item(
             TableName=_DYNAMODB_TABLE,
             Item={
-                "venueId":      {"S": venue_id},
-                "jobId":        {"S": job_id},
-                "forecastJson": {"S": json.dumps(forecast)},
-                "forecastDate": {"S": date_str},
-                "generatedAt":  {"N": str(int(time.time()))},
+                "venueId":               {"S": venue_id},
+                "jobId":                 {"S": job_id},
+                "forecastJson":          {"S": json.dumps(forecast)},
+                "forecastDate":          {"S": date_str},
+                "generatedAt":           {"N": str(int(time.time()))},
+                "modelType":             {"S": model_type},
+                "trainingSnapshotCount": {"N": str(snapshot_count)},
+                "trainingThreshold":     {"N": str(training_target)},
             },
         )
-        logger.info("[cron] Forecast written → %s / %s", venue_id, job_id)
+        logger.info(
+            "[cron] Forecast written → %s / %s  (model=%s snapshots=%d/%d)",
+            venue_id, job_id, model_type, snapshot_count, training_target,
+        )
         return True
     except Exception as exc:
         logger.error("[cron] DynamoDB write failed: %s", exc)
@@ -308,24 +329,35 @@ def main() -> None:
             logger.warning("[0/3] Bartender learner failed (non-fatal): %s", exc)
 
     # ── Step 1: Retrain Prophet (skipped in --refresh mode) ───────────────────
+    # Keep training-signal counts around so we can mirror them into the forecast
+    # record — the PWA renders "Learning mode — N% trained" from these.
+    last_train_snapshots = 0
+    last_train_status    = "skipped"
     if not args.refresh:
         logger.info("[1/3] Retraining Prophet model on last 90 days…")
         try:
             from venuescope.core.prophet_forecast.training_pipeline import train_venue_model
             train_result = train_venue_model(venue_id=venue_id, city=city, lat=lat, lon=lon)
+            last_train_snapshots = int(train_result.get("snapshots_used") or 0)
+            last_train_status    = str(train_result.get("status") or "unknown")
             logger.info(
                 "[1/3] Training → status=%s  snapshots=%d  mape=%s",
-                train_result.get("status"),
-                train_result.get("snapshots_used", 0),
+                last_train_status, last_train_snapshots,
                 train_result.get("mape_estimate", "?"),
             )
-            if train_result.get("status") == "insufficient_data":
+            if last_train_status == "insufficient_data":
                 logger.info("[1/3] Not enough data yet — will use prior for forecast")
         except Exception as exc:
             # Non-fatal: forecast_tonight will fall back to the generic prior
             logger.warning("[1/3] Training failed (will use existing/prior model): %s", exc)
     else:
         logger.info("[1/3] Skipping retraining (midday refresh mode)")
+        # Best-effort: read current snapshot count so the learning% still moves
+        try:
+            from venuescope.core.prophet_forecast.occupancy_snapshots import get_snapshots
+            last_train_snapshots = len(get_snapshots(venue_id) or [])
+        except Exception:
+            pass
 
     # ── Step 2: Generate tonight's forecast ───────────────────────────────────
     logger.info("[2/3] Generating tonight's forecast…")
@@ -349,6 +381,11 @@ def main() -> None:
     except Exception as exc:
         logger.error("[2/3] Forecast generation failed: %s", exc)
         sys.exit(1)
+
+    # Attach training-signal fields so _write_forecast_to_ddb can mirror
+    # them to top-level DDB attrs for the PWA's learning banner.
+    forecast.setdefault("training_snapshots", last_train_snapshots)
+    forecast.setdefault("training_target", 100)
 
     # ── Step 3: Write to DynamoDB ─────────────────────────────────────────────
     logger.info("[3/3] Writing to DynamoDB…")

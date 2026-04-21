@@ -13,6 +13,8 @@ import {
   Activity,
   Bell,
   Sliders,
+  ClipboardList,
+  Sparkles,
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -30,8 +32,11 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { id: 'dashboard',       label: 'Dashboard',        icon: LayoutDashboard },
+  { id: 'onboard',         label: 'Onboard Venue',    icon: Sparkles },
   { id: 'ops',             label: 'Ops Monitor',      icon: Activity },
   { id: 'alerts',          label: 'Alerts Inbox',     icon: Bell },
+  { id: 'review-queue',    label: 'Review Queue',     icon: ClipboardList },
+  { id: 'accuracy',        label: 'Accuracy SLA',     icon: Target },
   { id: 'venues',          label: 'Venues',           icon: Building2 },
   { id: 'cameras',         label: 'Cameras',          icon: Camera },
   { id: 'calibration',    label: 'Bar Calibration',  icon: Sliders },

@@ -1,0 +1,42 @@
+{
+  "venue_id": "theblindgoat",
+  "display_name": "Theblindgoat",
+  "overhead_camera": false,
+  "notes": "Auto-calibrated: bar_line_y=0.33, customer_side=+1",
+  "frame_width": null,
+  "frame_height": null,
+  "stations": [
+    {
+      "zone_id": "bar_main",
+      "label": "Bar",
+      "polygon": [
+        [
+          0.0,
+          0.05
+        ],
+        [
+          1.0,
+          0.05
+        ],
+        [
+          1.0,
+          0.95
+        ],
+        [
+          0.0,
+          0.95
+        ]
+      ],
+      "bar_line_p1": [
+        0.0,
+        0.33
+      ],
+      "bar_line_p2": [
+        1.0,
+        0.33
+      ],
+      "customer_side": 1,
+      "extra_bar_lines": []
+    }
+  ]
+}

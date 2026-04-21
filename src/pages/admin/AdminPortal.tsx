@@ -16,6 +16,9 @@ import { CamerasManagement } from './CamerasManagement';
 import { BarCalibration } from './BarCalibration';
 import { OpsMonitor } from './OpsMonitor';
 import { AlertsInbox } from './AlertsInbox';
+import { ReviewQueue } from './ReviewQueue';
+import { AccuracySLA } from './AccuracySLA';
+import { OnboardVenue } from './OnboardVenue';
 import authService from '../../services/auth.service';
 
 const ADMIN_API_CONFIGURED = !!(import.meta.env.VITE_ADMIN_API_URL ?? '').trim();
@@ -105,6 +108,9 @@ function AdminPortalInner() {
           {activeTab === 'cameras'         && <ErrorBoundary key="cameras"><CamerasManagement /></ErrorBoundary>}
           {activeTab === 'calibration'    && <ErrorBoundary key="calibration"><BarCalibration /></ErrorBoundary>}
           {activeTab === 'alerts'          && <ErrorBoundary key="alerts"><AlertsInbox /></ErrorBoundary>}
+          {activeTab === 'review-queue'    && <ErrorBoundary key="review-queue"><ReviewQueue /></ErrorBoundary>}
+          {activeTab === 'accuracy'        && <ErrorBoundary key="accuracy"><AccuracySLA /></ErrorBoundary>}
+          {activeTab === 'onboard'         && <ErrorBoundary key="onboard"><OnboardVenue /></ErrorBoundary>}
           {activeTab === 'users'           && <ErrorBoundary key="users"><UsersManagement /></ErrorBoundary>}
           {activeTab === 'analytics'       && <ErrorBoundary key="analytics"><SystemAnalytics /></ErrorBoundary>}
           {activeTab === 'email-reporting' && <ErrorBoundary key="email-reporting"><EmailReporting /></ErrorBoundary>}

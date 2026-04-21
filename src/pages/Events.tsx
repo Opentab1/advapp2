@@ -73,7 +73,7 @@ interface HourlyPoint {
 }
 
 interface TonightForecast {
-  model_type: 'prophet' | 'gbm' | 'prior';
+  model_type: 'prophet' | 'gbm' | 'prior' | 'trained';
   calibration_state: string;
   mape_expected: string;
   confidence_pct: number;
@@ -89,6 +89,67 @@ interface TonightForecast {
   staffing_hourly?: Record<string, { bartenders: number; servers: number; door: number; barback: number; concurrent: number }>;
   factors: TonightFactor[];
   hourly_curve: HourlyPoint[];
+  // Training-progress signals written by forecast_cron.py (2026-04-21+)
+  training_snapshots?: number;
+  training_target?:    number;
+  training_days?:      number;   // snapshot coverage in days (optional)
+  training_days_required?: number;
+}
+
+/**
+ * How "trained" is the forecast model today?
+ * Returns { pct, stage, narrative } — drives the banner above the forecast card.
+ *
+ * We gate on two signals from the training pipeline:
+ *   1. enough snapshots (target ≥100 by default)
+ *   2. enough days of coverage (target ≥14 by default — Prophet needs DOW signal)
+ *
+ * Learning % = whichever gate is more limiting (honest to the customer).
+ * Once model_type is a real trained model, we show 100%.
+ */
+function computeLearningProgress(f: TonightForecast): {
+  pct: number;
+  stage: 'learning' | 'ready';
+  snapshots: number;
+  snapshotTarget: number;
+  days?: number;
+  daysTarget?: number;
+  narrative: string;
+} {
+  const trainedTypes = new Set(['prophet', 'gbm', 'trained']);
+  if (trainedTypes.has(f.model_type)) {
+    return {
+      pct: 100, stage: 'ready',
+      snapshots: f.training_snapshots ?? 0,
+      snapshotTarget: f.training_target ?? 100,
+      days: f.training_days,
+      daysTarget: f.training_days_required,
+      narrative: 'Model is trained on this venue and updating nightly.',
+    };
+  }
+  const snapshots  = Math.max(0, f.training_snapshots ?? 0);
+  const snapTarget = Math.max(1, f.training_target     ?? 100);
+  const snapPct    = Math.min(100, (snapshots / snapTarget) * 100);
+  const days       = f.training_days;
+  const daysTarget = f.training_days_required;
+  let daysPct: number | undefined;
+  if (typeof days === 'number' && typeof daysTarget === 'number' && daysTarget > 0) {
+    daysPct = Math.min(100, (days / daysTarget) * 100);
+  }
+  // Most limiting gate wins
+  const limiting = Math.min(snapPct, daysPct ?? 100);
+  const pct = Math.max(0, Math.min(90, Math.round(limiting)));   // cap at 90% until trained
+  return {
+    pct, stage: 'learning',
+    snapshots, snapshotTarget: snapTarget,
+    days, daysTarget,
+    narrative:
+      snapshots === 0
+        ? 'Collecting first data — forecast uses a generic prior for now.'
+        : typeof daysTarget === 'number' && typeof days === 'number' && days < daysTarget
+          ? `Needs ~${Math.max(1, daysTarget - days)} more days of operation before the model trains.`
+          : `${snapshots} / ${snapTarget} data points collected. Forecast uses a generic prior until the model trains.`,
+  };
 }
 
 // ─── Demo Forecast ─────────────────────────────────────────────────────────
@@ -746,6 +807,42 @@ function TonightTab({ venueId }: { venueId: string }) {
           </div>
         </div>
       )}
+
+      {/* ── Learning banner (shown until the model is trained on this venue) ── */}
+      {(() => {
+        const lp = computeLearningProgress(forecast);
+        if (lp.stage === 'ready') return null;   // hide when fully trained
+        return (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4">
+            <div className="flex items-start gap-3">
+              <TrendingUp className="w-5 h-5 text-amber-300 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-amber-200">
+                    Learning mode — {lp.pct}% trained
+                  </span>
+                  <span className="text-[11px] text-amber-300/80 bg-amber-500/20 px-2 py-0.5 rounded-full">
+                    using generic prior
+                  </span>
+                </div>
+                <p className="text-xs text-amber-100/80 mt-1">{lp.narrative}</p>
+                <div className="mt-2 h-1.5 rounded-full bg-amber-500/10 overflow-hidden">
+                  <div
+                    className="h-full bg-amber-300/70 transition-all duration-500"
+                    style={{ width: `${lp.pct}%` }}
+                  />
+                </div>
+                <div className="text-[10px] text-amber-300/70 mt-1.5 flex gap-3">
+                  <span>{lp.snapshots}/{lp.snapshotTarget} data points</span>
+                  {typeof lp.days === 'number' && typeof lp.daysTarget === 'number' && (
+                    <span>· {lp.days.toFixed(1)}/{lp.daysTarget} days coverage</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Primary forecast readout ── */}
       <div className="bg-whoop-panel border border-whoop-divider rounded-2xl p-5 space-y-3">

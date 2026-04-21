@@ -14,7 +14,7 @@ import {
   ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, Zap,
 } from 'lucide-react';
 import adminService, {
-  AdminVenue, AdminJob, AdminCamera, OpsStatus,
+  AdminVenue, AdminJob, AdminCamera, OpsStatus, OpsMetrics,
   getOpsSecret, saveOpsSecret,
 } from '../../services/admin.service';
 import { useAdminVenue } from '../../contexts/AdminVenueContext';
@@ -83,6 +83,67 @@ function Gauge({ label, value, max, unit, color }: {
           style={{ width: value < 0 ? '0%' : `${pct}%` }}
         />
       </div>
+    </div>
+  );
+}
+
+// ─── Sparkline + MetricTile (time-series visual for ops metrics) ─────────────
+
+/**
+ * Dependency-free inline SVG sparkline. Renders the history of a single metric
+ * as a smooth line against the tile's background. No external chart library.
+ */
+function Sparkline({ values, color = '#60a5fa' }: { values: number[]; color?: string }) {
+  if (!values || values.length < 2) {
+    return (
+      <svg viewBox="0 0 120 32" className="w-full h-8 opacity-30">
+        <line x1="0" y1="16" x2="120" y2="16" stroke={color} strokeWidth="1" strokeDasharray="2 3" />
+      </svg>
+    );
+  }
+  const w = 120, h = 32, pad = 2;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const pts = values.map((v, i) => {
+    const x = pad + (i / (values.length - 1)) * (w - pad * 2);
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(' ');
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-8" preserveAspectRatio="none">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function MetricTile({
+  label, value, unit, thresholdWarn, thresholdCrit, history, accent = '#60a5fa',
+}: {
+  label: string;
+  value: number | string | null | undefined;
+  unit?: string;
+  thresholdWarn?: number;
+  thresholdCrit?: number;
+  history?: number[];
+  accent?: string;
+}) {
+  const isNum = typeof value === 'number' && !Number.isNaN(value);
+  let color = 'text-white';
+  if (isNum && thresholdCrit !== undefined && (value as number) >= thresholdCrit) color = 'text-red-400';
+  else if (isNum && thresholdWarn !== undefined && (value as number) >= thresholdWarn) color = 'text-yellow-400';
+
+  const lineColor = color.includes('red') ? '#f87171'
+                    : color.includes('yellow') ? '#facc15'
+                    : accent;
+
+  return (
+    <div className="bg-white/5 border border-white/10 rounded-lg p-3 flex flex-col gap-1.5">
+      <div className="text-xs uppercase tracking-wide text-gray-400">{label}</div>
+      <div className={`text-xl font-mono font-semibold ${color}`}>
+        {value === null || value === undefined ? '—' : `${value}${unit ?? ''}`}
+      </div>
+      <div className="mt-1"><Sparkline values={history ?? []} color={lineColor} /></div>
     </div>
   );
 }
@@ -173,6 +234,12 @@ export function OpsMonitor() {
   const [opsLoading,     setOpsLoading]     = useState(true);
   const [opsError,       setOpsError]       = useState<string | null>(null);
 
+  // Live metrics (from prometheus-node-exporter via /ops/metrics)
+  const [opsMetrics,     setOpsMetrics]     = useState<OpsMetrics | null>(null);
+  // Ring buffer of the last N samples for sparklines. 60 samples × 30s = 30 min history.
+  const METRICS_HISTORY_MAX = 60;
+  const [metricsHistory, setMetricsHistory] = useState<OpsMetrics[]>([]);
+
   // Logs
   const [logsOpen,       setLogsOpen]       = useState(false);
   const [logLines,       setLogLines]       = useState<string[]>([]);
@@ -225,6 +292,26 @@ export function OpsMonitor() {
     }
   }, []);
 
+  /**
+   * Fetch curated Prometheus metrics + append to the ring buffer so sparklines
+   * can show trend. If the endpoint is missing (older droplet build), we fail
+   * silently — this is additive, not load-bearing.
+   */
+  const fetchOpsMetrics = useCallback(async () => {
+    if (!getOpsSecret()) return;
+    try {
+      const m = await adminService.getOpsMetrics();
+      setOpsMetrics(m);
+      setMetricsHistory(prev => {
+        const next = [...prev, m];
+        if (next.length > METRICS_HISTORY_MAX) next.shift();
+        return next;
+      });
+    } catch {
+      // Endpoint may not be deployed yet; don't disturb the rest of the page
+    }
+  }, []);
+
   // ── Fetch logs ─────────────────────────────────────────────────────────────
 
   const fetchLogs = useCallback(async (filter: string) => {
@@ -243,9 +330,9 @@ export function OpsMonitor() {
 
   const fetchAll = useCallback(async () => {
     setCountdown(30);
-    await Promise.all([fetchVenueData(), fetchOpsStatus()]);
+    await Promise.all([fetchVenueData(), fetchOpsStatus(), fetchOpsMetrics()]);
     setLastUpdated(new Date());
-  }, [fetchVenueData, fetchOpsStatus]);
+  }, [fetchVenueData, fetchOpsStatus, fetchOpsMetrics]);
 
   useEffect(() => {
     fetchAll();
@@ -638,6 +725,85 @@ export function OpsMonitor() {
           )}
         </AnimatePresence>
       </motion.div>
+
+      {/* ── Live Metrics (from prometheus-node-exporter) ───────────────────── */}
+      {opsMetrics && (
+        <motion.div className="glass-card overflow-hidden"
+          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+        >
+          <div className="px-5 py-4 border-b border-white/10 flex items-center gap-2">
+            <Activity className="w-4 h-4 text-cyan-400" />
+            <span className="font-semibold text-white text-sm">Live Metrics</span>
+            <span className="ml-auto text-xs text-gray-500">
+              {metricsHistory.length} samples · {metricsHistory.length > 0
+                ? `${Math.round(metricsHistory.length * 30 / 60)} min history`
+                : 'warming up'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 p-4">
+            <MetricTile
+              label="Load (1m)"
+              value={opsMetrics.load1?.toFixed(2)}
+              unit={opsMetrics.cpu_cores ? ` / ${opsMetrics.cpu_cores}` : ''}
+              thresholdWarn={(opsMetrics.cpu_cores ?? 4) * 0.75}
+              thresholdCrit={(opsMetrics.cpu_cores ?? 4) * 1.0}
+              history={metricsHistory.map(m => m.load1 ?? 0)}
+              accent="#22d3ee"
+            />
+            <MetricTile
+              label="Memory"
+              value={opsMetrics.mem_used_pct?.toFixed(0)}
+              unit="%"
+              thresholdWarn={70}
+              thresholdCrit={85}
+              history={metricsHistory.map(m => m.mem_used_pct ?? 0)}
+              accent="#c084fc"
+            />
+            <MetricTile
+              label="Disk"
+              value={opsMetrics.disk_used_pct?.toFixed(0)}
+              unit="%"
+              thresholdWarn={70}
+              thresholdCrit={85}
+              history={metricsHistory.map(m => m.disk_used_pct ?? 0)}
+              accent="#f59e0b"
+            />
+            <MetricTile
+              label="Active jobs"
+              value={opsMetrics.active_jobs ?? '—'}
+              unit={opsMetrics.max_parallel ? ` / ${opsMetrics.max_parallel}` : ''}
+              history={metricsHistory.map(m => m.active_jobs ?? 0)}
+              accent="#34d399"
+            />
+            <MetricTile
+              label="Queue depth"
+              value={opsMetrics.queue_depth ?? '—'}
+              thresholdWarn={10}
+              thresholdCrit={20}
+              history={metricsHistory.map(m => m.queue_depth ?? 0)}
+              accent="#fbbf24"
+            />
+            <MetricTile
+              label="Offline queue"
+              value={opsMetrics.offline_queue ?? '—'}
+              thresholdWarn={1}
+              thresholdCrit={10}
+              history={metricsHistory.map(m => m.offline_queue ?? 0)}
+              accent="#f87171"
+            />
+          </div>
+          <div className="px-5 py-2 border-t border-white/10 text-xs text-gray-500 flex justify-between">
+            <span>
+              Worker: {opsMetrics.worker_up ? '🟢 up' : '🔴 down'}
+              {' · '}Venues active: {opsMetrics.venues_active?.length ?? 0}
+              {opsMetrics.venues_active && opsMetrics.venues_active.length > 0 && (
+                <> ({opsMetrics.venues_active.join(', ')})</>
+              )}
+            </span>
+            <span>polled every 30s</span>
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Live Jobs ──────────────────────────────────────────────────────── */}
       {opsStatus && opsStatus.liveJobs.length > 0 && (
