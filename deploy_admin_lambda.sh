@@ -89,7 +89,9 @@ INLINE_POLICY=$(cat <<EOF
         "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeCameras",
         "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeCameras/*",
         "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeJobs",
-        "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeJobs/*"
+        "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeJobs/*",
+        "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeLowConfEvents",
+        "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeLowConfEvents/*"
       ]
     }
   ]

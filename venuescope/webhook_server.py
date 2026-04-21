@@ -278,6 +278,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self._handle_ops_restart()
             elif parsed.path == "/ops/deploy":
                 self._handle_ops_deploy()
+            elif parsed.path == "/ops/probe-cameras":
+                # Read request body (Content-Length must be set)
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body   = self.rfile.read(length) if length > 0 else b""
+                self._handle_ops_probe_cameras(body)
             else:
                 self._json(404, {"error": "unknown ops route"})
             return
@@ -649,6 +654,84 @@ class WebhookHandler(BaseHTTPRequestHandler):
             })
         self._json(200, {"jobs": out, "count": len(out),
                          "since": since, "until": until})
+
+    def _handle_ops_probe_cameras(self, body: bytes):
+        """POST /ops/probe-cameras — probe a list of RTSP URLs from the droplet.
+
+        Request body: {"cameras": [{"name": "...", "rtspUrl": "rtsp://..."}]}
+        Response:     {"results": [{"name": "...", "ok": bool, "reason": str,
+                                    "width": int, "height": int, "fps": float}]}
+
+        Used by the admin portal's Onboard Venue wizard pre-flight step and by
+        the ad-hoc "Test connection" button in the Cameras tab. Probes are
+        sequential to avoid hammering an NVR; 3-second timeout per camera.
+        """
+        import cv2, time as _time
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            self._json(400, {"error": "invalid JSON body"})
+            return
+        cams = payload.get("cameras") or []
+        if not isinstance(cams, list):
+            self._json(400, {"error": "cameras must be a list"})
+            return
+
+        def _probe(url: str, timeout_s: float = 3.0) -> dict:
+            t0 = _time.time()
+            if not isinstance(url, str) or not url.strip().lower().startswith("rtsp://"):
+                return {"ok": False, "reason": "bad_url",
+                        "width": 0, "height": 0, "fps": 0.0,
+                        "elapsed_s": 0.0}
+            cap = None
+            try:
+                cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+                deadline = _time.time() + timeout_s
+                while not cap.isOpened() and _time.time() < deadline:
+                    _time.sleep(0.1)
+                if not cap.isOpened():
+                    return {"ok": False, "reason": "cannot_open",
+                            "width": 0, "height": 0, "fps": 0.0,
+                            "elapsed_s": round(_time.time() - t0, 2)}
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)  or 0)
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+                fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                # Try to read one frame before the timeout
+                frame = None
+                while _time.time() < deadline:
+                    ok, f = cap.read()
+                    if ok and f is not None:
+                        frame = f; break
+                    _time.sleep(0.05)
+                if frame is None:
+                    return {"ok": False, "reason": "no_frame",
+                            "width": w, "height": h, "fps": fps,
+                            "elapsed_s": round(_time.time() - t0, 2)}
+                return {"ok": True, "reason": "ok",
+                        "width": w or (frame.shape[1] if frame is not None else 0),
+                        "height": h or (frame.shape[0] if frame is not None else 0),
+                        "fps": fps,
+                        "elapsed_s": round(_time.time() - t0, 2)}
+            except Exception as e:
+                return {"ok": False, "reason": f"error: {e}",
+                        "width": 0, "height": 0, "fps": 0.0,
+                        "elapsed_s": round(_time.time() - t0, 2)}
+            finally:
+                if cap is not None:
+                    try: cap.release()
+                    except Exception: pass
+
+        results = []
+        for c in cams[:16]:  # hard cap to prevent a malicious payload hogging the worker
+            name = (c.get("name") or "").strip() or "camera"
+            url  = (c.get("rtspUrl") or "").strip()
+            res = _probe(url)
+            res["name"] = name
+            results.append(res)
+
+        self._json(200, {"results": results, "count": len(results),
+                         "ts": time.time()})
+
 
     def _handle_ops_metrics(self):
         """GET /ops/metrics — curated JSON snapshot for the admin OpsMonitor page.

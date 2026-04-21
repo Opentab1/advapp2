@@ -65,6 +65,10 @@ const VENUES_TABLE  = 'VenueScopeVenues';
 const CAMERAS_TABLE = 'VenueScopeCameras';
 const JOBS_TABLE    = 'VenueScopeJobs';
 const BILLING_TABLE = 'VenueScopeBilling';
+// Review queue — populated by worker when a detection fires below its
+// confidence threshold. Schema: PK=venueId, SK=eventId. A reviewer approves
+// or rejects each, updating the authoritative drink/bottle/visit count.
+const REVIEW_TABLE  = 'VenueScopeLowConfEvents';
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY ?? '';
 const STRIPE_PRICE  = process.env.STRIPE_PRICE_ID   ?? '';
 const STRIPE_WH_SEC = process.env.STRIPE_WEBHOOK_SECRET ?? '';
@@ -594,6 +598,195 @@ async function probeCameras({ ip, port, totalChannels = 16 }) {
   results.sort((a, b) => a.channel - b.channel);
   return ok({ channels: results });
 }
+
+// ─── Review queue (low-confidence event approval) ────────────────────────────
+//
+// Worker writes events into VenueScopeLowConfEvents when a drink / bottle /
+// visit fires below its confidence threshold. Admin reviewers accept or reject.
+// The authoritative per-venue totals incorporate the approved count.
+//
+// Schema:
+//   PK   venueId     (String)
+//   SK   eventId     (String, UUID)
+//   Attrs:
+//     jobId, cameraId, cameraName, feature, confidence (N), detectedAt (N),
+//     detectedValueJson, snapshotUrl, clipUrl,
+//     status ("pending" | "approved" | "rejected"),
+//     reviewedBy, reviewedAt (N), reviewerNote
+//   GSI status-detectedAt-index (partition=status, sort=detectedAt DESC)
+//     — enables listing by status without a full scan
+//
+// Create the table with AWS CLI:
+//   aws dynamodb create-table \
+//     --table-name VenueScopeLowConfEvents \
+//     --attribute-definitions \
+//       AttributeName=venueId,AttributeType=S \
+//       AttributeName=eventId,AttributeType=S \
+//       AttributeName=status,AttributeType=S \
+//       AttributeName=detectedAt,AttributeType=N \
+//     --key-schema \
+//       AttributeName=venueId,KeyType=HASH \
+//       AttributeName=eventId,KeyType=RANGE \
+//     --global-secondary-indexes \
+//       "IndexName=status-detectedAt-index,KeySchema=[{AttributeName=status,KeyType=HASH},{AttributeName=detectedAt,KeyType=RANGE}],Projection={ProjectionType=ALL},BillingMode=PAY_PER_REQUEST" \
+//     --billing-mode PAY_PER_REQUEST \
+//     --region us-east-2
+
+function _parseReviewItem(item) {
+  const S = (a) => a?.S ?? undefined;
+  const N = (a) => a?.N !== undefined ? Number(a.N) : undefined;
+  return {
+    eventId:          S(item.eventId),
+    venueId:          S(item.venueId),
+    jobId:            S(item.jobId),
+    cameraId:         S(item.cameraId),
+    cameraName:       S(item.cameraName),
+    feature:          S(item.feature),
+    confidence:       N(item.confidence) ?? 0,
+    detectedAt:       N(item.detectedAt) ?? 0,
+    detectedValueJson: S(item.detectedValueJson),
+    snapshotUrl:      S(item.snapshotUrl),
+    clipUrl:          S(item.clipUrl),
+    status:           S(item.status) ?? 'pending',
+    reviewedBy:       S(item.reviewedBy),
+    reviewedAt:       N(item.reviewedAt),
+    reviewerNote:     S(item.reviewerNote),
+  };
+}
+
+async function listReviewQueue(qs) {
+  const venueId = qs.venueId;
+  const feature = qs.feature;
+  const status  = qs.status ?? 'pending';
+  const limit   = Math.min(parseInt(qs.limit || '200') || 200, 500);
+  const fromTs  = qs.fromTs ? Number(qs.fromTs) : undefined;
+  const toTs    = qs.toTs   ? Number(qs.toTs)   : undefined;
+
+  try {
+    let raw;
+    if (venueId) {
+      // Partition-scoped query on PK, filter client-side (small partitions expected)
+      raw = await ddb.send(new QueryCommand({
+        TableName: REVIEW_TABLE,
+        KeyConditionExpression: 'venueId = :v',
+        ExpressionAttributeValues: { ':v': { S: venueId } },
+      }));
+    } else {
+      // Cross-venue → use the GSI by status
+      raw = await ddb.send(new QueryCommand({
+        TableName: REVIEW_TABLE,
+        IndexName: 'status-detectedAt-index',
+        KeyConditionExpression: '#s = :s',
+        ExpressionAttributeNames:  { '#s': 'status' },
+        ExpressionAttributeValues: { ':s': { S: status } },
+        ScanIndexForward: false,  // newest first
+        Limit: limit,
+      }));
+    }
+    const rows = (raw.Items ?? []).map(_parseReviewItem)
+      .filter(r => !feature || r.feature === feature)
+      .filter(r => !status  || r.status  === status)
+      .filter(r => fromTs === undefined || r.detectedAt >= fromTs)
+      .filter(r => toTs   === undefined || r.detectedAt <= toTs)
+      .sort((a, b) => b.detectedAt - a.detectedAt)
+      .slice(0, limit);
+    return ok({ events: rows, count: rows.length });
+  } catch (e) {
+    if (e.name === 'ResourceNotFoundException') {
+      // Table hasn't been created yet → return empty queue
+      return ok({ events: [], count: 0,
+                  note: 'VenueScopeLowConfEvents table not yet created' });
+    }
+    throw e;
+  }
+}
+
+async function reviewQueueStats(qs) {
+  const venueId = qs.venueId;
+  const fromTs  = qs.fromTs ? Number(qs.fromTs) : 0;
+  const toTs    = qs.toTs   ? Number(qs.toTs)   : Math.floor(Date.now() / 1000);
+  try {
+    const raw = venueId
+      ? await ddb.send(new QueryCommand({
+          TableName: REVIEW_TABLE,
+          KeyConditionExpression: 'venueId = :v',
+          ExpressionAttributeValues: { ':v': { S: venueId } },
+        }))
+      : await ddb.send(new ScanCommand({ TableName: REVIEW_TABLE }));
+    let pending = 0, approved = 0, rejected = 0;
+    for (const it of (raw.Items ?? [])) {
+      const r = _parseReviewItem(it);
+      if (r.detectedAt < fromTs || r.detectedAt > toTs) continue;
+      if      (r.status === 'pending')  pending++;
+      else if (r.status === 'approved') approved++;
+      else if (r.status === 'rejected') rejected++;
+    }
+    const judged = approved + rejected;
+    return ok({
+      pending, approved, rejected,
+      approvalRate: judged > 0 ? approved / judged : 0,
+    });
+  } catch (e) {
+    if (e.name === 'ResourceNotFoundException') {
+      return ok({ pending: 0, approved: 0, rejected: 0, approvalRate: 0 });
+    }
+    throw e;
+  }
+}
+
+async function reviewEvent(eventId, decision, body) {
+  if (decision !== 'approved' && decision !== 'rejected') {
+    return err(400, 'decision must be approved or rejected');
+  }
+  if (!body?.venueId) return err(400, 'venueId is required in body');
+  const note      = (body.note ?? '').slice(0, 500);
+  const reviewer  = (body.reviewedBy ?? 'admin').slice(0, 120);
+  const ts        = Math.floor(Date.now() / 1000);
+  try {
+    const res = await ddb.send(new UpdateItemCommand({
+      TableName: REVIEW_TABLE,
+      Key: {
+        venueId: { S: body.venueId },
+        eventId: { S: eventId },
+      },
+      UpdateExpression:
+        'SET #s = :s, reviewedBy = :r, reviewedAt = :t, reviewerNote = :n',
+      ExpressionAttributeNames:  { '#s': 'status' },
+      ExpressionAttributeValues: {
+        ':s': { S: decision },
+        ':r': { S: reviewer },
+        ':t': { N: String(ts) },
+        ':n': { S: note },
+      },
+      ConditionExpression: 'attribute_exists(eventId)',
+      ReturnValues: 'ALL_NEW',
+    }));
+    return ok(_parseReviewItem(res.Attributes ?? {}));
+  } catch (e) {
+    if (e.name === 'ConditionalCheckFailedException') return err(404, 'Event not found');
+    if (e.name === 'ResourceNotFoundException')       return err(503, 'Review table not yet created');
+    throw e;
+  }
+}
+
+async function reviewBulk(body) {
+  const ids     = Array.isArray(body?.eventIds) ? body.eventIds.slice(0, 100) : [];
+  const action  = body?.action === 'approve' ? 'approved'
+                : body?.action === 'reject'  ? 'rejected' : null;
+  const venueId = body?.venueId;
+  if (!ids.length || !action || !venueId) {
+    return err(400, 'eventIds[], action, venueId are required');
+  }
+  let updated = 0;
+  for (const id of ids) {
+    try {
+      await reviewEvent(id, action, { venueId, note: body.note, reviewedBy: body.reviewedBy });
+      updated++;
+    } catch { /* swallow per-item failure, continue */ }
+  }
+  return ok({ updated });
+}
+
 
 // ─── Billing helpers ──────────────────────────────────────────────────────────
 
@@ -1546,6 +1739,15 @@ export const handler = async (event, context) => {
 
     // Camera probing (NVR discovery)
     if (method === 'POST'  && rawPath === '/admin/probe-cameras')      return probeCameras(body);
+
+    // Review queue — low-confidence events needing human approval
+    if (method === 'GET'   && rawPath === '/admin/review-queue')               return listReviewQueue(qs);
+    if (method === 'GET'   && rawPath === '/admin/review-queue/stats')         return reviewQueueStats(qs);
+    const reviewApprove = rawPath.match(/^\/admin\/review-queue\/([^/]+)\/approve$/);
+    const reviewReject  = rawPath.match(/^\/admin\/review-queue\/([^/]+)\/reject$/);
+    if (method === 'POST'  && reviewApprove)                                   return reviewEvent(decodeURIComponent(reviewApprove[1]), 'approved', body);
+    if (method === 'POST'  && reviewReject)                                    return reviewEvent(decodeURIComponent(reviewReject[1]), 'rejected', body);
+    if (method === 'POST'  && rawPath === '/admin/review-queue/bulk')          return reviewBulk(body);
 
     // Admin Settings
     if (method === 'GET'   && rawPath === '/admin/settings')           return getAdminSettings();
