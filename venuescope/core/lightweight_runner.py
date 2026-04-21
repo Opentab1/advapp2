@@ -1,35 +1,65 @@
 """
-lightweight_runner.py — YOLO-free occupancy estimator for people_count mode.
+lightweight_runner.py — YOLO-sparse occupancy estimator for people_count mode.
 
-Uses OpenCV MOG2 background subtraction + contour detection.
-RAM usage: ~15-30 MB per stream (vs ~500 MB for YOLO).
+2026-04-21 rewrite: replaces the previous MOG2 background-subtraction approach.
 
-Accuracy notes:
-  - MOG2 detects foreground AREA, not individual people.
-  - Each person at bar-camera resolution covers ~3-6 contour blobs after
-    dilation, so raw blob count / BLOBS_PER_PERSON gives a headcount estimate.
-  - We report the MEDIAN frame estimate (not max) to avoid noise spikes from
-    lighting changes, reflections, or passing staff.
-  - total_entries / total_exits are NOT reported (frame-delta tracking is
-    meaningless noise for overhead cameras — these fields are only valid for
-    real door-line counters).
+Why the rewrite:
+  MOG2 was CPU-cheap but accuracy-lethal for bar environments — low lighting,
+  people who linger at the bar become "background" after a few seconds, and
+  the 8-second warmup eats most of each 15-second segment. Every job on Blind
+  Goat was reporting peak_occupancy=0 despite real people in frame.
+
+New approach:
+  Sparse YOLO sampling. Grab one frame every SAMPLE_INTERVAL_SEC seconds,
+  run yolov8n person detection on it, count detections. Over a 15s job:
+    - 3 samples × ~100ms per yolov8n inference on CPU = ~300ms CPU per job
+    - Comparable to the old dense-MOG2 cost (~150ms/job)
+    - Dramatically higher accuracy — YOLO reliably detects people at conf≥0.25
+      on the lit-or-dim bar frames we verified
+
+CPU math on the 4-vCPU droplet:
+  11 people_count cameras × 1 sample per 5s = 2.2 inferences/sec
+  ≈ 22% of one core sustained (fits comfortably alongside drink_count continuous
+  jobs that currently pin ~2 cores).
+
+RAM: model is fork-COW'd from the parent (same as drink_count), so per-job
+memory overhead is minimal — the YOLO weights are shared.
+
+Interface is preserved — same summary shape, same callback signatures,
+compatible with aws_sync.push logic expecting `people.peak_occupancy`.
 """
 from __future__ import annotations
-import time, logging, collections
+import time, logging, os
 from pathlib import Path
 from typing import Callable
 
 log = logging.getLogger("lightweight_runner")
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
-MIN_BLOB_AREA    = 2000    # px² — ignore small noise blobs (AC, IR flicker, shadows)
-MAX_BLOB_AREA    = 60000   # px² — ignore large lighting/shadow blobs
-LEARN_RATE       = 0.005   # MOG2 learning rate — slightly faster convergence
-DILATE_ITERS     = 1       # minimal dilation to avoid merging nearby people
-BLOBS_PER_PERSON = 4       # empirical: one person ≈ 4 foreground blobs
-OCCUPANCY_EVERY  = 15      # log one occupancy sample every N frames
-LIVE_CB_EVERY    = 30      # seconds between live_cb calls (continuous mode)
-WARMUP_SECS      = 8       # seconds to let background model stabilise
+# How often to sample + run YOLO. 5s is a good default — catches transient
+# peaks (bar fills briefly after last call) without chewing too much CPU.
+# Override per-camera via extra_config["sample_interval_sec"] or env
+# VENUESCOPE_LIGHTWEIGHT_SAMPLE_SEC.
+DEFAULT_SAMPLE_SEC = float(os.environ.get("VENUESCOPE_LIGHTWEIGHT_SAMPLE_SEC", "5.0"))
+
+# Confidence floor for person detection. Drop to 0.20 for IR / low-light cams
+# if you see undercounting; raise to 0.30 to suppress false positives in
+# high-clutter rooms.
+DEFAULT_CONF      = float(os.environ.get("VENUESCOPE_LIGHTWEIGHT_CONF", "0.25"))
+
+# YOLO input resolution. 480 is plenty for person detection at bar-camera
+# distances. Smaller = faster inference. Override via extra_config["imgsz"].
+DEFAULT_IMGSZ     = int(os.environ.get("VENUESCOPE_LIGHTWEIGHT_IMGSZ", "480"))
+
+# Default model (nano = fastest). Override via extra_config["model"] if you
+# need higher recall at low light — yolov8s is ~2x slower but ~5% better mAP.
+DEFAULT_MODEL     = os.environ.get("VENUESCOPE_LIGHTWEIGHT_MODEL", "yolov8n.pt")
+
+# Live callback frequency (continuous mode)
+LIVE_CB_EVERY     = 30        # seconds between live_cb() calls
+
+# Person class index in COCO
+PERSON_CLS        = 0
 
 
 def run_lightweight(
@@ -42,91 +72,101 @@ def run_lightweight(
 ) -> dict:
     """
     Drop-in replacement for VenueProcessor.run() for people_count mode.
-    Returns a summary dict compatible with the standard pipeline.
+    Returns a summary dict compatible with the existing pipeline.
     """
     import cv2
 
     source      = job["source_path"]
     job_id      = job["job_id"]
     clip_label  = job.get("clip_label", "")
-    max_seconds = float(extra_config.get("max_seconds", 0))  # 0 = no limit
-    # Per-camera calibration overrides the global constant (0 = use default)
-    _bpp = int(extra_config.get("blobs_per_person", 0))
-    blobs_per_person = _bpp if _bpp > 0 else BLOBS_PER_PERSON
+    max_seconds = float(extra_config.get("max_seconds", 0))
 
-    log.info(f"[lightweight] Opening stream: {Path(source).name}")
+    sample_sec  = float(extra_config.get("sample_interval_sec", DEFAULT_SAMPLE_SEC))
+    conf_thresh = float(extra_config.get("conf", DEFAULT_CONF))
+    imgsz       = int(extra_config.get("imgsz", DEFAULT_IMGSZ))
+    model_name  = str(extra_config.get("model", DEFAULT_MODEL))
+
+    log.info(f"[lightweight] Opening stream: {Path(source).name}  "
+             f"sample={sample_sec:.0f}s model={model_name} imgsz={imgsz}")
+
+    # Load YOLO via the shared loader so fork-COW works + device selection is
+    # consistent with the main engine. On a CPU-only droplet this returns a
+    # CPU model; on a laptop it picks MPS / CUDA.
+    from core.tracking.engine import _load_yolo
+    model = _load_yolo(model_name)
+
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open source: {source}")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
     fps = max(1.0, min(fps, 60.0))
+    sample_every_frames = max(1, int(round(sample_sec * fps)))
 
-    fgbg   = cv2.createBackgroundSubtractorMOG2(
-        history=int(fps * 8),   # match warmup window — model converges within warmup period
-        varThreshold=160,       # high threshold: only count significant foreground objects
-        detectShadows=False,
-    )
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    frame_idx       = 0
+    t_sec           = 0.0
+    last_sample_fr  = -sample_every_frames   # fire on first frame
+    frame_estimates: list[int] = []
+    occupancy_log:   list      = []
+    _last_live_cb   = time.time()
+    _start_wall     = time.time()
+    consecutive_read_failures = 0
 
-    frame_idx      = 0
-    t_sec          = 0.0
-    warmup_frames  = int(fps * WARMUP_SECS)
-    frame_estimates: list[int] = []   # per-frame people estimates (post-warmup)
-    occupancy_log:  list       = []
-    _last_live_cb  = time.time()
-    _start_wall    = time.time()
-
-    progress_cb(5, "Stream opened — building background model")
+    progress_cb(5, f"Stream opened — sparse YOLO every {sample_sec:.0f}s")
 
     try:
         while True:
-            ret, frame = cap.read()
+            # For non-sample frames: grab() without decode — 10-50x faster.
+            # Every Nth frame we do read() + inference.
+            need_sample = (frame_idx - last_sample_fr) >= sample_every_frames
+            if need_sample:
+                ret, frame = cap.read()
+            else:
+                ret  = cap.grab()
+                frame = None
+
             if not ret:
-                if is_continuous:
+                consecutive_read_failures += 1
+                if is_continuous and consecutive_read_failures < 5:
                     time.sleep(0.5)
-                    ret, frame = cap.read()
-                    if not ret:
-                        log.warning(f"[lightweight] Stream ended for job {job_id}")
-                        break
+                    continue
                 else:
+                    log.warning(f"[lightweight] stream ended for job {job_id}")
                     break
+            consecutive_read_failures = 0
 
             frame_idx += 1
             t_sec = frame_idx / fps
-
             if max_seconds > 0 and t_sec >= max_seconds:
                 break
 
-            # Background subtraction
-            fgmask = fgbg.apply(frame, learningRate=LEARN_RATE)
-
-            # Skip warmup — background model still forming
-            if frame_idx < warmup_frames:
+            if not need_sample or frame is None:
                 continue
 
-            # Minimal morphology to clean noise without merging people
-            fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN,  kernel)
-            fgmask = cv2.dilate(fgmask, kernel, iterations=DILATE_ITERS)
+            # ── YOLO inference on the sampled frame ────────────────────────
+            last_sample_fr = frame_idx
+            try:
+                results = model.predict(
+                    frame,
+                    classes=[PERSON_CLS],
+                    conf=conf_thresh,
+                    imgsz=imgsz,
+                    verbose=False,
+                )
+                r = results[0] if results else None
+                n_people = int(len(r.boxes)) if (r and r.boxes is not None) else 0
+            except Exception as e:
+                log.warning(f"[lightweight] inference failed at t={t_sec:.1f}s: {e}")
+                n_people = 0
 
-            # Count contour blobs in valid size range
-            contours, _ = cv2.findContours(fgmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            blobs = sum(1 for c in contours if MIN_BLOB_AREA < cv2.contourArea(c) < MAX_BLOB_AREA)
+            frame_estimates.append(n_people)
+            occupancy_log.append((round(t_sec, 1), n_people))
 
-            # Convert blobs → estimated people
-            estimated = max(0, round(blobs / blobs_per_person))
-            frame_estimates.append(estimated)
-
-            # Sample for log
-            if frame_idx % OCCUPANCY_EVERY == 0:
-                occupancy_log.append((round(t_sec, 1), estimated))
-
-            # Progress
-            if not is_continuous and frame_idx % int(fps * 5) == 0 and max_seconds > 0:
+            # ── Progress / live callback ───────────────────────────────────
+            if not is_continuous and max_seconds > 0:
                 pct = min(95, int((t_sec / max_seconds) * 100))
-                progress_cb(pct, f"~{estimated} people in frame")
+                progress_cb(pct, f"t={int(t_sec)}s  headcount≈{n_people}")
 
-            # Live callback
             if is_continuous:
                 now = time.time()
                 if now - _last_live_cb >= LIVE_CB_EVERY:
@@ -138,7 +178,6 @@ def run_lightweight(
                     except Exception as e:
                         log.debug(f"[lightweight] live_cb error: {e}")
                     _last_live_cb = now
-
     finally:
         cap.release()
 
@@ -149,16 +188,24 @@ def run_lightweight(
 
     peak = summary["people"]["peak_occupancy"]
     avg  = summary["people"].get("avg_occupancy", 0)
-    log.info(f"[lightweight] Done — est_peak={peak}, est_avg={avg}, frames={len(frame_estimates)}, duration={t_sec:.0f}s")
+    log.info(
+        f"[lightweight] Done — peak={peak} avg={avg} "
+        f"samples={len(frame_estimates)} duration={t_sec:.0f}s model={model_name}"
+    )
     return summary
 
 
 def _median(values: list[int]) -> int:
-    if not values:
-        return 0
-    s = sorted(values)
-    n = len(s)
+    if not values: return 0
+    s = sorted(values); n = len(s)
     return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) // 2
+
+
+def _percentile(values: list[int], pct: float) -> int:
+    if not values: return 0
+    s = sorted(values)
+    idx = max(0, min(len(s) - 1, int(round(len(s) * pct))))
+    return s[idx]
 
 
 def _build_summary(
@@ -167,22 +214,23 @@ def _build_summary(
     total_sec: float,
 ) -> dict:
     """
-    Build summary from per-frame people estimates.
+    Build summary from per-sample people counts.
 
-    peak_occupancy = 90th-percentile frame estimate (avoids outlier spikes)
-    avg_occupancy  = median frame estimate (robust central tendency)
+    peak_occupancy = 75th-percentile sample (suppresses single-frame spikes)
+    avg_occupancy  = median sample (robust central tendency)
 
-    total_entries / total_exits are intentionally 0 — frame-delta counting
-    on overhead cameras produces noise, not real door crossings.
+    total_entries / total_exits are intentionally 0 — room-based cameras
+    don't count doorway crossings; use a dedicated counting-line camera if
+    entry/exit accounting is required.
     """
     if frame_estimates:
-        sorted_est = sorted(frame_estimates)
-        n = len(sorted_est)
         avg_occ  = _median(frame_estimates)
-        # Use 75th percentile as "peak" — more conservative than 90th, still
-        # captures busy moments while rejecting transient noise spikes.
-        p75_idx  = min(n - 1, int(n * 0.75))
-        peak_occ = sorted_est[p75_idx]
+        # Peak = max of samples. Was 75th percentile but that was undercounting
+        # real peaks at sparse sample rates (verified via manual YOLO check
+        # showing 11 people in frame when 75th percentile of 4 samples said 7).
+        # Single outlier frames are acceptable — sparse YOLO is already robust
+        # to per-frame noise because each inference uses confidence≥0.25.
+        peak_occ = max(frame_estimates)
     else:
         peak_occ = avg_occ = 0
 
@@ -191,12 +239,12 @@ def _build_summary(
         "video_seconds": round(total_sec, 1),
         "quality":       "good",
         "people": {
-            "total_entries":      0,   # not tracked — overhead cameras don't count doors
+            "total_entries":      0,
             "total_exits":        0,
             "net_occupancy":      avg_occ,
             "peak_occupancy":     peak_occ,
             "avg_occupancy":      avg_occ,
-            "unique_tracks_seen": 0,
+            "unique_tracks_seen": sum(frame_estimates),  # rough proxy, no tracker
             "peak_entry_hour":    0,
             "hourly_entries":     {},
             "hourly_exits":       {},
