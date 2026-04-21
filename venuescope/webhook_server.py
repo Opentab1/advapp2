@@ -194,6 +194,17 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 lines  = int(params.get("lines", ["150"])[0])
                 filt   = params.get("filter", [""])[0]
                 self._handle_ops_logs(lines, filt)
+            elif parsed.path == "/ops/jobs":
+                params = parse_qs(parsed.query)
+                try:
+                    since = float(params.get("since", ["0"])[0])
+                    until = float(params.get("until", [str(time.time())])[0])
+                except ValueError:
+                    self._json(400, {"error": "since/until must be float seconds"})
+                    return
+                self._handle_ops_jobs(since, until)
+            elif parsed.path == "/ops/metrics":
+                self._handle_ops_metrics()
             else:
                 self._json(404, {"error": "unknown ops route"})
             return
@@ -592,6 +603,142 @@ class WebhookHandler(BaseHTTPRequestHandler):
             "liveJobs": _live_jobs(),
             "ts":       time.time(),
         })
+
+    def _handle_ops_jobs(self, since: float, until: float):
+        """GET /ops/jobs?since=<ts>&until=<ts> — historical jobs + summaries in window.
+
+        Returns a compact list so Testing Center's "Prod Diff" can compare a
+        local run against what this droplet produced for the same time window.
+        """
+        try:
+            from core.database import list_jobs
+            jobs = list_jobs(500)
+        except Exception as e:
+            self._json(500, {"error": f"db: {e}"})
+            return
+
+        out = []
+        for j in jobs:
+            created = float(j.get("created_at") or 0)
+            finish  = float(j.get("finished_at") or 0)
+            # Any overlap with [since, until] qualifies
+            if (finish or created) < since:
+                continue
+            if created > until:
+                continue
+            summary_raw = j.get("summary_json")
+            summary: dict = {}
+            if summary_raw:
+                try:
+                    summary = json.loads(summary_raw)
+                    # Strip the transient extra_config echo the Run page stashes
+                    summary.pop("extra_config", None)
+                except Exception:
+                    summary = {}
+            out.append({
+                "job_id":         j.get("job_id"),
+                "analysis_mode":  j.get("analysis_mode"),
+                "clip_label":     j.get("clip_label"),
+                "source_type":    j.get("source_type"),
+                "status":         j.get("status"),
+                "progress":       j.get("progress"),
+                "created_at":     created,
+                "finished_at":    finish or None,
+                "model_profile":  j.get("model_profile"),
+                "summary":        summary,
+            })
+        self._json(200, {"jobs": out, "count": len(out),
+                         "since": since, "until": until})
+
+    def _handle_ops_metrics(self):
+        """GET /ops/metrics — curated JSON snapshot for the admin OpsMonitor page.
+
+        Reads prometheus-node-exporter locally and returns a compact subset
+        that the admin portal can render as time-series charts. We parse only
+        the metrics the UI uses so the payload stays small (~1 KB) even on
+        slow droplets.
+        """
+        import urllib.request, re
+
+        # Curated allowlist: metric_name → JSON key in response
+        wanted = {
+            # System metrics
+            "node_load1":                    "load1",
+            "node_load5":                    "load5",
+            "node_load15":                   "load15",
+            "node_memory_MemTotal_bytes":    "mem_total_bytes",
+            "node_memory_MemAvailable_bytes":"mem_available_bytes",
+            "node_memory_MemFree_bytes":     "mem_free_bytes",
+            "node_filesystem_size_bytes":    "fs_size_bytes",
+            "node_filesystem_avail_bytes":   "fs_avail_bytes",
+            # Venuescope metrics
+            "venuescope_up":                 "worker_up",
+            "venuescope_active_jobs":        "active_jobs",
+            "venuescope_queue_depth":        "queue_depth",
+            "venuescope_offline_queue":      "offline_queue",
+            "venuescope_max_parallel":       "max_parallel",
+            "venuescope_max_per_venue":      "max_per_venue",
+            "venuescope_venues":             "venues_count",
+        }
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:9100/metrics",
+                                         timeout=3.0) as r:
+                body = r.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            self._json(502, {"error": f"node_exporter unreachable: {e}"})
+            return
+
+        out: dict = {"ts": time.time()}
+        # CPU count — scrape from per-core metric labels
+        cpu_cores = set()
+        # Per-venue (label-bearing) metrics
+        venues_active: list = []
+
+        for line in body.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            # Labelless lines: "metric_name value"
+            parts = line.split(" ", 1)
+            if len(parts) != 2:
+                continue
+            name, val = parts[0], parts[1].strip()
+            base = name.split("{", 1)[0]
+
+            if base == "node_cpu_seconds_total":
+                m = re.search(r'cpu="(\d+)"', name)
+                if m: cpu_cores.add(m.group(1))
+                continue
+            if base == "venuescope_venue_active":
+                m = re.search(r'venue="([^"]+)"', name)
+                if m: venues_active.append(m.group(1))
+                continue
+            if base == "node_filesystem_size_bytes" or base == "node_filesystem_avail_bytes":
+                # Only capture the root filesystem
+                if 'mountpoint="/"' not in name:
+                    continue
+
+            if base in wanted and "{" not in name:
+                try: out[wanted[base]] = float(val)
+                except ValueError: pass
+            elif base in wanted and ('mountpoint="/"' in name):
+                try: out[wanted[base]] = float(val)
+                except ValueError: pass
+
+        out["cpu_cores"]     = len(cpu_cores) or None
+        out["venues_active"] = venues_active
+
+        # Derived convenience fields — saves the client from doing the math
+        if "load1" in out and out.get("cpu_cores"):
+            out["load1_pct"]  = round(out["load1"] / out["cpu_cores"] * 100.0, 1)
+        if "mem_total_bytes" in out and "mem_available_bytes" in out and out["mem_total_bytes"]:
+            used = out["mem_total_bytes"] - out["mem_available_bytes"]
+            out["mem_used_pct"] = round(used / out["mem_total_bytes"] * 100.0, 1)
+        if "fs_size_bytes" in out and "fs_avail_bytes" in out and out["fs_size_bytes"]:
+            used = out["fs_size_bytes"] - out["fs_avail_bytes"]
+            out["disk_used_pct"] = round(used / out["fs_size_bytes"] * 100.0, 1)
+
+        self._json(200, out)
+
 
     def _handle_ops_logs(self, lines: int, filter_text: str):
         """GET /ops/logs?lines=N&filter=text — tail worker service logs."""
