@@ -3719,6 +3719,11 @@ export function VenueScope() {
   const [investigating, setInvestigating] = useState<VenueScopeJob | null>(null);
   const [nextPollIn, setNextPollIn]   = useState(POLL_INTERVAL_MS / 1000);
   const [cameras, setCameras]         = useState<CameraConfig[]>([]);
+  // Track whether the initial cameras fetch has completed. Without this,
+  // `allDisplayRooms` can't tell "still fetching" (keep showing existing
+  // tiles) from "fetch finished, 0 cameras" (hide everything). We only hide
+  // ghosts in the second case.
+  const [camerasLoaded, setCamerasLoaded] = useState(false);
   const [configuringCamera, setConfiguringCamera] = useState<CameraConfig | null>(null);
   const [configuringTableZonesCamera, setConfiguringTableZonesCamera] = useState<CameraConfig | null>(null);
   const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null);
@@ -3774,7 +3779,7 @@ export function VenueScope() {
   // Load camera configs (for zone overlay + editor)
   useEffect(() => {
     if (!venueId || isDemo) return;
-    cameraService.listCameras(venueId).then(setCameras).catch(() => {});
+    cameraService.listCameras(venueId).then(c => { setCameras(c); setCamerasLoaded(true); }).catch(() => {});
   }, [venueId, isDemo]);
 
   useEffect(() => { load(); }, [load]);
@@ -3795,7 +3800,7 @@ export function VenueScope() {
       if (document.visibilityState === 'visible') {
         load(true);
         setNextPollIn(POLL_INTERVAL_MS / 1000);
-        if (!isDemo) cameraService.listCameras(venueId).then(setCameras).catch(() => {});
+        if (!isDemo) cameraService.listCameras(venueId).then(c => { setCameras(c); setCamerasLoaded(true); }).catch(() => {});
       }
     }, POLL_INTERVAL_MS);
     countdownTimer.current = setInterval(() => {
@@ -3998,17 +4003,24 @@ export function VenueScope() {
   // stub room showing the live feed and zeroed counters. This means the grid
   // always shows configured cameras even when no job (or only ghost jobs) exist.
   const allDisplayRooms = useMemo(() => {
-    if (!cameras.length) return liveRooms;  // no config → fall back to job-only list
+    // The admin portal's camera registry is the single source of truth for
+    // which cameras this venue has. When a camera is deleted there, we must
+    // stop displaying its tile — even if historical jobs / stable DDB records
+    // still carry that camera's data. `camerasLoaded` tracks whether the
+    // initial fetch completed so we don't briefly render "no cameras" on
+    // first mount before the network round-trip finishes.
+    if (!camerasLoaded) return liveRooms;  // still fetching — keep old view
+    if (!cameras.length) return [];        // fetch succeeded, 0 cameras → hide all
 
     const enabledCams = cameras.filter(c => c.enabled !== false);
     const result: RoomSummary[] = [];
     const coveredCamIds = new Set<string>();
 
-    // First pass: include all job-based rooms, tag which cameras they cover.
-    // If the admin-portal camera config specifies a mode that differs from the
-    // job's analysisMode, the camera config wins — it reflects the owner's intent.
-    // Skip duplicate rooms that match an already-covered camera (prevents showing
-    // the same physical camera twice when multiple job records share the same camera).
+    // First pass: include only job-based rooms that match an enabled camera.
+    // Rooms whose camera has been deleted from the admin portal are dropped
+    // so ghost tiles disappear immediately on delete. If the admin-portal
+    // camera config specifies a mode that differs from the job's analysisMode,
+    // the camera config wins — it reflects the owner's intent.
     for (const room of liveRooms) {
       const cam = enabledCams.find(c => {
         const label = room.label.toLowerCase();
@@ -4017,23 +4029,19 @@ export function VenueScope() {
         const ch = channelFromSources(c.name, c.rtspUrl);
         return ch ? channelFromSources(room.label, null) === ch : false;
       });
-      if (cam) {
-        // If this camera was already covered by a better (live) room, skip the duplicate
-        if (coveredCamIds.has(cam.cameraId)) continue;
-        coveredCamIds.add(cam.cameraId);
-        const camModes: string[] = Array.isArray(cam.modes) && cam.modes.length ? cam.modes : [];
-        const camMode = camModes.includes('drink_count') ? 'drink_count'
-                      : camModes.includes('table_turns') ? 'table_turns'
-                      : camModes.includes('people_count') ? 'people_count'
-                      : null;
-        // Stamp camera-configured modes (source of truth for which stat blocks to show)
-        // and override primary mode if camera config differs from job
-        const overrides: Partial<RoomSummary> = { configuredModes: camModes.length ? camModes : room.configuredModes };
-        if (camMode && camMode !== room.mode) overrides.mode = camMode;
-        result.push({ ...room, ...overrides });
-        continue;
-      }
-      result.push(room);
+      if (!cam) continue;  // camera deleted/disabled — drop the ghost tile
+      if (coveredCamIds.has(cam.cameraId)) continue;  // duplicate job for same camera
+      coveredCamIds.add(cam.cameraId);
+      const camModes: string[] = Array.isArray(cam.modes) && cam.modes.length ? cam.modes : [];
+      const camMode = camModes.includes('drink_count') ? 'drink_count'
+                    : camModes.includes('table_turns') ? 'table_turns'
+                    : camModes.includes('people_count') ? 'people_count'
+                    : null;
+      // Stamp camera-configured modes (source of truth for which stat blocks to show)
+      // and override primary mode if camera config differs from job
+      const overrides: Partial<RoomSummary> = { configuredModes: camModes.length ? camModes : room.configuredModes };
+      if (camMode && camMode !== room.mode) overrides.mode = camMode;
+      result.push({ ...room, ...overrides });
     }
 
     // Second pass: add stub rooms for enabled cameras with no job room
@@ -4140,7 +4148,7 @@ export function VenueScope() {
             proxyBase={camProxyUrl}
             onClose={() => {
               // Refresh camera list so overlay shows updated zones
-              cameraService.listCameras(venueId).then(setCameras).catch(() => {});
+              cameraService.listCameras(venueId).then(c => { setCameras(c); setCamerasLoaded(true); }).catch(() => {});
               setConfiguringCamera(null);
             }}
           />
@@ -4154,7 +4162,7 @@ export function VenueScope() {
             camera={configuringTableZonesCamera}
             proxyBase={camProxyUrl}
             onClose={() => {
-              cameraService.listCameras(venueId).then(setCameras).catch(() => {});
+              cameraService.listCameras(venueId).then(c => { setCameras(c); setCamerasLoaded(true); }).catch(() => {});
               setConfiguringTableZonesCamera(null);
             }}
           />
