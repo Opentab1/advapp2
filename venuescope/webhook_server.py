@@ -338,6 +338,24 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self._handle_ops_metrics()
             elif parsed.path == "/ops/cam-proxy":
                 self._handle_ops_cam_proxy_get()
+            elif parsed.path == "/ops/auto-detect-zones":
+                params = parse_qs(parsed.query)
+                self._handle_ops_auto_detect_zones(
+                    params.get("venue_id",  [""])[0],
+                    params.get("camera_id", [""])[0],
+                )
+            elif parsed.path == "/ops/camera-accuracy":
+                params = parse_qs(parsed.query)
+                self._handle_ops_camera_accuracy(
+                    params.get("venue_id",  [""])[0],
+                    params.get("camera_id", [""])[0],
+                )
+            elif parsed.path == "/ops/recent-serves":
+                params = parse_qs(parsed.query)
+                self._handle_ops_recent_serves(
+                    params.get("venue_id",  [""])[0],
+                    params.get("camera_id", [""])[0],
+                )
             else:
                 self._json(404, {"error": "unknown ops route"})
             return
@@ -1090,6 +1108,110 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
         self.wfile.write(data)
+
+    # ── Zone editor helpers (Layer 4 polish) ─────────────────────────────────
+    def _handle_ops_auto_detect_zones(self, venue_id: str, camera_id: str):
+        """GET /ops/auto-detect-zones?venue_id=X&camera_id=Y
+        Runs auto_bar_config.analyze_stream() against the camera's RTSP URL
+        and returns the suggested config. Does NOT save — the editor decides
+        whether to apply after showing the user a preview.
+        """
+        if not venue_id or not camera_id:
+            self._json(400, {"error": "venue_id and camera_id required"})
+            return
+        try:
+            from core.ddb_cameras import list_cameras_ddb
+            cams = list_cameras_ddb(venue_id)
+            cam = next((c for c in cams if c.get("camera_id") == camera_id), None)
+            if not cam:
+                self._json(404, {"error": "camera not found"})
+                return
+            rtsp = (cam.get("rtsp_url") or "").strip()
+            if not rtsp:
+                self._json(400, {"error": "camera has no rtsp_url configured"})
+                return
+            from core.auto_bar_config import analyze_stream
+            cfg = analyze_stream(rtsp)
+            if not cfg:
+                self._json(500, {"error": "analyze_stream returned empty"})
+                return
+            self._json(200, {"config": cfg})
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
+    def _handle_ops_camera_accuracy(self, venue_id: str, camera_id: str):
+        """GET /ops/camera-accuracy?venue_id=X&camera_id=Y
+        Returns the last-24h accuracy snapshot: total serves, low-conf count,
+        review queue count, POS variance (if present). Drives the accuracy
+        badge inside the zone editor.
+        """
+        if not venue_id or not camera_id:
+            self._json(400, {"error": "venue_id and camera_id required"})
+            return
+        try:
+            import boto3
+            region = (os.environ.get("AWS_DEFAULT_REGION")
+                      or os.environ.get("AWS_REGION", "us-east-2"))
+            ddb = boto3.resource("dynamodb", region_name=region)
+
+            # Pull stats the worker writes to the stable camera status record
+            jobs = ddb.Table("VenueScopeJobs")
+            resp = jobs.get_item(Key={"venueId": venue_id, "jobId": f"~{camera_id}"})
+            status = resp.get("Item", {}) or {}
+
+            # Pull POS variance (populated by the nightly auto-tune cron)
+            cams = ddb.Table("VenueScopeCameras")
+            cresp = cams.get_item(Key={"venueId": venue_id, "cameraId": camera_id})
+            cam = cresp.get("Item", {}) or {}
+
+            total_drinks = int(status.get("totalDrinks", 0) or 0)
+            low_conf = int(status.get("lowConfServes24h", 0) or 0)
+            high_conf = int(status.get("highConfServes24h", 0) or 0)
+            review_count = int(status.get("reviewQueueCount", 0) or 0)
+
+            # Accuracy % from confidence counts (low-conf are "not confident"):
+            # if we have any serves at all, % high_conf is a proxy for accuracy.
+            total_serves = high_conf + low_conf
+            accuracy_pct = (
+                round(100.0 * high_conf / total_serves, 1)
+                if total_serves > 0 else None
+            )
+            self._json(200, {
+                "total_drinks_shift": total_drinks,
+                "high_conf_serves_24h": high_conf,
+                "low_conf_serves_24h":  low_conf,
+                "review_queue_count":   review_count,
+                "accuracy_pct":         accuracy_pct,
+                "pos_variance_pct":     int(cam.get("posVariancePct", 0) or 0) if cam.get("posVariancePct") is not None else None,
+                "needs_recalibration":  bool(cam.get("needsRecalibration", False)),
+            })
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
+    def _handle_ops_recent_serves(self, venue_id: str, camera_id: str):
+        """GET /ops/recent-serves?venue_id=X&camera_id=Y
+        Returns the last ~60 serve events (with normalized x/y + timestamp)
+        for the editor's "live detection flashes" overlay.
+        """
+        if not venue_id or not camera_id:
+            self._json(400, {"error": "venue_id and camera_id required"})
+            return
+        try:
+            import boto3
+            region = (os.environ.get("AWS_DEFAULT_REGION")
+                      or os.environ.get("AWS_REGION", "us-east-2"))
+            ddb = boto3.resource("dynamodb", region_name=region)
+            jobs = ddb.Table("VenueScopeJobs")
+            resp = jobs.get_item(Key={"venueId": venue_id, "jobId": f"~{camera_id}"})
+            status = resp.get("Item", {}) or {}
+            events_json = status.get("recentServeEvents", "[]")
+            try:
+                events = json.loads(events_json) if isinstance(events_json, str) else events_json
+            except Exception:
+                events = []
+            self._json(200, {"events": events or []})
+        except Exception as e:
+            self._json(500, {"error": str(e)})
 
     # ── HLS camera proxy config (Caddyfile upstream) ─────────────────────────
     # Router/NVR port-forwarding rules drift over time. These endpoints let

@@ -985,6 +985,35 @@ class AdminService {
     return data as { ok: boolean; ip: string; port: number };
   }
 
+  /** Run auto_bar_config on a camera's stream and return the suggested config. */
+  async autoDetectZones(venueId: string, cameraId: string): Promise<any> {
+    const qs = new URLSearchParams({ venue_id: venueId, camera_id: cameraId }).toString();
+    const data = await opsFetch(`/ops/auto-detect-zones?${qs}`);
+    return (data as any).config;
+  }
+
+  /** Snapshot of a camera's accuracy telemetry for the zone editor badge. */
+  async getCameraAccuracy(venueId: string, cameraId: string): Promise<{
+    total_drinks_shift: number;
+    high_conf_serves_24h: number;
+    low_conf_serves_24h: number;
+    review_queue_count: number;
+    accuracy_pct: number | null;
+    pos_variance_pct: number | null;
+    needs_recalibration: boolean;
+  }> {
+    const qs = new URLSearchParams({ venue_id: venueId, camera_id: cameraId }).toString();
+    return opsFetch(`/ops/camera-accuracy?${qs}`) as any;
+  }
+
+  /** Last ~60 drink detection events (normalized x/y) for live overlay flashes. */
+  async getRecentServes(venueId: string, cameraId: string): Promise<{
+    events: Array<{ t_sec: number; score: number; x: number; y: number; zone?: string }>;
+  }> {
+    const qs = new URLSearchParams({ venue_id: venueId, camera_id: cameraId }).toString();
+    return opsFetch(`/ops/recent-serves?${qs}`) as any;
+  }
+
   // ============ AUDIT LOG ============
 
   private sessionAuditLog: Array<{

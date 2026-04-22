@@ -178,11 +178,95 @@ export function ZoneEditorModal({
   const [dragTarget, setDragTarget] = useState<DragTarget>(null);
   const [saving, setSaving]         = useState(false);
   const [saveOk, setSaveOk]         = useState(false);
+  const [resetting, setResetting]   = useState(false);
   // Start in 'done' if we have a zone (existing or suggested), 'draw' only if truly empty
   const [step, setStep]             = useState<'draw' | 'done'>(existing ? 'done' : 'done');
   const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const editorHlsRef = useRef<Hls | null>(null);
+
+  // Layer 4 polish (admin-only): accuracy badge + live detection flashes.
+  type Accuracy = {
+    total_drinks_shift: number;
+    high_conf_serves_24h: number;
+    low_conf_serves_24h: number;
+    review_queue_count: number;
+    accuracy_pct: number | null;
+    pos_variance_pct: number | null;
+    needs_recalibration: boolean;
+  };
+  const [accuracy, setAccuracy] = useState<Accuracy | null>(null);
+  // Flashes are serve events with a UI-side id so we can animate + clean up.
+  const [flashes, setFlashes] = useState<Array<{ id: string; x: number; y: number; score: number }>>([]);
+  const seenEventKeysRef = useRef<Set<string>>(new Set());
+
+  // Fetch accuracy once on open + refresh every 15s
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      import('../services/admin.service').then(m => m.default.getCameraAccuracy(camera.venueId, camera.cameraId))
+        .then(a => { if (alive) setAccuracy(a); })
+        .catch(() => { /* endpoint unavailable — skip badge */ });
+    };
+    load();
+    const id = setInterval(load, 15_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [camera.venueId, camera.cameraId]);
+
+  // Poll recent serve events every 1.5s; flash each new one on the canvas
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const m = await import('../services/admin.service');
+        const r = await m.default.getRecentServes(camera.venueId, camera.cameraId);
+        if (!alive) return;
+        const fresh: typeof flashes = [];
+        for (const e of r.events ?? []) {
+          const key = `${e.t_sec}:${e.x}:${e.y}`;
+          if (seenEventKeysRef.current.has(key)) continue;
+          seenEventKeysRef.current.add(key);
+          fresh.push({ id: key, x: e.x, y: e.y, score: e.score });
+        }
+        if (fresh.length) {
+          setFlashes(cur => [...cur, ...fresh]);
+          // Auto-clear each flash after 1.8s
+          fresh.forEach(f => setTimeout(
+            () => setFlashes(cur => cur.filter(c => c.id !== f.id)),
+            1_800,
+          ));
+          // Prevent unbounded growth of seen-set
+          if (seenEventKeysRef.current.size > 300) {
+            const arr = Array.from(seenEventKeysRef.current).slice(-150);
+            seenEventKeysRef.current = new Set(arr);
+          }
+        }
+      } catch { /* silent */ }
+    };
+    tick();
+    const id = setInterval(tick, 1_500);
+    return () => { alive = false; clearInterval(id); };
+  }, [camera.venueId, camera.cameraId]);
+
+  async function handleResetToAuto() {
+    if (resetting) return;
+    if (!confirm('Replace the current zones with the auto-detected ones? Your manual edits will be overwritten (you can still cancel without saving).')) return;
+    setResetting(true);
+    try {
+      const m = await import('../services/admin.service');
+      const autoCfg = await m.default.autoDetectZones(camera.venueId, camera.cameraId);
+      if (autoCfg?.stations?.length) {
+        setConfig({ stations: autoCfg.stations } as BarConfig);
+        setStep('done');
+      } else {
+        alert('Auto-detection did not return any zones — leaving current config.');
+      }
+    } catch (e: any) {
+      alert(`Auto-detect failed: ${e?.message ?? e}`);
+    } finally {
+      setResetting(false);
+    }
+  }
 
   const isDrawing = rectAnchor !== null;
 
@@ -484,9 +568,33 @@ export function ZoneEditorModal({
               <p className="text-[10px] text-text-muted">{existing ? 'Edit your bar zone and bar line' : 'Suggested zone pre-loaded — adjust the bar line, then save'}</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-text-muted hover:text-white transition-colors p-1">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Accuracy badge (Layer 4 polish) */}
+            {accuracy && (
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[11px] ${
+                accuracy.needs_recalibration
+                  ? 'bg-amber-500/10 border-amber-500/40 text-amber-300'
+                  : accuracy.accuracy_pct != null && accuracy.accuracy_pct >= 90
+                    ? 'bg-green-500/10 border-green-500/40 text-green-300'
+                    : 'bg-white/5 border-white/15 text-text-muted'
+              }`}>
+                <span className="font-semibold">
+                  {accuracy.accuracy_pct != null ? `${accuracy.accuracy_pct}% accuracy` : 'no serves yet'}
+                </span>
+                <span className="opacity-60">·</span>
+                <span>{accuracy.low_conf_serves_24h} low-conf</span>
+                {accuracy.pos_variance_pct != null && (
+                  <>
+                    <span className="opacity-60">·</span>
+                    <span>POS {accuracy.pos_variance_pct > 0 ? '+' : ''}{accuracy.pos_variance_pct}%</span>
+                  </>
+                )}
+              </div>
+            )}
+            <button onClick={onClose} className="text-text-muted hover:text-white transition-colors p-1">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* How it works — instruction strip */}
@@ -609,6 +717,24 @@ export function ZoneEditorModal({
                 strokeDasharray="0.015 0.008"
               />
             )}
+
+            {/* Live drink-detection flashes (Layer 4 polish). Each flash
+                fades from 0.7 → 0 over 1.8s so the user can visually
+                confirm the bar line is at the real hand-off location. */}
+            {flashes.map(f => (
+              <g key={f.id} style={{ pointerEvents: 'none' }}>
+                <circle cx={f.x} cy={f.y} r="0.028"
+                  fill="rgba(255,80,80,0.65)"
+                  stroke="rgba(255,255,255,0.9)" strokeWidth="0.006">
+                  <animate attributeName="r" from="0.015" to="0.06" dur="1.6s" fill="freeze" />
+                  <animate attributeName="opacity" from="0.9" to="0" dur="1.6s" fill="freeze" />
+                </circle>
+                <circle cx={f.x} cy={f.y} r="0.008"
+                  fill="rgba(255,255,255,0.9)">
+                  <animate attributeName="opacity" from="1" to="0" dur="1.6s" fill="freeze" />
+                </circle>
+              </g>
+            ))}
           </svg>
 
           {/* Instruction overlay when no zones yet */}
@@ -835,11 +961,23 @@ export function ZoneEditorModal({
           )}
         </div>
 
-        {/* Footer — always visible Save button */}
-        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 flex items-center justify-between">
-          <p className="text-[10px] text-text-muted">
-            {config.stations.length > 0 ? 'Tip: add multiple zones for different bar sections' : ''}
-          </p>
+        {/* Footer — always visible Save button + Reset to auto-detected */}
+        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleResetToAuto}
+              disabled={resetting || saving}
+              title="Run auto_bar_config and replace current zones with the suggestion"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border border-white/15 text-text-muted hover:text-white hover:bg-white/5 disabled:opacity-40 transition-colors"
+            >
+              {resetting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              Reset to auto-detected
+            </button>
+            <p className="text-[10px] text-text-muted">
+              {config.stations.length > 0 ? 'Tip: add multiple zones for different bar sections' : ''}
+            </p>
+          </div>
           <button
             onClick={save}
             disabled={saving || config.stations.length === 0}

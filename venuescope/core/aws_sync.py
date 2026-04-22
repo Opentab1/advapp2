@@ -794,6 +794,25 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     _dq = summary.get("drink_quality", {})
     zone_drinks = _dq.get("zone_drinks", {})
     zone_events = _dq.get("zone_events", {})
+
+    # Confidence counts — drive the accuracy badge in the admin zone editor (Layer 4).
+    _high_conf = int(_dq.get("high_conf_serves", 0) or 0)
+    _low_conf  = int(_dq.get("low_conf_serves",  0) or 0)
+    update_expr += ", highConfServes24h = :hcs, lowConfServes24h = :lcs"
+    expr_vals[":hcs"] = {"N": str(_high_conf)}
+    expr_vals[":lcs"] = {"N": str(_low_conf)}
+
+    # Flatten last ~60 serve events across zones for the editor's detection-flash
+    # overlay. Events are {t_sec, score, x, y, zone} — x/y are normalized (0-1).
+    _recent = []
+    for _z, _evs in zone_events.items():
+        for _e in _evs:
+            _recent.append({**_e, "zone": _z})
+    _recent.sort(key=lambda e: e.get("t_sec", 0))
+    _recent = _recent[-60:]
+    if _recent:
+        update_expr += ", recentServeEvents = :rse"
+        expr_vals[":rse"] = {"S": json.dumps(_recent)}
     if zone_drinks:
         update_expr += ", zoneBreakdown = :zb"
         expr_vals[":zb"] = {"S": json.dumps({
