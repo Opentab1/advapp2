@@ -846,6 +846,10 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
   const [connUpdating, setConnUpdating] = useState(false);
   const [restartingCams, setRestartingCams] = useState<Set<string>>(new Set());
   const [previewCams, setPreviewCams] = useState<Set<string>>(new Set());
+  const [camProxy, setCamProxy] = useState<{ ip: string; port: number } | null>(null);
+  const [proxyPortInput, setProxyPortInput] = useState('');
+  const [proxyUpdating, setProxyUpdating] = useState(false);
+  const [proxyMsg, setProxyMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameSaving, setRenameSaving] = useState(false);
@@ -880,6 +884,10 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
     venueSettingsService.loadSettingsFromCloud(venueId).then((s: any) => {
       if (s?.camProxyUrl) setCamProxyUrl(s.camProxyUrl);
     }).catch(() => { /* keep cached value */ });
+    // Load the droplet's current HLS proxy upstream port (Caddyfile)
+    adminService.getCamProxy()
+      .then(p => { setCamProxy(p); setProxyPortInput(String(p.port)); })
+      .catch(() => { /* endpoint may not be deployed yet */ });
     statusTimer.current = setInterval(loadStatuses, 60_000);
     return () => { if (statusTimer.current) clearInterval(statusTimer.current); };
   }, [expanded, load, loadStatuses, venueId]);
@@ -955,6 +963,30 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
       alert(`Failed to rename camera: ${e.message}`);
     } finally {
       setRenameSaving(false);
+    }
+  };
+
+  const handleProxyPortUpdate = async () => {
+    const port = parseInt(proxyPortInput, 10);
+    if (!port || port < 1 || port > 65535) {
+      setProxyMsg({ kind: 'err', text: 'Port must be between 1 and 65535' });
+      return;
+    }
+    setProxyUpdating(true);
+    setProxyMsg(null);
+    try {
+      const ip = newIp.trim() || camProxy?.ip;
+      const res = await adminService.updateCamProxy({ port, ip });
+      setCamProxy({ ip: res.ip, port: res.port });
+      setProxyPortInput(String(res.port));
+      setProxyMsg({ kind: 'ok', text: `HLS proxy now → ${res.ip}:${res.port}. Reload tiles to verify.` });
+    } catch (e: any) {
+      const msg = e?.message === 'NO_SECRET'
+        ? 'Ops secret not set — open System Analytics to enter it.'
+        : (e?.message ?? 'Unknown error');
+      setProxyMsg({ kind: 'err', text: msg });
+    } finally {
+      setProxyUpdating(false);
     }
   };
 
@@ -1093,12 +1125,54 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                       >
                         {connUpdating
                           ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Updating...</>
-                          : `Update All ${cameras.length} Cameras`
+                          : `Update All ${cameras.length} Cameras (RTSP)`
                         }
                       </button>
                       <button onClick={() => setShowConnPanel(false)} className="px-3 py-2 rounded-lg hover:bg-white/10 text-gray-400">
                         <X className="w-4 h-4" />
                       </button>
+                    </div>
+
+                    {/* HLS Proxy Port — separate, updates Caddyfile on droplet */}
+                    <div className="mt-4 pt-4 border-t border-amber-500/20 space-y-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs text-amber-200 font-semibold">HLS Proxy Port (Caddy upstream)</p>
+                          <p className="text-[11px] text-amber-300/70 mt-0.5">
+                            Port the droplet proxies live HLS video from. Change when the router's HTTP port-forward rule drifts (symptom: video tiles show "Stream unreachable").
+                          </p>
+                        </div>
+                        {camProxy && (
+                          <div className="text-right text-[11px] text-gray-400 flex-shrink-0">
+                            <div>current</div>
+                            <div className="font-mono text-amber-300">{camProxy.ip}:{camProxy.port}</div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={proxyPortInput}
+                          onChange={e => setProxyPortInput(e.target.value.trim())}
+                          placeholder={camProxy ? String(camProxy.port) : '58024'}
+                          className="w-28 bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                        />
+                        <button
+                          onClick={handleProxyPortUpdate}
+                          disabled={proxyUpdating || !proxyPortInput || !!(camProxy && parseInt(proxyPortInput, 10) === camProxy.port && !newIp)}
+                          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-teal-500/80 text-black text-sm font-semibold disabled:opacity-40"
+                        >
+                          {proxyUpdating
+                            ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Reloading Caddy…</>
+                            : 'Update Proxy Port'
+                          }
+                        </button>
+                      </div>
+                      {proxyMsg && (
+                        <div className={`text-[11px] ${proxyMsg.kind === 'ok' ? 'text-green-400' : 'text-red-400'}`}>
+                          {proxyMsg.text}
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}

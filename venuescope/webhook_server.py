@@ -205,6 +205,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self._handle_ops_jobs(since, until)
             elif parsed.path == "/ops/metrics":
                 self._handle_ops_metrics()
+            elif parsed.path == "/ops/cam-proxy":
+                self._handle_ops_cam_proxy_get()
             else:
                 self._json(404, {"error": "unknown ops route"})
             return
@@ -283,6 +285,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0) or 0)
                 body   = self.rfile.read(length) if length > 0 else b""
                 self._handle_ops_probe_cameras(body)
+            elif parsed.path == "/ops/cam-proxy":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body   = self.rfile.read(length) if length > 0 else b""
+                self._handle_ops_cam_proxy_post(body)
             else:
                 self._json(404, {"error": "unknown ops route"})
             return
@@ -890,6 +896,110 @@ class WebhookHandler(BaseHTTPRequestHandler):
         except Exception as e:
             output.append(f"error: {e}")
             self._json(500, {"ok": False, "output": output})
+
+
+    # ── HLS camera proxy config (Caddyfile upstream) ─────────────────────────
+    # Router/NVR port-forwarding rules drift over time. These endpoints let
+    # the admin portal read/update the Caddy upstream without an SSH session.
+    CADDYFILE = "/etc/caddy/Caddyfile"
+    _CAM_RE = (
+        r"(reverse_proxy\s+http://)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{2,5})"
+        r"(\s*\{\s*\n\s*header_up\s+Host\s+)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{2,5})"
+    )
+
+    def _handle_ops_cam_proxy_get(self):
+        """GET /ops/cam-proxy — parse current upstream ip:port from Caddyfile."""
+        import re
+        try:
+            text = Path(self.CADDYFILE).read_text()
+            m = re.search(self._CAM_RE, text)
+            if not m:
+                self._json(500, {"error": "could not locate /cam/* upstream in Caddyfile"})
+                return
+            self._json(200, {"ip": m.group(2), "port": int(m.group(3))})
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
+    def _handle_ops_cam_proxy_post(self, body: bytes):
+        """POST /ops/cam-proxy {ip?, port} — update Caddyfile + reload Caddy.
+        Backs up first, validates the new config, and restores on failure.
+        """
+        import re, subprocess
+        try:
+            data = json.loads(body or b"{}")
+        except Exception:
+            self._json(400, {"error": "invalid JSON body"})
+            return
+
+        new_port = data.get("port")
+        new_ip   = (data.get("ip") or "").strip() or None
+
+        # Validate
+        try:
+            new_port = int(new_port)
+        except (TypeError, ValueError):
+            self._json(400, {"error": "port must be an integer"})
+            return
+        if not (1 <= new_port <= 65535):
+            self._json(400, {"error": "port out of range"})
+            return
+        if new_ip and not re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", new_ip):
+            self._json(400, {"error": "ip must be dotted-quad or omitted"})
+            return
+
+        caddy_path = Path(self.CADDYFILE)
+        try:
+            original = caddy_path.read_text()
+        except Exception as e:
+            self._json(500, {"error": f"cannot read Caddyfile: {e}"})
+            return
+
+        m = re.search(self._CAM_RE, original)
+        if not m:
+            self._json(500, {"error": "could not locate /cam/* upstream in Caddyfile"})
+            return
+
+        ip  = new_ip or m.group(2)
+        new_block = f"{m.group(1)}{ip}:{new_port}{m.group(4)}{ip}:{new_port}"
+        updated   = original[:m.start()] + new_block + original[m.end():]
+        if updated == original:
+            self._json(200, {"ok": True, "ip": ip, "port": new_port, "msg": "no change"})
+            return
+
+        # Back up, write, validate, reload. Restore on any failure.
+        ts     = time.strftime("%Y%m%d_%H%M%S")
+        backup = Path(f"/etc/caddy/Caddyfile.bak.{ts}")
+        try:
+            backup.write_text(original)
+            caddy_path.write_text(updated)
+
+            v = subprocess.run(
+                ["caddy", "validate", "--config", str(caddy_path)],
+                capture_output=True, text=True, timeout=15,
+            )
+            if v.returncode != 0:
+                caddy_path.write_text(original)
+                err = (v.stderr or v.stdout or "validation failed").strip()
+                self._json(500, {"error": f"caddy validate failed: {err}"})
+                return
+
+            r = subprocess.run(
+                ["systemctl", "reload", "caddy"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if r.returncode != 0:
+                caddy_path.write_text(original)
+                subprocess.run(["systemctl", "reload", "caddy"], timeout=15)
+                err = (r.stderr or r.stdout or "reload failed").strip()
+                self._json(500, {"error": f"caddy reload failed: {err}"})
+                return
+
+            log.info("ops/cam-proxy: updated to %s:%s (backup=%s)", ip, new_port, backup.name)
+            self._json(200, {"ok": True, "ip": ip, "port": new_port, "backup": backup.name})
+        except Exception as e:
+            try: caddy_path.write_text(original)
+            except Exception: pass
+            self._json(500, {"error": str(e)})
 
 
 if __name__ == "__main__":

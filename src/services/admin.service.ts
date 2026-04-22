@@ -958,6 +958,22 @@ class AdminService {
     return data as { ok: boolean; output: string[] };
   }
 
+  /** Read the HLS camera proxy upstream (ip:port) from the droplet's Caddyfile. */
+  async getCamProxy(): Promise<{ ip: string; port: number }> {
+    const data = await opsFetch('/ops/cam-proxy');
+    return data as { ip: string; port: number };
+  }
+
+  /** Update the HLS camera proxy upstream and reload Caddy. */
+  async updateCamProxy(args: { ip?: string; port: number }):
+    Promise<{ ok: boolean; ip: string; port: number }> {
+    const data = await opsFetch('/ops/cam-proxy', {
+      method: 'POST',
+      body:   JSON.stringify(args),
+    });
+    return data as { ok: boolean; ip: string; port: number };
+  }
+
   // ============ AUDIT LOG ============
 
   private sessionAuditLog: Array<{
