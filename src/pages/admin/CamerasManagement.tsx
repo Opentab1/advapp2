@@ -739,8 +739,33 @@ function snapshotUrl(label: string, proxyBase: string, rtspUrl?: string | null):
   return `${base}/snapshot/${ch}.jpg`;
 }
 
-function CameraLivePreview({ label, proxyBase, rtspUrl }: {
+// Parse helpers for overlay rendering on admin preview tiles
+function parseBarStations(json?: string): Array<{
+  polygon: [number, number][];
+  bar_line_p1: [number, number];
+  bar_line_p2: [number, number];
+  label?: string;
+}> {
+  if (!json) return [];
+  try {
+    const d = JSON.parse(json);
+    return Array.isArray(d?.stations) ? d.stations : [];
+  } catch { return []; }
+}
+
+function parseTableZonesLocal(json?: string): Array<{
+  table_id: string; label: string; polygon: [number, number][];
+}> {
+  if (!json) return [];
+  try {
+    const d = JSON.parse(json);
+    return Array.isArray(d) ? d : [];
+  } catch { return []; }
+}
+
+function CameraLivePreview({ label, proxyBase, rtspUrl, barConfigJson, tableZonesJson }: {
   label: string; proxyBase: string; rtspUrl?: string | null;
+  barConfigJson?: string; tableZonesJson?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -826,6 +851,46 @@ function CameraLivePreview({ label, proxyBase, rtspUrl }: {
           }}
         />
       )}
+      {/* Zone overlays — same polygons the worker uses for analytics.
+          Only renders on the admin side so operators can visually verify
+          the zones are placed where they meant them to be. */}
+      {state === 'ready' && (() => {
+        const bar = parseBarStations(barConfigJson);
+        const tables = parseTableZonesLocal(tableZonesJson);
+        if (!bar.length && !tables.length) return null;
+        return (
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            viewBox="0 0 1 1" preserveAspectRatio="none"
+          >
+            {bar.map((s, i) => (
+              <g key={`bar-${i}`}>
+                <polygon
+                  points={s.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
+                  fill="rgba(0,200,160,0.08)"
+                  stroke="rgba(0,200,160,0.75)"
+                  strokeWidth="0.004"
+                />
+                <line
+                  x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
+                  x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
+                  stroke="rgba(255,140,0,0.95)"
+                  strokeWidth="0.006"
+                  strokeDasharray="0.02 0.01"
+                />
+              </g>
+            ))}
+            {tables.map((z, i) => (
+              <polygon key={`t-${i}`}
+                points={z.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
+                fill="rgba(168,85,247,0.12)"
+                stroke="rgba(168,85,247,0.9)"
+                strokeWidth="0.004"
+              />
+            ))}
+          </svg>
+        );
+      })()}
       {state === 'ready' && (
         <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm">
           <span className="relative flex h-1.5 w-1.5">
@@ -1421,6 +1486,8 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                             label={cam.name}
                             proxyBase={camProxyUrl}
                             rtspUrl={cam.rtspUrl}
+                            barConfigJson={cam.barConfigJson}
+                            tableZonesJson={cam.tableZonesJson}
                           />
                           {!camProxyUrl && !cam.rtspUrl?.startsWith('https://') && (
                             <div className="mt-2 text-[11px] text-amber-400/80">

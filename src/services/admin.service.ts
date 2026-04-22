@@ -152,6 +152,7 @@ export interface AdminCamera {
   segmentSeconds: number;
   segmentInterval?: number;
   barConfigJson?: string;
+  tableZonesJson?: string;
   createdAt?: string;
   notes?: string;
   // Layer 2 — zone alignment health check (written by the worker every ~2min).
@@ -477,6 +478,7 @@ class AdminService {
         segmentInterval: c.segmentInterval,
         notes:           c.notes,
         barConfigJson:   c.barConfigJson,
+        tableZonesJson:  c.tableZonesJson,
         createdAt:       c.createdAt ? new Date(c.createdAt * 1000).toISOString() : '',
         needsRecalibration: c.needsRecalibration,
         recalCheckedAt:  c.recalCheckedAt,
