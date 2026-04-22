@@ -32,6 +32,11 @@ class BarConfig:
     frame_height:    Optional[int]    = None
     notes:           str              = ""
     overhead_camera: bool             = False   # True for top-down/fisheye ceiling cameras
+    # Fields written by core/auto_bar_config.analyze_stream() so the operator
+    # can see in DDB how a config was generated. Worker accepts but ignores
+    # them — never let them silently invalidate a saved auto-config.
+    auto_detected:   bool             = False
+    auto_note:       str              = ""
 
     def save(self) -> Path:
         path = CONFIG_DIR / f"{self.venue_id}.json"
