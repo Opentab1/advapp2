@@ -139,16 +139,30 @@ function computeLearningProgress(f: TonightForecast): {
   // Most limiting gate wins
   const limiting = Math.min(snapPct, daysPct ?? 100);
   const pct = Math.max(0, Math.min(90, Math.round(limiting)));   // cap at 90% until trained
+
+  // Pick the clearest message for the user. Priority:
+  //   1. No data at all → generic prior.
+  //   2. Days gate known and still short → show days needed.
+  //   3. Snapshots already exceeded snapshot target (and no explicit days
+  //      signal) → the model is gated by something else (usually days of
+  //      coverage). Say so instead of printing a misleading "397/100".
+  //   4. Otherwise → show snapshot progress.
+  let narrative: string;
+  if (snapshots === 0) {
+    narrative = 'Collecting first data — forecast uses a generic prior for now.';
+  } else if (typeof daysTarget === 'number' && typeof days === 'number' && days < daysTarget) {
+    narrative = `Needs ~${Math.max(1, daysTarget - days)} more days of operation before the model trains.`;
+  } else if (snapshots >= snapTarget) {
+    narrative = `Enough data points collected (${snapshots}). Model needs ~2 weeks of daily coverage before it trains — using a generic prior until then.`;
+  } else {
+    narrative = `${snapshots} / ${snapTarget} data points collected. Forecast uses a generic prior until the model trains.`;
+  }
+
   return {
     pct, stage: 'learning',
     snapshots, snapshotTarget: snapTarget,
     days, daysTarget,
-    narrative:
-      snapshots === 0
-        ? 'Collecting first data — forecast uses a generic prior for now.'
-        : typeof daysTarget === 'number' && typeof days === 'number' && days < daysTarget
-          ? `Needs ~${Math.max(1, daysTarget - days)} more days of operation before the model trains.`
-          : `${snapshots} / ${snapTarget} data points collected. Forecast uses a generic prior until the model trains.`,
+    narrative,
   };
 }
 
@@ -562,6 +576,11 @@ function ForecastAccuracySection({ venueId }: { venueId: string }) {
     </div>
   );
 
+  // Defensive clamp: older DDB records have unbounded negative accuracy from the
+  // pre-fix formula. Clamp to [0,100] here so DoW averages aren't poisoned by
+  // -500% outliers until those rows age out.
+  const clampAcc = (v: number) => Math.max(0, Math.min(100, v));
+
   // DOW breakdown
   const DOW_SHORT = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const dowGroups: Record<number, number[]> = {};
@@ -569,7 +588,7 @@ function ForecastAccuracySection({ venueId }: { venueId: string }) {
     const d   = new Date(h._date + 'T12:00:00');
     const dow = (d.getDay() + 6) % 7; // Mon=0
     dowGroups[dow] = dowGroups[dow] ?? [];
-    dowGroups[dow].push(h.actualAccuracyPct!);
+    dowGroups[dow].push(clampAcc(h.actualAccuracyPct!));
   });
   const dowAvg = DOW_SHORT.map((label, i) => {
     const vals = dowGroups[i] ?? [];
@@ -632,7 +651,7 @@ function ForecastAccuracySection({ venueId }: { venueId: string }) {
         </div>
         <div className="divide-y divide-whoop-divider">
           {withActuals.slice(-10).reverse().map(h => {
-            const acc = h.actualAccuracyPct ?? 0;
+            const acc = clampAcc(h.actualAccuracyPct ?? 0);
             const ok  = acc >= 85 ? 'text-green-400' : acc >= 70 ? 'text-amber-400' : 'text-red-400';
             return (
               <div key={h._date} className="flex items-center justify-between px-4 py-2.5">
@@ -833,9 +852,19 @@ function TonightTab({ venueId }: { venueId: string }) {
                   />
                 </div>
                 <div className="text-[10px] text-amber-300/70 mt-1.5 flex gap-3">
-                  <span>{lp.snapshots}/{lp.snapshotTarget} data points</span>
-                  {typeof lp.days === 'number' && typeof lp.daysTarget === 'number' && (
-                    <span>· {lp.days.toFixed(1)}/{lp.daysTarget} days coverage</span>
+                  {/* When snapshots already exceed target, the limiting gate is
+                      days-of-coverage. Lead with that instead of the misleading
+                      "397/100" which reads as "we're 4× past" when really
+                      we're still waiting. */}
+                  {lp.snapshots >= lp.snapshotTarget && typeof lp.days === 'number' && typeof lp.daysTarget === 'number' ? (
+                    <span>{lp.days.toFixed(1)}/{lp.daysTarget} days coverage</span>
+                  ) : (
+                    <>
+                      <span>{lp.snapshots}/{lp.snapshotTarget} data points</span>
+                      {typeof lp.days === 'number' && typeof lp.daysTarget === 'number' && (
+                        <span>· {lp.days.toFixed(1)}/{lp.daysTarget} days coverage</span>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

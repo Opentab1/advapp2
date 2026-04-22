@@ -1668,6 +1668,10 @@ function CameraLiveView({
   const [state, setState]   = React.useState<'loading' | 'playing' | 'reconnecting' | 'error' | 'mixed_content'>('loading');
   const [errorMsg, setErrorMsg] = React.useState('Stream unavailable');
   const [retryKey, setRetryKey] = React.useState(0);
+  // Stop retrying after N consecutive failures so the tile doesn't loop forever
+  // when the NVR/proxy is genuinely down. Reset on successful `playing` event.
+  const retryCountRef = React.useRef<number>(0);
+  const MAX_RETRIES   = 3;
   const url = liveStreamUrl(label, proxyBase, rtspUrl);
 
   // Detect if this is an HTTPS-upgraded HTTP stream — failure likely means untrusted self-signed cert.
@@ -1691,10 +1695,15 @@ function CameraLiveView({
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
 
-    // 12-second timeout → auto-reconnect
+    // 12-second timeout → auto-reconnect (up to MAX_RETRIES times)
     timerRef.current = setTimeout(() => {
       setState(prev => {
         if (prev !== 'loading') return prev;
+        retryCountRef.current += 1;
+        if (retryCountRef.current >= MAX_RETRIES) {
+          setErrorMsg('Stream unreachable — check NVR / proxy');
+          return 'error';
+        }
         if (reconnectRef.current) clearTimeout(reconnectRef.current);
         reconnectRef.current = setTimeout(() => {
           setState('loading');
@@ -1721,7 +1730,13 @@ function CameraLiveView({
 
     const handleError = () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      // Always auto-reconnect — show "Reconnecting" and retry after 8s
+      retryCountRef.current += 1;
+      if (retryCountRef.current >= MAX_RETRIES) {
+        setErrorMsg('Stream unreachable — check NVR / proxy');
+        setState('error');
+        return;
+      }
+      // Auto-reconnect — show "Reconnecting" and retry after 8s
       setState('reconnecting');
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
       reconnectRef.current = setTimeout(() => {
@@ -1819,11 +1834,22 @@ function CameraLiveView({
         </div>
       )}
 
-      {/* Generic unrecoverable error (mixed content etc.) */}
+      {/* Generic unrecoverable error (mixed content, too many retries, etc.) */}
       {state === 'error' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/80">
           <Camera className="w-5 h-5 text-text-muted" />
           <span className="text-[10px] text-text-muted">{errorMsg}</span>
+          <button
+            type="button"
+            className="mt-1 text-[10px] px-2 py-0.5 rounded border border-teal/30 text-teal hover:bg-teal/10"
+            onClick={() => {
+              retryCountRef.current = 0;
+              setState('loading');
+              setRetryKey(k => k + 1);
+            }}
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -1839,7 +1865,11 @@ function CameraLiveView({
         ref={videoRef}
         className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
         autoPlay muted playsInline
-        onCanPlay={() => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; } setState('playing'); }}
+        onCanPlay={() => {
+          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+          retryCountRef.current = 0;  // stream recovered — allow fresh retry budget
+          setState('playing');
+        }}
         onError={() => {
           if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
           handleError();
@@ -2231,13 +2261,16 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
               <div className={`text-xl font-bold ${room.currentOccupancy > 0 ? 'text-teal' : 'text-text-muted'}`}>
-                {room.currentOccupancy > 0 ? room.currentOccupancy : '—'}
+                {/* Show "—" only when the camera has never reported a snapshot
+                    yet (elapsedSec === 0); otherwise show the real value,
+                    including 0. A closed bar measuring 0 is true information. */}
+                {room.elapsedSec > 0 ? room.currentOccupancy : '—'}
               </div>
               <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">In Room</div>
             </div>
             <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
               <div className={`text-xl font-bold ${room.peakOccupancy > 0 ? 'text-white' : 'text-text-muted'}`}>
-                {room.peakOccupancy > 0 ? room.peakOccupancy : '—'}
+                {room.elapsedSec > 0 ? room.peakOccupancy : '—'}
               </div>
               <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Peak</div>
             </div>

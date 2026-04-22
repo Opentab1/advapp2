@@ -183,7 +183,12 @@ function buildStaff(jobs: VenueScopeJob[]): StaffStat[] {
           const drinkCount = snapCounts.size > 0 ? (snapCounts.get(name) ?? 0) : (d.drinks ?? 0);
           s.drinks     += drinkCount;
           s.shifts     += 1;
-          s.perHour    += d.per_hour ?? 0;
+          // Sanity-clamp per_hour: the backend occasionally divides drinks by a
+          // tiny elapsed window and reports 10k+/hr. No bar does that. Drop
+          // anything outside the plausible 0–200 range so the leaderboard
+          // shows real numbers instead of astronomical /hr rates.
+          const rawPerHour = Number(d.per_hour ?? 0);
+          s.perHour    += (rawPerHour > 0 && rawPerHour <= 200) ? rawPerHour : 0;
           s.theftFlags += job.hasTheftFlag ? 1 : 0;
           s.overPours  += d.over_pours ?? 0;
           s.totalOz    += d.total_oz ?? 0;
@@ -202,7 +207,8 @@ function buildStaff(jobs: VenueScopeJob[]): StaffStat[] {
       const s = map.get(name)!;
       s.drinks    += job.totalDrinks ?? 0;
       s.shifts    += 1;
-      s.perHour   += job.drinksPerHour ?? 0;
+      const rawDph = Number(job.drinksPerHour ?? 0);
+      s.perHour   += (rawDph > 0 && rawDph <= 200) ? rawDph : 0;
       s.theftFlags += job.hasTheftFlag ? 1 : 0;
       s.shiftDrinks.push({ date: job.createdAt ?? 0, drinks: job.totalDrinks ?? 0, flag: job.hasTheftFlag });
     }
@@ -253,7 +259,13 @@ function HeroNumbers({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
   const nights        = new Set(drinkJobs.map(j => fmtDate(jobTs(j)))).size;
   const avgPerNight   = nights > 0 ? Math.round(totalDrinks / nights) : 0;
 
-  // People count metrics
+  // People count metrics.
+  // peakOccupancy = venue-wide max at any one moment across the period. This
+  // is the metric the owner actually cares about ("how crowded did it get").
+  // uniqueTracked (sum across continuous jobs) double-counts: a continuous job
+  // started yesterday shows the same cumulative total in every time window,
+  // and a customer who walks past N cameras is counted N times. We stopped
+  // summing it as the primary display for that reason.
   const totalEntries  = jobs.reduce((s, j) => s + (j.totalEntries ?? 0), 0);
   const peakOccupancy = jobs.reduce((max, j) => Math.max(max, j.peakOccupancy ?? 0), 0);
   const uniqueTracked = jobs.reduce((s, j) => s + (j.uniqueTracked ?? 0), 0);
@@ -273,10 +285,10 @@ function HeroNumbers({ jobs, avgDrinkPrice }: { jobs: VenueScopeJob[]; avgDrinkP
     },
     hasPeople
       ? {
-          label: uniqueTracked > 0 ? 'People Tracked' : 'Peak Occupancy',
-          value: (uniqueTracked > 0 ? uniqueTracked : peakOccupancy).toLocaleString(),
+          label: 'Peak Occupancy',
+          value: peakOccupancy.toLocaleString(),
           color: 'text-blue-400',
-          sub: uniqueTracked > 0 && peakOccupancy > 0 ? `Peak: ${peakOccupancy}` : `across ${jobs.filter(j => (j.peakOccupancy ?? 0) > 0).length} sessions`,
+          sub: `across ${jobs.filter(j => (j.peakOccupancy ?? 0) > 0).length} session${jobs.filter(j => (j.peakOccupancy ?? 0) > 0).length !== 1 ? 's' : ''}`,
         }
       : {
           label: 'Revenue Protected',
@@ -725,10 +737,11 @@ function SnapRow({
 
   return (
     <>
-      {/* Row */}
+      {/* Row — NVR REF column removed: it duplicated the TIME column, and the
+          thumbnail already opens the full snapshot on click. */}
       <div
         className="grid items-center gap-2 px-4 py-2.5 hover:bg-whoop-bg/40 transition-colors"
-        style={{ gridTemplateColumns: '2.5rem 4.5rem 1fr 1fr auto' }}
+        style={{ gridTemplateColumns: '2.5rem 4.5rem 1fr 1fr' }}
       >
         {/* Thumbnail */}
         <div className="w-10 h-7 rounded overflow-hidden bg-whoop-bg border border-whoop-divider flex-shrink-0 flex items-center justify-center">
@@ -765,19 +778,6 @@ function SnapRow({
           )}
         </div>
 
-        {/* NVR ref */}
-        <div className="text-right flex-shrink-0">
-          {url ? (
-            <button
-              onClick={() => setOpen(true)}
-              className="text-[10px] text-teal hover:text-teal/80 transition-colors font-semibold tabular-nums"
-            >
-              {nvrRef}
-            </button>
-          ) : (
-            <span className="text-[10px] text-text-muted tabular-nums">{nvrRef}</span>
-          )}
-        </div>
       </div>
 
       {/* Expanded snapshot modal */}
@@ -920,12 +920,11 @@ function DetectionEventLog({ jobs }: { jobs: VenueScopeJob[] }) {
 
       {/* Column headers */}
       <div className="grid gap-0 px-4 py-2 border-b border-whoop-divider/40 text-[9px] text-text-muted uppercase tracking-wider font-semibold"
-        style={{ gridTemplateColumns: '2.5rem 4rem 1fr 1fr auto' }}>
+        style={{ gridTemplateColumns: '2.5rem 4rem 1fr 1fr' }}>
         <span></span>
         <span>Time</span>
         <span>Camera</span>
         <span>Bartender</span>
-        <span className="text-right">NVR ref</span>
       </div>
 
       {filtered.length === 0 ? (

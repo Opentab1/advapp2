@@ -357,14 +357,21 @@ def sync_partial_to_aws(job_id: str, progress_pct: float,
         expr_vals[":ca"] = {"N": str(created_at_val or time.time())}
         expr_vals[":ij"] = {"S": job_id}
         expr_vals[":il"] = {"BOOL": is_live_cam}
-        # Prefer camera_id as cameraLabel for unique deduplication in React
-        cam_name = str(job_data.get("camera_id", "") or "")
-        if not cam_name and clip_label.startswith("📡 "):
+        # cameraLabel is the human-readable name React shows on the camera grid.
+        # Prefer the friendly name from clip_label (e.g. "CH1 — Main Floor");
+        # only fall back to the internal camera_id if no clip_label is set.
+        # React uses camera_id separately for deduplication, so using the name
+        # here doesn't break that logic — it just stops leaking internal IDs
+        # like "cam_1776622919925_vpnc7y" into owner-visible tiles.
+        cam_name = ""
+        if clip_label.startswith("📡 "):
             raw = clip_label[len("📡 "):]
             for _sfx in (" — 🔴 LIVE", " — seg "):
                 if _sfx in raw:
                     raw = raw[:raw.index(_sfx)]
             cam_name = raw.strip()
+        if not cam_name:
+            cam_name = str(job_data.get("camera_id", "") or "")
         if cam_name:
             update_expr += ", cameraLabel = :cnl"
             expr_vals[":cnl"] = {"S": cam_name}
@@ -670,16 +677,22 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
     if clip:
         update_expr += ", clipLabel = if_not_exists(clipLabel, :cl)"
         expr_vals[":cl"] = {"S": clip}
-        # Prefer camera_id for unique deduplication; derive from clip_label as fallback
-        cam_name = summary.get("camera_id") or summary.get("camera_label", "")
-        if not cam_name and clip.startswith("📡 "):
+        # Prefer the friendly name from clip_label for the owner-visible label.
+        # Fall back to camera_label / camera_id only if we can't parse a name.
+        cam_name = ""
+        if clip.startswith("📡 "):
             raw = clip[len("📡 "):]
             for _sfx in (" — 🔴 LIVE", " — seg "):
                 if _sfx in raw:
                     raw = raw[:raw.index(_sfx)]
             cam_name = raw.strip()
+        if not cam_name:
+            cam_name = summary.get("camera_label") or summary.get("camera_id", "")
         if cam_name:
-            update_expr += ", cameraLabel = if_not_exists(cameraLabel, :cnl)"
+            # Write unconditionally so admin-portal renames propagate within
+            # one push cycle. The old `if_not_exists` locked the label to the
+            # first value ever written (often the internal camera_id).
+            update_expr += ", cameraLabel = :cnl"
             expr_vals[":cnl"] = {"S": cam_name}
 
     # ── Live theft events (real-time) ─────────────────────────────────────────
@@ -794,6 +807,11 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
 
     # Include table visits by staff + live occupancy for live dashboard
     tables_data = summary.get("tables", {})
+    # The table_service mode emits its own canonical leaderboard via
+    # summary["tableVisitsByStaff"] (handled below). If present, skip the
+    # per-table dict form here — DynamoDB UpdateItem rejects two paths to the
+    # same attribute in one call ("Two document paths overlap").
+    _svc_leaderboard_present = bool(summary.get("tableVisitsByStaff"))
     if tables_data:
         live_visits: Dict[str, Dict[str, int]] = {}
         live_occupancy: Dict[str, Any] = {}
@@ -808,7 +826,7 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
                 "avg_dwell_min":      tdata.get("avg_dwell_min", 0),
                 "avg_response_sec":   tdata.get("avg_response_sec"),
             }
-        if live_visits:
+        if live_visits and not _svc_leaderboard_present:
             update_expr += ", tableVisitsByStaff = :tvs"
             expr_vals[":tvs"] = {"S": json.dumps(live_visits)}
         update_expr += ", liveTableOccupancy = :lto"

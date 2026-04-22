@@ -194,16 +194,18 @@ def backfill_from_jobs(venue_id: str) -> int:
 
     bucket_size = 15 * 60  # 15 minutes
 
-    def _already_written(ts: float) -> bool:
+    def _existing_headcount(ts: float) -> int:
+        # Room-max across cameras: if another camera already wrote this bucket,
+        # only overwrite when our peak is higher. Returns -1 if no row exists.
         try:
             with _get_engine().connect() as conn:
-                n = conn.execute(text(
-                    "SELECT COUNT(*) FROM occupancy_snapshots "
+                row = conn.execute(text(
+                    "SELECT headcount FROM occupancy_snapshots "
                     "WHERE venue_id = :vid AND snapshot_ts = :ts"
-                ), {"vid": venue_id, "ts": round(ts, 1)}).scalar()
-            return bool(n and n > 0)
+                ), {"vid": venue_id, "ts": round(ts, 1)}).first()
+            return int(row[0]) if row is not None else -1
         except Exception:
-            return False
+            return -1
 
     total_written = 0
 
@@ -219,6 +221,7 @@ def backfill_from_jobs(venue_id: str) -> int:
         peak = int(
             summary.get("peak_occupancy")
             or summary.get("peak")
+            or summary.get("people", {}).get("peak_occupancy")
             or summary.get("occupancy", {}).get("peak", 0)
             or 0
         )
@@ -233,9 +236,11 @@ def backfill_from_jobs(venue_id: str) -> int:
         last_bucket  = int((started + duration) // bucket_size) * bucket_size
         written_this_job = 0
         for bts in range(int(first_bucket), int(last_bucket) + bucket_size, bucket_size):
-            if _already_written(bts):
-                continue
+            existing = _existing_headcount(bts)
+            if existing >= peak:
+                continue  # another camera already wrote an equal-or-higher peak for this bucket
             try:
+                # write_snapshot uses INSERT OR REPLACE — safe to overwrite
                 write_snapshot(venue_id=venue_id, ts=float(bts),
                                 headcount=peak, source="people_count")
                 written_this_job += 1
@@ -282,7 +287,7 @@ def backfill_from_jobs(venue_id: str) -> int:
         written_this_job = 0
         for bidx, drinks_in_bucket in sorted(buckets.items()):
             bts = session_start + (bidx * bucket_size)
-            if _already_written(bts):  # people_count wins if present
+            if _existing_headcount(bts) >= 0:  # people_count always wins if present
                 continue
             estimate = max(1, int(round((drinks_in_bucket / total_drinks) * magnitude)))
             try:

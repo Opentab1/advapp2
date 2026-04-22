@@ -439,11 +439,14 @@ def run_job(job_id: str):
             and not extra_config.get("force_yolo")
             and not _needs_yolo
         )
-        # Route table_turns primary mode to MOG2 background subtraction runner
-        # (no YOLO) when running on CPU-only RTSP streams. ~10x faster than YOLO
-        # with equivalent accuracy for slow-moving seated people.
+        # Route table_turns primary mode to the sparse-YOLO lightweight runner.
+        # The lightweight runner does not implement table_service tracking — when
+        # table_service is in extra_modes we must fall through to the full
+        # VenueProcessor YOLO path so the service tracker actually runs.
+        _extra = extra_config.get("extra_modes") or []
         _use_lightweight_tables = (
             mode == "table_turns"
+            and "table_service" not in _extra
             and not extra_config.get("force_yolo")
             and job.get("source_type") == "rtsp"
         )

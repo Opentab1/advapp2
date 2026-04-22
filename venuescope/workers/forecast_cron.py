@@ -268,7 +268,17 @@ def _backfill_actual(venue_id: str, yesterday: date) -> None:
 
     avg_drink_price = float(os.environ.get("VENUESCOPE_AVG_DRINK_PRICE", "33.0"))
     actual_revenue = round(actual_covers * avg_drink_price)
-    accuracy_pct = round((1 - abs(actual_covers - predicted_mid) / max(predicted_mid, 1)) * 100, 1) if predicted_mid else None
+    # Symmetric MAPE-style accuracy, clamped to [0, 100].
+    # The previous formula divided the error by `predicted`, which went deeply
+    # negative when actual >> predicted (e.g. predicted=89, actual=644 → -523%).
+    # Dividing by max(actual, predicted) keeps the score interpretable as
+    # "how close we were" and caps the worst case at 0%.
+    if predicted_mid:
+        err = abs(actual_covers - predicted_mid)
+        denom = max(actual_covers, predicted_mid, 1)
+        accuracy_pct = round(max(0.0, min(100.0, (1 - err / denom) * 100)), 1)
+    else:
+        accuracy_pct = None
 
     try:
         ddb.update_item(
