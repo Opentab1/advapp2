@@ -1083,13 +1083,12 @@ function DrinkTypeSection({ jobs }: { jobs: VenueScopeJob[] }) {
 // and walk-outs — but we no longer surface the raw count.
 
 function BottleSection({ jobs }: { jobs: VenueScopeJob[] }) {
-  const hasPours = jobs.some(j => (j.pourCount ?? 0) > 0 || (j.walkOutAlerts ?? 0) > 0);
+  const hasPours = jobs.some(j => (j.pourCount ?? 0) > 0);
   if (!hasPours) return null;
 
   const totalPours   = jobs.reduce((s, j) => s + (j.pourCount ?? 0), 0);
   const totalOz      = jobs.reduce((s, j) => s + (j.totalPouredOz ?? 0), 0);
   const overPours    = jobs.reduce((s, j) => s + (j.overPours ?? 0), 0);
-  const walkOuts     = jobs.reduce((s, j) => s + (j.walkOutAlerts ?? 0), 0);
   const avgOzPerPour = totalPours > 0 ? (totalOz / totalPours) : 0;
 
   const byClass: Record<string, number> = {};
@@ -1108,11 +1107,6 @@ function BottleSection({ jobs }: { jobs: VenueScopeJob[] }) {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
         <span className="text-base">🥃</span>
         <span className="text-sm font-semibold text-white">Pour Activity</span>
-        {walkOuts > 0 && (
-          <span className="ml-auto text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-full px-2 py-0.5">
-            {walkOuts} walk-out{walkOuts !== 1 ? 's' : ''}
-          </span>
-        )}
       </div>
       <div className="p-4 space-y-3">
         <div className="grid grid-cols-4 gap-2">

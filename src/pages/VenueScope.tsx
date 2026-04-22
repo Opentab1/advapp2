@@ -1366,7 +1366,7 @@ function buildRooms(jobs: VenueScopeJob[], enabledPeopleCamNames: Set<string> = 
 // ── Theft investigation modal ─────────────────────────────────────────────────
 
 interface LiveTheftEvent {
-  type: 'walk_out' | 'unknown_bottle' | 'over_pour';
+  type: 'unknown_bottle' | 'over_pour';  // walk_out removed 2026-04-21 per product decision
   ts?: number;
   bottle_class?: string;
   track_id?: number;
@@ -1378,11 +1378,16 @@ interface LiveTheftEvent {
 function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDrinkPrice: number; onClose: () => void }) {
   const liveEvents: LiveTheftEvent[] = React.useMemo(() => {
     if (!job.liveTheftEvents) return [];
-    try { return JSON.parse(job.liveTheftEvents); } catch { return []; }
+    try {
+      const all = JSON.parse(job.liveTheftEvents) as Array<{ type: string } & LiveTheftEvent>;
+      // Filter out walk_out events — the 10s-absence heuristic fires too often
+      // for normal bartender activity (restocking, cleaning). Not shown to user.
+      return all.filter(e => e.type !== 'walk_out') as LiveTheftEvent[];
+    } catch { return []; }
   }, [job.liveTheftEvents]);
 
-  const typeLabel = (t: string) => t === 'walk_out' ? 'Walk-out' : t === 'unknown_bottle' ? 'Unknown bottle' : 'Over-pour';
-  const typeColor = (t: string) => t === 'walk_out' ? 'text-red-400' : t === 'unknown_bottle' ? 'text-amber-400' : 'text-orange-400';
+  const typeLabel = (t: string) => t === 'unknown_bottle' ? 'Unknown bottle' : 'Over-pour';
+  const typeColor = (t: string) => t === 'unknown_bottle' ? 'text-amber-400' : 'text-orange-400';
 
   return (
     <AnimatePresence>
