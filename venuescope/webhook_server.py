@@ -1196,6 +1196,14 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Prewarm all 16 NVR channels: marks them active so the refresher opens
+    # captures and starts filling the cache immediately. Non-existent channels
+    # fail silently. Eliminates the 1-3s cold-start for first page load.
+    _boot_now = time.time()
+    for _ch in range(1, 17):
+        _snap_last_req[_ch] = _boot_now
+    log.info("Prewarming snapshot cache for channels 1-16")
+
     # Start the background snapshot refresher (keeps the JPEG cache warm).
     threading.Thread(target=_snap_refresher_worker, name="snap-refresher", daemon=True).start()
     log.info("Snapshot refresher thread started")
