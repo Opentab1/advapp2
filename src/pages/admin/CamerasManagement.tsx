@@ -714,69 +714,86 @@ function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null
   return null;
 }
 
-function CameraLivePreview({ label, proxyBase, rtspUrl, startDelayMs = 0 }: {
-  label: string; proxyBase: string; rtspUrl?: string | null; startDelayMs?: number;
+function CameraLivePreview({ label, proxyBase, rtspUrl }: {
+  label: string; proxyBase: string; rtspUrl?: string | null;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef<number>(0);
-  const [state, setState] = useState<'loading' | 'playing' | 'error'>('loading');
+  const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const [retryKey, setRetryKey] = useState(0);
+  // Only stream when the tile is near/in the viewport — keeps the NVR from being hammered
+  // by 16 simultaneous HLS sessions when "Expand All" is toggled on.
+  const [visible, setVisible] = useState(false);
   const MAX_RETRIES = 3;
   const url = liveStreamUrl(label, proxyBase, rtspUrl);
 
+  // Observe container visibility (margin so stream warms up just before scrolling into view)
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      entries => entries.forEach(e => setVisible(e.isIntersecting)),
+      { rootMargin: '400px 0px', threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   useEffect(() => {
     if (!url || !videoRef.current) return;
-    setState('loading');
     const v = videoRef.current;
+
+    // Tile scrolled away → tear the stream down so the NVR can serve others.
+    if (!visible) {
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      v.pause(); v.src = ''; v.load();
+      setState('idle');
+      return;
+    }
+
+    setState('loading');
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-    if (startDelayRef.current) { clearTimeout(startDelayRef.current); startDelayRef.current = null; }
 
-    // Fail-fast timeout: 8s (firstData fires within ~2s when healthy).
+    // Fail-fast timeout: 12s covers the NVR's first-byte + moov + first fragment.
     timerRef.current = setTimeout(() => {
       setState(prev => {
         if (prev !== 'loading') return prev;
         retryCountRef.current += 1;
         if (retryCountRef.current >= MAX_RETRIES) return 'error';
-        setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 1500);
+        setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 2000);
         return 'loading';
       });
-    }, 8_000);
+    }, 12_000);
 
     const handleError = () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
       retryCountRef.current += 1;
       if (retryCountRef.current >= MAX_RETRIES) { setState('error'); return; }
-      setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 1500);
+      setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 2000);
     };
 
-    const begin = () => {
-      if (url.includes('.m3u8') && Hls.isSupported()) {
-        const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
-        hlsRef.current = hls;
-        hls.loadSource(url); hls.attachMedia(v);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
-        hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) handleError(); });
-      } else {
-        v.src = url; v.load(); v.play().catch(() => {});
-      }
-    };
-
-    // Stagger starts when expanding many cameras at once (avoid NVR handshake pile-up).
-    if (startDelayMs > 0) startDelayRef.current = setTimeout(begin, startDelayMs);
-    else begin();
+    if (url.includes('.m3u8') && Hls.isSupported()) {
+      const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
+      hlsRef.current = hls;
+      hls.loadSource(url); hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+      hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) handleError(); });
+    } else {
+      v.src = url; v.load(); v.play().catch(() => {});
+    }
 
     return () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      if (startDelayRef.current) { clearTimeout(startDelayRef.current); startDelayRef.current = null; }
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       v.src = '';
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, retryKey]);
+  }, [url, retryKey, visible]);
 
   if (!url) {
     return (
@@ -787,7 +804,13 @@ function CameraLivePreview({ label, proxyBase, rtspUrl, startDelayMs = 0 }: {
   }
 
   return (
-    <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
+    <div ref={containerRef} className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
+      {state === 'idle' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/60">
+          <Camera className="w-4 h-4 text-gray-600" />
+          <span className="text-[10px] text-gray-500">Scroll to preview</span>
+        </div>
+      )}
       {state === 'loading' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
           <Loader2 className="w-5 h-5 text-teal-400 animate-spin" />
@@ -815,8 +838,7 @@ function CameraLivePreview({ label, proxyBase, rtspUrl, startDelayMs = 0 }: {
         ref={videoRef}
         className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
         autoPlay muted playsInline preload="auto"
-        // Flip to 'playing' on first decoded frame, not full buffer — shaves ~500ms off perceived load.
-        onLoadedData={() => {
+        onCanPlay={() => {
           if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
           retryCountRef.current = 0;
           setState('playing');
@@ -1207,7 +1229,7 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                     <Play className="w-4 h-4 text-teal-400" />
                     <span className="text-gray-300">
                       {previewAll
-                        ? `Showing previews for all ${cameras.length} cameras (staggered start)`
+                        ? `Showing previews for all ${cameras.length} cameras — tiles load as you scroll`
                         : 'Previews hidden — open to see all camera feeds at once'}
                     </span>
                   </div>
@@ -1224,7 +1246,7 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                 </div>
               )}
 
-              {cameras.map((cam, camIdx) => {
+              {cameras.map(cam => {
                 const conn = parseNvrConn(cam.rtspUrl);
                 const rec = statuses.get(cam.cameraId);
                 const camStatus: CameraStatus = !cam.enabled ? 'unknown' : (rec?.status ?? 'unknown');
@@ -1381,7 +1403,6 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                             label={cam.name}
                             proxyBase={camProxyUrl}
                             rtspUrl={cam.rtspUrl}
-                            startDelayMs={camIdx * 80}
                           />
                           {!camProxyUrl && !cam.rtspUrl?.startsWith('https://') && (
                             <div className="mt-2 text-[11px] text-amber-400/80">

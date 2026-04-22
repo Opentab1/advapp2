@@ -1865,8 +1865,7 @@ function CameraLiveView({
         ref={videoRef}
         className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
         autoPlay muted playsInline preload="auto"
-        // Flip to 'playing' on first decoded frame, not full buffer — shaves ~500ms off perceived load.
-        onLoadedData={() => {
+        onCanPlay={() => {
           if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
           retryCountRef.current = 0;  // stream recovered — allow fresh retry budget
           setState('playing');
