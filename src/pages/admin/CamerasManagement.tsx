@@ -38,19 +38,20 @@ import venueSettingsService from '../../services/venue-settings.service';
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 import Hls from 'hls.js';
 
-type CameraMode = 'drink_count' | 'bottle_count' | 'people_count' | 'table_turns' | 'staff_activity' | 'after_hours';
+type CameraMode = 'drink_count' | 'bottle_count' | 'people_count' | 'table_turns' | 'table_service' | 'staff_activity' | 'after_hours';
 
 const MODE_LABELS: Record<CameraMode, string> = {
   drink_count:    'Drink Count',
   bottle_count:   'Pour Activity',  // renamed: measures pour duration → oz, not static bottle count
   people_count:   'People Count',
   table_turns:    'Table Turns',
+  table_service:  'Table Service',
   staff_activity: 'Staff Activity',
   after_hours:    'After Hours',
 };
 
 const ALL_MODES: CameraMode[] = [
-  'drink_count', 'bottle_count', 'people_count', 'table_turns', 'staff_activity', 'after_hours',
+  'drink_count', 'bottle_count', 'people_count', 'table_turns', 'table_service', 'staff_activity', 'after_hours',
 ];
 
 // Direct DDB client for reading live status records

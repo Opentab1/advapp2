@@ -37,6 +37,7 @@ export type CameraMode =
   | 'bottle_count'
   | 'people_count'
   | 'table_turns'
+  | 'table_service'
   | 'staff_activity'
   | 'after_hours';
 
