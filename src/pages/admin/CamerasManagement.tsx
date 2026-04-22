@@ -30,9 +30,13 @@ import {
   Copy,
   Check,
   RotateCcw,
+  Loader2,
+  Play,
 } from 'lucide-react';
 import adminService, { AdminCamera, adminFetch } from '../../services/admin.service';
+import venueSettingsService from '../../services/venue-settings.service';
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
+import Hls from 'hls.js';
 
 type CameraMode = 'drink_count' | 'bottle_count' | 'people_count' | 'table_turns' | 'staff_activity' | 'after_hours';
 
@@ -688,6 +692,137 @@ function CameraModal({
   );
 }
 
+// ─── Camera Live Preview ──────────────────────────────────────────────────────
+// Mirrors the VenueScope CameraLiveView: routes through the venue's camProxyUrl
+// (HTTPS sslip.io proxy) + falls back to a direct HTTPS rtspUrl if provided.
+function channelFromSources(label: string, rtspUrl?: string | null): string | null {
+  if (rtspUrl) {
+    const m = rtspUrl.match(/\/ch(\d+)\//i) ?? rtspUrl.match(/[Cc]hannel[s]?\/(\d+)/);
+    if (m) return `ch${m[1]}`;
+  }
+  const m = label.match(/CH(\d+)/i);
+  return m ? `ch${m[1]}` : null;
+}
+
+function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null): string | null {
+  if (proxyBase) {
+    const ch = channelFromSources(label, rtspUrl);
+    if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/0/livetop.mp4`;
+  }
+  if (rtspUrl?.startsWith('https://')) return rtspUrl;
+  return null;
+}
+
+function CameraLivePreview({ label, proxyBase, rtspUrl }: {
+  label: string; proxyBase: string; rtspUrl?: string | null;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef<number>(0);
+  const [state, setState] = useState<'loading' | 'playing' | 'error'>('loading');
+  const [retryKey, setRetryKey] = useState(0);
+  const MAX_RETRIES = 3;
+  const url = liveStreamUrl(label, proxyBase, rtspUrl);
+
+  useEffect(() => {
+    if (!url || !videoRef.current) return;
+    setState('loading');
+    const v = videoRef.current;
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+
+    timerRef.current = setTimeout(() => {
+      setState(prev => {
+        if (prev !== 'loading') return prev;
+        retryCountRef.current += 1;
+        if (retryCountRef.current >= MAX_RETRIES) return 'error';
+        setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 3000);
+        return 'loading';
+      });
+    }, 12_000);
+
+    const handleError = () => {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      retryCountRef.current += 1;
+      if (retryCountRef.current >= MAX_RETRIES) { setState('error'); return; }
+      setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 3000);
+    };
+
+    if (url.includes('.m3u8') && Hls.isSupported()) {
+      const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
+      hlsRef.current = hls;
+      hls.loadSource(url); hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+      hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) handleError(); });
+    } else {
+      v.src = url; v.load(); v.play().catch(() => {});
+    }
+
+    return () => {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      v.src = '';
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, retryKey]);
+
+  if (!url) {
+    return (
+      <div className="relative w-full aspect-video rounded-lg bg-black/60 flex items-center justify-center text-xs text-gray-500 px-4 text-center">
+        No HTTPS proxy or direct HTTPS stream configured — can't preview.
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
+      {state === 'loading' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
+          <Loader2 className="w-5 h-5 text-teal-400 animate-spin" />
+          <span className="text-[10px] text-gray-400">Connecting…</span>
+        </div>
+      )}
+      {state === 'error' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/80">
+          <Camera className="w-5 h-5 text-gray-500" />
+          <span className="text-[10px] text-gray-400">Stream unreachable — check NVR / proxy</span>
+          <button
+            type="button"
+            className="mt-1 text-[10px] px-2 py-0.5 rounded border border-teal-500/30 text-teal-400 hover:bg-teal-500/10"
+            onClick={() => { retryCountRef.current = 0; setState('loading'); setRetryKey(k => k + 1); }}
+          >Retry</button>
+        </div>
+      )}
+      <video
+        ref={videoRef}
+        className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
+        autoPlay muted playsInline
+        onCanPlay={() => {
+          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+          retryCountRef.current = 0;
+          setState('playing');
+        }}
+        onError={() => {
+          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+          retryCountRef.current += 1;
+          if (retryCountRef.current >= MAX_RETRIES) { setState('error'); return; }
+          setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 3000);
+        }}
+      />
+      {state === 'playing' && (
+        <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-400" />
+          </span>
+          <span className="text-[9px] font-semibold text-white/90 uppercase tracking-wide">Live</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Venue Camera Section ─────────────────────────────────────────────────────
 
 function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName: string }) {
@@ -704,6 +839,11 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
   const [newPort, setNewPort] = useState('');
   const [connUpdating, setConnUpdating] = useState(false);
   const [restartingCams, setRestartingCams] = useState<Set<string>>(new Set());
+  const [previewCams, setPreviewCams] = useState<Set<string>>(new Set());
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [camProxyUrl, setCamProxyUrl] = useState<string>('');
   const statusTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -728,9 +868,15 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
     if (!expanded) return;
     load();
     loadStatuses();
+    // Load venue's HTTPS camera proxy URL so previews can stream
+    const cached = venueSettingsService.getCamProxyUrl(venueId);
+    if (cached) setCamProxyUrl(cached);
+    venueSettingsService.loadSettingsFromCloud(venueId).then((s: any) => {
+      if (s?.camProxyUrl) setCamProxyUrl(s.camProxyUrl);
+    }).catch(() => { /* keep cached value */ });
     statusTimer.current = setInterval(loadStatuses, 60_000);
     return () => { if (statusTimer.current) clearInterval(statusTimer.current); };
-  }, [expanded, load, loadStatuses]);
+  }, [expanded, load, loadStatuses, venueId]);
 
   // Pre-fill the connection panel from first camera URL
   useEffect(() => {
@@ -784,6 +930,34 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
     } catch (e: any) {
       alert(`Failed to delete camera: ${e.message}`);
     }
+  };
+
+  const startRename = (cam: AdminCamera) => {
+    setRenamingId(cam.cameraId);
+    setRenameDraft(cam.name);
+  };
+
+  const saveRename = async (cam: AdminCamera) => {
+    const next = renameDraft.trim();
+    if (!next || next === cam.name) { setRenamingId(null); return; }
+    setRenameSaving(true);
+    try {
+      await adminService.updateCamera(cam.cameraId, venueId, { name: next });
+      setCameras(prev => prev.map(c => c.cameraId === cam.cameraId ? { ...c, name: next } : c));
+      setRenamingId(null);
+    } catch (e: any) {
+      alert(`Failed to rename camera: ${e.message}`);
+    } finally {
+      setRenameSaving(false);
+    }
+  };
+
+  const togglePreview = (cameraId: string) => {
+    setPreviewCams(prev => {
+      const next = new Set(prev);
+      if (next.has(cameraId)) next.delete(cameraId); else next.add(cameraId);
+      return next;
+    });
   };
 
   const handleRestart = async (cam: AdminCamera) => {
@@ -965,7 +1139,44 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                         {/* Name + status */}
                         <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                           <Wifi className={`w-4 h-4 flex-shrink-0 ${cam.enabled ? 'text-green-400' : 'text-gray-600'}`} />
-                          <span className="text-white font-medium">{cam.name}</span>
+                          {renamingId === cam.cameraId ? (
+                            <div className="flex items-center gap-1 flex-1 min-w-0">
+                              <input
+                                autoFocus
+                                value={renameDraft}
+                                onChange={e => setRenameDraft(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') saveRename(cam);
+                                  if (e.key === 'Escape') setRenamingId(null);
+                                }}
+                                className="flex-1 min-w-0 bg-black/40 border border-teal-500/40 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+                                placeholder="e.g. CH1 — Main Floor"
+                              />
+                              <button
+                                onClick={() => saveRename(cam)}
+                                disabled={renameSaving}
+                                className="p-1 rounded hover:bg-green-500/10 text-green-400 disabled:opacity-40"
+                                title="Save name"
+                              >
+                                {renameSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                              </button>
+                              <button
+                                onClick={() => setRenamingId(null)}
+                                className="p-1 rounded hover:bg-white/10 text-gray-400"
+                                title="Cancel"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => startRename(cam)}
+                              className="text-white font-medium hover:text-teal-400 transition-colors text-left"
+                              title="Click to rename"
+                            >
+                              {cam.name}
+                            </button>
+                          )}
                           <span className={`text-xs px-1.5 py-0.5 rounded ${cam.enabled ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-500'}`}>
                             {cam.enabled ? 'enabled' : 'disabled'}
                           </span>
@@ -1018,6 +1229,17 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                       {/* Action buttons */}
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <button
+                          onClick={() => togglePreview(cam.cameraId)}
+                          title={previewCams.has(cam.cameraId) ? 'Hide preview' : 'Show preview'}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            previewCams.has(cam.cameraId)
+                              ? 'bg-teal-500/20 text-teal-300 hover:bg-teal-500/30'
+                              : 'hover:bg-teal-500/10 text-gray-400 hover:text-teal-400'
+                          }`}
+                        >
+                          <Play className="w-4 h-4" />
+                        </button>
+                        <button
                           onClick={() => handleToggle(cam)}
                           className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
                             cam.enabled
@@ -1047,6 +1269,30 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                         </button>
                       </div>
                     </div>
+
+                    {/* Collapsible live preview */}
+                    <AnimatePresence>
+                      {previewCams.has(cam.cameraId) && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0, marginTop: 0 }}
+                          animate={{ height: 'auto', opacity: 1, marginTop: 12 }}
+                          exit={{ height: 0, opacity: 0, marginTop: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="overflow-hidden"
+                        >
+                          <CameraLivePreview
+                            label={cam.name}
+                            proxyBase={camProxyUrl}
+                            rtspUrl={cam.rtspUrl}
+                          />
+                          {!camProxyUrl && !cam.rtspUrl?.startsWith('https://') && (
+                            <div className="mt-2 text-[11px] text-amber-400/80">
+                              Venue's <code className="text-amber-300">camProxyUrl</code> isn't configured — set the HTTPS proxy in the customer app's Settings page to enable previews.
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 );
               })}
