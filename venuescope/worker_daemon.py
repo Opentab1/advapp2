@@ -137,6 +137,76 @@ def _compute_max_parallel() -> int:
         return 4
 
 
+# Track which cameras currently have a running auto-config thread, so we don't
+# double-trigger (each analyze_stream() can take ~15-30s + uses an NVR slot).
+_autoconfig_inflight: set = set()
+_autoconfig_lock = __import__("threading").Lock()
+
+
+def _autoconfig_camera_bg(venue_id: str, camera_id: str, rtsp_url: str) -> None:
+    """Background thread: run auto_bar_config.analyze_stream on a camera and
+    persist the result to DDB so the first job sees a usable config instead
+    of defaulting to ZERO drinks detected.
+    """
+    try:
+        from core.auto_bar_config import analyze_stream
+        from core.ddb_cameras import update_camera_bar_config_json
+        log.info(f"[layer1] Auto-configuring zones for {venue_id}/{camera_id} ...")
+        cfg = analyze_stream(rtsp_url)
+        if not cfg:
+            log.warning(f"[layer1] analyze_stream returned empty for {camera_id}")
+            return
+        update_camera_bar_config_json(venue_id, camera_id, json.dumps(cfg))
+        log.info(
+            f"[layer1] Saved auto-config for {venue_id}/{camera_id} "
+            f"(note: {cfg.get('auto_note', 'n/a')})"
+        )
+    except Exception as e:
+        log.warning(f"[layer1] auto-config thread failed for {camera_id}: {e}")
+    finally:
+        with _autoconfig_lock:
+            _autoconfig_inflight.discard((venue_id, camera_id))
+
+
+def _autoconfig_pending_cameras() -> None:
+    """Find enabled drink_count cameras with no bar_config_json and spawn a
+    background thread to auto-detect zones for each. Runs on a slow cadence
+    (~60s) from the main loop — the actual ffmpeg/cv2 work happens off-thread.
+    """
+    try:
+        from core.ddb_cameras import list_cameras_ddb
+        cams = list_cameras_ddb()
+    except Exception as e:
+        log.debug(f"[layer1] list_cameras_ddb failed, skipping: {e}")
+        return
+
+    import threading as _threading
+    for c in cams:
+        if not c.get("enabled", True):
+            continue
+        mode = c.get("mode", "")
+        extra = c.get("extra_modes", []) or []
+        if mode != "drink_count" and "drink_count" not in extra:
+            continue
+        if (c.get("bar_config_json") or "").strip():
+            continue   # already configured (manual or prior auto)
+        rtsp = (c.get("rtsp_url") or "").strip()
+        venue_id = c.get("venue", "")
+        camera_id = c.get("camera_id", "")
+        if not rtsp or not venue_id or not camera_id:
+            continue
+        key = (venue_id, camera_id)
+        with _autoconfig_lock:
+            if key in _autoconfig_inflight:
+                continue
+            _autoconfig_inflight.add(key)
+        t = _threading.Thread(
+            target=_autoconfig_camera_bg, args=(venue_id, camera_id, rtsp),
+            name=f"autocfg-{camera_id}", daemon=True,
+        )
+        t.start()
+
+
 def _reap_stale_jobs():
     """Mark jobs stuck in 'running' for >2 hours as failed."""
     cutoff = time.time() - STALE_JOB_SECONDS
@@ -874,6 +944,14 @@ def main():
             # Periodic stale-job reaper (every 10 iterations ≈ every 20 seconds)
             if _poll_count % 10 == 0:
                 _reap_stale_jobs()
+
+            # Layer 1 — proactive zone auto-config for any enabled drink_count
+            # camera that still has no bar_config_json. Runs on a slow cadence
+            # (~every 60s); the heavy ffmpeg+Hough work happens off-thread so
+            # the main loop isn't blocked. Once persisted to DDB, subsequent
+            # jobs start with a real config instead of the "ZERO drinks" default.
+            if _poll_count % 30 == 0:
+                _autoconfig_pending_cameras()
 
             # Orphaned-camera reaper (every 15 iterations ≈ every 30 seconds).
             # Kills continuous child processes whose camera has been deleted or
