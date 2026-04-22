@@ -869,6 +869,60 @@ def main():
             if _poll_count % 10 == 0:
                 _reap_stale_jobs()
 
+            # Orphaned-camera reaper (every 15 iterations ≈ every 30 seconds).
+            # Kills continuous child processes whose camera has been deleted or
+            # disabled in the admin portal. Without this, deleting a camera
+            # leaves the existing YOLO subprocess running forever, still
+            # pushing to DDB under the old camera_id — and re-adding the
+            # camera creates a duplicate process pushing under the new ID.
+            if _poll_count % 15 == 0 and _active_camera:
+                try:
+                    from core.ddb_cameras import list_cameras_ddb
+                    _venue_id = os.environ.get("VENUESCOPE_VENUE_ID", "")
+                    if _venue_id:
+                        _live_cams = list_cameras_ddb(_venue_id)
+                        _enabled_ids = {
+                            c.get("camera_id", "")
+                            for c in _live_cams
+                            if c.get("enabled", True)
+                        }
+                        # Only run the reaper when we got a real camera list back.
+                        # An empty result can mean DDB is unreachable (creds, network,
+                        # rate limit) — killing every active job in that case would
+                        # be a self-inflicted outage. Require at least one camera
+                        # before treating any job as orphaned.
+                        if _enabled_ids:
+                            for _jid, _cid in list(_active_camera.items()):
+                                if _cid and _cid not in _enabled_ids:
+                                    _proc = _active.get(_jid)
+                                    if _proc and _proc.is_alive():
+                                        log.warning(
+                                            f"Camera {_cid} was deleted/disabled — "
+                                            f"killing orphaned job {_jid} (pid={_proc.pid})"
+                                        )
+                                        _proc.kill()
+                                        _proc.join(timeout=5)
+                                    # Clean up bookkeeping regardless of is_alive
+                                    _active.pop(_jid, None)
+                                    _active_start.pop(_jid, None)
+                                    _active_continuous.discard(_jid)
+                                    _active_venue.pop(_jid, None)
+                                    _active_camera.pop(_jid, None)
+                                    # _nvr_active_count is rebuilt each scheduling
+                                    # pass from _active_nvr, so popping here is
+                                    # sufficient — no separate counter to adjust.
+                                    _active_nvr.pop(_jid, None)
+                                    try:
+                                        from core.database import _raw_update
+                                        _raw_update(
+                                            _jid, status="failed",
+                                            error_msg="Camera removed from registry",
+                                        )
+                                    except Exception:
+                                        pass
+                except Exception as _orphan_exc:
+                    log.debug(f"Orphaned-camera reaper error (non-fatal): {_orphan_exc}")
+
             _now = time.time()
 
             # 1. Reap finished processes; kill any that exceed JOB_TIMEOUT
