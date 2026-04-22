@@ -35,6 +35,8 @@ import {
 } from 'lucide-react';
 import adminService, { AdminCamera, adminFetch } from '../../services/admin.service';
 import venueSettingsService from '../../services/venue-settings.service';
+import type { Camera as CameraConfig } from '../../services/camera.service';
+import { ZoneEditorModal, TableZoneEditorModal } from '../VenueScope';
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 
 type CameraMode = 'drink_count' | 'bottle_count' | 'people_count' | 'table_turns' | 'table_service' | 'staff_activity' | 'after_hours';
@@ -52,6 +54,26 @@ const MODE_LABELS: Record<CameraMode, string> = {
 const ALL_MODES: CameraMode[] = [
   'drink_count', 'bottle_count', 'people_count', 'table_turns', 'table_service', 'staff_activity', 'after_hours',
 ];
+
+// Convert the admin's AdminCamera view to the Camera shape the imported
+// ZoneEditorModal / TableZoneEditorModal expect (they come from VenueScope).
+function adminCameraToCameraConfig(c: AdminCamera, venueId: string): CameraConfig {
+  const modes = (c.modes || '').split(',').map(m => m.trim()).filter(Boolean) as CameraConfig['modes'];
+  return {
+    venueId,
+    cameraId:        c.cameraId,
+    name:            c.name,
+    rtspUrl:         c.rtspUrl,
+    modes:           modes.length ? modes : ['drink_count'],
+    enabled:         c.enabled,
+    modelProfile:    (c.modelProfile as CameraConfig['modelProfile']) || 'balanced',
+    segmentSeconds:  c.segmentSeconds,
+    segmentInterval: c.segmentInterval,
+    createdAt:       0,
+    notes:           c.notes,
+    barConfigJson:   c.barConfigJson,
+  };
+}
 
 // Direct DDB client for reading live status records
 const _ddbRegion = import.meta.env.VITE_AWS_REGION || 'us-east-2';
@@ -834,6 +856,8 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
   const [restartingCams, setRestartingCams] = useState<Set<string>>(new Set());
   const [previewAll, setPreviewAll] = useState(false);
   const [camProxy, setCamProxy] = useState<{ ip: string; port: number } | null>(null);
+  const [zoneEditorCam, setZoneEditorCam] = useState<AdminCamera | null>(null);
+  const [tableZoneEditorCam, setTableZoneEditorCam] = useState<AdminCamera | null>(null);
   const [proxyPortInput, setProxyPortInput] = useState('');
   const [proxyUpdating, setProxyUpdating] = useState(false);
   const [proxyMsg, setProxyMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -1344,6 +1368,26 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                             <RotateCcw className={`w-4 h-4 ${restartingCams.has(cam.cameraId) ? 'animate-spin' : ''}`} />
                           </button>
                         )}
+                        {/* Zone editor — opens the bar zone drawing modal (drink_count cameras) */}
+                        {(cam.modes || '').split(',').some(m => m.trim() === 'drink_count') && (
+                          <button
+                            onClick={() => setZoneEditorCam(cam)}
+                            title="Draw bar zones + bar-front line"
+                            className="p-1.5 rounded-lg hover:bg-purple-500/10 text-gray-400 hover:text-purple-400 transition-colors"
+                          >
+                            <Search className="w-4 h-4" />
+                          </button>
+                        )}
+                        {/* Table zones — opens the table polygon modal (table_turns / table_service cameras) */}
+                        {(cam.modes || '').split(',').some(m => ['table_turns','table_service'].includes(m.trim())) && (
+                          <button
+                            onClick={() => setTableZoneEditorCam(cam)}
+                            title="Draw per-table polygons"
+                            className="p-1.5 rounded-lg hover:bg-blue-500/10 text-gray-400 hover:text-blue-400 transition-colors"
+                          >
+                            <Network className="w-4 h-4" />
+                          </button>
+                        )}
                         <button onClick={() => setEditCamera(cam)}
                           className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors">
                           <Edit2 className="w-4 h-4" />
@@ -1409,6 +1453,21 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
         {editCamera && (
           <CameraModal venueId={venueId} camera={editCamera}
             onClose={() => setEditCamera(null)} onSaved={load} />
+        )}
+        {/* Zone editor — drawn on the sub-stream live feed (see VenueScope.tsx). */}
+        {zoneEditorCam && (
+          <ZoneEditorModal
+            camera={adminCameraToCameraConfig(zoneEditorCam, venueId)}
+            proxyBase={camProxyUrl}
+            onClose={() => { setZoneEditorCam(null); load(); }}
+          />
+        )}
+        {tableZoneEditorCam && (
+          <TableZoneEditorModal
+            camera={adminCameraToCameraConfig(tableZoneEditorCam, venueId)}
+            proxyBase={camProxyUrl}
+            onClose={() => { setTableZoneEditorCam(null); load(); }}
+          />
         )}
       </AnimatePresence>
     </div>

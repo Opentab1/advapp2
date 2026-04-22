@@ -14,7 +14,7 @@ import {
   Camera, Loader2, X, Download,
   ChevronDown, ChevronUp, FileText,
   Activity, Users, Zap, DollarSign, Calendar, TrendingUp,
-  CreditCard, Edit2, Crosshair, Trash2, Check,
+  CreditCard, Crosshair, Trash2, Check,
   ExternalLink, GlassWater, Filter,
 } from 'lucide-react';
 import authService from '../services/auth.service';
@@ -150,7 +150,7 @@ function _ptInRect(pt: [number,number], poly: [number,number][]): boolean {
          pt[1] >= Math.min(...ys) && pt[1] <= Math.max(...ys);
 }
 
-function ZoneEditorModal({
+export function ZoneEditorModal({
   camera,
   proxyBase,
   onClose,
@@ -901,7 +901,7 @@ type TableDragTarget =
   | { kind: 'zone';   zoneIdx: number; startPt: [number, number]; startPolygon: [number, number][] }
   | null;
 
-function TableZoneEditorModal({
+export function TableZoneEditorModal({
   camera,
   proxyBase,
   onClose,
@@ -1646,13 +1646,14 @@ function snapshotUrl(label: string, proxyBase: string, rtspUrl?: string | null):
 }
 
 function CameraLiveView({
-  label, proxyBase, rtspUrl, barConfig, tableZones, onConfigureZones, cameraModes,
+  label, proxyBase, rtspUrl, barConfig, tableZones,
 }: {
   label: string;
   proxyBase: string;
   rtspUrl?: string | null;
   barConfig?: BarConfig | null;
   tableZones?: TableZone[] | null;
+  // Editor is now admin-only (Layer 4) — these props are no longer consumed.
   onConfigureZones?: () => void;
   cameraModes?: string[];
 }) {
@@ -1705,13 +1706,6 @@ function CameraLiveView({
       {/* Zone overlays — show whenever preview is ready */}
       {barConfig && state === 'ready' && <ZoneOverlay config={barConfig} />}
       {tableZones && tableZones.length > 0 && state === 'ready' && <TableZoneOverlay zones={tableZones} />}
-      {!barConfig && state === 'ready' && onConfigureZones && (!cameraModes || cameraModes.includes('drink_count')) && (
-        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-          <div className="px-2 py-1 rounded bg-black/50 text-[9px] text-amber-400/80">
-            No bar zones configured
-          </div>
-        </div>
-      )}
       {state === 'ready' && (
         <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm">
           <span className="relative flex h-1.5 w-1.5">
@@ -1721,18 +1715,8 @@ function CameraLiveView({
           <span className="text-[9px] font-semibold text-white/90 uppercase tracking-wide">Live</span>
         </div>
       )}
-      {/* Configure zones button */}
-      {onConfigureZones && (
-        <button
-          onClick={e => { e.stopPropagation(); onConfigureZones(); }}
-          className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm text-[9px] text-white/60 hover:text-white transition-colors"
-        >
-          <Edit2 className="w-2.5 h-2.5" />
-          {cameraModes?.includes('table_turns') && !cameraModes?.includes('drink_count')
-            ? (tableZones && tableZones.length > 0 ? `${tableZones.length} Table${tableZones.length !== 1 ? 's' : ''} ✓` : 'Set Up Tables')
-            : (barConfig ? 'Edit Zones' : 'Configure Zones')}
-        </button>
-      )}
+      {/* Configure Zones / Set Up Tables were moved to the admin Cameras page
+          (Layer 4). Consumer page keeps the ZoneOverlay visual only. */}
     </div>
   );
 }
