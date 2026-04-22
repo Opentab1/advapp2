@@ -787,6 +787,12 @@ function CameraLivePreview({ label, proxyBase, rtspUrl }: {
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/80">
           <Camera className="w-5 h-5 text-gray-500" />
           <span className="text-[10px] text-gray-400">Stream unreachable — check NVR / proxy</span>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[9px] text-teal-400/70 hover:text-teal-300 font-mono break-all max-w-full px-4"
+          >{url}</a>
           <button
             type="button"
             className="mt-1 text-[10px] px-2 py-0.5 rounded border border-teal-500/30 text-teal-400 hover:bg-teal-500/10"
