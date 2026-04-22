@@ -36,7 +36,6 @@ import {
 import adminService, { AdminCamera, adminFetch } from '../../services/admin.service';
 import venueSettingsService from '../../services/venue-settings.service';
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
-import Hls from 'hls.js';
 
 type CameraMode = 'drink_count' | 'bottle_count' | 'people_count' | 'table_turns' | 'table_service' | 'staff_activity' | 'after_hours';
 
@@ -705,34 +704,31 @@ function channelFromSources(label: string, rtspUrl?: string | null): string | nu
   return m ? `ch${m[1]}` : null;
 }
 
-function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null): string | null {
-  if (proxyBase) {
-    const ch = channelFromSources(label, rtspUrl);
-    // Use sub-stream (/1/ = ~704p, low bitrate) instead of main (/0/ = 4K, very slow first-frame).
-    // Chrome needs to download ~10× less data before canplay fires: ~7s vs ~77s for main stream.
-    if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/1/livetop.mp4`;
-  }
-  if (rtspUrl?.startsWith('https://')) return rtspUrl;
-  return null;
+// JPEG snapshot URL — served by the droplet's webhook server using a persistent
+// cv2.VideoCapture per channel. First hit: ~500ms. Steady-state: ~100ms from cache.
+// Used for preview tiles where "live video" latency is unacceptable.
+function snapshotUrl(label: string, proxyBase: string, rtspUrl?: string | null): string | null {
+  if (!proxyBase) return null;
+  const ch = channelFromSources(label, rtspUrl);
+  if (!ch) return null;
+  // proxyBase is like https://host.sslip.io/cam — strip "/cam" to get the base.
+  const base = proxyBase.replace(/\/cam\/?$/, '').replace(/\/$/, '');
+  return `${base}/snapshot/${ch}.jpg`;
 }
 
 function CameraLivePreview({ label, proxyBase, rtspUrl }: {
   label: string; proxyBase: string; rtspUrl?: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const retryCountRef = useRef<number>(0);
-  const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
-  const [retryKey, setRetryKey] = useState(0);
-  // Only stream when the tile is near/in the viewport — keeps the NVR from being hammered
-  // by 16 simultaneous HLS sessions when "Expand All" is toggled on.
+  const imgRef = useRef<HTMLImageElement>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [visible, setVisible] = useState(false);
-  const MAX_RETRIES = 3;
-  const url = liveStreamUrl(label, proxyBase, rtspUrl);
+  const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [tick, setTick] = useState(0);   // cache-buster for img src
+  const errorCountRef = useRef(0);
+  const baseUrl = snapshotUrl(label, proxyBase, rtspUrl);
 
-  // Observe container visibility (margin so stream warms up just before scrolling into view)
+  // Observe visibility so off-screen tiles don't poll
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -744,66 +740,30 @@ function CameraLivePreview({ label, proxyBase, rtspUrl }: {
     return () => io.disconnect();
   }, []);
 
+  // Drive refresh cadence + state when visible
   useEffect(() => {
-    if (!url || !videoRef.current) return;
-    const v = videoRef.current;
-
-    // Tile scrolled away → tear the stream down so the NVR can serve others.
-    if (!visible) {
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      v.pause(); v.src = ''; v.load();
+    if (refreshTimerRef.current) { clearInterval(refreshTimerRef.current); refreshTimerRef.current = null; }
+    if (!visible || !baseUrl) {
       setState('idle');
       return;
     }
-
-    setState('loading');
-    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-
-    // Fail-fast timeout: 12s covers the NVR's first-byte + moov + first fragment.
-    timerRef.current = setTimeout(() => {
-      setState(prev => {
-        if (prev !== 'loading') return prev;
-        retryCountRef.current += 1;
-        if (retryCountRef.current >= MAX_RETRIES) return 'error';
-        setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 2000);
-        return 'loading';
-      });
-    }, 12_000);
-
-    const handleError = () => {
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      retryCountRef.current += 1;
-      if (retryCountRef.current >= MAX_RETRIES) { setState('error'); return; }
-      setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 2000);
-    };
-
-    if (url.includes('.m3u8') && Hls.isSupported()) {
-      const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
-      hlsRef.current = hls;
-      hls.loadSource(url); hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
-      hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) handleError(); });
-    } else {
-      v.src = url; v.load(); v.play().catch(() => {});
-    }
-
+    setState(prev => (prev === 'ready' ? 'ready' : 'loading'));
+    setTick(t => t + 1);
+    refreshTimerRef.current = setInterval(() => setTick(t => t + 1), 1500);
     return () => {
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-      v.src = '';
+      if (refreshTimerRef.current) { clearInterval(refreshTimerRef.current); refreshTimerRef.current = null; }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, retryKey, visible]);
+  }, [visible, baseUrl]);
 
-  if (!url) {
+  if (!baseUrl) {
     return (
       <div className="relative w-full aspect-video rounded-lg bg-black/60 flex items-center justify-center text-xs text-gray-500 px-4 text-center">
-        No HTTPS proxy or direct HTTPS stream configured — can't preview.
+        Camera proxy not configured — can't preview.
       </div>
     );
   }
+
+  const src = `${baseUrl}?t=${tick}`;
 
   return (
     <div ref={containerRef} className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
@@ -816,43 +776,34 @@ function CameraLivePreview({ label, proxyBase, rtspUrl }: {
       {state === 'loading' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
           <Loader2 className="w-5 h-5 text-teal-400 animate-spin" />
-          <span className="text-[10px] text-gray-400">Connecting…</span>
+          <span className="text-[10px] text-gray-400">Loading camera…</span>
         </div>
       )}
       {state === 'error' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/80">
           <Camera className="w-5 h-5 text-gray-500" />
-          <span className="text-[10px] text-gray-400">Stream unreachable — check NVR / proxy</span>
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[9px] text-teal-400/70 hover:text-teal-300 font-mono break-all max-w-full px-4"
-          >{url}</a>
+          <span className="text-[10px] text-gray-400">Preview unavailable — check NVR / proxy</span>
           <button
             type="button"
             className="mt-1 text-[10px] px-2 py-0.5 rounded border border-teal-500/30 text-teal-400 hover:bg-teal-500/10"
-            onClick={() => { retryCountRef.current = 0; setState('loading'); setRetryKey(k => k + 1); }}
+            onClick={() => { errorCountRef.current = 0; setState('loading'); setTick(t => t + 1); }}
           >Retry</button>
         </div>
       )}
-      <video
-        ref={videoRef}
-        className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
-        autoPlay muted playsInline preload="auto"
-        onCanPlay={() => {
-          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-          retryCountRef.current = 0;
-          setState('playing');
-        }}
-        onError={() => {
-          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-          retryCountRef.current += 1;
-          if (retryCountRef.current >= MAX_RETRIES) { setState('error'); return; }
-          setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 1500);
-        }}
-      />
-      {state === 'playing' && (
+      {visible && (
+        <img
+          ref={imgRef}
+          src={src}
+          alt={label}
+          className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'ready' ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={() => { errorCountRef.current = 0; setState('ready'); }}
+          onError={() => {
+            errorCountRef.current += 1;
+            if (errorCountRef.current >= 4) setState('error');
+          }}
+        />
+      )}
+      {state === 'ready' && (
         <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm">
           <span className="relative flex h-1.5 w-1.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />

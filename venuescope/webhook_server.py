@@ -3,7 +3,7 @@ VenueScope — Webhook server (port 8502).
 Handles Stripe events, venue Tailscale callbacks, and bar calibration.
 """
 import os, sys, json, logging, tempfile, threading, uuid, time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -41,6 +41,137 @@ DROPLET_DIR  = os.environ.get("VENUESCOPE_DEPLOY_DIR", "/opt/venuescope")
 #             "message": str, "result": dict|None, "error": str|None} }
 _calib_jobs: dict = {}
 _calib_lock  = threading.Lock()
+
+# ── Camera snapshot cache ─────────────────────────────────────────────────────
+# { channel_int: (timestamp: float, jpeg_bytes: bytes) }
+# A background refresher keeps recently-accessed channels perpetually warm so
+# the browser gets <100ms responses instead of 2-8s ffmpeg cold-starts.
+_snap_cache:    dict = {}
+_snap_lock      = threading.Lock()
+_snap_inflight: set  = set()             # channels currently being fetched
+_snap_last_req: dict = {}                # channel -> last request timestamp
+SNAP_TTL_SEC      = 2.5                  # how long a cache entry is "fresh"
+SNAP_WARM_WINDOW  = 90.0                 # keep refreshing a channel for N seconds after last request
+SNAP_NVR_HOST     = os.environ.get("VENUESCOPE_NVR_HOST", "108.191.193.107:58024")
+SNAP_TIMEOUT_SEC  = 6.0                  # ffmpeg wall-clock budget
+
+
+# Persistent OpenCV captures per channel — avoids ffmpeg's 2-8s cold-start for
+# every snapshot. { channel: cv2.VideoCapture }
+_snap_caps: dict   = {}
+_snap_caps_lock    = threading.Lock()
+
+
+def _get_or_open_capture(channel: int):
+    """Return a long-lived cv2.VideoCapture for the given channel (lazy-open).
+    Returns None on failure. cv2 is imported lazily so the webhook starts fast.
+    """
+    with _snap_caps_lock:
+        cap = _snap_caps.get(channel)
+        if cap is not None and cap.isOpened():
+            return cap
+
+    try:
+        import cv2
+    except Exception as e:
+        log.warning("cv2 import failed: %s", e)
+        return None
+
+    url = f"http://{SNAP_NVR_HOST}/hls/live/ch{channel}/1/livetop.mp4"
+    try:
+        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+        # Smallest possible internal buffer so reads return freshest frame
+        try: cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception: pass
+        if not cap.isOpened():
+            return None
+        with _snap_caps_lock:
+            old = _snap_caps.get(channel)
+            if old is not None:
+                try: old.release()
+                except Exception: pass
+            _snap_caps[channel] = cap
+        return cap
+    except Exception as e:
+        log.warning("open capture ch%d: %s", channel, e)
+        return None
+
+
+def _close_capture(channel: int):
+    with _snap_caps_lock:
+        cap = _snap_caps.pop(channel, None)
+    if cap is not None:
+        try: cap.release()
+        except Exception: pass
+
+
+def _fetch_snapshot_jpeg(channel: int) -> bytes:
+    """Grab one frame via persistent OpenCV capture, encode as JPEG.
+    Returns b'' on failure (caller keeps serving stale cache).
+    """
+    try:
+        import cv2
+    except Exception:
+        return b""
+
+    cap = _get_or_open_capture(channel)
+    if cap is None:
+        return b""
+
+    # Drain any stale buffered frames, keep only the latest.
+    ok, frame = False, None
+    for _ in range(3):
+        ok, frame = cap.read()
+        if not ok:
+            break
+    if not ok or frame is None:
+        _close_capture(channel)  # reconnect on next cycle
+        return b""
+
+    try:
+        ok2, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        if not ok2:
+            return b""
+        return bytes(buf)
+    except Exception as e:
+        log.warning("jpeg encode ch%d: %s", channel, e)
+        return b""
+
+
+def _snap_refresher_worker():
+    """Background thread: keep the JPEG cache warm for recently-requested channels.
+
+    Uses persistent OpenCV captures (one TCP connection per channel, opened
+    once, reused forever) so refreshes are ~100ms each instead of 2-8s.
+    """
+    while True:
+        try:
+            now = time.time()
+            with _snap_lock:
+                active_channels = sorted(
+                    ch for ch, t in list(_snap_last_req.items())
+                    if (now - t) < SNAP_WARM_WINDOW
+                )
+            # Close captures for channels that went idle (free NVR bandwidth)
+            with _snap_caps_lock:
+                for ch in list(_snap_caps.keys()):
+                    if ch not in active_channels:
+                        try: _snap_caps[ch].release()
+                        except Exception: pass
+                        _snap_caps.pop(ch, None)
+
+            if not active_channels:
+                time.sleep(1.0)
+                continue
+            for ch in active_channels:
+                jpeg = _fetch_snapshot_jpeg(ch)
+                if jpeg:
+                    with _snap_lock:
+                        _snap_cache[ch] = (time.time(), jpeg)
+            time.sleep(0.2)  # ~5fps ceiling per channel when many active
+        except Exception as e:
+            log.warning("snap refresher: %s", e)
+            time.sleep(2.0)
 
 
 def _set_job(job_id: str, **kwargs):
@@ -222,6 +353,16 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self._cors()
             self.end_headers()
             self.wfile.write(b"ok")
+            return
+
+        # Public JPEG snapshots for camera preview tiles:
+        #   GET /snapshot/chN.jpg  (no auth — used by the UI)
+        # Backed by ffmpeg pulling a single frame from the NVR's sub-stream.
+        # Cached per-channel for 2s so we don't DDoS the NVR when 16 tiles poll.
+        import re as _re
+        m = _re.match(r"^/snapshot/ch(\d+)\.jpg$", parsed.path)
+        if m:
+            self._handle_snapshot(int(m.group(1)))
             return
 
         # Calibration status poll: GET /calibrate/status?job_id=...
@@ -898,6 +1039,58 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self._json(500, {"ok": False, "output": output})
 
 
+    # ── Camera JPEG snapshot (public, cached) ─────────────────────────────────
+    def _handle_snapshot(self, channel: int):
+        """GET /snapshot/chN.jpg — returns a JPEG frame from the NVR's sub-stream.
+
+        The cache is kept warm by a background refresher thread (started at boot)
+        so the typical response is <100ms served from memory. On a cold miss
+        we block briefly while the refresher picks up the channel.
+        """
+        if not (1 <= channel <= 64):
+            self.send_response(400)
+            self._cors()
+            self.end_headers()
+            return
+
+        now = time.time()
+        # Mark this channel as "active" so the refresher keeps it warm
+        with _snap_lock:
+            _snap_last_req[channel] = now
+            cached = _snap_cache.get(channel)
+
+        if cached:
+            self._send_jpeg(cached[1])
+            return
+
+        # Cold miss — the refresher just got the signal. Wait up to ~6s for the
+        # first frame; otherwise fetch synchronously as a fallback.
+        for _ in range(60):
+            time.sleep(0.1)
+            with _snap_lock:
+                if channel in _snap_cache:
+                    self._send_jpeg(_snap_cache[channel][1])
+                    return
+
+        jpeg = _fetch_snapshot_jpeg(channel)
+        if jpeg:
+            with _snap_lock:
+                _snap_cache[channel] = (time.time(), jpeg)
+            self._send_jpeg(jpeg)
+        else:
+            self.send_response(503)
+            self._cors()
+            self.end_headers()
+
+    def _send_jpeg(self, data: bytes):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=1")
+        self._cors()
+        self.end_headers()
+        self.wfile.write(data)
+
     # ── HLS camera proxy config (Caddyfile upstream) ─────────────────────────
     # Router/NVR port-forwarding rules drift over time. These endpoints let
     # the admin portal read/update the Caddy upstream without an SSH session.
@@ -1003,6 +1196,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", PORT), WebhookHandler)
+    # Start the background snapshot refresher (keeps the JPEG cache warm).
+    threading.Thread(target=_snap_refresher_worker, name="snap-refresher", daemon=True).start()
+    log.info("Snapshot refresher thread started")
+
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), WebhookHandler)
     log.info("Webhook server listening on port %d", PORT)
     server.serve_forever()

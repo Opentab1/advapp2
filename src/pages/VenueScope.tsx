@@ -1633,20 +1633,16 @@ function channelFromSources(label: string, rtspUrl?: string | null): string | nu
   return m ? `ch${m[1]}` : null;
 }
 
-function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null): string | null {
-  // Primary path: route through the HTTPS Caddy proxy on the droplet (sslip.io cert = trusted on
-  // all devices, no per-device cert trust required). proxyBase = venue's camProxyUrl setting,
-  // e.g. https://137-184-61-178.sslip.io/cam
-  if (proxyBase) {
-    const ch = channelFromSources(label, rtspUrl);
-    // Sub-stream (/1/) = ~704p, low bitrate. Chrome fires `canplay` ~10× faster than the 4K
-    // main stream (/0/): ~7s vs ~77s. Tile resolution is small enough that sub-stream looks fine.
-    if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/1/livetop.mp4`;
-  }
-  // Fallback: rtspUrl is already HTTPS (e.g. NVR with a proper CA cert) — use directly.
-  if (rtspUrl?.startsWith('https://')) return rtspUrl;
-  // No usable proxy and no HTTPS rtspUrl — can't stream (HTTP on HTTPS page = mixed content).
-  return null;
+// JPEG snapshot URL — served by the droplet's webhook using a persistent
+// cv2.VideoCapture per channel. First hit: ~500ms, steady-state: ~100ms.
+// Massively faster than HLS fMP4 (which takes 60-80s to canplay on this NVR)
+// at the cost of being snapshot-on-refresh rather than true live video.
+function snapshotUrl(label: string, proxyBase: string, rtspUrl?: string | null): string | null {
+  if (!proxyBase) return null;
+  const ch = channelFromSources(label, rtspUrl);
+  if (!ch) return null;
+  const base = proxyBase.replace(/\/cam\/?$/, '').replace(/\/$/, '');
+  return `${base}/snapshot/${ch}.jpg`;
 }
 
 function CameraLiveView({
@@ -1660,235 +1656,63 @@ function CameraLiveView({
   onConfigureZones?: () => void;
   cameraModes?: string[];
 }) {
-  const videoRef      = React.useRef<HTMLVideoElement>(null);
-  const hlsRef        = React.useRef<Hls | null>(null);
-  const timerRef      = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const watchdogRef   = React.useRef<ReturnType<typeof setInterval> | null>(null);
-  const reconnectRef  = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastTimeRef   = React.useRef<number>(-1);
-  const stallCountRef = React.useRef<number>(0);
-  const [state, setState]   = React.useState<'loading' | 'playing' | 'reconnecting' | 'error' | 'mixed_content'>('loading');
-  const [errorMsg, setErrorMsg] = React.useState('Stream unavailable');
-  const [retryKey, setRetryKey] = React.useState(0);
-  // Stop retrying after N consecutive failures so the tile doesn't loop forever
-  // when the NVR/proxy is genuinely down. Reset on successful `playing` event.
-  const retryCountRef = React.useRef<number>(0);
-  const MAX_RETRIES   = 3;
-  const url = liveStreamUrl(label, proxyBase, rtspUrl);
-
-  // Detect if this is an HTTPS-upgraded HTTP stream — failure likely means untrusted self-signed cert.
-
+  const [state, setState] = React.useState<'loading' | 'ready' | 'error'>('loading');
+  const [tick, setTick]   = React.useState(0);
+  const errorCountRef     = React.useRef(0);
+  const baseUrl           = snapshotUrl(label, proxyBase, rtspUrl);
 
   React.useEffect(() => {
-    if (!url || !videoRef.current) return;
+    if (!baseUrl) return;
+    // Kick a first fetch immediately and then refresh every 1.5s
+    setTick(t => t + 1);
+    const id = setInterval(() => setTick(t => t + 1), 1500);
+    return () => clearInterval(id);
+  }, [baseUrl]);
 
-    setState('loading');
-    setErrorMsg('Stream unavailable');
+  if (!baseUrl) return null;
 
-    // Detect plain mixed-content (HTTP stream on HTTPS page, no upgrade applied)
-    const isHttps = window.location.protocol === 'https:';
-    if (isHttps && url.startsWith('http://')) {
-      setState('mixed_content');
-      return;
-    }
-
-    const v = videoRef.current;
-
-    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-
-    // 12-second timeout → auto-reconnect (up to MAX_RETRIES times)
-    timerRef.current = setTimeout(() => {
-      setState(prev => {
-        if (prev !== 'loading') return prev;
-        retryCountRef.current += 1;
-        if (retryCountRef.current >= MAX_RETRIES) {
-          setErrorMsg('Stream unreachable — check NVR / proxy');
-          return 'error';
-        }
-        if (reconnectRef.current) clearTimeout(reconnectRef.current);
-        reconnectRef.current = setTimeout(() => {
-          setState('loading');
-          setRetryKey(k => k + 1);
-        }, 8_000);
-        return 'reconnecting';
-      });
-    }, 12_000);
-
-    lastTimeRef.current   = -1;
-    stallCountRef.current = 0;
-
-    const stopWatchdog = () => {
-      if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
-    };
-
-    const cleanup = () => {
-      if (timerRef.current)    { clearTimeout(timerRef.current);    timerRef.current    = null; }
-      if (reconnectRef.current){ clearTimeout(reconnectRef.current); reconnectRef.current = null; }
-      stopWatchdog();
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-      v.src = '';
-    };
-
-    const handleError = () => {
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      retryCountRef.current += 1;
-      if (retryCountRef.current >= MAX_RETRIES) {
-        setErrorMsg('Stream unreachable — check NVR / proxy');
-        setState('error');
-        return;
-      }
-      // Auto-reconnect — show "Reconnecting" and retry after 8s
-      setState('reconnecting');
-      if (reconnectRef.current) clearTimeout(reconnectRef.current);
-      reconnectRef.current = setTimeout(() => {
-        setState('loading');
-        setRetryKey(k => k + 1);
-      }, 8_000);
-    };
-
-    // Silent reconnect — reload src without showing error UI
-    const silentReconnect = () => {
-      stopWatchdog();
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-      lastTimeRef.current   = -1;
-      stallCountRef.current = 0;
-      if (url.includes('.m3u8') && Hls.isSupported()) {
-        const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
-        hlsRef.current = hls;
-        hls.loadSource(url);
-        hls.attachMedia(v);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
-        hls.on(Hls.Events.ERROR, (_evt, data) => { if (data.fatal) handleError(); });
-      } else {
-        v.src = '';
-        v.load();
-        v.src = url;
-        v.load();
-        v.play().catch(() => {});
-      }
-      startWatchdog();
-    };
-
-    // Watchdog: fires every 5s. If currentTime hasn't advanced for 2 consecutive
-    // ticks (10s) while the video is supposed to be playing → silent reconnect.
-    const startWatchdog = () => {
-      stopWatchdog();
-      watchdogRef.current = setInterval(() => {
-        const vid = videoRef.current;
-        if (!vid || vid.paused || vid.ended) return;
-        const t = vid.currentTime;
-        if (t === lastTimeRef.current) {
-          stallCountRef.current += 1;
-          if (stallCountRef.current >= 2) {
-            stallCountRef.current = 0;
-            silentReconnect();
-          }
-        } else {
-          lastTimeRef.current   = t;
-          stallCountRef.current = 0;
-        }
-      }, 5_000);
-    };
-
-    if (url.includes('.m3u8') && Hls.isSupported()) {
-      const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
-      hlsRef.current = hls;
-      hls.loadSource(url);
-      hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
-      hls.on(Hls.Events.ERROR, (_evt, data) => { if (data.fatal) handleError(); });
-    } else {
-      v.src = url;
-      v.load();
-      v.play().catch(() => {});
-    }
-
-    // Start watchdog once video begins playing
-    const onPlaying = () => startWatchdog();
-    v.addEventListener('playing', onPlaying);
-
-    return () => {
-      v.removeEventListener('playing', onPlaying);
-      cleanup();
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, retryKey]);
-
-  if (!url) return null;
+  const src = `${baseUrl}?t=${tick}`;
 
   return (
     <div className="relative w-full overflow-hidden rounded-xl bg-black aspect-video">
       {state === 'loading' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
           <Loader2 className="w-5 h-5 text-teal animate-spin" />
-          <span className="text-[10px] text-text-muted">Connecting to camera…</span>
+          <span className="text-[10px] text-text-muted">Loading camera…</span>
         </div>
       )}
-
-      {/* Reconnecting (any error — auto-retries every 8s) */}
-      {state === 'reconnecting' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-            <span className="text-[10px] text-amber-300 font-medium">Reconnecting…</span>
-          </div>
-        </div>
-      )}
-
-      {/* Generic unrecoverable error (mixed content, too many retries, etc.) */}
       {state === 'error' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/80">
           <Camera className="w-5 h-5 text-text-muted" />
-          <span className="text-[10px] text-text-muted">{errorMsg}</span>
+          <span className="text-[10px] text-text-muted">Preview unavailable — check NVR / proxy</span>
           <button
             type="button"
             className="mt-1 text-[10px] px-2 py-0.5 rounded border border-teal/30 text-teal hover:bg-teal/10"
-            onClick={() => {
-              retryCountRef.current = 0;
-              setState('loading');
-              setRetryKey(k => k + 1);
-            }}
-          >
-            Retry
-          </button>
+            onClick={() => { errorCountRef.current = 0; setState('loading'); setTick(t => t + 1); }}
+          >Retry</button>
         </div>
       )}
-
-      {/* Mixed content (HTTP on HTTPS page, no upgrade) */}
-      {state === 'mixed_content' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-4 text-center">
-          <Camera className="w-5 h-5 text-yellow-400" />
-          <span className="text-[10px] text-text-muted">Set proxy URL to HTTPS to load stream</span>
-          {proxyBase && <span className="text-[9px] text-text-muted/50 break-all">{proxyBase}</span>}
-        </div>
-      )}
-      <video
-        ref={videoRef}
-        className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
-        autoPlay muted playsInline preload="auto"
-        onCanPlay={() => {
-          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-          retryCountRef.current = 0;  // stream recovered — allow fresh retry budget
-          setState('playing');
-        }}
+      <img
+        src={src}
+        alt={label}
+        className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'ready' ? 'opacity-100' : 'opacity-0'}`}
+        onLoad={() => { errorCountRef.current = 0; setState('ready'); }}
         onError={() => {
-          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-          handleError();
+          errorCountRef.current += 1;
+          if (errorCountRef.current >= 5) setState('error');
         }}
       />
-      {/* Zone overlays — show whenever feed is playing */}
-      {barConfig && state === 'playing' && <ZoneOverlay config={barConfig} />}
-      {tableZones && tableZones.length > 0 && state === 'playing' && <TableZoneOverlay zones={tableZones} />}
-      {/* No-config hint — only for drink_count cameras (other modes don't use bar zones) */}
-      {!barConfig && state === 'playing' && onConfigureZones && (!cameraModes || cameraModes.includes('drink_count')) && (
+      {/* Zone overlays — show whenever preview is ready */}
+      {barConfig && state === 'ready' && <ZoneOverlay config={barConfig} />}
+      {tableZones && tableZones.length > 0 && state === 'ready' && <TableZoneOverlay zones={tableZones} />}
+      {!barConfig && state === 'ready' && onConfigureZones && (!cameraModes || cameraModes.includes('drink_count')) && (
         <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
           <div className="px-2 py-1 rounded bg-black/50 text-[9px] text-amber-400/80">
             No bar zones configured
           </div>
         </div>
       )}
-      {state === 'playing' && (
+      {state === 'ready' && (
         <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm">
           <span className="relative flex h-1.5 w-1.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
