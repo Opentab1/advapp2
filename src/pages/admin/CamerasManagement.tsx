@@ -32,6 +32,7 @@ import {
   RotateCcw,
   Loader2,
   Play,
+  Crosshair,
 } from 'lucide-react';
 import adminService, { AdminCamera, adminFetch } from '../../services/admin.service';
 import venueSettingsService from '../../services/venue-settings.service';
@@ -1368,24 +1369,31 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                             <RotateCcw className={`w-4 h-4 ${restartingCams.has(cam.cameraId) ? 'animate-spin' : ''}`} />
                           </button>
                         )}
-                        {/* Zone editor — opens the bar zone drawing modal (drink_count cameras) */}
+                        {/* Zone config buttons — prominent so operators can find them.
+                            The existing polygons also render as an overlay on the
+                            consumer VenueScope tile for this camera once saved. */}
                         {(cam.modes || '').split(',').some(m => m.trim() === 'drink_count') && (
                           <button
                             onClick={() => setZoneEditorCam(cam)}
                             title="Draw bar zones + bar-front line"
-                            className="p-1.5 rounded-lg hover:bg-purple-500/10 text-gray-400 hover:text-purple-400 transition-colors"
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                              (cam.barConfigJson || '').trim()
+                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/30 hover:bg-purple-500/30'
+                                : 'bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25 animate-pulse'
+                            }`}
                           >
-                            <Search className="w-4 h-4" />
+                            <Crosshair className="w-3.5 h-3.5" />
+                            {(cam.barConfigJson || '').trim() ? 'Bar Zones ✓' : 'Set Up Bar Zones'}
                           </button>
                         )}
-                        {/* Table zones — opens the table polygon modal (table_turns / table_service cameras) */}
                         {(cam.modes || '').split(',').some(m => ['table_turns','table_service'].includes(m.trim())) && (
                           <button
                             onClick={() => setTableZoneEditorCam(cam)}
                             title="Draw per-table polygons"
-                            className="p-1.5 rounded-lg hover:bg-blue-500/10 text-gray-400 hover:text-blue-400 transition-colors"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border bg-blue-500/15 text-blue-300 border-blue-500/40 hover:bg-blue-500/25 transition-colors"
                           >
-                            <Network className="w-4 h-4" />
+                            <Network className="w-3.5 h-3.5" />
+                            Tables
                           </button>
                         )}
                         <button onClick={() => setEditCamera(cam)}

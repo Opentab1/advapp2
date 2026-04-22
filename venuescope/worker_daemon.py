@@ -143,6 +143,24 @@ _autoconfig_inflight: set = set()
 _autoconfig_lock = __import__("threading").Lock()
 
 
+# Per-camera cooldown after an unsuccessful auto-detect so we don't thrash the
+# NVR every 60 seconds on cameras where YOLO can't find tables (fisheye angles,
+# occluded scenes, etc). 24-hour gap leaves room for ops to draw manually
+# without a background retry pulling NVR bandwidth in the meantime.
+_AUTOCFG_COOLDOWN_SEC = 24 * 3600
+_autoconfig_last_attempt: dict = {}   # (venue, cam, "bar"|"tables") -> unix_ts
+
+
+def _should_skip_autocfg(venue_id: str, camera_id: str, kind: str) -> bool:
+    key = (venue_id, camera_id, kind)
+    last = _autoconfig_last_attempt.get(key, 0)
+    return (time.time() - last) < _AUTOCFG_COOLDOWN_SEC
+
+
+def _mark_autocfg_attempted(venue_id: str, camera_id: str, kind: str) -> None:
+    _autoconfig_last_attempt[(venue_id, camera_id, kind)] = time.time()
+
+
 def _autoconfig_camera_bg(
     venue_id: str, camera_id: str, rtsp_url: str,
     need_bar: bool, need_tables: bool,
@@ -152,7 +170,8 @@ def _autoconfig_camera_bg(
     configs instead of defaulting to ZERO detections.
     """
     try:
-        if need_bar:
+        if need_bar and not _should_skip_autocfg(venue_id, camera_id, "bar"):
+            _mark_autocfg_attempted(venue_id, camera_id, "bar")
             try:
                 from core.auto_bar_config import analyze_stream as analyze_bar
                 from core.ddb_cameras import update_camera_bar_config_json
@@ -165,11 +184,12 @@ def _autoconfig_camera_bg(
                         f"(note: {cfg.get('auto_note', 'n/a')})"
                     )
                 else:
-                    log.warning(f"[layer1] analyze_bar returned empty for {camera_id}")
+                    log.warning(f"[layer1] analyze_bar returned empty for {camera_id} — cooldown 24h")
             except Exception as e:
                 log.warning(f"[layer1] bar auto-config failed for {camera_id}: {e}")
 
-        if need_tables:
+        if need_tables and not _should_skip_autocfg(venue_id, camera_id, "tables"):
+            _mark_autocfg_attempted(venue_id, camera_id, "tables")
             try:
                 from core.auto_table_config import analyze_stream as analyze_tables
                 from core.ddb_cameras import update_camera_table_zones_json
@@ -181,7 +201,7 @@ def _autoconfig_camera_bg(
                         f"[layer1] Saved {len(zones)} table zones for {venue_id}/{camera_id}"
                     )
                 else:
-                    log.info(f"[layer1] No tables detected for {camera_id} — operator can draw manually")
+                    log.info(f"[layer1] No tables detected for {camera_id} — cooldown 24h, draw manually")
             except Exception as e:
                 log.warning(f"[layer1] table auto-detect failed for {camera_id}: {e}")
     finally:
