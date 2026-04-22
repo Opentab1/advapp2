@@ -237,6 +237,11 @@ class CalibrationEngine:
         Snapshot the existing config into history, then write the new winning
         config to disk and DDB barConfigJson for this specific camera.
         History is stored in DDB as barConfigHistory (JSON array, max 20 entries).
+
+        Calibration only sweeps (y_pos, customer_side) — those are the two
+        fields we know. Everything else (polygon, overhead_camera, extra
+        bar lines, other stations) is PRESERVED from the existing config so
+        we don't clobber operator-drawn layouts or the overhead flag.
         """
         from core.config import CONFIG_DIR
         import datetime as _dt
@@ -246,24 +251,57 @@ class CalibrationEngine:
             f"customer_side={'+1' if customer_side > 0 else '-1'}"
             + (f", camera={self.camera_id}" if self.camera_id else "")
         )
+
+        # Read existing config so we can preserve polygon + overhead flag
+        existing_cfg: dict = {}
+        try:
+            if self.camera_id and self.venue_id:
+                import boto3, os as _os
+                _region = _os.environ.get("AWS_DEFAULT_REGION") or _os.environ.get("AWS_REGION", "us-east-2")
+                _pre = boto3.resource("dynamodb", region_name=_region).Table("VenueScopeCameras")
+                _itm = _pre.get_item(Key={"venueId": self.venue_id, "cameraId": self.camera_id}).get("Item", {})
+                _cj  = _itm.get("barConfigJson", "") or ""
+                if _cj:
+                    existing_cfg = json.loads(_cj)
+        except Exception as _e:
+            log.warning("calibrate: could not read existing config (will use defaults): %s", _e)
+
+        # Preserve polygon — only fall back to full-frame if no existing
+        # polygon was drawn.
+        existing_stations = existing_cfg.get("stations", []) or []
+        if existing_stations and existing_stations[0].get("polygon"):
+            preserved_polygon       = existing_stations[0]["polygon"]
+            preserved_extra_lines   = existing_stations[0].get("extra_bar_lines", [])
+            preserved_zone_id       = existing_stations[0].get("zone_id", "bar_main")
+            preserved_zone_label    = existing_stations[0].get("label", "Bar")
+        else:
+            preserved_polygon = [
+                [0.0, 0.05], [1.0, 0.05],
+                [1.0, 0.95], [0.0, 0.95],
+            ]
+            preserved_extra_lines = []
+            preserved_zone_id     = "bar_main"
+            preserved_zone_label  = "Bar"
+
+        preserved_overhead = bool(existing_cfg.get("overhead_camera", False))
+
         config = {
             "venue_id":        self.venue_id,
             "display_name":    self.venue_id.replace("_", " ").title(),
-            "overhead_camera": False,
+            "overhead_camera": preserved_overhead,
+            "auto_detected":   bool(existing_cfg.get("auto_detected", False)),
+            "auto_note":       existing_cfg.get("auto_note", ""),
             "notes":           note,
-            "frame_width":     None,
-            "frame_height":    None,
+            "frame_width":     existing_cfg.get("frame_width"),
+            "frame_height":    existing_cfg.get("frame_height"),
             "stations": [{
-                "zone_id":         "bar_main",
-                "label":           "Bar",
-                "polygon": [
-                    [0.0, 0.05], [1.0, 0.05],
-                    [1.0, 0.95], [0.0, 0.95],
-                ],
+                "zone_id":         preserved_zone_id,
+                "label":           preserved_zone_label,
+                "polygon":         preserved_polygon,
                 "bar_line_p1":    [0.0, y_pos],
                 "bar_line_p2":    [1.0, y_pos],
                 "customer_side":   customer_side,
-                "extra_bar_lines": [],
+                "extra_bar_lines": preserved_extra_lines,
             }],
         }
         config_json = json.dumps(config, indent=2)
