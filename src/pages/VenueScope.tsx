@@ -181,6 +181,13 @@ export function ZoneEditorModal({
   const [resetting, setResetting]   = useState(false);
   // Start in 'done' if we have a zone (existing or suggested), 'draw' only if truly empty
   const [step, setStep]             = useState<'draw' | 'done'>(existing ? 'done' : 'done');
+  // Background JPEG snapshot tick — auto-refreshes every 1.5s
+  const [editorTick, setEditorTick] = useState(0);
+  useEffect(() => {
+    setEditorTick(t => t + 1);
+    const id = setInterval(() => setEditorTick(t => t + 1), 1_500);
+    return () => clearInterval(id);
+  }, []);
   const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const editorHlsRef = useRef<Hls | null>(null);
@@ -627,9 +634,23 @@ export function ZoneEditorModal({
           className="relative bg-black select-none flex-1 min-h-0 overflow-hidden"
           style={{ minHeight: '280px' }}
         >
+          {/* Background — JPEG snapshot (refreshes every 1.5s, loads in ~500ms).
+              Previously used HLS <video> which takes 60–80s to canplay on
+              this NVR's fMP4 — too slow for the editor. Hidden <video> stays
+              mounted so the existing ref/hls cleanup code still works. */}
+          {(() => {
+            const snap = snapshotUrl(camera.name || '', proxyBase, camera.rtspUrl);
+            return snap ? (
+              <img
+                src={`${snap}?t=${editorTick}`}
+                alt={camera.name}
+                className="absolute inset-0 w-full h-full object-cover opacity-80"
+              />
+            ) : null;
+          })()}
           <video
             ref={videoRef}
-            className="absolute inset-0 w-full h-full object-cover opacity-70"
+            className="hidden"
             autoPlay muted playsInline
           />
           {!streamUrl && (
@@ -1056,6 +1077,12 @@ export function TableZoneEditorModal({
   const [saving, setSaving]         = useState(false);
   const [saveOk, setSaveOk]         = useState(false);
   const [resetting, setResetting]   = useState(false);
+  const [editorTick, setEditorTick] = useState(0);
+  useEffect(() => {
+    setEditorTick(t => t + 1);
+    const id = setInterval(() => setEditorTick(t => t + 1), 1_500);
+    return () => clearInterval(id);
+  }, []);
   const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef   = useRef<Hls | null>(null);
@@ -1241,7 +1268,17 @@ export function TableZoneEditorModal({
 
         {/* Canvas */}
         <div className="relative bg-black select-none flex-1 min-h-0 overflow-hidden" style={{ minHeight: '280px' }}>
-          <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover opacity-70" autoPlay muted playsInline />
+          {(() => {
+            const snap = snapshotUrl(camera.name || '', proxyBase, camera.rtspUrl);
+            return snap ? (
+              <img
+                src={`${snap}?t=${editorTick}`}
+                alt={camera.name}
+                className="absolute inset-0 w-full h-full object-cover opacity-80"
+              />
+            ) : null;
+          })()}
+          <video ref={videoRef} className="hidden" autoPlay muted playsInline />
           {!streamUrl && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <p className="text-text-muted text-xs bg-black/40 px-3 py-1.5 rounded-lg">No live feed — drawing on blank canvas</p>
