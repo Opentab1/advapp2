@@ -1639,7 +1639,9 @@ function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null
   // e.g. https://137-184-61-178.sslip.io/cam
   if (proxyBase) {
     const ch = channelFromSources(label, rtspUrl);
-    if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/0/livetop.mp4`;
+    // Sub-stream (/1/) = ~704p, low bitrate. Chrome fires `canplay` ~10× faster than the 4K
+    // main stream (/0/): ~7s vs ~77s. Tile resolution is small enough that sub-stream looks fine.
+    if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/1/livetop.mp4`;
   }
   // Fallback: rtspUrl is already HTTPS (e.g. NVR with a proper CA cert) — use directly.
   if (rtspUrl?.startsWith('https://')) return rtspUrl;

@@ -708,7 +708,9 @@ function channelFromSources(label: string, rtspUrl?: string | null): string | nu
 function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null): string | null {
   if (proxyBase) {
     const ch = channelFromSources(label, rtspUrl);
-    if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/0/livetop.mp4`;
+    // Use sub-stream (/1/ = ~704p, low bitrate) instead of main (/0/ = 4K, very slow first-frame).
+    // Chrome needs to download ~10× less data before canplay fires: ~7s vs ~77s for main stream.
+    if (ch) return `${proxyBase.replace(/\/$/, '')}/hls/live/${ch}/1/livetop.mp4`;
   }
   if (rtspUrl?.startsWith('https://')) return rtspUrl;
   return null;
