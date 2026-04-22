@@ -143,35 +143,56 @@ _autoconfig_inflight: set = set()
 _autoconfig_lock = __import__("threading").Lock()
 
 
-def _autoconfig_camera_bg(venue_id: str, camera_id: str, rtsp_url: str) -> None:
-    """Background thread: run auto_bar_config.analyze_stream on a camera and
-    persist the result to DDB so the first job sees a usable config instead
-    of defaulting to ZERO drinks detected.
+def _autoconfig_camera_bg(
+    venue_id: str, camera_id: str, rtsp_url: str,
+    need_bar: bool, need_tables: bool,
+) -> None:
+    """Background thread: run auto_bar_config and/or auto_table_config on a
+    camera and persist the result(s) to DDB so the first job sees usable
+    configs instead of defaulting to ZERO detections.
     """
     try:
-        from core.auto_bar_config import analyze_stream
-        from core.ddb_cameras import update_camera_bar_config_json
-        log.info(f"[layer1] Auto-configuring zones for {venue_id}/{camera_id} ...")
-        cfg = analyze_stream(rtsp_url)
-        if not cfg:
-            log.warning(f"[layer1] analyze_stream returned empty for {camera_id}")
-            return
-        update_camera_bar_config_json(venue_id, camera_id, json.dumps(cfg))
-        log.info(
-            f"[layer1] Saved auto-config for {venue_id}/{camera_id} "
-            f"(note: {cfg.get('auto_note', 'n/a')})"
-        )
-    except Exception as e:
-        log.warning(f"[layer1] auto-config thread failed for {camera_id}: {e}")
+        if need_bar:
+            try:
+                from core.auto_bar_config import analyze_stream as analyze_bar
+                from core.ddb_cameras import update_camera_bar_config_json
+                log.info(f"[layer1] Auto-configuring bar zones for {venue_id}/{camera_id} ...")
+                cfg = analyze_bar(rtsp_url)
+                if cfg:
+                    update_camera_bar_config_json(venue_id, camera_id, json.dumps(cfg))
+                    log.info(
+                        f"[layer1] Saved bar config for {venue_id}/{camera_id} "
+                        f"(note: {cfg.get('auto_note', 'n/a')})"
+                    )
+                else:
+                    log.warning(f"[layer1] analyze_bar returned empty for {camera_id}")
+            except Exception as e:
+                log.warning(f"[layer1] bar auto-config failed for {camera_id}: {e}")
+
+        if need_tables:
+            try:
+                from core.auto_table_config import analyze_stream as analyze_tables
+                from core.ddb_cameras import update_camera_table_zones_json
+                log.info(f"[layer1] Auto-detecting tables for {venue_id}/{camera_id} ...")
+                zones = analyze_tables(rtsp_url)
+                if zones:
+                    update_camera_table_zones_json(venue_id, camera_id, json.dumps(zones))
+                    log.info(
+                        f"[layer1] Saved {len(zones)} table zones for {venue_id}/{camera_id}"
+                    )
+                else:
+                    log.info(f"[layer1] No tables detected for {camera_id} — operator can draw manually")
+            except Exception as e:
+                log.warning(f"[layer1] table auto-detect failed for {camera_id}: {e}")
     finally:
         with _autoconfig_lock:
             _autoconfig_inflight.discard((venue_id, camera_id))
 
 
 def _autoconfig_pending_cameras() -> None:
-    """Find enabled drink_count cameras with no bar_config_json and spawn a
-    background thread to auto-detect zones for each. Runs on a slow cadence
-    (~60s) from the main loop — the actual ffmpeg/cv2 work happens off-thread.
+    """Find cameras that are missing bar zones (drink_count) or table zones
+    (table_turns / table_service) and spawn a background thread to auto-detect
+    the missing config(s). Runs on a slow cadence (~60s) from the main loop.
     """
     try:
         from core.ddb_cameras import list_cameras_ddb
@@ -186,10 +207,16 @@ def _autoconfig_pending_cameras() -> None:
             continue
         mode = c.get("mode", "")
         extra = c.get("extra_modes", []) or []
-        if mode != "drink_count" and "drink_count" not in extra:
+        all_modes = {mode, *extra}
+
+        has_drink  = "drink_count" in all_modes
+        has_tables = bool(all_modes & {"table_turns", "table_service"})
+
+        need_bar    = has_drink  and not (c.get("bar_config_json") or "").strip()
+        need_tables = has_tables and not (c.get("table_zones_json") or "").strip()
+        if not need_bar and not need_tables:
             continue
-        if (c.get("bar_config_json") or "").strip():
-            continue   # already configured (manual or prior auto)
+
         rtsp = (c.get("rtsp_url") or "").strip()
         venue_id = c.get("venue", "")
         camera_id = c.get("camera_id", "")
@@ -201,7 +228,8 @@ def _autoconfig_pending_cameras() -> None:
                 continue
             _autoconfig_inflight.add(key)
         t = _threading.Thread(
-            target=_autoconfig_camera_bg, args=(venue_id, camera_id, rtsp),
+            target=_autoconfig_camera_bg,
+            args=(venue_id, camera_id, rtsp, need_bar, need_tables),
             name=f"autocfg-{camera_id}", daemon=True,
         )
         t.start()

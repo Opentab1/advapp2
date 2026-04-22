@@ -1055,9 +1055,32 @@ export function TableZoneEditorModal({
   const [dragTarget, setDragTarget] = useState<TableDragTarget>(null);
   const [saving, setSaving]         = useState(false);
   const [saveOk, setSaveOk]         = useState(false);
+  const [resetting, setResetting]   = useState(false);
   const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef   = useRef<Hls | null>(null);
+
+  async function handleResetToAuto() {
+    if (resetting) return;
+    const msg = zones.length > 0
+      ? `Replace your ${zones.length} drawn table${zones.length !== 1 ? 's' : ''} with YOLO auto-detection? Nothing is saved until you click Save Table Zones.`
+      : 'Run YOLO auto-detection to place table polygons?';
+    if (!confirm(msg)) return;
+    setResetting(true);
+    try {
+      const m = await import('../services/admin.service');
+      const auto = await m.default.autoDetectTables(camera.venueId, camera.cameraId);
+      if (auto && auto.length > 0) {
+        setZones(auto as TableZone[]);
+      } else {
+        alert('No tables detected — the scene may not have obvious dining tables in this view.');
+      }
+    } catch (e: any) {
+      alert(`Auto-detect failed: ${e?.message ?? e}`);
+    } finally {
+      setResetting(false);
+    }
+  }
 
   const streamUrl = (() => {
     if (proxyBase) {
@@ -1299,8 +1322,20 @@ export function TableZoneEditorModal({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 flex items-center justify-between">
-          <p className="text-[10px] text-text-muted">{zones.length > 0 ? `${zones.length} table${zones.length !== 1 ? 's' : ''} configured — draw more to add` : ''}</p>
+        <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleResetToAuto}
+              disabled={resetting || saving}
+              title="Run YOLO dining-table detection and replace zones with the suggestion"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border border-white/15 text-text-muted hover:text-white hover:bg-white/5 disabled:opacity-40 transition-colors"
+            >
+              {resetting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              Auto-detect tables
+            </button>
+            <p className="text-[10px] text-text-muted">{zones.length > 0 ? `${zones.length} table${zones.length !== 1 ? 's' : ''} configured — draw more to add` : ''}</p>
+          </div>
           <button onClick={save} disabled={saving || zones.length === 0}
             className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold bg-purple-500 text-white hover:bg-purple-400 disabled:opacity-40 transition-colors">
             {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}

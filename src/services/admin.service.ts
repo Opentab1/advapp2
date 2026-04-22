@@ -992,6 +992,15 @@ class AdminService {
     return (data as any).config;
   }
 
+  /** Run auto_table_config on a camera's stream, return suggested table zones. */
+  async autoDetectTables(venueId: string, cameraId: string): Promise<Array<{
+    table_id: string; label: string; polygon: [number, number][];
+  }>> {
+    const qs = new URLSearchParams({ venue_id: venueId, camera_id: cameraId }).toString();
+    const data = await opsFetch(`/ops/auto-detect-tables?${qs}`);
+    return (data as any).zones ?? [];
+  }
+
   /** Snapshot of a camera's accuracy telemetry for the zone editor badge. */
   async getCameraAccuracy(venueId: string, cameraId: string): Promise<{
     total_drinks_shift: number;

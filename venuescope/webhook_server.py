@@ -344,6 +344,12 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     params.get("venue_id",  [""])[0],
                     params.get("camera_id", [""])[0],
                 )
+            elif parsed.path == "/ops/auto-detect-tables":
+                params = parse_qs(parsed.query)
+                self._handle_ops_auto_detect_tables(
+                    params.get("venue_id",  [""])[0],
+                    params.get("camera_id", [""])[0],
+                )
             elif parsed.path == "/ops/camera-accuracy":
                 params = parse_qs(parsed.query)
                 self._handle_ops_camera_accuracy(
@@ -1136,6 +1142,31 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": "analyze_stream returned empty"})
                 return
             self._json(200, {"config": cfg})
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
+    def _handle_ops_auto_detect_tables(self, venue_id: str, camera_id: str):
+        """GET /ops/auto-detect-tables?venue_id=X&camera_id=Y
+        Runs auto_table_config.analyze_stream() and returns the suggested
+        table zones. Does NOT save — editor shows preview first.
+        """
+        if not venue_id or not camera_id:
+            self._json(400, {"error": "venue_id and camera_id required"})
+            return
+        try:
+            from core.ddb_cameras import list_cameras_ddb
+            cams = list_cameras_ddb(venue_id)
+            cam = next((c for c in cams if c.get("camera_id") == camera_id), None)
+            if not cam:
+                self._json(404, {"error": "camera not found"})
+                return
+            rtsp = (cam.get("rtsp_url") or "").strip()
+            if not rtsp:
+                self._json(400, {"error": "camera has no rtsp_url configured"})
+                return
+            from core.auto_table_config import analyze_stream
+            zones = analyze_stream(rtsp)
+            self._json(200, {"zones": zones or []})
         except Exception as e:
             self._json(500, {"error": str(e)})
 

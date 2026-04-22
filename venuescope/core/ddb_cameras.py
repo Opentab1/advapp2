@@ -183,6 +183,29 @@ def update_camera_bar_config_json(venue_id: str, camera_id: str,
         return False
 
 
+def update_camera_table_zones_json(venue_id: str, camera_id: str,
+                                   table_zones_json: str) -> bool:
+    """Write tableZonesJson to a camera's DynamoDB record.
+    Called by the Layer 1 auto-config loop after auto_table_config runs.
+    Returns True on success.
+    """
+    ddb = _get_ddb()
+    if not ddb:
+        return False
+    try:
+        table = ddb.Table(TABLE)
+        table.update_item(
+            Key={"venueId": venue_id, "cameraId": camera_id},
+            UpdateExpression="SET tableZonesJson = :v",
+            ExpressionAttributeValues={":v": table_zones_json},
+        )
+        log.info(f"[ddb_cameras] tableZonesJson saved for {venue_id}/{camera_id}")
+        return True
+    except Exception as e:
+        log.warning(f"[ddb_cameras] update_camera_table_zones_json failed: {e}")
+        return False
+
+
 def update_camera_next_occupancy(venue_id: str, camera_id: str, next_at: float) -> bool:
     """
     Write nextOccupancyAt (Unix epoch seconds) to the camera's DDB record.
