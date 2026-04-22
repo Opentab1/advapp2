@@ -1379,10 +1379,11 @@ function TheftModal({ job, avgDrinkPrice, onClose }: { job: VenueScopeJob; avgDr
   const liveEvents: LiveTheftEvent[] = React.useMemo(() => {
     if (!job.liveTheftEvents) return [];
     try {
-      const all = JSON.parse(job.liveTheftEvents) as Array<{ type: string } & LiveTheftEvent>;
-      // Filter out walk_out events — the 10s-absence heuristic fires too often
-      // for normal bartender activity (restocking, cleaning). Not shown to user.
-      return all.filter(e => e.type !== 'walk_out') as LiveTheftEvent[];
+      // Incoming payload may still carry legacy walk_out events — filter before
+      // narrowing the type. Walk-outs were retired 2026-04-21: the 10s-absence
+      // heuristic fires too often for normal restocking / cleaning.
+      const all = JSON.parse(job.liveTheftEvents) as Array<Record<string, unknown>>;
+      return all.filter(e => e?.type !== 'walk_out') as unknown as LiveTheftEvent[];
     } catch { return []; }
   }, [job.liveTheftEvents]);
 
