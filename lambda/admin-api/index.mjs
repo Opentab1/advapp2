@@ -138,7 +138,15 @@ function cameraFromItem(item) {
     createdAt:       s(item.createdAt),
     notes:           s(item.notes),
     barConfigJson:   s(item.barConfigJson),
+    tableZonesJson:  s(item.tableZonesJson),
     blobsPerPerson:  n(item.blobsPerPerson),
+    // Layer 2 health flags written by the worker — drive the
+    // "Zones may be misaligned" badge and accuracy panel in the admin UI.
+    needsRecalibration: item.needsRecalibration?.BOOL === true,
+    recalCheckedAt:     n(item.recalCheckedAt),
+    recalElapsedSec:    n(item.recalElapsedSec),
+    recalTotalDrinks:   n(item.recalTotalDrinks),
+    posVariancePct:     n(item.posVariancePct),
   };
 }
 
@@ -384,6 +392,7 @@ async function updateCamera(cameraId, body) {
   if (fields.modelProfile   !== undefined) setField('modelProfile', fields.modelProfile);
   if (fields.notes          !== undefined) setField('notes', fields.notes);
   if (fields.barConfigJson  !== undefined) setField('barConfigJson', fields.barConfigJson);
+  if (fields.tableZonesJson !== undefined) setField('tableZonesJson', fields.tableZonesJson);
   if (fields.enabled        !== undefined) setField('enabled', fields.enabled, 'BOOL');
   if (fields.segmentSeconds !== undefined) setField('segmentSeconds', fields.segmentSeconds, 'N');
   if (fields.segmentInterval!== undefined) setField('segmentInterval', fields.segmentInterval, 'N');
