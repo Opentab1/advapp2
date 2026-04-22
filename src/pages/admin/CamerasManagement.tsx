@@ -1549,6 +1549,102 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
   );
 }
 
+// ─── Zone reference panel — collapsible "how zones work" doc ────────────────
+function ZoneReferencePanel() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-6 rounded-lg border border-purple-500/30 bg-purple-500/5 overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between p-4 hover:bg-purple-500/10 transition-colors text-left"
+      >
+        <div className="flex items-center gap-3">
+          <Crosshair className="w-5 h-5 text-purple-400 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-white">How zones work — the accuracy reference</p>
+            <p className="text-xs text-gray-400">What every line + polygon does, why bad layout = silent failure, the killers that aren't obvious</p>
+          </div>
+        </div>
+        {open ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden border-t border-purple-500/20"
+          >
+            <div className="p-5 space-y-5 text-sm text-gray-300">
+
+              <section>
+                <p className="text-xs uppercase tracking-wider text-purple-400 mb-2 font-semibold">What each zone primitive actually does</p>
+                <div className="space-y-3">
+                  <div>
+                    <p className="font-semibold text-white">Polygon (the green box)</p>
+                    <p className="text-gray-400 text-[13px]">"Where the bartender works." If a bartender's body is outside the polygon, the software <em>cannot see them</em> — they're geometrically rejected. No serve will ever fire.</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white">Bar line (the orange dashed line)</p>
+                    <p className="text-gray-400 text-[13px]">"The threshold a drink must cross." A drink is counted when the bartender's body or arm reach (with a 30–80px bonus) crosses from staff side to customer side, dwells 2–3 frames, and isn't moving too fast. Drawing it 50px off the actual counter edge changes accuracy by ~30%.</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white">Customer side (±1)</p>
+                    <p className="text-gray-400 text-[13px]">"Which side of the line are customers on." If this is flipped, every serve gets rejected. The bar will read 0 drinks forever — this is exactly what the amber "Zones may be misaligned" badge catches.</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white">Extra bar lines</p>
+                    <p className="text-gray-400 text-[13px]">For L-shaped bars, tiered passes, or service windows where drinks can leave the bartender at more than one place. Each line has its own 4-second cooldown.</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white">Overhead camera flag</p>
+                    <p className="text-gray-400 text-[13px]">For ceiling-mounted fisheye cameras. The detection pipeline switches to: lower confidence floor (0.30 → 0.15), higher resolution (640 → 1280px), longer arm-reach bonus (30 → 80px), and "hover near line" detection (catches gun-fill where the bartender never bodily crosses the line). Forgetting this on a fisheye loses ~50% of serves.</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white">Table polygon (purple boxes)</p>
+                    <p className="text-gray-400 text-[13px]">For Table Turns: 30 frames (15s) of any centroid inside → "occupied"; 60 frames (30s) of nothing → "free." For Table Service: same polygon defines what counts as a server visit. Polygon should cover where customers <em>sit</em> — body + chair pull-out — not just the table top.</p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                <p className="text-xs uppercase tracking-wider text-amber-400 mb-2 font-semibold">⚠ The trap — bad layout is invisible</p>
+                <p className="text-amber-200/80 text-[13px]">If the polygon doesn't include the bartender, the worker never tries to detect a serve, so there's nothing to log. <strong>Layout failure looks identical to "quiet shift" in the data.</strong> The Layer 2 health check catches it after 2h of zero drinks during business hours, but the right answer is to never deploy a bad layout in the first place.</p>
+              </section>
+
+              <section>
+                <p className="text-xs uppercase tracking-wider text-purple-400 mb-2 font-semibold">Foolproof drawing protocol</p>
+                <ol className="space-y-1.5 text-[13px] text-gray-300 list-decimal list-inside">
+                  <li>Open the editor — let auto-detect run if zones are empty.</li>
+                  <li>Drag the polygon corners to <strong>just barely</strong> contain all bartender movement. Exclude the customer area entirely.</li>
+                  <li>Drag the bar line so it runs along the customer-facing edge of the counter — not behind, not in front.</li>
+                  <li>Click on the line to set Customer Side: pick whichever side customers actually stand on.</li>
+                  <li>For L-shaped or tiered bars, add an extra bar line at the second serve point.</li>
+                  <li>Save. Linter at the bottom will block save on errors and warn on risky configs.</li>
+                </ol>
+              </section>
+
+              <section>
+                <p className="text-xs uppercase tracking-wider text-purple-400 mb-2 font-semibold">Killers the editor can't fix (require physical changes)</p>
+                <ul className="space-y-1.5 text-[13px] text-gray-300 list-disc list-inside">
+                  <li><strong>Mirrors behind the bar</strong> — YOLO detects reflections as separate people on the wrong side of the line. Cover with tape or art.</li>
+                  <li><strong>Polished metal counters</strong> — same problem, smaller scale. Use a fabric runner.</li>
+                  <li><strong>Customer-visible monitors showing the camera feed</strong> — creates "inception" detections. Mask with an ignore zone.</li>
+                  <li><strong>Fisheye edges</strong> — detection degrades at the corners of overhead cameras. Place subjects toward the center if possible.</li>
+                  <li><strong>NVR upstream saturation</strong> — frequent RTSP reconnects mean the worker is missing chunks. Reduce concurrent streams.</li>
+                </ul>
+              </section>
+
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function CamerasManagement() {
@@ -1604,6 +1700,12 @@ export function CamerasManagement() {
           If cameras go offline, check the NVR IP and port — the router may have changed the port forwarding rule.
           Use <strong>Change IP / Port</strong> to update all cameras at once.
         </div>
+
+        {/* Layer A — How zones work (collapsible reference). Layout is the
+            single biggest accuracy lever; this panel is the operator's
+            mental-model reference any time they open this page. */}
+        <ZoneReferencePanel />
+
 
         {/* Duplicate venue name warning */}
         {dupNames.length > 0 && !dupWarningDismissed && (

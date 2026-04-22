@@ -93,6 +93,148 @@ function parseBarConfig(json: string | undefined): BarConfig | null {
   try { return JSON.parse(json) as BarConfig; } catch { return null; }
 }
 
+// ── Layer A — Pre-save zone linter ───────────────────────────────────────────
+// Catches the silent-killer mistakes that the operator can't see by eye:
+// tiny polygons that exclude the bartender, bar lines floating outside the
+// zone, two-station overlap that breaks re-ID, etc. Errors block Save;
+// warnings still allow it but flag the risk.
+export type LintIssue = { level: 'error' | 'warning'; message: string };
+
+function _polygonArea(poly: [number, number][]): number {
+  if (poly.length < 3) return 0;
+  let a = 0;
+  for (let i = 0, n = poly.length; i < n; i++) {
+    const [x1, y1] = poly[i];
+    const [x2, y2] = poly[(i + 1) % n];
+    a += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(a) / 2;
+}
+
+function _polyBBox(poly: [number, number][]): [number, number, number, number] {
+  let xMin = 1, yMin = 1, xMax = 0, yMax = 0;
+  for (const [x, y] of poly) {
+    if (x < xMin) xMin = x;
+    if (x > xMax) xMax = x;
+    if (y < yMin) yMin = y;
+    if (y > yMax) yMax = y;
+  }
+  return [xMin, yMin, xMax, yMax];
+}
+
+function _bboxIntersect(
+  a: [number, number, number, number],
+  b: [number, number, number, number],
+): number {
+  const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
+  const iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+  return ix * iy;
+}
+
+// Liang-Barsky line clip — returns true if any portion of the segment is
+// inside the polygon's bbox (cheap proxy for "line touches the zone").
+function _segmentTouchesBBox(
+  p1: [number, number], p2: [number, number],
+  bbox: [number, number, number, number],
+): boolean {
+  const [xMin, yMin, xMax, yMax] = bbox;
+  let t0 = 0, t1 = 1;
+  const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+  const p = [-dx, dx, -dy, dy];
+  const q = [p1[0] - xMin, xMax - p1[0], p1[1] - yMin, yMax - p1[1]];
+  for (let i = 0; i < 4; i++) {
+    if (p[i] === 0) {
+      if (q[i] < 0) return false;
+    } else {
+      const r = q[i] / p[i];
+      if (p[i] < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+      else          { if (r < t0) return false; if (r < t1) t1 = r; }
+    }
+  }
+  return t0 <= t1;
+}
+
+function lintBarConfig(cfg: BarConfig): LintIssue[] {
+  const issues: LintIssue[] = [];
+  const stations = cfg.stations || [];
+  if (stations.length === 0) {
+    issues.push({ level: 'error', message: 'No bar zones drawn yet — nothing for the worker to look at.' });
+    return issues;
+  }
+  const bboxes: [number, number, number, number][] = [];
+  stations.forEach((s, i) => {
+    const tag = stations.length > 1 ? ` (zone ${i + 1})` : '';
+    const poly = s.polygon || [];
+    const area = _polygonArea(poly);
+    if (area < 0.01) {
+      issues.push({ level: 'error', message: `Bar zone${tag} is too small — drag the corners out so the polygon covers the whole bartender area.` });
+    } else if (area < 0.05) {
+      issues.push({ level: 'warning', message: `Bar zone${tag} is very small (${(area*100).toFixed(1)}% of frame). Bartenders walking outside it won't be tracked.` });
+    }
+
+    const bbox = _polyBBox(poly);
+    bboxes.push(bbox);
+
+    const p1 = s.bar_line_p1, p2 = s.bar_line_p2;
+    if (!p1 || !p2 || (p1[0] === p2[0] && p1[1] === p2[1])) {
+      issues.push({ level: 'error', message: `Bar line${tag} is missing or zero-length — drag the orange dots to opposite ends of the counter.` });
+    } else if (!_segmentTouchesBBox(p1, p2, bbox)) {
+      issues.push({ level: 'error', message: `Bar line${tag} sits outside the bar zone — the line must touch the polygon (it's the threshold drinks cross to be counted).` });
+    }
+
+    if (s.customer_side !== 1 && s.customer_side !== -1) {
+      issues.push({ level: 'error', message: `Customer side${tag} not set — pick which side of the orange line customers are on.` });
+    }
+  });
+
+  // Multi-station overlap — significant overlap breaks per-station re-ID.
+  for (let i = 0; i < bboxes.length; i++) {
+    for (let j = i + 1; j < bboxes.length; j++) {
+      const inter = _bboxIntersect(bboxes[i], bboxes[j]);
+      const aArea = _polygonArea(stations[i].polygon);
+      const minOverlap = Math.min(aArea, _polygonArea(stations[j].polygon)) * 0.25;
+      if (inter > minOverlap) {
+        issues.push({ level: 'warning', message: `Zone ${i + 1} and zone ${j + 1} overlap a lot. A bartender in the overlap region may be assigned to the wrong station — pull the polygons apart if possible.` });
+      }
+    }
+  }
+
+  return issues;
+}
+
+function lintTableZones(zones: TableZone[]): LintIssue[] {
+  const issues: LintIssue[] = [];
+  if (zones.length === 0) {
+    issues.push({ level: 'error', message: 'No table zones drawn yet — draw a polygon around each table seating area.' });
+    return issues;
+  }
+  const bboxes: [number, number, number, number][] = [];
+  zones.forEach((z, i) => {
+    const tag = ` (${z.label || `Table ${i + 1}`})`;
+    const area = _polygonArea(z.polygon || []);
+    if (area < 0.005) {
+      issues.push({ level: 'error', message: `Table${tag} is tiny — make the polygon big enough to cover the whole seating area, including pulled-out chairs.` });
+    } else if (area < 0.02) {
+      issues.push({ level: 'warning', message: `Table${tag} is small (${(area*100).toFixed(1)}% of frame). Customers seated at the edge may not register as occupied.` });
+    }
+    if (!z.label || !z.label.trim()) {
+      issues.push({ level: 'warning', message: `Table ${i + 1} has no name — give it a clear label so reports are easy to read.` });
+    }
+    bboxes.push(_polyBBox(z.polygon || []));
+  });
+  // Overlaps — server walking between two adjacent polygons can fire two visits
+  for (let i = 0; i < bboxes.length; i++) {
+    for (let j = i + 1; j < bboxes.length; j++) {
+      const inter = _bboxIntersect(bboxes[i], bboxes[j]);
+      const minOverlap = Math.min(_polygonArea(zones[i].polygon), _polygonArea(zones[j].polygon)) * 0.20;
+      if (inter > minOverlap) {
+        issues.push({ level: 'warning', message: `${zones[i].label || `Table ${i+1}`} and ${zones[j].label || `Table ${j+1}`} overlap — a server walking between them may trigger both at once.` });
+      }
+    }
+  }
+  return issues;
+}
+
 // ── Zone overlay (read-only SVG on live feed) ─────────────────────────────────
 
 function ZoneOverlay({ config }: { config: BarConfig }) {
@@ -982,6 +1124,27 @@ export function ZoneEditorModal({
           )}
         </div>
 
+        {/* Layer A — pre-save lint output */}
+        {(() => {
+          const issues = lintBarConfig(config);
+          if (issues.length === 0) return null;
+          const errs = issues.filter(i => i.level === 'error');
+          const warns = issues.filter(i => i.level === 'warning');
+          return (
+            <div className={`px-5 py-2 border-t flex-shrink-0 ${errs.length ? 'bg-red-500/10 border-red-500/30' : 'bg-amber-500/10 border-amber-500/30'}`}>
+              {errs.map((i, k) => (
+                <div key={`e${k}`} className="flex items-start gap-2 text-[11px] text-red-300 py-0.5">
+                  <span className="font-bold">✗</span><span>{i.message}</span>
+                </div>
+              ))}
+              {warns.map((i, k) => (
+                <div key={`w${k}`} className="flex items-start gap-2 text-[11px] text-amber-300 py-0.5">
+                  <span>⚠</span><span>{i.message}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {/* Footer — always visible Save button + Reset to auto-detected */}
         <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -999,14 +1162,20 @@ export function ZoneEditorModal({
               {config.stations.length > 0 ? 'Tip: add multiple zones for different bar sections' : ''}
             </p>
           </div>
-          <button
-            onClick={save}
-            disabled={saving || config.stations.length === 0}
-            className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold bg-teal text-black hover:bg-teal/90 disabled:opacity-40 transition-colors"
-          >
-            {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-            {saveOk ? 'Saved!' : 'Save Zones'}
-          </button>
+          {(() => {
+            const errs = lintBarConfig(config).filter(i => i.level === 'error');
+            return (
+              <button
+                onClick={save}
+                disabled={saving || config.stations.length === 0 || errs.length > 0}
+                title={errs.length > 0 ? 'Fix the red errors above before saving' : ''}
+                className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold bg-teal text-black hover:bg-teal/90 disabled:opacity-40 transition-colors"
+              >
+                {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                {saveOk ? 'Saved!' : errs.length > 0 ? 'Fix errors to save' : 'Save Zones'}
+              </button>
+            );
+          })()}
         </div>
       </motion.div>
     </motion.div>
@@ -1359,6 +1528,27 @@ export function TableZoneEditorModal({
         </div>
 
         {/* Footer */}
+        {/* Layer A — pre-save lint output */}
+        {(() => {
+          const issues = lintTableZones(zones);
+          if (issues.length === 0) return null;
+          const errs = issues.filter(i => i.level === 'error');
+          const warns = issues.filter(i => i.level === 'warning');
+          return (
+            <div className={`px-5 py-2 border-t flex-shrink-0 ${errs.length ? 'bg-red-500/10 border-red-500/30' : 'bg-amber-500/10 border-amber-500/30'}`}>
+              {errs.map((i, k) => (
+                <div key={`e${k}`} className="flex items-start gap-2 text-[11px] text-red-300 py-0.5">
+                  <span className="font-bold">✗</span><span>{i.message}</span>
+                </div>
+              ))}
+              {warns.map((i, k) => (
+                <div key={`w${k}`} className="flex items-start gap-2 text-[11px] text-amber-300 py-0.5">
+                  <span>⚠</span><span>{i.message}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         <div className="px-5 py-3 border-t border-whoop-divider flex-shrink-0 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <button
@@ -1373,11 +1563,17 @@ export function TableZoneEditorModal({
             </button>
             <p className="text-[10px] text-text-muted">{zones.length > 0 ? `${zones.length} table${zones.length !== 1 ? 's' : ''} configured — draw more to add` : ''}</p>
           </div>
-          <button onClick={save} disabled={saving || zones.length === 0}
-            className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold bg-purple-500 text-white hover:bg-purple-400 disabled:opacity-40 transition-colors">
-            {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-            {saveOk ? 'Saved!' : 'Save Table Zones'}
-          </button>
+          {(() => {
+            const errs = lintTableZones(zones).filter(i => i.level === 'error');
+            return (
+              <button onClick={save} disabled={saving || zones.length === 0 || errs.length > 0}
+                title={errs.length > 0 ? 'Fix the red errors above before saving' : ''}
+                className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold bg-purple-500 text-white hover:bg-purple-400 disabled:opacity-40 transition-colors">
+                {saveOk ? <Check className="w-3 h-3" /> : saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                {saveOk ? 'Saved!' : errs.length > 0 ? 'Fix errors to save' : 'Save Table Zones'}
+              </button>
+            );
+          })()}
         </div>
       </motion.div>
     </motion.div>
