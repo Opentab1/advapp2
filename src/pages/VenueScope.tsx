@@ -4079,7 +4079,9 @@ export function VenueScope() {
   // Publish computed occupancy + Little's Law dwell to shared store so Live page can use it.
   useEffect(() => {
     const nowSec = Date.now() / 1000;
-    const peopleRooms = allRooms.filter(r => r.mode === 'people_count');
+    // Source from allDisplayRooms (admin-registry-filtered) rather than
+    // allRooms, so deleted cameras don't keep contributing to occupancy.
+    const peopleRooms = allDisplayRooms.filter(r => r.mode === 'people_count');
     const multiModeRooms = allDisplayRooms.filter(
       r => r.mode !== 'people_count' && r.configuredModes.includes('people_count')
     );
@@ -4265,7 +4267,7 @@ export function VenueScope() {
           )}
 
           {/* 1. Today's hero numbers — always shown; handles empty/closed state internally */}
-          <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} peopleRooms={allRooms.filter(r => r.mode === 'people_count')} isDemo={isDemo} />
+          <TonightHero jobs={tonightJobs} avgDrinkPrice={avgDrinkPrice} barOpen={barIsOpen} peopleRooms={allDisplayRooms.filter(r => r.mode === 'people_count')} isDemo={isDemo} />
 
           {/* POS Reconciliation */}
           <POSReconciliationPanel jobs={tonightJobs} />
