@@ -649,14 +649,20 @@ def _camera_loop_proc_entry():
         import logging as _logging
         _clog = _logging.getLogger("camera_loop")
     try:
-        # On startup: push any SQLite-only cameras to DynamoDB so the admin
-        # portal always reflects reality. Skips cameras already in DDB.
+        # SQLite → DDB sync is OFF by default.
+        # This was a one-time migration aid back when SQLite was the source
+        # of truth for cameras. Now the admin portal owns the DDB table,
+        # and re-pushing SQLite on every restart resurrects cameras the
+        # user just deleted (SQLite still has them, DDB doesn't → sync
+        # recreates them in DDB). Only run this when explicitly bootstrapping
+        # a new venue from a pre-existing SQLite dump.
         venue_id = os.environ.get("VENUESCOPE_VENUE_ID", "")
-        if venue_id:
+        if venue_id and os.environ.get("VENUESCOPE_BOOTSTRAP_SYNC") == "1":
             from core.ddb_cameras import sync_sqlite_to_ddb
             n = sync_sqlite_to_ddb(venue_id)
             if n:
-                _clog.info(f"[startup] Synced {n} cameras from SQLite → DynamoDB")
+                _clog.info(f"[bootstrap] Synced {n} cameras from SQLite → DynamoDB "
+                           f"(VENUESCOPE_BOOTSTRAP_SYNC=1)")
 
         from core.camera_loop import get_manager as _get_cam_mgr
         _mgr = _get_cam_mgr()
