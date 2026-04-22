@@ -448,22 +448,11 @@ class AdminService {
 
   async listCameras(venueId?: string): Promise<AdminCamera[]> {
     console.log('Fetching cameras...', venueId ?? 'all');
-    const qs = venueId ? `?venueId=${encodeURIComponent(venueId)}` : '';
 
-    // Try the Admin Lambda API first
-    if (ADMIN_API) {
-      try {
-        const data = await adminFetch(`/admin/cameras${qs}`);
-        return data.items ?? [];
-      } catch (e: any) {
-        // If the Lambda doesn't have the cameras route (older deployment),
-        // fall through to the DynamoDB fallback below
-        if (!venueId || !e.message?.includes('No route')) throw e;
-        console.warn('Lambda cameras route unavailable, falling back to direct DynamoDB:', e.message);
-      }
-    }
-
-    // Fallback: query VenueScopeCameras directly via DynamoDB credentials
+    // For per-venue listing, query DynamoDB directly — same path the customer
+    // VenueScope page uses. This guarantees we get every field the worker
+    // writes (tableZonesJson, needsRecalibration, etc.) without depending on
+    // the admin Lambda's hand-coded field allowlist staying in sync.
     if (venueId) {
       const cams = await cameraService.listCameras(venueId);
       return cams.map(c => ({
@@ -487,6 +476,11 @@ class AdminService {
       }));
     }
 
+    // Cross-venue listing still goes through the Lambda (rare admin operation).
+    if (ADMIN_API) {
+      const data = await adminFetch(`/admin/cameras`);
+      return data.items ?? [];
+    }
     throw new Error('VITE_ADMIN_API_URL is not configured — set it in Amplify → App Settings → Environment Variables');
   }
 
