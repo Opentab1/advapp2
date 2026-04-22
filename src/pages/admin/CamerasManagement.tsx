@@ -1219,6 +1219,19 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
+                        {/* Zone-misalignment warning (Layer 2 — admin-only) */}
+                        {cam.needsRecalibration && (
+                          <div className="mb-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/40 flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 text-xs">
+                              <div className="text-amber-300 font-semibold">Zones may be misaligned</div>
+                              <div className="text-amber-200/70 mt-0.5">
+                                Running {Math.floor((cam.recalElapsedSec ?? 0)/3600)}h during business hours with 0 drinks detected.
+                                {' '}Likely the bar line or customer_side is off — recalibrate zones.
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         {/* Name + status */}
                         <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                           <Wifi className={`w-4 h-4 flex-shrink-0 ${cam.enabled ? 'text-green-400' : 'text-gray-600'}`} />

@@ -207,6 +207,78 @@ def _autoconfig_pending_cameras() -> None:
         t.start()
 
 
+def _check_zone_alignment_health() -> None:
+    """Layer 2: Flag drink_count cameras whose zones look misaligned.
+    Heuristic: camera has been running live for 2+ hours, it is currently
+    business hours, but totalDrinks is still 0 → zones almost certainly
+    mis-drawn (or customer_side inverted). Writes needsRecalibration to
+    the camera record in DDB; the admin portal shows a warning badge.
+    """
+    try:
+        import boto3
+        from core.ddb_cameras import list_cameras_ddb
+        region = (os.environ.get("AWS_DEFAULT_REGION")
+                  or os.environ.get("AWS_REGION", "us-east-2"))
+        ddb = boto3.resource("dynamodb", region_name=region)
+        cams_table = ddb.Table("VenueScopeCameras")
+        jobs_table = ddb.Table("VenueScopeJobs")
+    except Exception as e:
+        log.debug(f"[layer2] setup failed: {e}")
+        return
+
+    # Business hours = 4pm – 2am (matches live_updater._is_operating_hours)
+    from datetime import datetime
+    h = datetime.now().hour
+    is_business = (16 <= h <= 23) or (0 <= h < 2)
+
+    try:
+        cams = list_cameras_ddb()
+    except Exception:
+        return
+
+    for c in cams:
+        if not c.get("enabled", True):
+            continue
+        mode = c.get("mode", "")
+        extra = c.get("extra_modes", []) or []
+        if mode != "drink_count" and "drink_count" not in extra:
+            continue
+        venue_id = c.get("venue", "")
+        camera_id = c.get("camera_id", "")
+        if not venue_id or not camera_id:
+            continue
+
+        try:
+            resp = jobs_table.get_item(
+                Key={"venueId": venue_id, "jobId": f"~{camera_id}"})
+            status = resp.get("Item", {}) or {}
+        except Exception:
+            continue
+
+        elapsed = int(status.get("elapsedSec", 0) or 0)
+        total_drinks = int(status.get("totalDrinks", 0) or 0)
+        is_live = bool(status.get("isLive", False))
+
+        needs = bool(is_business and is_live and elapsed > 7200 and total_drinks == 0)
+
+        try:
+            cams_table.update_item(
+                Key={"venueId": venue_id, "cameraId": camera_id},
+                UpdateExpression=(
+                    "SET needsRecalibration = :v, "
+                    "    recalCheckedAt     = :t, "
+                    "    recalElapsedSec    = :e, "
+                    "    recalTotalDrinks   = :d"
+                ),
+                ExpressionAttributeValues={
+                    ":v": needs, ":t": int(time.time()),
+                    ":e": elapsed, ":d": total_drinks,
+                },
+            )
+        except Exception as e:
+            log.debug(f"[layer2] update failed for {camera_id}: {e}")
+
+
 def _reap_stale_jobs():
     """Mark jobs stuck in 'running' for >2 hours as failed."""
     cutoff = time.time() - STALE_JOB_SECONDS
@@ -952,6 +1024,12 @@ def main():
             # jobs start with a real config instead of the "ZERO drinks" default.
             if _poll_count % 30 == 0:
                 _autoconfig_pending_cameras()
+
+            # Layer 2 — alignment health check (~every 2 minutes).
+            # Sets needsRecalibration=true on drink_count cameras that have
+            # been live 2+ hours during business hours with zero drinks.
+            if _poll_count % 60 == 0:
+                _check_zone_alignment_health()
 
             # Orphaned-camera reaper (every 15 iterations ≈ every 30 seconds).
             # Kills continuous child processes whose camera has been deleted or

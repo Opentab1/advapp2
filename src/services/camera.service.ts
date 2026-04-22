@@ -56,6 +56,11 @@ export interface Camera {
   barConfigJson?: string; // JSON: {stations: [{zone_id, label, polygon, bar_line_p1, bar_line_p2, customer_side}]}
   tableZonesJson?: string; // JSON array: [{table_id, label, polygon: [[x,y],...]}]
   nextOccupancyAt?: number; // Unix epoch seconds — when the worker will next run people_count
+  // Worker-written alignment health (Layer 2). True when zones likely need re-drawing.
+  needsRecalibration?: boolean;
+  recalCheckedAt?: number;
+  recalElapsedSec?: number;
+  recalTotalDrinks?: number;
 }
 
 function _itemToCamera(item: Record<string, Record<string, unknown>>): Camera {
@@ -82,6 +87,10 @@ function _itemToCamera(item: Record<string, Record<string, unknown>>): Camera {
     barConfigJson:   s('barConfigJson') || undefined,
     tableZonesJson:  s('tableZonesJson') || undefined,
     nextOccupancyAt: n('nextOccupancyAt') || undefined,
+    needsRecalibration: (item['needsRecalibration'] as any)?.BOOL === true,
+    recalCheckedAt:  n('recalCheckedAt')  || undefined,
+    recalElapsedSec: n('recalElapsedSec') || undefined,
+    recalTotalDrinks: n('recalTotalDrinks') || undefined,
   };
 }
 

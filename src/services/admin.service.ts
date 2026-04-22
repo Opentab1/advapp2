@@ -154,6 +154,13 @@ export interface AdminCamera {
   barConfigJson?: string;
   createdAt?: string;
   notes?: string;
+  // Layer 2 — zone alignment health check (written by the worker every ~2min).
+  // True when a drink_count camera has been live 2+ hours in business hours
+  // with zero drinks detected — zones likely mis-drawn or customer_side flipped.
+  needsRecalibration?: boolean;
+  recalCheckedAt?: number;     // unix seconds
+  recalElapsedSec?: number;
+  recalTotalDrinks?: number;
 }
 
 export interface AdminJob {
@@ -471,6 +478,10 @@ class AdminService {
         notes:           c.notes,
         barConfigJson:   c.barConfigJson,
         createdAt:       c.createdAt ? new Date(c.createdAt * 1000).toISOString() : '',
+        needsRecalibration: c.needsRecalibration,
+        recalCheckedAt:  c.recalCheckedAt,
+        recalElapsedSec: c.recalElapsedSec,
+        recalTotalDrinks: c.recalTotalDrinks,
       }));
     }
 
