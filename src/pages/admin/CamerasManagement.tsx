@@ -714,12 +714,13 @@ function liveStreamUrl(label: string, proxyBase: string, rtspUrl?: string | null
   return null;
 }
 
-function CameraLivePreview({ label, proxyBase, rtspUrl }: {
-  label: string; proxyBase: string; rtspUrl?: string | null;
+function CameraLivePreview({ label, proxyBase, rtspUrl, startDelayMs = 0 }: {
+  label: string; proxyBase: string; rtspUrl?: string | null; startDelayMs?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef<number>(0);
   const [state, setState] = useState<'loading' | 'playing' | 'error'>('loading');
   const [retryKey, setRetryKey] = useState(0);
@@ -732,36 +733,45 @@ function CameraLivePreview({ label, proxyBase, rtspUrl }: {
     const v = videoRef.current;
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    if (startDelayRef.current) { clearTimeout(startDelayRef.current); startDelayRef.current = null; }
 
+    // Fail-fast timeout: 8s (firstData fires within ~2s when healthy).
     timerRef.current = setTimeout(() => {
       setState(prev => {
         if (prev !== 'loading') return prev;
         retryCountRef.current += 1;
         if (retryCountRef.current >= MAX_RETRIES) return 'error';
-        setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 3000);
+        setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 1500);
         return 'loading';
       });
-    }, 12_000);
+    }, 8_000);
 
     const handleError = () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
       retryCountRef.current += 1;
       if (retryCountRef.current >= MAX_RETRIES) { setState('error'); return; }
-      setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 3000);
+      setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 1500);
     };
 
-    if (url.includes('.m3u8') && Hls.isSupported()) {
-      const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
-      hlsRef.current = hls;
-      hls.loadSource(url); hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
-      hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) handleError(); });
-    } else {
-      v.src = url; v.load(); v.play().catch(() => {});
-    }
+    const begin = () => {
+      if (url.includes('.m3u8') && Hls.isSupported()) {
+        const hls = new Hls({ liveSyncDurationCount: 1, lowLatencyMode: true, enableWorker: true });
+        hlsRef.current = hls;
+        hls.loadSource(url); hls.attachMedia(v);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+        hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) handleError(); });
+      } else {
+        v.src = url; v.load(); v.play().catch(() => {});
+      }
+    };
+
+    // Stagger starts when expanding many cameras at once (avoid NVR handshake pile-up).
+    if (startDelayMs > 0) startDelayRef.current = setTimeout(begin, startDelayMs);
+    else begin();
 
     return () => {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      if (startDelayRef.current) { clearTimeout(startDelayRef.current); startDelayRef.current = null; }
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       v.src = '';
     };
@@ -804,8 +814,9 @@ function CameraLivePreview({ label, proxyBase, rtspUrl }: {
       <video
         ref={videoRef}
         className={`w-full h-full object-cover transition-opacity duration-300 ${state === 'playing' ? 'opacity-100' : 'opacity-0'}`}
-        autoPlay muted playsInline
-        onCanPlay={() => {
+        autoPlay muted playsInline preload="auto"
+        // Flip to 'playing' on first decoded frame, not full buffer — shaves ~500ms off perceived load.
+        onLoadedData={() => {
           if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
           retryCountRef.current = 0;
           setState('playing');
@@ -814,7 +825,7 @@ function CameraLivePreview({ label, proxyBase, rtspUrl }: {
           if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
           retryCountRef.current += 1;
           if (retryCountRef.current >= MAX_RETRIES) { setState('error'); return; }
-          setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 3000);
+          setTimeout(() => { setState('loading'); setRetryKey(k => k + 1); }, 1500);
         }}
       />
       {state === 'playing' && (
@@ -846,7 +857,7 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
   const [newPort, setNewPort] = useState('');
   const [connUpdating, setConnUpdating] = useState(false);
   const [restartingCams, setRestartingCams] = useState<Set<string>>(new Set());
-  const [previewCams, setPreviewCams] = useState<Set<string>>(new Set());
+  const [previewAll, setPreviewAll] = useState(false);
   const [camProxy, setCamProxy] = useState<{ ip: string; port: number } | null>(null);
   const [proxyPortInput, setProxyPortInput] = useState('');
   const [proxyUpdating, setProxyUpdating] = useState(false);
@@ -989,14 +1000,6 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
     } finally {
       setProxyUpdating(false);
     }
-  };
-
-  const togglePreview = (cameraId: string) => {
-    setPreviewCams(prev => {
-      const next = new Set(prev);
-      if (next.has(cameraId)) next.delete(cameraId); else next.add(cameraId);
-      return next;
-    });
   };
 
   const handleRestart = async (cam: AdminCamera) => {
@@ -1197,7 +1200,31 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                 <p className="text-gray-400 text-sm py-2">No cameras configured. Add one below.</p>
               )}
 
-              {cameras.map(cam => {
+              {/* Global preview toggle — shows/hides live feeds for ALL cameras at once */}
+              {cameras.length > 0 && (camProxyUrl || cameras.some(c => c.rtspUrl?.startsWith('https://'))) && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-teal-500/5 border border-teal-500/20">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Play className="w-4 h-4 text-teal-400" />
+                    <span className="text-gray-300">
+                      {previewAll
+                        ? `Showing previews for all ${cameras.length} cameras (staggered start)`
+                        : 'Previews hidden — open to see all camera feeds at once'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setPreviewAll(v => !v)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                      previewAll
+                        ? 'bg-teal-500/20 text-teal-300 border-teal-500/40 hover:bg-teal-500/30'
+                        : 'bg-teal-500/80 text-black border-teal-400/70 hover:bg-teal-400'
+                    }`}
+                  >
+                    {previewAll ? 'Collapse All' : 'Expand All'}
+                  </button>
+                </div>
+              )}
+
+              {cameras.map((cam, camIdx) => {
                 const conn = parseNvrConn(cam.rtspUrl);
                 const rec = statuses.get(cam.cameraId);
                 const camStatus: CameraStatus = !cam.enabled ? 'unknown' : (rec?.status ?? 'unknown');
@@ -1310,17 +1337,6 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                       {/* Action buttons */}
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <button
-                          onClick={() => togglePreview(cam.cameraId)}
-                          title={previewCams.has(cam.cameraId) ? 'Hide preview' : 'Show preview'}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            previewCams.has(cam.cameraId)
-                              ? 'bg-teal-500/20 text-teal-300 hover:bg-teal-500/30'
-                              : 'hover:bg-teal-500/10 text-gray-400 hover:text-teal-400'
-                          }`}
-                        >
-                          <Play className="w-4 h-4" />
-                        </button>
-                        <button
                           onClick={() => handleToggle(cam)}
                           className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
                             cam.enabled
@@ -1351,9 +1367,9 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                       </div>
                     </div>
 
-                    {/* Collapsible live preview */}
+                    {/* Collapsible live preview — driven by the venue-level Show/Hide Previews toggle */}
                     <AnimatePresence>
-                      {previewCams.has(cam.cameraId) && (
+                      {previewAll && (
                         <motion.div
                           initial={{ height: 0, opacity: 0, marginTop: 0 }}
                           animate={{ height: 'auto', opacity: 1, marginTop: 12 }}
@@ -1365,6 +1381,7 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                             label={cam.name}
                             proxyBase={camProxyUrl}
                             rtspUrl={cam.rtspUrl}
+                            startDelayMs={camIdx * 80}
                           />
                           {!camProxyUrl && !cam.rtspUrl?.startsWith('https://') && (
                             <div className="mt-2 text-[11px] text-amber-400/80">
