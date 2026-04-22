@@ -38,7 +38,7 @@ type CameraMode = 'drink_count' | 'bottle_count' | 'people_count' | 'table_turns
 
 const MODE_LABELS: Record<CameraMode, string> = {
   drink_count:    'Drink Count',
-  bottle_count:   'Bottle Count',
+  bottle_count:   'Pour Activity',  // renamed: measures pour duration → oz, not static bottle count
   people_count:   'People Count',
   table_turns:    'Table Turns',
   staff_activity: 'Staff Activity',

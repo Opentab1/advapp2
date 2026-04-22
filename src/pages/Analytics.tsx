@@ -643,15 +643,17 @@ function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
       });
     }
 
-    // Bottle count events
-    if ((mode === 'bottle_count' || (job.activeModes ?? '').includes('bottle_count')) && (job.bottleCount ?? 0) > 0) {
-      const pours = job.pourCount ? ` · ${job.pourCount} pours` : '';
+    // Pour events (renamed from "Bottle count events")
+    if ((mode === 'bottle_count' || (job.activeModes ?? '').includes('bottle_count')) && (job.pourCount ?? 0) > 0) {
+      const oz = job.totalPouredOz ? ` · ${job.totalPouredOz.toFixed(1)} oz` : '';
+      const avg = (job.pourCount ?? 0) > 0 && job.totalPouredOz
+        ? ` · ${(job.totalPouredOz / (job.pourCount ?? 1)).toFixed(1)} oz/pour` : '';
       events.push({
         ts: jobTs(job),
         type: 'bottle',
         camera: cam,
-        stat: `${job.bottleCount} bottle${(job.bottleCount ?? 1) !== 1 ? 's' : ''}`,
-        detail: `Peak: ${job.peakBottleCount ?? job.bottleCount}${pours}`,
+        stat: `${job.pourCount} pour${(job.pourCount ?? 1) !== 1 ? 's' : ''}`,
+        detail: `${oz}${avg}`.trim().replace(/^·\s*/, ''),
       });
     }
 
@@ -1073,17 +1075,22 @@ function DrinkTypeSection({ jobs }: { jobs: VenueScopeJob[] }) {
   );
 }
 
-// ── Bottle Count Detail (gap #7) ───────────────────────────────────────────────
+// ── Pour Activity (formerly Bottle Count) ────────────────────────────────────
+// Renamed 2026-04-21 per product decision: static "bottles visible on shelf"
+// was a useless number to venue owners. What matters is pour events (how many
+// pours, how long, how many over-pours, any walk-outs). The underlying worker
+// still tracks bottle appearances internally — required to detect pour events
+// and walk-outs — but we no longer surface the raw count.
 
 function BottleSection({ jobs }: { jobs: VenueScopeJob[] }) {
-  const hasBottle = jobs.some(j => (j.bottleCount ?? 0) > 0);
-  if (!hasBottle) return null;
+  const hasPours = jobs.some(j => (j.pourCount ?? 0) > 0 || (j.walkOutAlerts ?? 0) > 0);
+  if (!hasPours) return null;
 
-  const totalBottles = jobs.reduce((s, j) => s + (j.bottleCount ?? 0), 0);
   const totalPours   = jobs.reduce((s, j) => s + (j.pourCount ?? 0), 0);
   const totalOz      = jobs.reduce((s, j) => s + (j.totalPouredOz ?? 0), 0);
   const overPours    = jobs.reduce((s, j) => s + (j.overPours ?? 0), 0);
   const walkOuts     = jobs.reduce((s, j) => s + (j.walkOutAlerts ?? 0), 0);
+  const avgOzPerPour = totalPours > 0 ? (totalOz / totalPours) : 0;
 
   const byClass: Record<string, number> = {};
   for (const job of jobs) {
@@ -1099,8 +1106,8 @@ function BottleSection({ jobs }: { jobs: VenueScopeJob[] }) {
   return (
     <div className="bg-whoop-panel border border-whoop-divider rounded-2xl overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-whoop-divider">
-        <span className="text-base">🍾</span>
-        <span className="text-sm font-semibold text-white">Bottle Count</span>
+        <span className="text-base">🥃</span>
+        <span className="text-sm font-semibold text-white">Pour Activity</span>
         {walkOuts > 0 && (
           <span className="ml-auto text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-full px-2 py-0.5">
             {walkOuts} walk-out{walkOuts !== 1 ? 's' : ''}
@@ -1110,10 +1117,10 @@ function BottleSection({ jobs }: { jobs: VenueScopeJob[] }) {
       <div className="p-4 space-y-3">
         <div className="grid grid-cols-4 gap-2">
           {[
-            { label: 'Bottles', value: totalBottles, color: 'text-white' },
-            { label: 'Pours', value: totalPours, color: 'text-white' },
-            { label: 'Oz Poured', value: totalOz.toFixed(1), color: 'text-white' },
-            { label: 'Over-pours', value: overPours, color: overPours > 0 ? 'text-amber-400' : 'text-emerald-400' },
+            { label: 'Pours',       value: totalPours,                         color: 'text-white' },
+            { label: 'Oz Poured',   value: totalOz.toFixed(1),                 color: 'text-white' },
+            { label: 'Avg / Pour',  value: `${avgOzPerPour.toFixed(1)} oz`,    color: 'text-white' },
+            { label: 'Over-pours',  value: overPours,                          color: overPours > 0 ? 'text-amber-400' : 'text-emerald-400' },
           ].map(tile => (
             <div key={tile.label} className="bg-whoop-bg rounded-xl p-2.5 text-center">
               <div className={`text-sm font-bold tabular-nums ${tile.color}`}>{tile.value}</div>

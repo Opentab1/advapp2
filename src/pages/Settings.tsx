@@ -1846,7 +1846,7 @@ export function Settings() {
                         <select value={newCam.mode} onChange={e => setNewCam(p => ({ ...p, mode: e.target.value }))}
                           className="w-full bg-warm-800 border border-warm-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
                           <option value="drink_count">🍺 Drink Count</option>
-                          <option value="bottle_count">🍾 Bottle Count</option>
+                          <option value="bottle_count">🥃 Pour Activity</option>
                           <option value="people_count">🚶 People Count</option>
                           <option value="staff_activity">👷 Staff Activity</option>
                           <option value="after_hours">🔒 After Hours</option>
