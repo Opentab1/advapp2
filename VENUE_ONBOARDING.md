@@ -7,6 +7,73 @@ silent-failure mode in production before.**
 
 ---
 
+## Pre-arrival checklist (do this the night before)
+
+The venue visit itself should only cover work that **requires being on-site
+with the hardware**. Everything in this list can be done from your laptop
+before you arrive; skipping it turns a 2-hour job into a 6-hour one.
+
+### Info to collect from the owner 24+ hours in advance
+
+- [ ] **Venue name, address, legal capacity** (fire-code max, not seating)
+- [ ] **Owner email + name** (becomes the Cognito account)
+- [ ] **Concept type** — small bar / mid bar / large bar / restaurant /
+      nightclub / mixed
+- [ ] **Typical slow-night covers** (their Tuesday-ish number)
+- [ ] **Typical busy-night covers** (their Saturday-ish number)
+- [ ] **NVR public IP + HTTP port** (for HLS reverse proxy) or a VPN
+      endpoint if the NVR isn't internet-exposed
+- [ ] **NVR admin credentials** (we need these to enumerate channels)
+- [ ] **POS vendor** — Square, Toast, Clover, other, or none
+- [ ] **A 5-10 min MP4 export from a previous busy Fri/Sat shift** + the
+      POS drink count for the same window (used for bar calibration —
+      see §4)
+
+### Pre-stage the night before (~20 min from your laptop)
+
+- [ ] **Create the venue record** via the Onboarding Wizard step 1 only.
+      Fills in venueId, owner Cognito user, forecast baseline. Skip
+      steps 2–5; do those on-site. Owner gets their temp password over
+      email (or paste it in your 1Password to share in person).
+- [ ] **If this is your first time shipping to a new SES region or
+      sender address**: hit Admin → Email Reporting → Verify Sender and
+      click the AWS link. Avoids on-site scramble.
+- [ ] **Request SES production access** if the venue expects to email
+      more than a handful of verified addresses — approval can take
+      24 hours, so file it early. (AWS Console → SES → Account
+      dashboard → Request production access.)
+- [ ] **Droplet ready** — either reuse the shared droplet (cheaper; works
+      up to ~20 cams total across venues) or provision a new one via
+      `deploy/provision.sh`. Confirm it has Caddy + worker + webhook
+      services + the latest `main` branch pulled.
+- [ ] **Caddyfile draft** — copy the existing `/cam/*` + `/ops/*` blocks,
+      update NVR host:port placeholders, stash locally. Deploy in the
+      first 5 min on-site.
+
+### Take with you to the venue
+
+- [ ] **Laptop** (for admin portal + SSH to droplet)
+- [ ] **Phone** signed into the same owner account (for the multi-device
+      sanity check at the end)
+- [ ] **Ethernet cable** — WiFi at venues is often the thing standing
+      between you and working cameras
+- [ ] **A 5-min POS-calibrated MP4** (above) on a USB stick or in iCloud
+- [ ] **This playbook** bookmarked on your phone
+
+### On-site time estimate (after pre-staging)
+
+| Task | Time |
+|---|---|
+| Connect droplet to NVR, update Caddyfile, verify HLS snapshot | 15–30 min |
+| Add cameras via wizard, pre-flight each | 10–20 min |
+| Draw polygons / verify auto-detected tables | 20–30 min |
+| Bar calibration with POS clip | 30 min |
+| POS integration (if they have Square/Toast) | 30 min |
+| Live verification 30-min watch | 30 min |
+| **Total** | **~2–3 hours** |
+
+---
+
 ## 0 · Prerequisites
 
 Before touching anything in the admin portal:
