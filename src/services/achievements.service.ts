@@ -10,6 +10,9 @@
 
 import authService from './auth.service';
 import staffService from './staff.service';
+import {
+  loadVenueSetting, saveVenueSetting, peekVenueSetting,
+} from './venueSettings.service';
 
 // ============ TYPES ============
 
@@ -56,9 +59,23 @@ export interface NewRecordEvent {
   improvement?: number;
 }
 
-// ============ STORAGE KEYS ============
+// ============ STORAGE ============
+//
+// All three achievement sub-blobs (records, streak, weeklyGoal) live in one
+// DDB blob under venue settings key 'achievements'. Keeping them together
+// lets a single load/save cover the whole feature — and more importantly,
+// lets a phone that logs in for the first time see the same streak and
+// records the user set on their laptop.
 
-const getKey = (venueId: string, key: string) => `pulse_achievements_${venueId}_${key}`;
+interface _AchievementsBlob {
+  records: PersonalRecord[];
+  streak: Streak | null;
+  weeklyGoal: WeeklyGoal | null;
+}
+
+const _EMPTY_BLOB: _AchievementsBlob = {
+  records: [], streak: null, weeklyGoal: null,
+};
 
 // ============ SERVICE ============
 
@@ -68,17 +85,36 @@ class AchievementsService {
     return user?.venueId || 'default';
   }
 
+  /**
+   * Pull the full achievements blob from DynamoDB into the local cache so the
+   * synchronous getRecords/getStreak/getWeeklyGoal accessors below return
+   * cross-device data. Call once when the achievements UI mounts.
+   */
+  async hydrate(): Promise<void> {
+    const venueId = this.getVenueId();
+    await loadVenueSetting<_AchievementsBlob>('achievements', _EMPTY_BLOB, venueId);
+  }
+
+  private readBlob(): _AchievementsBlob {
+    const venueId = this.getVenueId();
+    return peekVenueSetting<_AchievementsBlob>('achievements', _EMPTY_BLOB, venueId);
+  }
+
+  private writeBlob(blob: _AchievementsBlob): void {
+    const venueId = this.getVenueId();
+    // Fire-and-forget — cache is updated synchronously so subsequent reads
+    // are already consistent even before the server round-trip completes.
+    void saveVenueSetting('achievements', blob, venueId);
+  }
+
   // ============ PERSONAL RECORDS ============
 
   getRecords(): PersonalRecord[] {
-    const venueId = this.getVenueId();
-    const data = localStorage.getItem(getKey(venueId, 'records'));
-    return data ? JSON.parse(data) : [];
+    return this.readBlob().records;
   }
 
   private saveRecords(records: PersonalRecord[]): void {
-    const venueId = this.getVenueId();
-    localStorage.setItem(getKey(venueId, 'records'), JSON.stringify(records));
+    this.writeBlob({ ...this.readBlob(), records });
   }
 
   checkAndUpdateRecord(
@@ -128,12 +164,7 @@ class AchievementsService {
   // ============ STREAKS ============
 
   getStreak(): Streak {
-    const venueId = this.getVenueId();
-    const data = localStorage.getItem(getKey(venueId, 'streak'));
-    if (data) {
-      return JSON.parse(data);
-    }
-    return {
+    return this.readBlob().streak ?? {
       current: 0,
       best: 0,
       threshold: 75,
@@ -143,8 +174,7 @@ class AchievementsService {
   }
 
   private saveStreak(streak: Streak): void {
-    const venueId = this.getVenueId();
-    localStorage.setItem(getKey(venueId, 'streak'), JSON.stringify(streak));
+    this.writeBlob({ ...this.readBlob(), streak });
   }
 
   updateStreak(todayScore: number): { streakBroken: boolean; newMilestone: number | null } {
@@ -206,12 +236,9 @@ class AchievementsService {
   // ============ WEEKLY GOALS ============
 
   getWeeklyGoal(): WeeklyGoal | null {
-    const venueId = this.getVenueId();
-    const data = localStorage.getItem(getKey(venueId, 'weeklyGoal'));
-    if (!data) return null;
-    
-    const goal: WeeklyGoal = JSON.parse(data);
-    
+    const goal = this.readBlob().weeklyGoal;
+    if (!goal) return null;
+
     // Check if it's a new week
     const currentWeekStart = this.getWeekStart(new Date());
     if (goal.weekStart !== currentWeekStart) {
@@ -225,7 +252,7 @@ class AchievementsService {
         weekStart: currentWeekStart,
       };
     }
-    
+
     return goal;
   }
 
@@ -279,8 +306,7 @@ class AchievementsService {
   }
 
   private saveWeeklyGoal(goal: WeeklyGoal): void {
-    const venueId = this.getVenueId();
-    localStorage.setItem(getKey(venueId, 'weeklyGoal'), JSON.stringify(goal));
+    this.writeBlob({ ...this.readBlob(), weeklyGoal: goal });
   }
 
   private getWeekStart(date: Date): string {

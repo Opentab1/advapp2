@@ -1105,12 +1105,19 @@ class AdminService {
     this.sessionAuditLog.unshift(auditEntry);
     console.log('Audit logged:', auditEntry.action, '-', auditEntry.targetName);
 
-    try {
-      const stored = localStorage.getItem('adminAuditLog') || '[]';
-      const parsed = JSON.parse(stored);
-      parsed.unshift(auditEntry);
-      localStorage.setItem('adminAuditLog', JSON.stringify(parsed.slice(0, 500)));
-    } catch (_) { /* */ }
+    // Persist to DynamoDB so every admin + every device sees the same trail.
+    // Kept capped at 500 entries so the blob doesn't grow unbounded; older
+    // history is expected to live in a dedicated audit table later.
+    void (async () => {
+      try {
+        const { loadSystemSetting, saveSystemSetting } =
+          await import('./systemSettings.service');
+        const existing = await loadSystemSetting<typeof this.sessionAuditLog>(
+          'auditLog', []);
+        const merged = [auditEntry, ...existing].slice(0, 500);
+        await saveSystemSetting('auditLog', merged);
+      } catch { /* logging is best-effort; never surface a failure to callers */ }
+    })();
   }
 
   async getAuditLog(options: {
@@ -1134,16 +1141,17 @@ class AdminService {
 
     allEntries.push(...this.sessionAuditLog);
 
+    // Pull the cross-device log from DynamoDB so another admin's actions
+    // (on their laptop or phone) are visible here too.
     try {
-      const stored = localStorage.getItem('adminAuditLog');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        const sessionIds = new Set(this.sessionAuditLog.map(e => e.id));
-        for (const entry of parsed) {
-          if (!sessionIds.has(entry.id)) allEntries.push(entry);
-        }
+      const { loadSystemSetting } = await import('./systemSettings.service');
+      const persisted = await loadSystemSetting<typeof this.sessionAuditLog>(
+        'auditLog', []);
+      const sessionIds = new Set(this.sessionAuditLog.map(e => e.id));
+      for (const entry of persisted) {
+        if (!sessionIds.has(entry.id)) allEntries.push(entry);
       }
-    } catch (_) { /* */ }
+    } catch (_) { /* non-fatal — session log still shows */ }
 
     try {
       const venues = await this.listVenues();

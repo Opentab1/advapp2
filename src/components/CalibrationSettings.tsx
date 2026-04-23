@@ -36,10 +36,12 @@ export function CalibrationSettings({ venueId }: CalibrationSettingsProps) {
   const [lightMax, setLightMax] = useState(defaults.light.max);
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   
-  // Load existing calibration
+  // Load existing calibration from DynamoDB so this device always reflects
+  // what other devices on the same account have set.
   useEffect(() => {
-    const existing = venueCalibrationService.getCalibration(venueId);
-    if (existing) {
+    let cancelled = false;
+    const apply = (existing: VenueCalibration | null) => {
+      if (cancelled || !existing) return;
       setCalibration(existing);
       if (existing.sound) {
         setSoundMin(existing.sound.min);
@@ -52,7 +54,11 @@ export function CalibrationSettings({ venueId }: CalibrationSettingsProps) {
       if (existing.venueType) {
         setSelectedPreset(existing.venueType);
       }
-    }
+    };
+    // Paint immediately from cache, then overwrite with server truth.
+    apply(venueCalibrationService.getCalibration(venueId));
+    venueCalibrationService.hydrate(venueId).then(apply).catch(() => { /* ok */ });
+    return () => { cancelled = true; };
   }, [venueId]);
   
   const handlePresetSelect = (presetKey: string) => {

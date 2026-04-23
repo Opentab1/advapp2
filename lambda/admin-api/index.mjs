@@ -1186,6 +1186,54 @@ async function putVenueSetting(venueId, key, body) {
   }
 }
 
+// ─── System-scope settings (admin-authored, cross-venue) ─────────────────────
+//
+// For data that belongs to the platform rather than a single venue: the sales
+// CRM pipeline, the admin audit log, etc. Stored on VenueScopeVenues under a
+// reserved `_system_<key>_` venueId so it lives in the same row type as a
+// venue — one PK namespace, no second table.
+//
+// Only super-admins should hit these routes. The Lambda authorizer already
+// gates /admin/* paths to Cognito admins.
+
+const SYSTEM_SETTING_KEYS = new Set([
+  'crmLeads',   // Sales pipeline for multi-rep teams
+  'auditLog',   // Cross-device admin action history (capped client-side at 500)
+]);
+
+async function getSystemSetting(key) {
+  if (!SYSTEM_SETTING_KEYS.has(key)) return err(400, `unknown system key: ${key}`);
+  try {
+    const r = await ddb.send(new GetItemCommand({
+      TableName: VENUES_TABLE,
+      Key: { venueId: { S: `_system_${key}_` } },
+    }));
+    const raw = r.Item?.valueJson?.S;
+    return ok({ value: raw ? JSON.parse(raw) : null });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function putSystemSetting(key, body) {
+  if (!SYSTEM_SETTING_KEYS.has(key)) return err(400, `unknown system key: ${key}`);
+  const value = body?.value;
+  if (value === undefined) return err(400, 'body.value required');
+  try {
+    await ddb.send(new PutItemCommand({
+      TableName: VENUES_TABLE,
+      Item: {
+        venueId:   { S: `_system_${key}_` },
+        valueJson: { S: JSON.stringify(value) },
+        updatedAt: { S: new Date().toISOString() },
+      },
+    }));
+    return ok({ ok: true });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
 // ─── Alert Reviews (stored in VenueScopeVenues with venueId="_alert_reviews_") ─
 
 const REVIEWS_KEY = '_alert_reviews_';
@@ -1817,6 +1865,9 @@ export const handler = async (event, context) => {
     const settingMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/settings\/([^/]+)$/);
     if (method === 'GET'    && settingMatch)                           return getVenueSetting(decodeURIComponent(settingMatch[1]), settingMatch[2]);
     if (method === 'POST'   && settingMatch)                           return putVenueSetting(decodeURIComponent(settingMatch[1]), settingMatch[2], body);
+    const sysSettingMatch = rawPath.match(/^\/admin\/system\/settings\/([^/]+)$/);
+    if (method === 'GET'    && sysSettingMatch)                        return getSystemSetting(sysSettingMatch[1]);
+    if (method === 'POST'   && sysSettingMatch)                        return putSystemSetting(sysSettingMatch[1], body);
     const emailConfigMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/email-config$/);
     if (method === 'POST'   && emailConfigMatch)                       return saveVenueEmailConfig(decodeURIComponent(emailConfigMatch[1]), body);
     const deleteVenueMatch = rawPath.match(/^\/admin\/venues\/([^/]+)$/);

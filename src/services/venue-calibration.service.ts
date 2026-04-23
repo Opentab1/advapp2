@@ -1,11 +1,17 @@
 /**
  * Venue Calibration Service
- * 
+ *
  * Manages per-venue custom optimal ranges for sound and light.
  * Falls back to time-slot defaults if not customized.
- * 
- * Stored in localStorage for now, can be migrated to backend later.
+ *
+ * Persisted via venueSettings.service so any device the manager logs in on
+ * shows the same calibration. The local synchronous methods still return
+ * cached values for immediate rendering; `hydrate()` should be called once on
+ * mount to pull the authoritative copy from DynamoDB.
  */
+import {
+  loadVenueSetting, saveVenueSetting, peekVenueSetting,
+} from './venueSettings.service';
 
 export interface VenueCalibration {
   venueId: string;
@@ -67,45 +73,43 @@ export const VENUE_TYPE_PRESETS: Record<string, {
   },
 };
 
-const STORAGE_KEY = 'venue_calibration';
-
 class VenueCalibrationService {
   /**
-   * Get calibration for a venue
+   * Synchronous read of the local cache. Returns whatever we last saw from
+   * the server (or a fresh local edit). Call `hydrate(venueId)` once on mount
+   * to ensure the cache reflects the latest server state.
    */
   getCalibration(venueId: string): VenueCalibration | null {
-    try {
-      const stored = localStorage.getItem(`${STORAGE_KEY}_${venueId}`);
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (error) {
-      console.error('Error reading calibration:', error);
-    }
-    return null;
+    return peekVenueSetting<VenueCalibration | null>('calibration', null, venueId);
   }
 
   /**
-   * Save calibration for a venue
+   * Fetch calibration from DynamoDB, populate the local cache, and return it.
+   * UI components should call this in useEffect so cross-device changes show
+   * up on first render.
+   */
+  async hydrate(venueId: string): Promise<VenueCalibration | null> {
+    return loadVenueSetting<VenueCalibration | null>('calibration', null, venueId);
+  }
+
+  /**
+   * Save calibration. Writes through to DynamoDB so other devices see the
+   * update on their next hydrate().
    */
   saveCalibration(calibration: VenueCalibration): void {
-    try {
-      calibration.updatedAt = new Date().toISOString();
-      localStorage.setItem(`${STORAGE_KEY}_${calibration.venueId}`, JSON.stringify(calibration));
-    } catch (error) {
-      console.error('Error saving calibration:', error);
-    }
+    calibration.updatedAt = new Date().toISOString();
+    // Fire-and-forget: venueSettings.saveVenueSetting populates the local
+    // cache synchronously, so subsequent getCalibration() calls already
+    // reflect the write even if the network request is still in flight.
+    void saveVenueSetting('calibration', calibration, calibration.venueId);
   }
 
   /**
-   * Clear calibration for a venue (reset to defaults)
+   * Clear calibration (reset to defaults). Writes null to the server so
+   * every device stops seeing the override.
    */
   clearCalibration(venueId: string): void {
-    try {
-      localStorage.removeItem(`${STORAGE_KEY}_${venueId}`);
-    } catch (error) {
-      console.error('Error clearing calibration:', error);
-    }
+    void saveVenueSetting<VenueCalibration | null>('calibration', null, venueId);
   }
 
   /**

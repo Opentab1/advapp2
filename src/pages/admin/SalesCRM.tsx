@@ -61,9 +61,15 @@ interface Lead {
   updatedAt: string;
 }
 
+import {
+  loadSystemSetting, saveSystemSetting, peekSystemSetting,
+} from '../../services/systemSettings.service';
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'venuescope_crm_leads';
+// STORAGE_KEY intentionally removed — CRM leads now live in DynamoDB via
+// systemSettings.service under the 'crmLeads' key, with localStorage as
+// a cache mirror inside that service.
 
 const PIPELINE_STAGES: Stage[] = ['prospect', 'contacted', 'demo', 'trial', 'customer'];
 
@@ -174,17 +180,22 @@ function uid(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-function loadLeads(): Lead[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Lead[]) : [];
-  } catch {
-    return [];
-  }
+// CRM pipeline persistence. Leads live in DynamoDB so every rep and partner
+// sees the same pipeline on every device; localStorage is a write-through
+// cache inside systemSettings.service for latency + offline mode.
+function loadLeadsSync(): Lead[] {
+  // Synchronous cache peek for first render; the async fetch below overwrites
+  // as soon as the server responds.
+  return peekSystemSetting<Lead[]>('crmLeads', []);
+}
+
+async function loadLeadsFromServer(): Promise<Lead[]> {
+  return loadSystemSetting<Lead[]>('crmLeads', []);
 }
 
 function saveLeads(leads: Lead[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(leads));
+  // Fire-and-forget; saveSystemSetting updates the local cache synchronously.
+  void saveSystemSetting('crmLeads', leads);
 }
 
 function isOverdue(lead: Lead): boolean {
@@ -892,9 +903,15 @@ export function SalesCRM() {
   const [sortField, setSortField] = useState<SortField>('createdAt');
   const [listFilter, setListFilter] = useState<ListFilter>('all');
 
-  // Load from localStorage on mount
+  // Render the cached pipeline immediately, then sync from the server so
+  // another rep's edits show up without a page refresh.
   useEffect(() => {
-    setLeads(loadLeads());
+    setLeads(loadLeadsSync());
+    let cancelled = false;
+    loadLeadsFromServer()
+      .then(srv => { if (!cancelled) setLeads(srv); })
+      .catch(() => { /* fall back to cache */ });
+    return () => { cancelled = true; };
   }, []);
 
   const persistLeads = useCallback((updated: Lead[]) => {
