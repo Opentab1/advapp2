@@ -13,17 +13,27 @@ from typing import Dict, List, Tuple, Optional, Callable
 
 log = logging.getLogger("calibrate")
 
-# ── Sweep parameters ──────────────────────────────────────────────────────────
+# ── Sweep parameters (side-angle default) ───────────────────────────────────
 Y_POSITIONS    = [0.33, 0.36, 0.39, 0.42, 0.45, 0.48, 0.51, 0.54]
 CUSTOMER_SIDES = [+1, -1]  # +1 = customers below line (higher Y), -1 = above line
 
-# Processing settings — maximise speed on 1-vCPU droplet
 CALIB_MODEL    = "yolov8n.pt"
 CALIB_IMGSZ    = 480
 CALIB_CONF     = 0.35
 CALIB_IOU      = 0.45
 CALIB_STRIDE   = 3           # process every 3rd frame
 CALIB_MAX_SEC  = 300.0       # cap at 5 min regardless of clip length
+
+# Overhead fisheye cams need different knobs — matches production drink_counter:
+#   • conf=0.15 (overhead compresses people, detections are softer)
+#   • imgsz=640 (higher res to recover that detail)
+#   • wider Y sweep (bar line can be anywhere from 15%–70% on fisheye)
+#   • use bbox leading edge toward customer, not centroid — approximates the
+#     production 80px "reach probe" so arm-reach serves get counted.
+OVERHEAD_Y_POSITIONS  = [0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
+OVERHEAD_CONF         = 0.15
+OVERHEAD_IMGSZ        = 640
+OVERHEAD_STRIDE       = 2
 
 # Cooldown: min frames between counted crossings per (combo, track_id).
 # effective_fps ≈ 25/3 ≈ 8; 40 frames ≈ 5 s cooldown.
@@ -50,8 +60,20 @@ class CalibrationEngine:
         self.actual_count = actual_count
         self.venue_id     = venue_id
         self.camera_id    = camera_id  # specific camera this clip came from
-        self.y_positions  = y_positions or Y_POSITIONS
         self.cb           = progress_cb or (lambda p, m: None)
+
+        # Detect overhead mode from the camera's existing config so we pick
+        # the right YOLO knobs + Y sweep range before the run starts.
+        self.is_overhead  = self._read_existing_overhead_flag()
+        if y_positions:
+            self.y_positions = y_positions
+        elif self.is_overhead:
+            self.y_positions = OVERHEAD_Y_POSITIONS
+        else:
+            self.y_positions = Y_POSITIONS
+        self.conf         = OVERHEAD_CONF  if self.is_overhead else CALIB_CONF
+        self.imgsz        = OVERHEAD_IMGSZ if self.is_overhead else CALIB_IMGSZ
+        self.stride       = OVERHEAD_STRIDE if self.is_overhead else CALIB_STRIDE
 
         # Per-combo state: last known side, cooldown, total count
         # key = (y_idx, side_idx)
@@ -65,6 +87,24 @@ class CalibrationEngine:
                 self._last_side[k] = {}
                 self._cooldown[k]  = {}
                 self._counts[k]    = 0
+
+    def _read_existing_overhead_flag(self) -> bool:
+        """Look up the camera's existing barConfigJson in DDB, return the
+        overhead_camera flag. Safe fallback: False.
+        """
+        if not (self.camera_id and self.venue_id):
+            return False
+        try:
+            import boto3, os as _os
+            _region = _os.environ.get("AWS_DEFAULT_REGION") or _os.environ.get("AWS_REGION", "us-east-2")
+            _t = boto3.resource("dynamodb", region_name=_region).Table("VenueScopeCameras")
+            _i = _t.get_item(Key={"venueId": self.venue_id, "cameraId": self.camera_id}).get("Item", {})
+            _cj = _i.get("barConfigJson", "") or ""
+            if not _cj:
+                return False
+            return bool(json.loads(_cj).get("overhead_camera", False))
+        except Exception:
+            return False
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -139,7 +179,8 @@ class CalibrationEngine:
         if total_f > 0:
             max_frames = min(max_frames, total_f)
 
-        self.cb(8, f"Video: {W}×{H} @{fps:.1f}fps — scanning up to {min(CALIB_MAX_SEC, total_f/fps if total_f>0 else CALIB_MAX_SEC):.0f}s")
+        mode_tag = "overhead" if self.is_overhead else "side"
+        self.cb(8, f"Video: {W}×{H} @{fps:.1f}fps ({mode_tag}, conf={self.conf}, {len(self.y_positions)}Y × 2 sides) — scanning up to {min(CALIB_MAX_SEC, total_f/fps if total_f>0 else CALIB_MAX_SEC):.0f}s")
 
         frame_idx  = 0
         proc_count = 0
@@ -152,21 +193,21 @@ class CalibrationEngine:
             frame_idx += 1
             if frame_idx > max_frames:
                 break
-            if frame_idx % CALIB_STRIDE != 0:
+            if frame_idx % self.stride != 0:
                 continue
 
             # Progress update every ~5 seconds of video
             if proc_count % 40 == 0 and proc_count > 0:
                 pct     = 8 + 82 * min(frame_idx / max(max_frames, 1), 1.0)
                 elapsed = time.time() - t_start
-                remain  = elapsed / proc_count * (max_frames / CALIB_STRIDE - proc_count)
+                remain  = elapsed / proc_count * (max_frames / self.stride - proc_count)
                 self.cb(pct, f"Frame {frame_idx}/{max_frames} — ETA {max(0, remain):.0f}s")
 
             # YOLO + ByteTrack
             res = model.track(
                 frame,
-                imgsz   = CALIB_IMGSZ,
-                conf    = CALIB_CONF,
+                imgsz   = self.imgsz,
+                conf    = self.conf,
                 iou     = CALIB_IOU,
                 classes = [0],       # person only
                 persist = True,
@@ -183,9 +224,15 @@ class CalibrationEngine:
 
             xyxy      = boxes.xyxy.cpu().numpy()
             track_ids = boxes.id.cpu().numpy().astype(int)
-            cy_vals   = ((xyxy[:, 1] + xyxy[:, 3]) / 2) / H  # normalised Y centroids
+            # For overhead fisheye cams, use the bbox bottom edge (the arm-reach
+            # approximation) instead of centroid — matches production reach probe.
+            # For side cams, centroid works fine.
+            if self.is_overhead:
+                y_vals = xyxy[:, 3] / H     # bottom edge (feet / counter side)
+            else:
+                y_vals = ((xyxy[:, 1] + xyxy[:, 3]) / 2) / H   # centroid
 
-            self._score_frame(track_ids, cy_vals, frame_idx)
+            self._score_frame(track_ids, y_vals, frame_idx)
 
         cap.release()
 
