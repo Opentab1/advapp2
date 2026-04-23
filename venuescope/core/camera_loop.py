@@ -119,6 +119,13 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
         "bar_config_json": cam.get("bar_config_json", ""),
         # Table zone config from DDB zone editor (JSON array of {table_id, label, polygon})
         "tables": json.loads(cam.get("table_zones_json") or "[]"),
+        # Per-camera table_rules override. Defaults to DEFAULT_TABLE_RULES on
+        # the worker side; use this for bar-stool cams where people may
+        # disappear for a few minutes (bathroom) mid-session and for fast
+        # drink turnover that should still count as a seated visit.
+        # Keys honored by table_turns_runner + TableTurnTracker:
+        #   occupied_conf_samples | empty_conf_samples | min_dwell_seconds
+        "table_rules": json.loads(cam.get("table_rules_json") or "{}"),
     }
     # Sub-stream swap for non-drink_count jobs.
     # Background: the NVR's residential upstream can't saturate with all 10+

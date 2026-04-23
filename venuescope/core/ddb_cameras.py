@@ -57,6 +57,10 @@ def _item_to_camera(item: dict) -> dict:
         "bar_config_json":  item.get("barConfigJson", ""),
         # Table zone config saved by the React table zone editor (JSON array string)
         "table_zones_json": item.get("tableZonesJson", ""),
+        # Per-camera table_rules override (JSON string). Used for bar-stool
+        # cams that need longer empty_conf_samples (bathroom tolerance) and
+        # shorter min_dwell_seconds than the dining-floor defaults.
+        "table_rules_json": item.get("tableRulesJson", ""),
         # Per-camera override: force main stream /0/ even for non-drink_count
         # modes. Set True when a channel's /1/ sub-stream is broken on the NVR.
         "force_main_stream": bool(item.get("forceMainStream", False)),
