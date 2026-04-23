@@ -330,6 +330,29 @@ export function ZoneEditorModal({
     const id = setInterval(() => setEditorTick(t => t + 1), 1_500);
     return () => clearInterval(id);
   }, []);
+
+  // Self-heal sync on mount — re-read barConfigJson from DynamoDB so the
+  // modal can never open with stale zones that predate an optimizer write
+  // (or another admin's edit from a different device).
+  useEffect(() => {
+    let cancelled = false;
+    cameraService.listCameras(camera.venueId).then(cams => {
+      if (cancelled) return;
+      const fresh = cams.find(c => c.cameraId === camera.cameraId);
+      const freshConfig = fresh ? parseBarConfig(fresh.barConfigJson) : null;
+      if (!freshConfig) return;
+      // Only adopt the server copy if the user hasn't started editing yet
+      // (i.e. the local state still equals what we initialized with).
+      setConfig(prev => {
+        const prevStr = JSON.stringify(prev);
+        const initStr = JSON.stringify(existing ?? suggestedConfig);
+        return prevStr === initStr ? freshConfig : prev;
+      });
+    }).catch(() => { /* ok — keep whatever parsed from the passed-in camera */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera.venueId, camera.cameraId]);
+
   const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const editorHlsRef = useRef<Hls | null>(null);
@@ -1252,6 +1275,26 @@ export function TableZoneEditorModal({
     const id = setInterval(() => setEditorTick(t => t + 1), 1_500);
     return () => clearInterval(id);
   }, []);
+
+  // Self-heal sync on mount — re-read the camera's tableZonesJson directly
+  // from DynamoDB. Stops the modal from ever showing "No zones drawn yet"
+  // when the worker/optimizer just wrote polygons that the caller's cached
+  // copy didn't yet have.
+  useEffect(() => {
+    let cancelled = false;
+    cameraService.listCameras(camera.venueId).then(cams => {
+      if (cancelled) return;
+      const fresh = cams.find(c => c.cameraId === camera.cameraId);
+      if (!fresh?.tableZonesJson) return;
+      const parsed = parseTableZones(fresh.tableZonesJson);
+      // Only adopt the fresh zones if the local state is still empty — the
+      // admin may have already started drawing by the time this resolves,
+      // and we don't want to clobber unsaved work.
+      setZones(prev => (prev.length === 0 && parsed.length > 0) ? parsed : prev);
+    }).catch(() => { /* ok — keep whatever parsed from the passed-in camera */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera.venueId, camera.cameraId]);
   const svgRef   = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef   = useRef<Hls | null>(null);
