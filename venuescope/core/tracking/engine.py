@@ -1200,9 +1200,14 @@ class VenueProcessor:
                 _since_yolo = _wall_now - _last_yolo_wall_t
                 if _idle_secs > _IDLE_ENTER_AFTER and _since_yolo < _IDLE_SANITY_EVERY:
                     # Empty frame, recent sanity pass — skip YOLO this round.
-                    # Advance the frame counter so downstream bookkeeping
-                    # (stride, logs) stays consistent.
+                    # Also sleep ~2s so the background HLS decoder blocks on
+                    # a full queue; otherwise pyav keeps decoding every frame
+                    # at consumer rate and burns ~25% CPU per cam even with
+                    # YOLO disabled. This drops effective consumer rate from
+                    # 2 fps → 0.5 fps during idle, which is plenty given the
+                    # 30s sanity timer still runs a full inference on schedule.
                     frame_idx += 1
+                    time.sleep(2.0)
                     continue
                 _last_yolo_wall_t = _wall_now
 
