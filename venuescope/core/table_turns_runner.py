@@ -124,12 +124,18 @@ def run_table_turns_lightweight(
     H, W = first_frame.shape[:2]
 
     # ── Build table zones from config ───────────────────────────────────────
+    # Admins draw polygons on the table surface; _widen_seat_polygon_px
+    # extends them to also cover the chair-skirt and leaning-back head
+    # room. Shared with the engine path so both "lightweight table_turns"
+    # here and the full-YOLO table_service path treat zones identically.
+    from core.tracking.engine import _widen_seat_polygon_px
     table_zones: List[TableZone] = []
     for t in tables_cfg:
         poly_norm = t.get("polygon", [])
         if len(poly_norm) < 3:
             continue
         poly_px = [(px * W, py * H) for px, py in poly_norm]
+        poly_px = _widen_seat_polygon_px(poly_px)
         table_zones.append(TableZone(
             table_id   = t.get("id", t.get("table_id", f"t{len(table_zones)}")),
             label      = t.get("label", f"Table {len(table_zones)+1}"),
@@ -249,7 +255,18 @@ def run_table_turns_lightweight(
             log.warning(f"[table] inference err at t={t_sec:.1f}s: {e}")
             continue
 
-        centroids_list: List[Tuple[float, float]] = []
+        # One anchor point per detection: the foot-point (bottom-center of
+        # the bbox, nudged up 10% to avoid floor shadows). Foot-point is
+        # the right signal for "person at this table" because seated
+        # diners' feet/knees project close to the chair-and-table base in
+        # every camera angle, while bbox centroids drift with posture —
+        # leaning forward pushes centroid above the polygon, leaning back
+        # pushes it into the next table's zone.
+        #
+        # Combined with the 15%-down / 10%-up polygon widening in the zone
+        # config above, this converts every seated person into a hit
+        # without the admin having to redraw their polygons.
+        points_list: List[Tuple[float, float]] = []
         track_ids_list: List[int] = []
         if r is not None and r.boxes is not None and len(r.boxes):
             boxes = r.boxes.xyxy.cpu().numpy()
@@ -257,14 +274,14 @@ def run_table_turns_lightweight(
                      if r.boxes.id is not None
                      else list(range(-proc_idx * 100, -proc_idx * 100 + len(boxes))))
             for (x1, y1, x2, y2), tid in zip(boxes, ids):
-                cx = (x1 + x2) / 2.0
-                cy = (y1 + y2) / 2.0
-                centroids_list.append((float(cx), float(cy)))
+                foot_x = (x1 + x2) / 2.0
+                foot_y = y1 + (y2 - y1) * 0.90   # 90% down — skip shadow
+                points_list.append((float(foot_x), float(foot_y)))
                 track_ids_list.append(int(tid))
 
-        centroids_arr = np.array(centroids_list, dtype=np.float32) \
-                        if centroids_list else np.empty((0, 2), dtype=np.float32)
-        tracker.update(proc_idx, t_sec, centroids_arr, track_ids_list)
+        points_arr = np.array(points_list, dtype=np.float32) \
+                      if points_list else np.empty((0, 2), dtype=np.float32)
+        tracker.update(proc_idx, t_sec, points_arr, track_ids_list)
 
         # Live push
         if is_continuous and (time.time() - last_live_push) >= LIVE_CB_EVERY:

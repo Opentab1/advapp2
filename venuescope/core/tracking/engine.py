@@ -51,6 +51,44 @@ def _centroids(boxes: np.ndarray) -> np.ndarray:
                      (boxes[:,1]+boxes[:,3])/2], axis=1)
 
 
+def _feet_points(boxes: np.ndarray) -> np.ndarray:
+    """Bottom-center of each bbox nudged up 10% to skip floor shadow.
+    Better anchor than centroid for "person at this table" zone tests — a
+    seated diner's centroid can drift above the table surface (leaning
+    forward) or below (slouching back), but the foot point stays at the
+    chair-and-table base in every camera angle. Used by table_service and
+    the lightweight table_turns runner."""
+    if not len(boxes):
+        return np.empty((0, 2), dtype=np.float32)
+    return np.stack([(boxes[:,0]+boxes[:,2])/2,
+                     boxes[:,1] + (boxes[:,3]-boxes[:,1]) * 0.90], axis=1)
+
+
+def _widen_seat_polygon_px(poly, down_frac: float = 0.15, up_frac: float = 0.10):
+    """Widen a table polygon to cover the chair area + leaning-back head room.
+    Admins draw polygons on the table surface; seated diners' anchor points
+    project onto the chair in front and above the back edge. Extending the
+    bottom vertices downward by 15% of polygon height and the top vertices
+    upward by 10% converts every seated person into a hit without forcing
+    the admin to redraw.
+
+    Only shifts y-coordinates; x-bounds stay where the admin drew them so
+    adjacent tables don't bleed into each other's zones. Callers pass
+    polygons in pixel space (px, py); normalized polygons get widened the
+    same way because the math is proportional."""
+    if len(poly) < 3:
+        return list(poly)
+    ys = [p[1] for p in poly]
+    min_y, max_y = min(ys), max(ys)
+    h = max_y - min_y
+    if h <= 0:
+        return list(poly)
+    mid_y = (min_y + max_y) / 2.0
+    dy_down = h * down_frac
+    dy_up   = h * up_frac
+    return [((x, y + dy_down) if y > mid_y else (x, y - dy_up)) for (x, y) in poly]
+
+
 def _in_ignore_zone(cx, cy, zones, W, H):
     for zone in zones:
         poly = [(p[0]*W, p[1]*H) for p in zone.get("polygon", [])]
@@ -1722,7 +1760,8 @@ class VenueProcessor:
         elif mode == "table_turns":
             zones = [TableZone(table_id=t["table_id"],
                                label=t.get("label",t["table_id"]),
-                               polygon_px=[(p[0]*W,p[1]*H) for p in t["polygon"]])
+                               polygon_px=_widen_seat_polygon_px(
+                                   [(p[0]*W,p[1]*H) for p in t["polygon"]]))
                      for t in ec.get("tables",[])]
             r = DEFAULT_TABLE_RULES
             tracker = TableTurnTracker(zones, r.occupied_conf_frames,
@@ -1736,7 +1775,8 @@ class VenueProcessor:
         elif mode == "table_service":
             zones = [ServiceTableZone(table_id=t["table_id"],
                                       label=t.get("label", t["table_id"]),
-                                      polygon_px=[(p[0]*W, p[1]*H) for p in t["polygon"]])
+                                      polygon_px=_widen_seat_polygon_px(
+                                          [(p[0]*W, p[1]*H) for p in t["polygon"]]))
                      for t in ec.get("tables", [])]
             server_names = {}
             if self.shift:
@@ -1781,7 +1821,13 @@ class VenueProcessor:
                                    boxes=boxes_px if len(boxes_px) else None)
         elif mode == "bottle_count":
             return analyzer.update(frame_idx, t_sec, boxes_px, class_ids or [], confs)
-        elif mode in ("people_count", "table_turns", "table_service", "staff_activity"):
+        elif mode in ("table_turns", "table_service"):
+            # Table-zone modes do a point-in-polygon test against the drawn
+            # table zones. Feet are the right anchor — see _feet_points
+            # docstring and the matching change in table_turns_runner.
+            feet = _feet_points(boxes_px) if len(boxes_px) else centroids
+            return analyzer.update(frame_idx, t_sec, feet, track_ids)
+        elif mode in ("people_count", "staff_activity"):
             return analyzer.update(frame_idx, t_sec, centroids, track_ids)
         elif mode == "after_hours":
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
