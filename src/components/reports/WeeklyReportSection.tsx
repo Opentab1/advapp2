@@ -5,7 +5,7 @@
  * Allows scheduling preferences and one-click PDF download via browser print.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileText, Download, Mail, RefreshCw, TrendingUp, TrendingDown,
@@ -14,6 +14,9 @@ import {
 import emailReportService from '../../services/email-report.service';
 import authService from '../../services/auth.service';
 import { haptic } from '../../utils/haptics';
+import {
+  loadVenueSetting, saveVenueSetting, peekVenueSetting,
+} from '../../services/venueSettings.service';
 
 type SendDay = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
 
@@ -23,15 +26,14 @@ interface ReportSchedule {
   email: string;
 }
 
-const SCHEDULE_KEY = 'pulse_report_schedule';
-
-function loadSchedule(): ReportSchedule {
-  try {
-    const raw = localStorage.getItem(SCHEDULE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
+function initialSchedule(): ReportSchedule {
   const user = authService.getStoredUser();
-  return { enabled: false, day: 'monday', email: user?.email || '' };
+  const fallback: ReportSchedule = {
+    enabled: false, day: 'monday', email: user?.email || '',
+  };
+  if (!user?.venueId) return fallback;
+  // Synchronous cache peek for first render; server value arrives via useEffect.
+  return peekVenueSetting<ReportSchedule>('reportSchedule', fallback, user.venueId);
 }
 
 const DAYS: SendDay[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -44,9 +46,21 @@ export function WeeklyReportSection() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const [schedule, setSchedule] = useState<ReportSchedule>(loadSchedule);
+  const [schedule, setSchedule] = useState<ReportSchedule>(initialSchedule);
   const [scheduleSaved, setScheduleSaved] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
+
+  // Hydrate schedule from DynamoDB on mount so a fresh device sees the
+  // latest value the owner last saved anywhere.
+  useEffect(() => {
+    if (!user?.venueId) return;
+    loadVenueSetting<ReportSchedule>(
+      'reportSchedule',
+      schedule,
+      user.venueId,
+    ).then(s => setSchedule(s)).catch(() => { /* keep initialSchedule */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.venueId]);
 
   const fetchReport = useCallback(async () => {
     if (!user?.venueId) return;
@@ -67,11 +81,19 @@ export function WeeklyReportSection() {
     if (!reportData && !loading) fetchReport();
   };
 
-  const handleSaveSchedule = () => {
-    localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule));
-    haptic('success');
-    setScheduleSaved(true);
-    setTimeout(() => setScheduleSaved(false), 3000);
+  const handleSaveSchedule = async () => {
+    if (!user?.venueId) return;
+    try {
+      await saveVenueSetting('reportSchedule', schedule, user.venueId);
+      haptic('success');
+      setScheduleSaved(true);
+      setTimeout(() => setScheduleSaved(false), 3000);
+    } catch {
+      // Write-through cache already holds the value so a later retry (or
+      // reload on any device) will push it up.
+      setScheduleSaved(true);
+      setTimeout(() => setScheduleSaved(false), 3000);
+    }
   };
 
   const handleDownload = () => {

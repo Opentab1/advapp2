@@ -22,6 +22,7 @@ import { haptic } from '../utils/haptics';
 import { useDisplayName } from '../hooks/useDisplayName';
 import squarePosService, { SquareCredentials } from '../services/square-pos.service';
 import venueScopeService from '../services/venuescope.service';
+import { loadVenueSetting, saveVenueSetting } from '../services/venueSettings.service';
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<'account' | 'venue' | 'integrations' | 'calibration' | 'alerts' | 'cameras' | 'billing' | 'staffing' | 'about'>('account');
@@ -413,9 +414,13 @@ export function Settings() {
     if (activeTab !== 'staffing') return;
     const venueId = user?.venueId;
     if (!venueId) return;
-    // Load saved rates from localStorage
-    const savedRates = localStorage.getItem(`vs_hourly_rates_${venueId}`);
-    if (savedRates) { try { setHourlyRates(JSON.parse(savedRates)); } catch { /* ignore */ } }
+    // Load saved rates from DynamoDB (server-authoritative; localStorage is
+    // just a write-through cache inside venueSettings.service).
+    loadVenueSetting<{ bartender: number; server: number; door: number; manager: number }>(
+      'hourlyRates',
+      { bartender: 18, server: 15, door: 16, manager: 22 },
+      venueId,
+    ).then(rates => setHourlyRates(rates)).catch(() => { /* keep defaults */ });
     // Load physics from DynamoDB
     venueScopeService.getVenuePhysics(venueId).then(p => {
       if (!p) return;
@@ -436,7 +441,7 @@ export function Settings() {
     setPhysicsSaving(true);
     try {
       await venueScopeService.saveVenuePhysics(venueId, physicsForm as unknown as Record<string, unknown>);
-      localStorage.setItem(`vs_hourly_rates_${venueId}`, JSON.stringify(hourlyRates));
+      await saveVenueSetting('hourlyRates', hourlyRates, venueId);
       setPhysicsSaved(true);
       setTimeout(() => setPhysicsSaved(false), 2500);
     } finally {

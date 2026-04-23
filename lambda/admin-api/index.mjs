@@ -1129,6 +1129,63 @@ async function cancelJob(body) {
   return ok({ success: true });
 }
 
+// ─── Generic venue settings (cross-device user-authored data) ─────────────────
+//
+// Feature-owned blobs live on the venue record as `settings_<key>Json` strings.
+// This keeps per-venue operator data (staff roster, shifts, wage rates, report
+// schedule, calibration thresholds, …) in one DDB row and crosses devices by
+// default. Consumers call GET /admin/venues/:id/settings/:key and POST back.
+//
+// Allowed keys are explicit so a typo in the client can't shove arbitrary data
+// into the venue record. Values must be JSON-serializable.
+
+const VENUE_SETTING_KEYS = new Set([
+  'staffing',        // { staff: [...], shifts: [...] }
+  'hourlyRates',     // { bartender: 18, server: 15, ... }
+  'reportSchedule',  // { enabled, dayOfWeek, hour, recipient }
+  'calibration',     // venue-calibration.service payload
+  'achievements',    // { records, streak, weeklyGoal }
+]);
+
+async function getVenueSetting(venueId, key) {
+  if (!venueId || venueId.startsWith('_')) return err(400, 'invalid venueId');
+  if (!VENUE_SETTING_KEYS.has(key)) return err(400, `unknown setting key: ${key}`);
+  try {
+    const r = await ddb.send(new GetItemCommand({
+      TableName: VENUES_TABLE,
+      Key: { venueId: { S: venueId } },
+      ProjectionExpression: '#f',
+      ExpressionAttributeNames: { '#f': `settings_${key}Json` },
+    }));
+    const raw = r.Item?.[`settings_${key}Json`]?.S;
+    return ok({ value: raw ? JSON.parse(raw) : null });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
+async function putVenueSetting(venueId, key, body) {
+  if (!venueId || venueId.startsWith('_')) return err(400, 'invalid venueId');
+  if (!VENUE_SETTING_KEYS.has(key)) return err(400, `unknown setting key: ${key}`);
+  const value = body?.value;
+  if (value === undefined) return err(400, 'body.value required');
+  try {
+    await ddb.send(new UpdateItemCommand({
+      TableName: VENUES_TABLE,
+      Key: { venueId: { S: venueId } },
+      UpdateExpression: 'SET #f = :v, settingsUpdatedAt = :u',
+      ExpressionAttributeNames: { '#f': `settings_${key}Json` },
+      ExpressionAttributeValues: {
+        ':v': { S: JSON.stringify(value) },
+        ':u': { S: new Date().toISOString() },
+      },
+    }));
+    return ok({ ok: true });
+  } catch (e) {
+    return err(500, e.message);
+  }
+}
+
 // ─── Alert Reviews (stored in VenueScopeVenues with venueId="_alert_reviews_") ─
 
 const REVIEWS_KEY = '_alert_reviews_';
@@ -1757,6 +1814,9 @@ export const handler = async (event, context) => {
     if (method === 'PATCH'  && statusMatch)                            return updateVenueStatus(statusMatch[1], body.status);
     const profileMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/profile$/);
     if (method === 'PATCH'  && profileMatch)                           return updateVenueProfile(decodeURIComponent(profileMatch[1]), body);
+    const settingMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/settings\/([^/]+)$/);
+    if (method === 'GET'    && settingMatch)                           return getVenueSetting(decodeURIComponent(settingMatch[1]), settingMatch[2]);
+    if (method === 'POST'   && settingMatch)                           return putVenueSetting(decodeURIComponent(settingMatch[1]), settingMatch[2], body);
     const emailConfigMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/email-config$/);
     if (method === 'POST'   && emailConfigMatch)                       return saveVenueEmailConfig(decodeURIComponent(emailConfigMatch[1]), body);
     const deleteVenueMatch = rawPath.match(/^\/admin\/venues\/([^/]+)$/);

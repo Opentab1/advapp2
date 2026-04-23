@@ -11,6 +11,7 @@ import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval,
 import authService from '../services/auth.service';
 import venueScopeService from '../services/venuescope.service';
 import type { VenueScopeJob } from '../services/venuescope.service';
+import { loadVenueSetting, saveVenueSetting, peekVenueSetting } from '../services/venueSettings.service';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { CSVImport } from '../components/common/CSVImport';
 import { isDemoAccount, generateDemoCapacityModel } from '../utils/demoData';
@@ -141,27 +142,35 @@ const API_BASE  = import.meta.env.VITE_STAFFING_API_URL || '';
 const STAFF_API = API_BASE ? `${API_BASE}/staff`  : '';
 const SHIFTS_API = API_BASE ? `${API_BASE}/shifts` : '';
 
-const _lsKey = (venueId: string, type: 'staff' | 'shifts') => `vs_staffing_${type}_${venueId}`;
+// Staffing data is persisted in DynamoDB via venueSettings.service so
+// managers see the same roster + shifts on every device. The sync helpers
+// below read/write the local cache so existing synchronous call sites keep
+// working; a useEffect on mount hydrates the cache from the server.
+
+type _StaffingBlob = { staff: StaffMember[]; shifts: Shift[] };
+
 function _lsGetStaff(venueId: string): StaffMember[] {
-  try { return JSON.parse(localStorage.getItem(_lsKey(venueId, 'staff')) || '[]'); } catch { return []; }
-}
-function _lsSaveStaff(venueId: string, data: StaffMember[]) {
-  localStorage.setItem(_lsKey(venueId, 'staff'), JSON.stringify(data));
+  return peekVenueSetting<_StaffingBlob>('staffing',
+    { staff: [], shifts: [] }, venueId).staff;
 }
 function _lsGetShifts(venueId: string): Shift[] {
-  try { return JSON.parse(localStorage.getItem(_lsKey(venueId, 'shifts')) || '[]'); } catch { return []; }
+  return peekVenueSetting<_StaffingBlob>('staffing',
+    { staff: [], shifts: [] }, venueId).shifts;
+}
+function _lsSaveStaff(venueId: string, data: StaffMember[]) {
+  const prev = peekVenueSetting<_StaffingBlob>('staffing',
+    { staff: [], shifts: [] }, venueId);
+  // Fire-and-forget: write-through cache is already populated by save, so
+  // even if the server is unreachable the next synchronous read succeeds.
+  void saveVenueSetting('staffing', { ...prev, staff: data }, venueId);
 }
 function _lsSaveShifts(venueId: string, data: Shift[]) {
-  localStorage.setItem(_lsKey(venueId, 'shifts'), JSON.stringify(data));
+  const prev = peekVenueSetting<_StaffingBlob>('staffing',
+    { staff: [], shifts: [] }, venueId);
+  void saveVenueSetting('staffing', { ...prev, shifts: data }, venueId);
 }
 
-function _lsGetRates(venueId: string): HourlyRates {
-  try {
-    const raw = localStorage.getItem(`vs_hourly_rates_${venueId}`);
-    if (raw) return { ...{ bartender: 18, server: 15, door: 16, manager: 22 }, ...JSON.parse(raw) };
-  } catch { /* ignore */ }
-  return { bartender: 18, server: 15, door: 16, manager: 22 };
-}
+const _RATE_DEFAULTS: HourlyRates = { bartender: 18, server: 15, door: 16, manager: 22 };
 
 // Shift hours (start → end, crossing midnight counted as 8 hrs default)
 function shiftHours(start: string, end: string): number {
@@ -937,11 +946,24 @@ export function Staffing() {
           date: s.date, startTime: s.startTime, endTime: s.endTime, suggested: s.suggested,
         }));
       } else {
-        mappedStaff  = _lsGetStaff(venueId);
-        mappedShifts = _lsGetShifts(venueId);
+        // Pull from DynamoDB — falls back to the local cache if offline.
+        const blob = await loadVenueSetting<_StaffingBlob>(
+          'staffing', { staff: [], shifts: [] }, venueId,
+        );
+        mappedStaff  = blob.staff;
+        mappedShifts = blob.shifts;
       }
       setStaff(mappedStaff);
       setShifts(mappedShifts);
+
+      // Hydrate hourly rates from the server as well so a device that has
+      // never seen this venue doesn't show stale defaults.
+      try {
+        const rates = await loadVenueSetting<Partial<HourlyRates>>(
+          'hourlyRates', {}, venueId,
+        );
+        setHourlyRates({ ..._RATE_DEFAULTS, ...rates });
+      } catch { /* cache fallback already applied below */ }
 
       // Load VenueScope jobs for camera performance
       const jobs = await venueScopeService.listJobs(venueId, 100);
@@ -992,8 +1014,7 @@ export function Staffing() {
         .sort((a, b) => b.drinks - a.drinks);
       setCamPerf(perfArr);
 
-      // Load capacity model + hourly rates
-      setHourlyRates(_lsGetRates(venueId));
+      // Load capacity model (rates already pulled above via loadVenueSetting)
       venueScopeService.getCapacityModel(venueId).then(cm => {
         if (cm) setCapacityModel(cm as unknown as BartenderCapModel);
       }).catch(() => {});
