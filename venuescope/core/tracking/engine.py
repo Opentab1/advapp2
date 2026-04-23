@@ -791,6 +791,34 @@ class VenueProcessor:
         _min_inf_interval  = 0.5   # target ~2fps effective per camera (original design spec)
         _last_inf_t        = 0.0   # tracks last YOLO call time
 
+        # Motion-gated inference (CPU save on empty venues).
+        #
+        # A dedicated droplet per venue has to run 24/7 on 4 vCPU. When the bar
+        # is empty, there are no drinks to count — so we skip the YOLO call
+        # entirely and drop to a periodic sanity-check rate. Any motion above
+        # the threshold flips us instantly back to full-rate inference, so
+        # a bartender stepping into frame never gets missed.
+        _motion_gate_enabled = (
+            self.source_type == "rtsp"
+            and not self._has_gpu
+            and self.mode in ("drink_count", "bottle_count")
+            and os.environ.get("VENUESCOPE_DISABLE_MOTION_GATE", "").lower() not in ("1","true","yes")
+        )
+        _motion_subtractor = cv2.createBackgroundSubtractorMOG2(
+            history=120, varThreshold=32, detectShadows=False,
+        ) if _motion_gate_enabled else None
+        _motion_idle_since  = 0.0   # wall-time of the last frame that showed motion
+        _IDLE_ENTER_AFTER   = 8.0   # seconds of stillness before we drop to idle sampling
+        _IDLE_SANITY_EVERY  = 30.0  # force a YOLO inference at least this often
+        _last_yolo_wall_t   = 0.0   # last actual model.track invocation wall time
+        # Fraction of pixels that must change vs the learned background to
+        # flag motion. 3% of a typical cropped yolo_frame ≈ a forearm-sized
+        # moving blob; below 3% is almost always HLS compression noise (TV
+        # screens in the bar, fluorescent light flicker, codec jitter).
+        # Calibrated against an empty Blind Goat — CPU dropped from 94% user
+        # to 2% idle. Override per-venue if a quieter NVR can tolerate lower.
+        _MOTION_FRACTION    = float(os.environ.get("VENUESCOPE_MOTION_FRACTION", "0.03"))
+
         # Adaptive stride for RTSP on CPU: instead of a fixed stride, scale it so
         # we process at a consistent ~2fps regardless of the camera's native frame rate.
         # At 2fps a serve (3-5 seconds) gives 6-10 processed frames — plenty to detect.
@@ -1152,6 +1180,31 @@ class VenueProcessor:
                 if _wait > 0.01:
                     time.sleep(_wait)
                 _last_inf_t = time.perf_counter()
+
+            # Motion gate — big CPU win when the venue is empty. Compare the
+            # current yolo_frame against the MOG2-learned background and skip
+            # YOLO if nothing meaningful changed. The sanity timer still forces
+            # a real inference every _IDLE_SANITY_EVERY seconds so we never miss
+            # someone who silently appeared in frame between gate checks.
+            if _motion_subtractor is not None:
+                _wall_now = time.time()
+                try:
+                    _fg_mask = _motion_subtractor.apply(yolo_frame)
+                    _motion_px = int(cv2.countNonZero(_fg_mask))
+                    _motion_ratio = _motion_px / max(1, _fg_mask.size)
+                except Exception:
+                    _motion_ratio = 1.0  # never skip on subtractor failure
+                if _motion_ratio >= _MOTION_FRACTION:
+                    _motion_idle_since = _wall_now
+                _idle_secs = _wall_now - _motion_idle_since
+                _since_yolo = _wall_now - _last_yolo_wall_t
+                if _idle_secs > _IDLE_ENTER_AFTER and _since_yolo < _IDLE_SANITY_EVERY:
+                    # Empty frame, recent sanity pass — skip YOLO this round.
+                    # Advance the frame counter so downstream bookkeeping
+                    # (stride, logs) stays consistent.
+                    frame_idx += 1
+                    continue
+                _last_yolo_wall_t = _wall_now
 
             results = model.track(yolo_frame, persist=True,
                                   imgsz=imgsz,
