@@ -175,6 +175,13 @@ def run_table_turns_lightweight(
     # Prime with first frame
     pending_frame: np.ndarray | None = first_frame
 
+    # Reconnect + watchdog state (long-term fix for HLS stream hiccups that
+    # otherwise leave cap.read() returning False forever — see CH7 incident).
+    consec_fail        = 0
+    last_successful_rd = time.time()
+    RECONNECT_AFTER    = 20          # consecutive False reads → reopen cap
+    BAIL_AFTER_SEC     = 180         # no good frame for 3 min → exit job
+
     while True:
         if pending_frame is not None:
             frame = pending_frame
@@ -190,10 +197,27 @@ def run_table_turns_lightweight(
                 frame = None
 
         if not ret:
+            consec_fail += 1
             if is_continuous:
+                if consec_fail >= RECONNECT_AFTER:
+                    log.warning(f"[table] {consec_fail} consec read failures on "
+                                f"{source} — reopening cap")
+                    try: cap.release()
+                    except Exception: pass
+                    cap = cv2.VideoCapture(source)
+                    consec_fail = 0
+                    time.sleep(1.0)
+                    continue
+                if (time.time() - last_successful_rd) > BAIL_AFTER_SEC:
+                    log.error(f"[table] no good frame for {BAIL_AFTER_SEC}s on "
+                              f"{source} — bailing so manager can relaunch")
+                    break
                 time.sleep(0.5)
                 continue
             break
+
+        consec_fail        = 0
+        last_successful_rd = time.time()
 
         frame_idx += 1
         t_sec      = frame_idx / fps

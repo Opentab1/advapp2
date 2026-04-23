@@ -133,9 +133,18 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
     # saving per camera, enough to keep all 10 cams live on one residential
     # connection.
     _source_path = cam["rtsp_url"]
-    if primary_mode != "drink_count" and "/hls/live/" in _source_path and "/0/" in _source_path:
+    # Per-camera override: some NVR channels have broken sub-stream encoders
+    # (e.g. CH7 drops after ~6 frames on /1/ while /0/ works fine). Setting
+    # forceMainStream=True in DDB keeps the cam on /0/ regardless of mode.
+    _force_main = bool(cam.get("force_main_stream") or cam.get("forceMainStream"))
+    if (primary_mode != "drink_count"
+        and not _force_main
+        and "/hls/live/" in _source_path
+        and "/0/" in _source_path):
         _source_path = _source_path.replace("/0/livetop.mp4", "/1/livetop.mp4")
         log.info(f"[camera_loop] '{cam['name']}' using NVR sub-stream (mode={primary_mode})")
+    elif _force_main:
+        log.info(f"[camera_loop] '{cam['name']}' forced to main stream (force_main_stream=True)")
 
     create_job(
         job_id        = jid,

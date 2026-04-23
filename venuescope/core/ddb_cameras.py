@@ -57,6 +57,9 @@ def _item_to_camera(item: dict) -> dict:
         "bar_config_json":  item.get("barConfigJson", ""),
         # Table zone config saved by the React table zone editor (JSON array string)
         "table_zones_json": item.get("tableZonesJson", ""),
+        # Per-camera override: force main stream /0/ even for non-drink_count
+        # modes. Set True when a channel's /1/ sub-stream is broken on the NVR.
+        "force_main_stream": bool(item.get("forceMainStream", False)),
         # Source flag so camera_loop knows this came from DDB
         "_source":          "dynamodb",
     }
