@@ -120,13 +120,30 @@ def _launch_segment(cam: dict, seg_num: int = 0) -> str:
         # Table zone config from DDB zone editor (JSON array of {table_id, label, polygon})
         "tables": json.loads(cam.get("table_zones_json") or "[]"),
     }
+    # Sub-stream swap for non-drink_count jobs.
+    # Background: the NVR's residential upstream can't saturate with all 10+
+    # cameras pulling /0/ (main stream, 2560×1944 @ ~500 KB/s each). Some jobs
+    # starve their RTSP reads and stall, which we saw as CH6/CH7/CH13 stuck
+    # in reconnect cascades while CH1–5 stayed live.
+    #
+    # drink_count NEEDS main-stream resolution — the bartender reach probe
+    # relies on full pixel detail. Everything else (table_turns via MOG2
+    # motion, table_service centroid-in-polygon, people_count YOLO at imgsz
+    # 480) is fine on /1/ (sub-stream, ~704×480 @ ~50 KB/s). 10× bandwidth
+    # saving per camera, enough to keep all 10 cams live on one residential
+    # connection.
+    _source_path = cam["rtsp_url"]
+    if primary_mode != "drink_count" and "/hls/live/" in _source_path and "/0/" in _source_path:
+        _source_path = _source_path.replace("/0/livetop.mp4", "/1/livetop.mp4")
+        log.info(f"[camera_loop] '{cam['name']}' using NVR sub-stream (mode={primary_mode})")
+
     create_job(
         job_id        = jid,
         analysis_mode = primary_mode,
         shift_id      = cam.get("shift_id"),
         shift_json    = None,
         source_type   = "rtsp",
-        source_path   = cam["rtsp_url"],
+        source_path   = _source_path,
         model_profile = model_profile,
         config_path   = cam.get("config_path"),
         annotate      = False,
@@ -156,8 +173,14 @@ def _effective_cam(cam: dict, last_occupancy_t: float) -> dict:
       extra_modes when it's not yet time, so the segment still runs the primary mode.
     - For people_count-only cameras: handled by _run_camera_loop via interval wait.
     """
-    mode_str  = cam.get("mode", "drink_count")
-    all_modes = [m.strip() for m in mode_str.split(",") if m.strip()]
+    # Merge primary + extras so the filter has the COMPLETE mode set. Without
+    # this, a camera with primary=people_count and extras=[table_turns,
+    # table_service] sees all_modes=["people_count"] only, the filter strips
+    # it, the fallback injects "drink_count" — and the camera launches with a
+    # mode it was never configured for (silent mis-launch on CH6/CH13).
+    primary_list = [m.strip() for m in cam.get("mode", "drink_count").split(",") if m.strip()]
+    extra_list   = list(cam.get("extra_modes") or [])
+    all_modes    = primary_list + [m for m in extra_list if m not in primary_list]
 
     has_people = any(m in _PEOPLE_MODES for m in all_modes)
     if not has_people:
@@ -169,12 +192,18 @@ def _effective_cam(cam: dict, last_occupancy_t: float) -> dict:
 
     elapsed = time.time() - last_occupancy_t
     if elapsed < OCCUPANCY_INTERVAL:
-        # Not yet — strip people_count for this segment
+        # Not yet time for the people_count sample. Strip it but PRESERVE the
+        # rest (table_turns, drink_count, whatever the camera actually does).
+        # Before, the fallback to ["drink_count"] fired when filtering emptied
+        # the list — now that all_modes includes extras, it never does.
         filtered = [m for m in all_modes if m not in _PEOPLE_MODES]
         if not filtered:
-            filtered = ["drink_count"]
+            # Truly people_only cam — nothing to run without people_count
+            return cam
         cam = dict(cam)
-        cam["mode"] = ",".join(filtered)
+        cam["mode"] = filtered[0]
+        # Extras become everything after the new primary
+        cam["extra_modes"] = filtered[1:]
     return cam
 
 

@@ -573,13 +573,27 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         _dwell_sec    = headcount / _arrival_rate  # L = λW → W = L/λ
         _dwell_min    = round(min(_dwell_sec / 60.0, 240.0), 1)  # cap at 4h
 
+    # Owner-mode guard for people-count fields.
+    #
+    # Multiple continuously-running jobs write to the SAME stable status
+    # record (`~cameraId`). Before this guard, a drink_count or table_turns
+    # job's push would overwrite peakOccupancy/peopleIn/peopleOut/currentHeadcount
+    # with 0 every ~3 seconds, wiping out the real peak a people_count sparse
+    # pass had just written a few minutes earlier. Net effect: "Peak Occupancy"
+    # tile was stuck at 0 on every camera.
+    #
+    # Rule: a job may only write people-count fields if (a) it's a
+    # people_count run, OR (b) it actually observed non-zero people data on
+    # this segment. Everything else keeps its hands off so the people_count
+    # pass's value persists.
+    _is_people_run  = mode == "people_count"
+    _has_people_obs = peak_occ > 0 or headcount > 0 or people_in > 0 or people_out > 0
+    _can_write_people = _is_people_run or _has_people_obs
+
     update_expr = (
         "SET #st = :s, updatedAt = :u, isLive = :il, "
         "elapsedSec = :es, analysisMode = :am, "
-        "totalDrinks = :td, unrungDrinks = :ud, "
-        "peopleIn = :pi, peopleOut = :po, currentHeadcount = :hc, "
-        "peakOccupancy = :po2, "
-        "totalEntries = :te, totalExits = :tx"   # frontend reads these field names
+        "totalDrinks = :td, unrungDrinks = :ud"
     )
     expr_names = {"#st": "status"}
     expr_vals: Dict[str, Any] = {
@@ -590,13 +604,18 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
         ":am":  {"S": mode},
         ":td":  {"N": str(today_drinks)},
         ":ud":  {"N": str(today_unrung)},
-        ":pi":  {"N": str(people_in)},
-        ":po":  {"N": str(people_out)},
-        ":hc":  {"N": str(headcount)},
-        ":po2": {"N": str(peak_occ)},
-        ":te":  {"N": str(people_in)},    # totalEntries
-        ":tx":  {"N": str(people_out)},   # totalExits
     }
+    if _can_write_people:
+        update_expr += (
+            ", peopleIn = :pi, peopleOut = :po, currentHeadcount = :hc, "
+            "peakOccupancy = :po2, totalEntries = :te, totalExits = :tx"
+        )
+        expr_vals[":pi"]  = {"N": str(people_in)}
+        expr_vals[":po"]  = {"N": str(people_out)}
+        expr_vals[":hc"]  = {"N": str(headcount)}
+        expr_vals[":po2"] = {"N": str(peak_occ)}
+        expr_vals[":te"]  = {"N": str(people_in)}    # totalEntries
+        expr_vals[":tx"]  = {"N": str(people_out)}   # totalExits
     # Write avgDwellMin when Little's Law has enough data
     if _dwell_min is not None:
         update_expr += ", avgDwellMin = :adm"

@@ -1682,8 +1682,11 @@ class VenueProcessor:
                      for t in ec.get("tables", [])]
             server_names = {}
             if self.shift:
-                for b in self.shift.bartenders:
-                    if hasattr(b, "track_id") and b.track_id is not None:
+                # ShiftManager stores bartenders in .records (dict keyed by name).
+                # This used to read .bartenders which doesn't exist and crashed
+                # every drink_count job with "'ShiftManager' object has no attribute 'bartenders'".
+                for b in self.shift.records.values():
+                    if getattr(b, "track_id", None) is not None:
                         server_names[b.track_id] = b.name
             # Build bar-zone polygon in pixels so the classifier can exclude
             # bartenders (tracks that spend most of their time behind the bar).
