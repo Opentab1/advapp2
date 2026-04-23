@@ -121,6 +121,11 @@ function venueFromItem(item) {
     userCount:    parseInt(item.userCount?.N ?? '1'),
     deviceCount:  parseInt(item.deviceCount?.N ?? '0'),
     emailConfig:  emailConfigRaw ? JSON.parse(emailConfigRaw) : null,
+    // Forecast onboarding profile — feeds prior model until Prophet trains
+    capacity:       item.capacity?.N        ? parseInt(item.capacity.N)      : null,
+    venueTier:      s(item.venueTier)       || null,
+    slowDayCovers:  item.slowDayCovers?.N   ? parseInt(item.slowDayCovers.N) : null,
+    busyDayCovers:  item.busyDayCovers?.N   ? parseInt(item.busyDayCovers.N) : null,
   };
 }
 
@@ -185,7 +190,8 @@ async function listVenues() {
 
 async function createVenue(body) {
   const { venueName, venueId, locationName = 'Main', locationId = 'main',
-          ownerEmail, ownerName, tempPassword } = body;
+          ownerEmail, ownerName, tempPassword,
+          capacity, venueTier, slowDayCovers, busyDayCovers } = body;
   if (!venueName || !venueId || !ownerEmail || !ownerName || !tempPassword)
     return err(400, 'Missing: venueName, venueId, ownerEmail, ownerName, tempPassword');
   if (!USER_POOL_ID) return err(500, 'USER_POOL_ID env var not set');
@@ -218,21 +224,33 @@ async function createVenue(body) {
     DesiredDeliveryMediums: ['EMAIL'],
   }));
 
+  const venueItem = {
+    venueId:      { S: venueId },
+    venueName:    { S: venueName },
+    locationName: { S: locationName },
+    locationId:   { S: locationId },
+    ownerEmail:   { S: ownerEmail },
+    ownerName:    { S: ownerName },
+    status:       { S: 'active' },
+    createdAt:    { S: new Date().toISOString() },
+    plan:         { S: 'standard' },
+    userCount:    { N: '1' },
+    deviceCount:  { N: '0' },
+  };
+  // Forecast onboarding profile — optional at venue creation, but strongly
+  // recommended so tonight's prior isn't a generic industry average.
+  if (Number.isInteger(capacity) && capacity > 0)
+    venueItem.capacity = { N: String(capacity) };
+  if (venueTier && typeof venueTier === 'string')
+    venueItem.venueTier = { S: venueTier };
+  if (Number.isInteger(slowDayCovers) && slowDayCovers > 0)
+    venueItem.slowDayCovers = { N: String(slowDayCovers) };
+  if (Number.isInteger(busyDayCovers) && busyDayCovers > 0)
+    venueItem.busyDayCovers = { N: String(busyDayCovers) };
+
   await ddb.send(new PutItemCommand({
     TableName: VENUES_TABLE,
-    Item: {
-      venueId:      { S: venueId },
-      venueName:    { S: venueName },
-      locationName: { S: locationName },
-      locationId:   { S: locationId },
-      ownerEmail:   { S: ownerEmail },
-      ownerName:    { S: ownerName },
-      status:       { S: 'active' },
-      createdAt:    { S: new Date().toISOString() },
-      plan:         { S: 'standard' },
-      userCount:    { N: '1' },
-      deviceCount:  { N: '0' },
-    },
+    Item: venueItem,
     ConditionExpression: 'attribute_not_exists(venueId)',
   }));
 
@@ -248,6 +266,46 @@ async function updateVenueStatus(venueId, status) {
     ExpressionAttributeValues: { ':s': { S: status } },
   }));
   return ok({ success: true });
+}
+
+async function updateVenueProfile(venueId, body) {
+  if (!venueId || venueId.startsWith('_')) return err(400, 'invalid venueId');
+  const { capacity, venueTier, slowDayCovers, busyDayCovers } = body;
+  const setFragments = [];
+  const values = {};
+  const names = {};
+  // capacity is a DynamoDB reserved word — must go through ExpressionAttributeNames.
+  if (Number.isInteger(capacity) && capacity > 0) {
+    setFragments.push('#cap = :cap');
+    names['#cap'] = 'capacity';
+    values[':cap'] = { N: String(capacity) };
+  }
+  if (venueTier && typeof venueTier === 'string') {
+    setFragments.push('venueTier = :tier');
+    values[':tier'] = { S: venueTier };
+  }
+  if (Number.isInteger(slowDayCovers) && slowDayCovers > 0) {
+    setFragments.push('slowDayCovers = :slow');
+    values[':slow'] = { N: String(slowDayCovers) };
+  }
+  if (Number.isInteger(busyDayCovers) && busyDayCovers > 0) {
+    setFragments.push('busyDayCovers = :busy');
+    values[':busy'] = { N: String(busyDayCovers) };
+  }
+  if (setFragments.length === 0)
+    return err(400, 'no profile fields provided');
+  try {
+    await ddb.send(new UpdateItemCommand({
+      TableName: VENUES_TABLE,
+      Key: { venueId: { S: venueId } },
+      UpdateExpression: 'SET ' + setFragments.join(', '),
+      ExpressionAttributeValues: values,
+      ...(Object.keys(names).length ? { ExpressionAttributeNames: names } : {}),
+    }));
+    return ok({ ok: true });
+  } catch (e) {
+    return err(500, e.message);
+  }
 }
 
 // ─── Users ────────────────────────────────────────────────────────────────────
@@ -1697,6 +1755,8 @@ export const handler = async (event, context) => {
     if (method === 'POST'  && rawPath === '/admin/venues')             return createVenue(body);
     const statusMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/status$/);
     if (method === 'PATCH'  && statusMatch)                            return updateVenueStatus(statusMatch[1], body.status);
+    const profileMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/profile$/);
+    if (method === 'PATCH'  && profileMatch)                           return updateVenueProfile(decodeURIComponent(profileMatch[1]), body);
     const emailConfigMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/email-config$/);
     if (method === 'POST'   && emailConfigMatch)                       return saveVenueEmailConfig(decodeURIComponent(emailConfigMatch[1]), body);
     const deleteVenueMatch = rawPath.match(/^\/admin\/venues\/([^/]+)$/);

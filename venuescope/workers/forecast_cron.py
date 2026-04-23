@@ -110,6 +110,43 @@ def _get_venue_capacity() -> int:
     return int(os.environ.get("VENUESCOPE_CAPACITY", "150"))
 
 
+def _fetch_venue_profile(venue_id: str) -> dict:
+    """
+    Pull per-venue onboarding profile from DDB so the prior forecast can
+    scale to this venue instead of using a generic industry baseline.
+
+    Returns {"capacity", "tier", "slow_day_covers", "busy_day_covers"} —
+    any missing field falls back to .env/default.
+    """
+    profile: dict = {}
+    try:
+        import boto3
+        ddb = boto3.resource(
+            "dynamodb",
+            region_name=os.environ.get("AWS_REGION", "us-east-2"),
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+        )
+        item = ddb.Table("VenueScopeVenues").get_item(
+            Key={"venueId": venue_id}
+        ).get("Item", {})
+        if item.get("capacity") is not None:
+            profile["capacity"] = int(item["capacity"])
+        if item.get("venueTier"):
+            profile["tier"] = str(item["venueTier"])
+        if item.get("slowDayCovers") is not None:
+            profile["slow_day_covers"] = float(item["slowDayCovers"])
+        if item.get("busyDayCovers") is not None:
+            profile["busy_day_covers"] = float(item["busyDayCovers"])
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "[forecast_cron] failed to load venue profile for %s: %s",
+            venue_id, e,
+        )
+    return profile
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DynamoDB write
 # ─────────────────────────────────────────────────────────────────────────────
@@ -319,6 +356,16 @@ def main() -> None:
     avg_drink_price = _get_avg_drink_price()
     venue_capacity  = _get_venue_capacity()
 
+    # Per-venue onboarding profile overrides the env defaults when the owner
+    # has filled it in during onboarding. Keeps the generic prior from
+    # overshooting for small venues (Blind Goat 22 actual vs 158 predicted).
+    _profile = _fetch_venue_profile(venue_id)
+    if "capacity" in _profile:
+        venue_capacity = _profile["capacity"]
+    venue_tier        = _profile.get("tier", "small_bar")
+    slow_day_covers   = _profile.get("slow_day_covers")
+    busy_day_covers   = _profile.get("busy_day_covers")
+
     logger.info("venue=%s  city=%s  date=%s  tz=%s  concept=%s  avg_drink_price=$%.2f  capacity=%d",
                 venue_id, city, today, tz_name, concept_type, avg_drink_price, venue_capacity)
 
@@ -382,6 +429,9 @@ def main() -> None:
             avg_drink_price = avg_drink_price,
             concept_type    = concept_type,
             venue_capacity  = venue_capacity,
+            venue_tier      = venue_tier,
+            slow_day_covers = slow_day_covers,
+            busy_day_covers = busy_day_covers,
         )
         mid        = forecast.get("final_estimate", {}).get("mid", "?")
         mape       = forecast.get("mape_expected", "?")

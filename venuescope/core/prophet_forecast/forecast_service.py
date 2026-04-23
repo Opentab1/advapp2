@@ -35,6 +35,8 @@ _SLOTS_PER_HOUR = 60 // _SLOT_MINUTES   # 4
 _AVG_DRINK_PRICE = 33.0
 
 # Day-of-week multipliers for generic prior (Mon=0 ... Sun=6)
+# Used only if the venue hasn't supplied slowDayCovers + busyDayCovers at
+# onboarding. When they have, we interpolate between those two numbers.
 _DOW_PRIOR = {
     0: 0.40,   # Monday
     1: 0.45,   # Tuesday
@@ -45,22 +47,62 @@ _DOW_PRIOR = {
     6: 0.55,   # Sunday
 }
 
-# Hour-of-day shape for generic prior (hour 16..25, index 0..9)
-_HOUR_SHAPE_PRIOR = {
-    16: 0.20,
-    17: 0.35,
-    18: 0.55,
-    19: 0.70,
-    20: 0.85,
-    21: 0.95,
-    22: 1.00,
-    23: 0.90,
-    24: 0.70,  # midnight
-    25: 0.40,  # 1 AM
+# Hour-of-day SHAPE (unitless, peak = 1.0) per venue tier. Scaled by the
+# tier-specific base peak at runtime. Hours 16..25 span 4 PM → 1 AM next day.
+# bar_late and restaurant peak at different hours — this is what makes a
+# "small bar" prior actually look like a small bar rather than industry avg.
+_HOUR_SHAPE_BY_TIER = {
+    "bar_late": {    # cocktail/dive/sports bar — peaks 10-11 PM
+        16: 0.15, 17: 0.25, 18: 0.40, 19: 0.55, 20: 0.75,
+        21: 0.90, 22: 1.00, 23: 0.95, 24: 0.75, 25: 0.45,
+    },
+    "restaurant": {  # dinner service — peaks 7-8 PM, quiet after 10
+        16: 0.30, 17: 0.60, 18: 0.90, 19: 1.00, 20: 0.95,
+        21: 0.75, 22: 0.45, 23: 0.25, 24: 0.10, 25: 0.05,
+    },
+    "nightclub": {   # peaks midnight — slow start
+        16: 0.05, 17: 0.10, 18: 0.15, 19: 0.25, 20: 0.45,
+        21: 0.65, 22: 0.85, 23: 1.00, 24: 1.00, 25: 0.80,
+    },
+    "mixed": {       # restaurant-then-bar, both peaks
+        16: 0.25, 17: 0.55, 18: 0.80, 19: 0.85, 20: 0.80,
+        21: 0.90, 22: 1.00, 23: 0.90, 24: 0.65, 25: 0.35,
+    },
 }
 
-# Typical weekend peak occupancy for generic prior (before DOW multiplier)
+# Tier → default weekend peak headcount when a venue hasn't supplied their own
+# slowDayCovers/busyDayCovers numbers. Calibrated to realistic small-footprint
+# venues. Final forecast is always capped at venue_capacity regardless.
+_TIER_DEFAULT_PEAK = {
+    "small_bar":    35,   # neighborhood bar, 40-cap-ish
+    "mid_bar":      90,   # ~100-cap bar/lounge
+    "large_bar":   220,   # big sports bar or music venue
+    "restaurant":   70,   # mid-size dinner house
+    "nightclub":   300,
+    "mixed":        60,
+}
+
+# Back-compat hour shape used by anything importing _HOUR_SHAPE_PRIOR.
+_HOUR_SHAPE_PRIOR = _HOUR_SHAPE_BY_TIER["bar_late"]
+
+# Legacy constant kept as a fallback when tier is unknown AND no self-reported
+# baseline exists. Consumer UIs should never actually hit this path — size
+# tiers + capacity cap + self-report take precedence.
 _GENERIC_PEAK = 120
+
+
+def _tier_to_shape_key(tier: str) -> str:
+    """Map an onboarding tier to the hour-shape table key."""
+    t = (tier or "").lower().strip()
+    if t in ("small_bar", "mid_bar", "large_bar"):
+        return "bar_late"
+    if t == "restaurant":
+        return "restaurant"
+    if t == "nightclub":
+        return "nightclub"
+    if t == "mixed":
+        return "mixed"
+    return "bar_late"
 
 # Default avg visit duration in 15-min slots by venue concept type
 _AVG_VISIT_SLOTS_BY_CONCEPT = {
@@ -97,24 +139,98 @@ def _get_hospitality_holidays(year: int) -> dict[date, tuple[str, float]]:
     }
 
 
-def _generic_prior_forecast(target_date: date) -> list[dict]:
+def _resolve_prior_peak(
+    tier: str,
+    venue_capacity: int,
+    slow_day_covers: Optional[float],
+    busy_day_covers: Optional[float],
+    dow: int,
+) -> float:
     """
-    Build a generic prior hourly curve when no model is trained.
-    Uses DOW + hour-of-day shape table to produce a plausible baseline.
+    Pick the prior's peak headcount for this venue + day.
+
+    Priority:
+      1. Self-reported slow/busy day covers (best) — interpolate by DOW.
+      2. Tier default peak, scaled by DOW multiplier.
+      3. Legacy _GENERIC_PEAK × DOW multiplier (last resort).
+
+    Then: hard-cap at venue_capacity (never predict above what fits).
+    """
+    dow_mult = _DOW_PRIOR.get(dow, 0.60)
+
+    if slow_day_covers is not None and busy_day_covers is not None \
+            and busy_day_covers > 0:
+        # Map DOW weights onto the slow↔busy range. weekend-heavy DOWs use
+        # numbers closer to busy_day_covers, quiet DOWs closer to slow_day_covers.
+        # dow_mult 1.0 → busy, 0.40 → near slow. Normalize to [0,1].
+        slow_w = min(_DOW_PRIOR.values())                # ~0.40
+        busy_w = max(_DOW_PRIOR.values())                # ~1.00
+        t = (dow_mult - slow_w) / max(1e-9, (busy_w - slow_w))
+        t = max(0.0, min(1.0, t))
+        peak = slow_day_covers + t * (busy_day_covers - slow_day_covers)
+    else:
+        base = _TIER_DEFAULT_PEAK.get(
+            (tier or "").lower().strip(),
+            _GENERIC_PEAK,
+        )
+        peak = base * dow_mult
+
+    # Hard cap at physical capacity — no venue can fit more than it holds.
+    if venue_capacity and venue_capacity > 0:
+        peak = min(peak, float(venue_capacity))
+
+    return max(0.0, peak)
+
+
+def _generic_prior_forecast(
+    target_date: date,
+    tier: str = "small_bar",
+    venue_capacity: int = 150,
+    slow_day_covers: Optional[float] = None,
+    busy_day_covers: Optional[float] = None,
+    avg_visit_slots: int = 8,
+) -> list[dict]:
+    """
+    Build the prior hourly curve when no trained model exists. Uses the
+    venue's tier/capacity/self-reported numbers to scale the baseline so
+    the prior actually resembles the venue instead of industry averages.
+
+    Self-reported slow_day_covers / busy_day_covers are *total covers for
+    the night*, not peak concurrent occupancy. We convert to per-slot peak
+    by accounting for the shape integral and average visit duration — the
+    downstream aggregation (total_yhat / avg_visit_slots) must land on the
+    user's own number.
     """
     dow = target_date.weekday()
-    dow_mult = _DOW_PRIOR.get(dow, 0.60)
-    base_peak = _GENERIC_PEAK * dow_mult
+    target_covers = _resolve_prior_peak(
+        tier, venue_capacity, slow_day_covers, busy_day_covers, dow,
+    )
+
+    shape_table = _HOUR_SHAPE_BY_TIER.get(_tier_to_shape_key(tier),
+                                          _HOUR_SHAPE_BY_TIER["bar_late"])
+
+    # Scale target_covers into the per-slot peak yhat that, after downstream
+    # aggregation, produces mid_covers ≈ target_covers. See the aggregation
+    # block at line ~520: mid_covers = sum(yhat over slots) / avg_visit_slots.
+    shape_integral = sum(shape_table.get(h, 0.30) for h in range(_OPEN_HOUR, _CLOSE_HOUR))
+    slots_per_shape_unit = shape_integral * _SLOTS_PER_HOUR
+    if slots_per_shape_unit <= 0:
+        slots_per_shape_unit = 1.0
+    base_peak = target_covers * avg_visit_slots / slots_per_shape_unit
+
+    # Safety: per-slot peak itself cannot exceed capacity (prevents pathological
+    # tier/avg_visit combos from spiking a single slot above cap before the
+    # later cap-clamp runs).
+    if venue_capacity and venue_capacity > 0:
+        base_peak = min(base_peak, float(venue_capacity))
 
     slots = []
     for hour_abs in range(_OPEN_HOUR, _CLOSE_HOUR):
-        hour_display = hour_abs if hour_abs < 24 else hour_abs - 24
-        shape = _HOUR_SHAPE_PRIOR.get(hour_abs, 0.30)
+        shape = shape_table.get(hour_abs, 0.30)
         yhat = base_peak * shape
         for slot in range(_SLOTS_PER_HOUR):
             slot_hour = hour_abs if hour_abs < 24 else hour_abs - 24
             slot_minute = slot * _SLOT_MINUTES
-            # Build datetime for the slot
             if hour_abs < 24:
                 slot_dt = datetime(target_date.year, target_date.month, target_date.day,
                                    slot_hour, slot_minute)
@@ -221,6 +337,9 @@ def forecast_tonight(
     avg_drink_price: float = _AVG_DRINK_PRICE,
     concept_type: str = "default",
     venue_capacity: int = 150,
+    venue_tier: str = "small_bar",
+    slow_day_covers: Optional[float] = None,
+    busy_day_covers: Optional[float] = None,
 ) -> dict:
     """
     Produce the Tonight's Forecast for a venue.
@@ -317,9 +436,22 @@ def forecast_tonight(
         except Exception as e:
             logger.warning("[forecast] Model predict failed: %s — falling back to prior", e)
             model_type = "prior"
-            slots_raw = _generic_prior_forecast(target_date)
+            slots_raw = _generic_prior_forecast(
+                target_date,
+                tier=venue_tier,
+                venue_capacity=venue_capacity,
+                slow_day_covers=slow_day_covers,
+                busy_day_covers=busy_day_covers,
+            )
     else:
-        slots_raw = _generic_prior_forecast(target_date)
+        slots_raw = _generic_prior_forecast(
+            target_date,
+            tier=venue_tier,
+            venue_capacity=venue_capacity,
+            slow_day_covers=slow_day_covers,
+            busy_day_covers=busy_day_covers,
+            avg_visit_slots=avg_visit_slots,
+        )
 
     # Step 7: Apply weather multiplier W(t) per slot
     # Compute per-slot weather multiplier (varies by hour)
@@ -368,6 +500,16 @@ def forecast_tonight(
             slot["yhat"]       *= holiday_mult
             slot["yhat_lower"] *= holiday_mult
             slot["yhat_upper"] *= holiday_mult
+
+    # Step 8.5: Hard-cap every slot at venue capacity — even a trained Prophet
+    # model should not predict more people than physically fit, and weather/
+    # holiday multipliers can push past capacity on busy forecasts.
+    if venue_capacity and venue_capacity > 0:
+        _cap = float(venue_capacity)
+        for slot in adjusted_slots:
+            slot["yhat"]       = min(slot["yhat"],       _cap)
+            slot["yhat_lower"] = min(slot["yhat_lower"], _cap)
+            slot["yhat_upper"] = min(slot["yhat_upper"], _cap)
 
     # Step 9: Aggregate to hourly curve (group by hour label, take first slot per hour)
     hourly_by_hour: dict[str, dict] = {}

@@ -22,7 +22,7 @@ import {
   ArrowLeft, ArrowRight, Loader2, Plus, Trash2, AlertCircle,
   ExternalLink, Copy,
 } from 'lucide-react';
-import adminService from '../../services/admin.service';
+import adminService, { type VenueTier } from '../../services/admin.service';
 
 // ─── Step metadata ───────────────────────────────────────────────────────────
 
@@ -45,6 +45,13 @@ interface VenueForm {
   locationName: string;
   ownerEmail:  string;
   ownerName:   string;
+  // Forecast onboarding profile — feeds the prior model so tonight's
+  // forecast is scaled to this venue instead of industry averages. All
+  // four fields together eliminate the 2-week cold-start problem.
+  venueTier:     VenueTier;
+  capacity:      string;          // keep as string for controlled input
+  slowDayCovers: string;
+  busyDayCovers: string;
 }
 
 interface CameraForm {
@@ -119,6 +126,7 @@ export function OnboardVenue() {
   // Step 1 — venue
   const [venue, setVenue] = useState<VenueForm>({
     venueName: '', venueId: '', locationName: 'Main', ownerEmail: '', ownerName: '',
+    venueTier: 'small_bar', capacity: '', slowDayCovers: '', busyDayCovers: '',
   });
   const [venueCreated, setVenueCreated] = useState(false);
   const [ownerTempPassword, setOwnerTempPassword] = useState<string | null>(null);
@@ -152,6 +160,13 @@ export function OnboardVenue() {
       setErr('Venue name, owner email, and owner name are required.');
       return;
     }
+    const capacityN = parseInt(venue.capacity || '0', 10);
+    const slowN     = parseInt(venue.slowDayCovers || '0', 10);
+    const busyN     = parseInt(venue.busyDayCovers || '0', 10);
+    if (capacityN && slowN && busyN && busyN < slowN) {
+      setErr('Busy-day covers should be ≥ slow-day covers.');
+      return;
+    }
     setBusy(true);
     try {
       const res = await adminService.createVenue({
@@ -160,6 +175,10 @@ export function OnboardVenue() {
         locationName: venue.locationName.trim() || 'Main',
         ownerEmail:   venue.ownerEmail.trim(),
         ownerName:    venue.ownerName.trim(),
+        venueTier:    venue.venueTier,
+        capacity:      capacityN > 0 ? capacityN : undefined,
+        slowDayCovers: slowN     > 0 ? slowN     : undefined,
+        busyDayCovers: busyN     > 0 ? busyN     : undefined,
       });
       if (!res.success) {
         setErr(res.message); return;
@@ -302,6 +321,50 @@ export function OnboardVenue() {
               onChange={v => setVenue(s => ({ ...s, ownerEmail: v }))}
               placeholder="pat@venue.com" />
           </div>
+
+          {/* Forecast onboarding profile — decides tonight's prior so the
+              day-1 forecast resembles this venue instead of industry avg. */}
+          {!venueCreated && (
+            <div className="mt-2 bg-white/5 border border-white/10 rounded-lg p-4">
+              <div className="text-sm font-semibold text-white mb-1">
+                Forecast baseline <span className="text-xs text-gray-500 font-normal">· optional, strongly recommended</span>
+              </div>
+              <div className="text-xs text-gray-500 mb-3">
+                Tonight's forecast uses these as the prior until ~7 days of real
+                data arrive. Without them every venue starts with the same
+                industry-average guess.
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Venue type</label>
+                  <select
+                    value={venue.venueTier}
+                    onChange={e => setVenue(s => ({ ...s, venueTier: e.target.value as VenueTier }))}
+                    className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500">
+                    <option value="small_bar">Small bar (cocktail, dive, ≤ 60 cap)</option>
+                    <option value="mid_bar">Mid bar / lounge (60–150 cap)</option>
+                    <option value="large_bar">Large bar / sports bar (150+ cap)</option>
+                    <option value="restaurant">Restaurant (dinner service)</option>
+                    <option value="nightclub">Nightclub (late peak)</option>
+                    <option value="mixed">Mixed (restaurant → bar)</option>
+                  </select>
+                </div>
+                <Field label="Legal capacity (hard cap)" value={venue.capacity} type="number"
+                  onChange={v => setVenue(s => ({ ...s, capacity: v }))}
+                  placeholder="e.g. 60"
+                  help="Physical/fire-code max. Forecast never exceeds this." />
+                <Field label="Typical slow-night covers" value={venue.slowDayCovers} type="number"
+                  onChange={v => setVenue(s => ({ ...s, slowDayCovers: v }))}
+                  placeholder="e.g. 15 (Tuesday)"
+                  help="Headcount on your slowest normal night." />
+                <Field label="Typical busy-night covers" value={venue.busyDayCovers} type="number"
+                  onChange={v => setVenue(s => ({ ...s, busyDayCovers: v }))}
+                  placeholder="e.g. 80 (Saturday)"
+                  help="Headcount on your busiest normal night." />
+              </div>
+            </div>
+          )}
+
           {venueCreated && ownerTempPassword && (
             <div className="bg-cyan-500/10 border border-cyan-500/30 rounded p-3 text-sm">
               <div className="text-cyan-300 font-semibold mb-1">

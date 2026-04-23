@@ -80,6 +80,26 @@ export interface AdminVenue {
   ownerName?: string;
   mqttTopic?: string;
   emailConfig?: EmailConfig | null;
+  // Forecast onboarding profile
+  capacity?: number | null;
+  venueTier?: VenueTier | null;
+  slowDayCovers?: number | null;
+  busyDayCovers?: number | null;
+}
+
+export type VenueTier =
+  | 'small_bar'
+  | 'mid_bar'
+  | 'large_bar'
+  | 'restaurant'
+  | 'nightclub'
+  | 'mixed';
+
+export interface VenueProfileInput {
+  capacity?: number;
+  venueTier?: VenueTier;
+  slowDayCovers?: number;
+  busyDayCovers?: number;
 }
 
 export interface AdminUser {
@@ -130,6 +150,13 @@ export interface CreateVenueInput {
   locationId?: string;
   ownerEmail: string;
   ownerName: string;
+  // Forecast onboarding profile (optional at venue creation, but strongly
+  // recommended — a venue created without these fields falls back to the
+  // generic industry prior for ~7 days of learning).
+  capacity?: number;
+  venueTier?: VenueTier;
+  slowDayCovers?: number;
+  busyDayCovers?: number;
 }
 
 export interface CreateUserInput {
@@ -324,6 +351,26 @@ class AdminService {
       return true;
     } catch (error: any) {
       console.error('deleteVenue failed:', error);
+      return false;
+    }
+  }
+
+  async updateVenueProfile(venueId: string, profile: VenueProfileInput): Promise<boolean> {
+    try {
+      await adminFetch(`/admin/venues/${encodeURIComponent(venueId)}/profile`, {
+        method: 'PATCH',
+        body: JSON.stringify(profile),
+      });
+      this.logAuditEntry({
+        action: 'Venue Profile Updated',
+        actionType: 'update',
+        targetType: 'venue',
+        targetName: venueId,
+        details: `Updated forecast profile: ${JSON.stringify(profile)}`,
+      });
+      return true;
+    } catch (error) {
+      console.error('Update venue profile failed:', error);
       return false;
     }
   }

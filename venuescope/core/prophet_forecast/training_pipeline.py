@@ -21,7 +21,8 @@ from core.prophet_forecast.weather_ingest import fetch_historical_weather
 
 logger = logging.getLogger(__name__)
 
-_MIN_DAYS = 14
+_MIN_DAYS = 7           # was 14; with self-reported + tier priors the 14-day
+                        # wait was unnecessary for a "day 1 feels useful" UX.
 _MIN_SNAPSHOTS = 100
 _TRAINING_WINDOW_DAYS = 90
 
@@ -337,14 +338,16 @@ def train_venue_model(
 
 def _mape_from_days(days: float) -> str:
     """Return expected MAPE string based on days of training data."""
-    if days < 14:
+    if days < _MIN_DAYS:
         return "±30%"
+    elif days < 14:
+        return "±27%"
     elif days < 28:
-        return "±24%"
+        return "±22%"
     elif days < 84:
-        return "±18%"
+        return "±16%"
     elif days < 180:
-        return "±12%"
+        return "±11%"
     elif days < 365:
         return "±8%"
     else:
@@ -353,8 +356,10 @@ def _mape_from_days(days: float) -> str:
 
 def _calibration_state_from_days(days: float) -> str:
     """Return calibration state label based on days of training data."""
-    if days < 14:
+    if days < _MIN_DAYS:
         return "generic_prior"
+    elif days < 14:
+        return "week_1"
     elif days < 28:
         return "week_2"
     elif days < 84:
