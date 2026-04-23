@@ -4,7 +4,7 @@ import {
   Mail, Send, Clock, Users, CheckCircle, XCircle, RefreshCw,
   Plus, Trash2, ChevronDown, AlertCircle, Zap, Calendar,
   Settings, Shield, ToggleLeft, ToggleRight, Eye, FileText,
-  ChevronRight,
+  ChevronRight, ShieldCheck, Loader2,
 } from 'lucide-react';
 import adminService, { EmailConfig } from '../../services/admin.service';
 
@@ -87,6 +87,30 @@ export function EmailReporting() {
   // Send log
   const [log, setLog] = useState<LogEntry[]>([]);
   const [logLoading, setLogLoading] = useState(true);
+
+  // Per-recipient verification (SES sandbox mode requires each recipient verified)
+  const [recipientStatus, setRecipientStatus] = useState<Record<string, 'unknown' | 'pending' | 'verified' | 'failed'>>({});
+  const [verifyingRecipient, setVerifyingRecipient] = useState<string | null>(null);
+
+  const checkRecipientStatus = useCallback(async (email: string) => {
+    try {
+      const r = await adminService.checkSenderStatus(email);
+      setRecipientStatus(p => ({ ...p, [email]: r.verified ? 'verified' : r.status === 'Pending' ? 'pending' : 'unknown' }));
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleVerifyRecipient = async (email: string) => {
+    setVerifyingRecipient(email);
+    try {
+      const msg = await adminService.verifySenderEmail(email);
+      setRecipientStatus(p => ({ ...p, [email]: 'pending' }));
+      flash(true, msg);
+    } catch (e) {
+      flash(false, `Verify failed: ${(e as Error).message}`);
+    } finally {
+      setVerifyingRecipient(null);
+    }
+  };
 
   const flash = (ok: boolean, text: string) => {
     setGlobalMsg({ ok, text });
@@ -512,7 +536,15 @@ export function EmailReporting() {
             <div key={venue.venueId} className="glass-card overflow-hidden">
               {/* Venue row */}
               <div className="p-4 flex items-center justify-between cursor-pointer hover:bg-white/3 transition-colors"
-                onClick={() => setExpanded(expanded === venue.venueId ? null : venue.venueId)}>
+                onClick={() => {
+                  const next = expanded === venue.venueId ? null : venue.venueId;
+                  setExpanded(next);
+                  if (next) {
+                    (venue.emailConfig?.recipients || []).forEach(r => {
+                      if (!recipientStatus[r]) checkRecipientStatus(r);
+                    });
+                  }
+                }}>
                 <div className="flex items-center gap-4">
                   <button onClick={e => { e.stopPropagation(); saveConfig(venue.venueId, { ...venue.emailConfig!, enabled: !venue.emailConfig?.enabled }); }}
                     disabled={saving === venue.venueId}
@@ -576,13 +608,39 @@ export function EmailReporting() {
                       <div className="md:col-span-2">
                         <label className="block text-xs text-gray-500 mb-2"><Mail className="w-3.5 h-3.5 inline mr-1" />Recipients</label>
                         <div className="space-y-2">
-                          {venue.emailConfig?.recipients.map(email => (
-                            <div key={email} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2">
-                              <span className="text-sm text-white">{email}</span>
-                              <button onClick={() => saveConfig(venue.venueId, { ...venue.emailConfig!, recipients: venue.emailConfig!.recipients.filter(r => r !== email) })}
-                                className="text-gray-500 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                            </div>
-                          ))}
+                          {venue.emailConfig?.recipients.map(email => {
+                            const st = recipientStatus[email] ?? 'unknown';
+                            const isVerifying = verifyingRecipient === email;
+                            return (
+                              <div key={email} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2">
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <span className="text-sm text-white truncate">{email}</span>
+                                  {st === 'verified' && (
+                                    <span className="flex items-center gap-1 text-xs text-emerald-400 shrink-0">
+                                      <ShieldCheck className="w-3.5 h-3.5" /> verified
+                                    </span>
+                                  )}
+                                  {st === 'pending' && (
+                                    <span className="text-xs text-amber-400 shrink-0">pending — check inbox</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {st !== 'verified' && (
+                                    <button
+                                      onClick={() => handleVerifyRecipient(email)}
+                                      disabled={isVerifying}
+                                      title="Send AWS SES verification email"
+                                      className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
+                                      {isVerifying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                                      {isVerifying ? 'Sending…' : 'Verify'}
+                                    </button>
+                                  )}
+                                  <button onClick={() => saveConfig(venue.venueId, { ...venue.emailConfig!, recipients: venue.emailConfig!.recipients.filter(r => r !== email) })}
+                                    className="text-gray-500 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                                </div>
+                              </div>
+                            );
+                          })}
                           <div className="flex gap-2">
                             <input type="email" placeholder="Add email address…"
                               value={newEmail[venue.venueId] || ''}
