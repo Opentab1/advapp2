@@ -531,6 +531,18 @@ class AdminService {
     throw new Error('VITE_ADMIN_API_URL is not configured — set it in Amplify → App Settings → Environment Variables');
   }
 
+  async getCamera(venueId: string, cameraId: string): Promise<AdminCamera | null> {
+    // Refetch a single camera row straight from DynamoDB. Used to avoid opening
+    // a zone-editor modal on stale cached polygons — the optimizer or another
+    // admin may have written newer zones since the page loaded.
+    try {
+      const cams = await this.listCameras(venueId);
+      return cams.find(c => c.cameraId === cameraId) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async createCamera(camera: {
     venueId: string;
     name: string;

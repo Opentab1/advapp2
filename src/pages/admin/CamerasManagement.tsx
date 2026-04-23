@@ -924,6 +924,32 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
   const [camProxy, setCamProxy] = useState<{ ip: string; port: number } | null>(null);
   const [zoneEditorCam, setZoneEditorCam] = useState<AdminCamera | null>(null);
   const [tableZoneEditorCam, setTableZoneEditorCam] = useState<AdminCamera | null>(null);
+
+  // When the admin clicks "Set Up Bar Zones" / "Tables", first pull the
+  // camera's current row from DynamoDB so the modal opens with whatever the
+  // optimizer or another admin most recently wrote. Without this, stale
+  // zones from the initial page load would show up and a Save would silently
+  // overwrite newer config. Falls back to the cached row if refetch fails.
+  const openZoneEditorForCam = useCallback(async (cam: AdminCamera, kind: 'bar' | 'table') => {
+    try {
+      const fresh = await adminService.getCamera(cam.venueId, cam.cameraId);
+      const target = fresh || cam;
+      if (kind === 'bar')   setZoneEditorCam(target);
+      else                  setTableZoneEditorCam(target);
+      if (fresh) {
+        // Replace the stale row in the list too so the preview thumbnail +
+        // overlay badges reflect the freshly-fetched polygons/bar lines.
+        setCameras(prev => prev.map(c =>
+          c.cameraId === fresh.cameraId ? fresh : c
+        ));
+      }
+    } catch {
+      // Network hiccup — open with the cached row rather than stranding the
+      // admin. The save path still writes to DDB authoritatively.
+      if (kind === 'bar')   setZoneEditorCam(cam);
+      else                  setTableZoneEditorCam(cam);
+    }
+  }, []);
   const [proxyPortInput, setProxyPortInput] = useState('');
   const [proxyUpdating, setProxyUpdating] = useState(false);
   const [proxyMsg, setProxyMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -966,7 +992,14 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
       .then(p => { setCamProxy(p); setProxyPortInput(String(p.port)); })
       .catch(() => { /* endpoint may not be deployed yet */ });
     statusTimer.current = setInterval(loadStatuses, 60_000);
-    return () => { if (statusTimer.current) clearInterval(statusTimer.current); };
+    // Auto-refresh the camera list too so worker-side writes (auto-detect,
+    // optimizer, Layer 3 POS variance tune) flow into the admin UI without
+    // forcing the admin to manually refresh the page.
+    const cameraTimer = setInterval(load, 30_000);
+    return () => {
+      if (statusTimer.current) clearInterval(statusTimer.current);
+      clearInterval(cameraTimer);
+    };
   }, [expanded, load, loadStatuses, venueId]);
 
   // Pre-fill the connection panel from first camera URL
@@ -1439,7 +1472,7 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                             consumer VenueScope tile for this camera once saved. */}
                         {(cam.modes || '').split(',').some(m => m.trim() === 'drink_count') && (
                           <button
-                            onClick={() => setZoneEditorCam(cam)}
+                            onClick={() => void openZoneEditorForCam(cam, 'bar')}
                             title="Draw bar zones + bar-front line"
                             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
                               (cam.barConfigJson || '').trim()
@@ -1453,7 +1486,7 @@ function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName
                         )}
                         {(cam.modes || '').split(',').some(m => ['table_turns','table_service'].includes(m.trim())) && (
                           <button
-                            onClick={() => setTableZoneEditorCam(cam)}
+                            onClick={() => void openZoneEditorForCam(cam, 'table')}
                             title="Draw per-table polygons"
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border bg-blue-500/15 text-blue-300 border-blue-500/40 hover:bg-blue-500/25 transition-colors"
                           >
