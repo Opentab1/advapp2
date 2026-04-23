@@ -32,6 +32,36 @@ Before touching anything in the admin portal:
 
 ---
 
+## 1a · Use the Onboarding Wizard (2 min)
+
+Admin → **Onboard Venue** (Building2 icon, top of admin sidebar) runs the
+whole flow step-by-step and writes everything to DynamoDB so every device
+the owner/partner/manager logs in on sees the same state from minute one.
+
+**Step 1 — Venue basics + forecast baseline:**
+- [ ] Venue name, owner name, owner email (drives Cognito account creation)
+- [ ] **Forecast baseline section** — optional but strongly recommended.
+      Blank baseline = industry-average prior, which over-predicts for
+      small venues (Blind Goat saw 204 forecasted vs 22 actual before we
+      added this). Fill in:
+  - **Venue type** — small_bar / mid_bar / large_bar / restaurant /
+    nightclub / mixed. Determines hour-shape curve (bar peaks at 10 PM,
+    restaurant at 7 PM, nightclub at midnight, etc.).
+  - **Legal capacity** — hard cap. Forecast will never predict more
+    headcount than this.
+  - **Typical slow-night covers** — Tuesday-ish number
+  - **Typical busy-night covers** — Saturday-ish number
+- [ ] Save. Cognito sends the owner a temp password; copy from the UI.
+
+**Step 2 — Cameras** (see §1 below).
+
+**Step 3 — Preflight** — the wizard calls `/ops/probe-cameras` on the
+droplet to open each RTSP URL, read a frame, and report back. Any red
+camera = stop here and fix the URL, credentials, or port-forward before
+proceeding.
+
+---
+
 ## 1 · Connect cameras (10–20 min depending on count)
 
 Admin → Cameras → Add a venue section → **Discover Cameras (Cortex IQ)**
@@ -83,6 +113,13 @@ Common issues:
   upstream port via the UI. No SSH needed.
 - **NVR only serves main stream, not sub**: fall back to `/0/livetop.mp4`
   but expect slow snapshot load times.
+- **One specific channel's sub-stream drops after ~6 frames** (happened on
+  Blind Goat CH7): set `forceMainStream=true` on that camera's row in
+  `VenueScopeCameras`. The `camera_loop` honors the flag and pins that
+  channel to `/0/` while everything else uses `/1/` for the 10× bandwidth
+  win. The `table_turns_runner` also auto-reconnects on 20 consecutive
+  read failures and bails after 3 min of no frames, so a single flaky
+  channel can't wedge the worker.
 - **Too many concurrent streams saturate NVR upstream**: cap the worker's
   parallel jobs with `VENUESCOPE_WORKERS=N` in `.env`.
 
@@ -183,12 +220,24 @@ Expect `peak=N` lines with N > 0 when the venue is active. If always 0:
 
 ---
 
-## 8 · Email reports (2 min)
+## 8 · Email reports (5 min — SES sandbox adds a step)
 
-Admin → Settings → Email Reporting:
-- [ ] Add the venue owner's email
-- [ ] Pick daily or weekly cadence
-- [ ] Save
+Admin → Email Reporting:
+- [ ] Set **sender email** (e.g. `reports@advizia.ai`) → click
+      **Verify Sender** → click the AWS verification link in that inbox
+- [ ] Set **auto-schedule** hour + day (e.g. 9 AM ET, Every Day) →
+      **Enable Schedule**. Creates an EventBridge rule that invokes the
+      admin Lambda daily. Cron expression uses UTC-5 in the UI display
+      logic; during EDT the actual fire time is +1 hr. Not a bug, just a
+      known gotcha.
+- [ ] Expand the venue row → add the owner/manager email to
+      **Recipients**. Every recipient appears with a **Verify** button
+      next to it — **click Verify for each recipient** in SES sandbox
+      mode, and each recipient must click their AWS link. In production
+      mode (`Request production access` in SES console), this step
+      disappears and you can email anyone.
+- [ ] Click **Send Test** once a recipient is verified to confirm
+      the whole path works.
 
 ---
 
@@ -262,6 +311,25 @@ These need venue intervention (tape, matting, physical changes):
 - Router port-forward rule changed: admin → Cameras → Change IP/Port
 - Add a new camera: it auto-configs within 60s
 - Remove a camera: orphan reaper kills its worker within 30s
+
+---
+
+## Multi-device sanity check (before you leave the venue)
+
+Every operator-authored setting lives in DynamoDB — localStorage is a
+write-through cache, not the source of truth. Before leaving:
+
+- [ ] Sign in as the owner on **the laptop** you used to configure; set
+      the hourly wage rates in Settings → Staffing; save
+- [ ] Sign in as the same owner on **your phone** (or incognito on the
+      same laptop); confirm the wage rates are already populated
+- [ ] Same pattern for: staff roster, report schedule, CRM leads (admin),
+      calibration overrides, achievements/streaks, admin audit trail
+
+Each setting is allowlisted on the Lambda — adding a new one requires
+extending `VENUE_SETTING_KEYS` in `lambda/admin-api/index.mjs` *and*
+handling it in `venueSettings.service.ts` (or `systemSettings.service.ts`
+for admin-scope blobs).
 
 ---
 
