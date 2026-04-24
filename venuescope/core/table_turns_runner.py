@@ -350,11 +350,27 @@ def _build_summary(tracker: TableTurnTracker, total_sec: float, clip_label: str)
                         for s in sessions
                         if s.seated_at is not None and s.cleared_at is not None]
         dwells.extend(table_dwells)
+        # Field names must match what aws_sync reads when it assembles the
+        # live ~cameraId record: turn_count (not "turns"), currently_occupied
+        # (not "is_occupied"), and avg_response_sec. We also keep the legacy
+        # names as aliases so any consumer reading from summary directly
+        # doesn't break — and because the engine path already uses these
+        # canonical names, the lightweight path must match exactly or the
+        # customer's floor-cam tile will silently ignore the data.
+        _dwell_min = round(sum(table_dwells) / len(table_dwells) / 60, 1) if table_dwells else 0
+        _responses = [s.response_seconds
+                      for s in sessions
+                      if s.response_seconds is not None]
+        _resp_sec  = round(sum(_responses) / len(_responses), 1) if _responses else None
+        _occupied  = bool(getattr(state, "is_occupied", False))
         table_detail[tid] = {
-            "label":        table.label,
-            "turns":        t_turns,
-            "is_occupied":  bool(getattr(state, "is_occupied", False)),
-            "avg_dwell_min": round(sum(table_dwells) / len(table_dwells) / 60, 1) if table_dwells else 0,
+            "label":              table.label,
+            "turn_count":         t_turns,
+            "turns":              t_turns,             # legacy alias
+            "currently_occupied": _occupied,
+            "is_occupied":        _occupied,           # legacy alias
+            "avg_dwell_min":      _dwell_min,
+            "avg_response_sec":   _resp_sec,
         }
     avg_dwell_min = round(sum(dwells) / len(dwells) / 60, 1) if dwells else 0
     return {

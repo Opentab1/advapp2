@@ -2546,39 +2546,76 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
       )}
 
       {isTableTurns && (() => {
-        // Parse per-table detail for dwell breakdown
-        let tableRows: { label: string; turns: number; dwellMin: number }[] = [];
+        // Per-table drill-in rows. Merge three data sources into one row per
+        // table so the tile always lists every configured polygon — empty
+        // tables were previously filtered out and the admin saw "all clear"
+        // with no per-table breakdown, making it impossible to tell which
+        // specific table had been sitting empty for hours.
+        type TableRow = {
+          id:        string;
+          label:     string;
+          occupied:  boolean;
+          turns:     number;
+          dwellMin:  number;
+          respSec:   number;          // avg response time for completed sessions
+        };
+        const tableMap: Record<string, TableRow> = {};
+        // 1) From tableDetail — completed session stats (turns, avg dwell)
         try {
           const detail = room.job?.tableDetail ? JSON.parse(room.job.tableDetail) : null;
-          if (detail) {
-            tableRows = Object.entries(detail as Record<string, { label?: string; turn_count?: number; avg_dwell_min?: number }>)
-              .map(([id, d]) => ({ label: d.label ?? id, turns: d.turn_count ?? 0, dwellMin: d.avg_dwell_min ?? 0 }))
-              .filter(r => r.turns > 0)
-              .sort((a, b) => b.dwellMin - a.dwellMin);
+          if (detail && typeof detail === 'object') {
+            for (const [id, d] of Object.entries(detail as Record<string, {
+              label?: string; turn_count?: number; avg_dwell_min?: number; avg_response_sec?: number;
+            }>)) {
+              tableMap[id] = {
+                id, label: d.label ?? id,
+                occupied: false,
+                turns: d.turn_count ?? 0,
+                dwellMin: d.avg_dwell_min ?? 0,
+                respSec: d.avg_response_sec ?? 0,
+              };
+            }
           }
         } catch { /* ignore */ }
-
-        // Parse live occupancy for real-time "currently seated" indicators
-        type LiveOccRow = { label: string; occupied: boolean };
-        let liveOccRows: LiveOccRow[] = [];
+        // 2) From liveTableOccupancy — real-time seat status + any tables
+        //    that exist in config but haven't completed a session yet.
         try {
           const lto = room.job?.liveTableOccupancy ? JSON.parse(room.job.liveTableOccupancy) : null;
-          if (lto) {
-            liveOccRows = Object.entries(lto as Record<string, { label?: string; currently_occupied?: boolean }>)
-              .map(([id, d]) => ({ label: d.label ?? id, occupied: d.currently_occupied ?? false }));
+          if (lto && typeof lto === 'object') {
+            for (const [id, d] of Object.entries(lto as Record<string, {
+              label?: string; currently_occupied?: boolean;
+              turn_count?: number; avg_dwell_min?: number; avg_response_sec?: number;
+            }>)) {
+              const existing = tableMap[id] ?? {
+                id, label: d.label ?? id,
+                occupied: false, turns: 0, dwellMin: 0, respSec: 0,
+              };
+              existing.occupied = d.currently_occupied ?? existing.occupied;
+              // Prefer richer stats from detail; fall back to lto's copy
+              if (existing.turns === 0) existing.turns       = d.turn_count ?? 0;
+              if (existing.dwellMin === 0) existing.dwellMin = d.avg_dwell_min ?? 0;
+              if (existing.respSec === 0)  existing.respSec  = d.avg_response_sec ?? 0;
+              tableMap[id] = existing;
+            }
           }
         } catch { /* ignore */ }
-        const occupiedCount = liveOccRows.filter(r => r.occupied).length;
+        // Sort: occupied first, then by turns desc, then by dwell desc.
+        const tableRows: TableRow[] = Object.values(tableMap).sort((a, b) => {
+          if (a.occupied !== b.occupied) return a.occupied ? -1 : 1;
+          if (a.turns !== b.turns)       return b.turns - a.turns;
+          return b.dwellMin - a.dwellMin;
+        });
+        const occupiedCount = tableRows.filter(r => r.occupied).length;
 
         return (
           <div className="space-y-2">
             {/* Live occupancy banner — only shown when zones are detected */}
-            {room.isLive && liveOccRows.length > 0 && (
+            {room.isLive && tableRows.length > 0 && (
               <div className={`rounded-xl px-3 py-2 flex items-center gap-2 text-[11px] font-medium ${occupiedCount > 0 ? 'bg-green-900/40 text-green-300' : 'bg-whoop-bg text-text-muted'}`}>
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${occupiedCount > 0 ? 'bg-green-400 animate-pulse' : 'bg-gray-600'}`} />
                 {occupiedCount > 0
-                  ? `${occupiedCount} of ${liveOccRows.length} table${liveOccRows.length !== 1 ? 's' : ''} occupied`
-                  : `${liveOccRows.length} table${liveOccRows.length !== 1 ? 's' : ''} — all clear`}
+                  ? `${occupiedCount} of ${tableRows.length} table${tableRows.length !== 1 ? 's' : ''} occupied`
+                  : `${tableRows.length} table${tableRows.length !== 1 ? 's' : ''} — all clear`}
               </div>
             )}
             <div className="grid grid-cols-3 gap-2">
@@ -2604,11 +2641,23 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
             {tableRows.length > 0 && (
               <div className="bg-whoop-bg rounded-xl px-3 py-2 space-y-1.5">
                 {tableRows.map(row => (
-                  <div key={row.label} className="flex items-center justify-between text-[10px]">
-                    <span className="text-text-muted truncate">{row.label}</span>
+                  <div key={row.id} className="flex items-center justify-between text-[10px]">
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        row.occupied ? 'bg-green-400 animate-pulse' : 'bg-gray-600'
+                      }`} title={row.occupied ? 'currently occupied' : 'empty'} />
+                      <span className={row.occupied ? 'text-white' : 'text-text-muted'}>{row.label}</span>
+                    </span>
                     <div className="flex items-center gap-3 flex-shrink-0 ml-2">
-                      <span className="text-white">{row.turns} turn{row.turns !== 1 ? 's' : ''}</span>
-                      <span className="text-purple-400">{row.dwellMin > 0 ? `${Math.round(row.dwellMin)}m dwell` : '—'}</span>
+                      <span className={row.turns > 0 ? 'text-white' : 'text-text-muted'}>
+                        {row.turns} turn{row.turns !== 1 ? 's' : ''}
+                      </span>
+                      <span className="text-purple-400">
+                        {row.dwellMin > 0 ? `${Math.round(row.dwellMin)}m dwell` : '—'}
+                      </span>
+                      <span className="text-sky-400">
+                        {row.respSec > 0 ? `${Math.round(row.respSec)}s resp` : '—'}
+                      </span>
                     </div>
                   </div>
                 ))}
