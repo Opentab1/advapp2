@@ -1166,7 +1166,7 @@ function BottleSection({ jobs }: { jobs: VenueScopeJob[] }) {
         <span className="text-sm font-semibold text-white">Pour Activity</span>
       </div>
       <div className="p-4 space-y-3">
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {[
             { label: 'Pours',       value: totalPours,                         color: 'text-white' },
             { label: 'Oz Poured',   value: totalOz.toFixed(1),                 color: 'text-white' },

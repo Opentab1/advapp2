@@ -2495,7 +2495,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
 
       {/* Primary metrics */}
       {isDrink && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
           <div className="bg-whoop-bg rounded-xl p-2.5 text-center">
             <div className="text-xl font-bold text-teal">{room.totalDrinks}</div>
             <div className="text-[9px] text-text-muted uppercase tracking-wide mt-0.5">Drinks</div>
@@ -2618,7 +2618,7 @@ function RoomCard({ room, camProxyUrl, camera, onInvestigate, onConfigureZones, 
                   : `${tableRows.length} table${tableRows.length !== 1 ? 's' : ''} — all clear`}
               </div>
             )}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
               <div className="bg-whoop-bg rounded-xl p-3 text-center">
                 <div className="text-xl font-bold text-white">
                   {room.totalTurns > 0 ? room.totalTurns : '—'}
@@ -3801,7 +3801,7 @@ function DetectionEventsPanel({
                         value={urlDraft}
                         onChange={e => setUrlDraft(e.target.value)}
                         placeholder="http://nvr/playback/{channel}/{starttime}"
-                        className="text-[10px] bg-whoop-bg border border-whoop-divider rounded px-2 py-1 text-white w-64 focus:outline-none focus:border-teal/50"
+                        className="text-[10px] bg-whoop-bg border border-whoop-divider rounded px-2 py-1 text-white w-full sm:w-64 focus:outline-none focus:border-teal/50"
                         autoFocus
                       />
                       <button
