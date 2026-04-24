@@ -181,6 +181,14 @@ def run_table_turns_lightweight(
     # Prime with first frame
     pending_frame: np.ndarray | None = first_frame
 
+    # Ambient occupancy tracker — piggy-backs on the YOLO person detections
+    # we already run every sample_sec. Writes "peak people in frame" so the
+    # customer tile can show an actual occupancy number on floor cams that
+    # don't have entry-line polygons drawn (entry lines are the PeopleCounter
+    # input; without them headcount would sit at 0 forever).
+    peak_concurrent_people = 0
+    last_concurrent_people = 0
+
     # Reconnect + watchdog state (long-term fix for HLS stream hiccups that
     # otherwise leave cap.read() returning False forever — see CH7 incident).
     consec_fail        = 0
@@ -283,10 +291,22 @@ def run_table_turns_lightweight(
                       if points_list else np.empty((0, 2), dtype=np.float32)
         tracker.update(proc_idx, t_sec, points_arr, track_ids_list)
 
+        # Ambient peak-occupancy — # of person bboxes YOLO saw in this frame.
+        # This is what the customer tile wants to show as "IN ROOM" and
+        # "PEAK" on floor cams. It's strictly a floor-level approximation
+        # (people_count mode with actual entry lines is still the right
+        # answer for entrance cams), but for a dining floor this gives
+        # the operator a realistic number instead of a stubborn 0.
+        last_concurrent_people = len(points_list)
+        if last_concurrent_people > peak_concurrent_people:
+            peak_concurrent_people = last_concurrent_people
+
         # Live push
         if is_continuous and (time.time() - last_live_push) >= LIVE_CB_EVERY:
             try:
                 partial = _build_summary(tracker, t_sec, clip_label)
+                partial["peak_occupancy"]    = peak_concurrent_people
+                partial["current_headcount"] = last_concurrent_people
                 live_cb(partial, time.time() - start_wall)
             except Exception as e:
                 log.debug(f"[table] live_cb err: {e}")
@@ -300,6 +320,8 @@ def run_table_turns_lightweight(
     progress_cb(98, "Finalising table turns")
 
     summary = _build_summary(tracker, t_sec, clip_label)
+    summary["peak_occupancy"]    = peak_concurrent_people
+    summary["current_headcount"] = last_concurrent_people
     try:
         summary["_table_state"] = tracker.get_cross_segment_state() \
             if hasattr(tracker, "get_cross_segment_state") else {}

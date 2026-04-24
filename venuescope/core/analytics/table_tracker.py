@@ -252,8 +252,14 @@ class TableTurnTracker:
         return [ev]
 
     def get_cross_segment_state(self) -> Dict:
-        """Serialize active sessions so they survive a worker restart."""
+        """Serialize active sessions AND completed sessions so today's turn
+        counts and dwells survive a worker restart. The earlier version only
+        saved `completed_turns` as an integer count, which meant `state.sessions`
+        started empty on restart and `total_turns = len(sessions)` reset to 0
+        even though the day's real turns had already happened. Now we serialize
+        each completed session's timestamps so the full list reconstitutes."""
         active = {}
+        completed: Dict[str, List[Dict]] = {}
         for tid, state in self._states.items():
             if state.is_occupied and state.seated_at is not None:
                 active[tid] = {
@@ -261,12 +267,28 @@ class TableTurnTracker:
                     "person_frames":  state.person_frames,
                     "sessions_count": len(state.sessions),
                 }
-        return {"active_sessions": active, "completed_turns": {
-            tid: len(state.sessions) for tid, state in self._states.items()
-        }}
+            completed[tid] = [
+                {
+                    "seated_at":       s.seated_at,
+                    "cleared_at":      s.cleared_at,
+                    "first_service_t": s.first_service_t,
+                    "visit_count":     s.visit_count,
+                }
+                for s in state.sessions
+                if s.seated_at is not None and s.cleared_at is not None
+            ]
+        return {
+            "active_sessions": active,
+            "completed":       completed,
+            # Back-compat with older payloads that only had the counts.
+            "completed_turns": {tid: len(v) for tid, v in completed.items()},
+        }
 
     def restore_cross_segment_state(self, state_dict: Dict) -> None:
-        """Re-hydrate active table sessions from a prior segment's state."""
+        """Re-hydrate active table sessions AND the day's completed sessions
+        from a prior segment's state. Rebuilding the completed list makes
+        `total_turns = len(sessions)` reflect the actual day's turns, not just
+        what's happened since the worker last restarted."""
         if not state_dict:
             return
         active = state_dict.get("active_sessions", {})
@@ -278,6 +300,24 @@ class TableTurnTracker:
                 s.person_frames = info.get("person_frames", self.occupied_conf)
                 if s._current_session is None:
                     s._current_session = TableSession(table_id=tid, seated_at=info["seated_at"])
+        # Rebuild completed sessions. Older payloads won't have this key — they
+        # fall through as a no-op, same as before.
+        completed = state_dict.get("completed", {})
+        for tid, sess_list in completed.items():
+            if tid not in self._states or not isinstance(sess_list, list):
+                continue
+            state = self._states[tid]
+            for info in sess_list:
+                try:
+                    state.sessions.append(TableSession(
+                        table_id       = tid,
+                        seated_at      = float(info["seated_at"]),
+                        cleared_at     = float(info["cleared_at"]),
+                        first_service_t= info.get("first_service_t"),
+                    ))
+                except Exception:
+                    # Malformed entry — skip rather than crash the whole restore.
+                    continue
 
     def summary(self) -> Dict[str, Any]:
         result = {}

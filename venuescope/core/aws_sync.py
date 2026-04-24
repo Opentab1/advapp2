@@ -563,7 +563,19 @@ def push_live_metrics(job_id: str, summary: Dict[str, Any], elapsed_sec: float,
 
     # For people_count mode, total_entries/exits are always 0 (lightweight runner
     # doesn't count door crossings). Use peak_occupancy from the blob estimator instead.
-    peak_occ = int(people.get("peak_occupancy", headcount)) if mode == "people_count" else headcount
+    #
+    # For table_turns on floor cams we don't have entry lines to derive a true
+    # "headcount" from line-crossings — the best signal we have is the raw count
+    # of YOLO person detections per frame, maxed across the segment. The
+    # table_turns_runner writes that as summary["peak_occupancy"] + summary
+    # ["current_headcount"] directly (not under "people"), so check both spots.
+    if mode == "people_count":
+        peak_occ = int(people.get("peak_occupancy", headcount))
+    elif mode in ("table_turns", "table_service"):
+        peak_occ  = int(summary.get("peak_occupancy", 0))
+        headcount = int(summary.get("current_headcount", 0))
+    else:
+        peak_occ = headcount
 
     # Little's Law dwell: avg_dwell = avg_occupancy / arrival_rate
     # Only valid after ≥60s with at least 1 entry recorded.
