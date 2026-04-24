@@ -592,6 +592,15 @@ class VenueProcessor:
         (self.result_dir / "snapshots").mkdir(exist_ok=True)
 
         self._conf_sum = 0.0; self._conf_n = 0
+        # Ambient peak occupancy — max # of person detections seen in a single
+        # YOLO pass across the lifetime of this job. Feeds the floor-cam
+        # "IN ROOM" / "PEAK" tiles on the customer VenueScope when the camera
+        # doesn't have an entry-line people_count config drawn. Mirrored in
+        # table_turns_runner (lightweight path); kept here for cams whose
+        # extras put them on the full-engine code path (e.g. CH1–CH6 which
+        # include table_service, which forces full-engine).
+        self._peak_people = 0
+        self._last_people = 0
         self._total = self._processed = self._dropped = 0
         self._screen_recording_warning: Optional[str] = None   # Gap 2
         self._prev_ids = set(); self._id_switches = 0
@@ -1359,6 +1368,15 @@ class VenueProcessor:
                     self._id_switches += min(len(self._prev_ids-cur), len(cur-self._prev_ids))
                     self._prev_ids = cur
 
+                    # Ambient peak occupancy: count person class (0) detections
+                    # in this frame and update the running max. Only person
+                    # class — drink_count also detects bottles/cups (39/40/41)
+                    # which would otherwise inflate the headcount.
+                    _people_now = sum(1 for c in class_ids if c == 0) if class_ids else len(track_ids)
+                    self._last_people = _people_now
+                    if _people_now > self._peak_people:
+                        self._peak_people = _people_now
+
                     # Improvement 2: Adaptive confidence — lower threshold if detections are poor,
                     # slowly raise it back when quality recovers (prevents false positives persisting
                     # after a transient bad window like a lighting change or occlusion).
@@ -1879,7 +1897,12 @@ class VenueProcessor:
              "quality":       quality,
              "snap_count":    self._snap_count,
              "heatmap_generated": False,
-             "serve_snapshots": dict(self._serve_snapshots)}
+             "serve_snapshots": dict(self._serve_snapshots),
+             # Ambient peak-occupancy: max # of person detections across
+             # the job. Used by aws_sync to write peakOccupancy on floor
+             # cams that don't have line-crossing people_count configured.
+             "peak_occupancy":    self._peak_people,
+             "current_headcount": self._last_people}
 
         if self._angle_info:
             b["camera_angle"] = self._angle_info
