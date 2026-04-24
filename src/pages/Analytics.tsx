@@ -10,6 +10,7 @@ import {
   RefreshCw, AlertTriangle, ShieldCheck, TrendingUp,
   ChevronDown, ChevronUp, User, Video, DollarSign,
   Wine, Users, Activity, Search, X, Camera,
+  Armchair, UserCheck, Clock,
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob } from '../services/venuescope.service';
@@ -522,7 +523,12 @@ function TheftSection({ jobs }: { jobs: VenueScopeJob[] }) {
 
 interface DetectionEvent {
   ts: number;           // epoch seconds (wall clock)
-  type: 'drink' | 'people' | 'bottle' | 'pour' | 'theft';
+  // Unified feed across every worker-emitted signal — drink serves at the
+  // bar, table activity on the floor, server-visit behaviour, etc.
+  type: 'drink' | 'people' | 'bottle' | 'pour' | 'theft'
+      | 'turn'       // table_turns: a completed seated session
+      | 'service'    // table_service: server approached a table
+      | 'unvisited'; // table_service: table went >threshold minutes without a visit
   camera: string;
   stat: string;
   detail: string;
@@ -692,6 +698,52 @@ function buildEvents(jobs: VenueScopeJob[]): DetectionEvent[] {
         flag: true,
       });
     }
+
+    // Table turns — one aggregate row per job when turns were logged.
+    // The worker stores totalTurns/avgDwellMin/avgResponseSec on each job
+    // record; we surface them here so the Detection Events feed shows the
+    // dining room's activity, not just the bar.
+    if ((mode === 'table_turns' || (job.activeModes ?? '').includes('table_turns'))
+        && (job.totalTurns ?? 0) > 0) {
+      const dwell = job.avgDwellMin ? ` · avg dwell ${job.avgDwellMin.toFixed(1)}m` : '';
+      events.push({
+        ts: jobTs(job),
+        type: 'turn',
+        camera: cam,
+        stat: `${job.totalTurns} turn${(job.totalTurns ?? 1) !== 1 ? 's' : ''}`,
+        detail: `${dwell}`.trim().replace(/^·\s*/, ''),
+      });
+    }
+
+    // Server visits — derived from the per-table-per-staff JSON the worker
+    // writes under tableVisitsByStaff. We count total visits and surface the
+    // top server. Low fidelity compared to per-event logging, but every visit
+    // still contributes to the count — good enough for the activity feed.
+    if ((mode === 'table_service' || (job.activeModes ?? '').includes('table_service'))
+        && job.tableVisitsByStaff) {
+      try {
+        const byStaff = JSON.parse(job.tableVisitsByStaff) as Record<string, Record<string, number>>;
+        let total = 0;
+        const perStaff: Record<string, number> = {};
+        for (const tableId of Object.keys(byStaff)) {
+          for (const [staffId, n] of Object.entries(byStaff[tableId])) {
+            total += n;
+            perStaff[staffId] = (perStaff[staffId] ?? 0) + n;
+          }
+        }
+        if (total > 0) {
+          const topStaff = Object.entries(perStaff).sort((a, b) => b[1] - a[1])[0];
+          const respSec = job.avgResponseSec ? ` · avg response ${Math.round(job.avgResponseSec)}s` : '';
+          events.push({
+            ts: jobTs(job),
+            type: 'service',
+            camera: cam,
+            stat: `${total} visit${total !== 1 ? 's' : ''}`,
+            detail: `${topStaff ? topStaff[0] : ''}${respSec}`.trim().replace(/^·\s*/, ''),
+          });
+        }
+      } catch { /* malformed JSON — skip */ }
+    }
   }
 
   return events.sort((a, b) => b.ts - a.ts);
@@ -703,15 +755,21 @@ const EVENT_META: Record<DetectionEvent['type'], { label: string; color: string;
   bottle: { label: 'Bottle Count',     color: 'text-purple-400',  icon: <Activity className="w-3.5 h-3.5" /> },
   pour:   { label: 'Over-Pour Alert',  color: 'text-amber-400',   icon: <AlertTriangle className="w-3.5 h-3.5" /> },
   theft:  { label: 'Theft Flag',       color: 'text-red-400',     icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+  turn:      { label: 'Table Turn',      color: 'text-green-400',  icon: <Armchair className="w-3.5 h-3.5" /> },
+  service:   { label: 'Server Visit',    color: 'text-sky-400',    icon: <UserCheck className="w-3.5 h-3.5" /> },
+  unvisited: { label: 'Unvisited Table', color: 'text-orange-400', icon: <Clock className="w-3.5 h-3.5" /> },
 };
 
 const FILTER_OPTIONS: Array<{ key: DetectionEvent['type'] | 'all'; label: string }> = [
-  { key: 'all',    label: 'All' },
-  { key: 'drink',  label: 'Drinks' },
-  { key: 'people', label: 'People' },
-  { key: 'bottle', label: 'Bottles' },
-  { key: 'pour',   label: 'Mispours' },
-  { key: 'theft',  label: 'Theft' },
+  { key: 'all',       label: 'All' },
+  { key: 'drink',     label: 'Drinks' },
+  { key: 'turn',      label: 'Turns' },
+  { key: 'service',   label: 'Service' },
+  { key: 'people',    label: 'People' },
+  { key: 'bottle',    label: 'Bottles' },
+  { key: 'pour',      label: 'Mispours' },
+  { key: 'theft',     label: 'Theft' },
+  { key: 'unvisited', label: 'Unvisited' },
 ];
 
 // ── Snap row + modal ──────────────────────────────────────────────────────────
