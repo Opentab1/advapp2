@@ -631,18 +631,27 @@ def forecast_tonight(
     c_impact_pct = round((c_drag - 1.0) * 100)
     c_impact_str = f"{c_impact_pct:+d}%" if c_impact_pct != 0 else "no impact"
 
-    # Baseline covers (DOW × month shape, no weather or event effects)
-    # Use same slot-sum aggregation as mid_covers so lift_pct is on the same scale
-    _month_mult = {
+    # Baseline covers = the DOW-adjusted prior for THIS venue with no
+    # weather / event / holiday effects applied. Using the venue's own
+    # tier + slow/busy + capacity means the baseline is on the same scale
+    # as mid_covers, and "lift" cleanly reads as "how much weather +
+    # events pushed us above or below a normal night." Previously this
+    # used _GENERIC_PEAK * dow_mult which produced a 100+ baseline for
+    # small venues → the lift number was nonsensically negative.
+    _month_mult_tbl = {
         1: 0.72, 2: 0.78, 3: 0.92, 4: 0.88, 5: 0.91, 6: 0.96,
         7: 0.94, 8: 0.93, 9: 0.87, 10: 0.97, 11: 0.85, 12: 1.12,
     }
-    month_mult = _month_mult.get(target_date.month, 1.0)
-    baseline_peak = _GENERIC_PEAK * dow_mult * month_mult
-    baseline_slots_sum = sum(
-        baseline_peak * _HOUR_SHAPE_PRIOR.get(h, 0.30) * _SLOTS_PER_HOUR
-        for h in range(_OPEN_HOUR, _CLOSE_HOUR)
+    month_mult = _month_mult_tbl.get(target_date.month, 1.0)
+    _baseline_slots = _generic_prior_forecast(
+        target_date,
+        tier            = venue_tier,
+        venue_capacity  = venue_capacity,
+        slow_day_covers = slow_day_covers,
+        busy_day_covers = busy_day_covers,
+        avg_visit_slots = avg_visit_slots,
     )
+    baseline_slots_sum = sum(s["yhat"] for s in _baseline_slots)
     baseline_covers = max(1, int(round(baseline_slots_sum / avg_visit_slots)))
     lift = mid_covers - baseline_covers
     lift_pct = round((lift / baseline_covers) * 100) if baseline_covers > 0 else 0
