@@ -16,11 +16,21 @@ from collections import deque
 
 os.environ.setdefault("YOLO_TELEMETRY",          "False")
 os.environ.setdefault("ULTRALYTICS_AUTOINSTALL", "False")
-# Ensure thread limits are set before torch/MKL/BLAS imports — worker_daemon.py sets
-# these too, but engine may be imported independently in other contexts.
-os.environ.setdefault("OMP_NUM_THREADS",     "2")
-os.environ.setdefault("MKL_NUM_THREADS",     "2")
-os.environ.setdefault("OPENBLAS_NUM_THREADS","2")
+# Pin BLAS/OMP threads to 1. Set before torch/MKL/BLAS imports so the values stick.
+os.environ.setdefault("OMP_NUM_THREADS",     "1")
+os.environ.setdefault("MKL_NUM_THREADS",     "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS","1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
+# Belt-and-suspenders: the env vars above cover MKL/OpenBLAS, but OpenCV and PyTorch
+# read their own thread configs. Without these, each camera process still spawns N
+# worker threads for cv2 ops (resize, imencode) and torch matmuls.
+cv2.setNumThreads(1)
+try:
+    import torch as _torch
+    _torch.set_num_threads(1)
+except Exception:
+    pass
 
 from ultralytics import YOLO
 
@@ -609,7 +619,9 @@ class VenueProcessor:
         self._track_ages: Dict[int,int] = {}
         self._snap_count = 0
         self._clip_count  = 0
-        self._serve_snapshots: Dict[float, str] = {}  # t_sec -> S3 key (populated async)
+        from collections import OrderedDict as _OrderedDict
+        self._serve_snapshots: "OrderedDict[float, str]" = _OrderedDict()  # bounded LRU, t_sec -> S3 key
+        self._serve_snapshots_cap = 200
         self._snap_executor = None  # ThreadPoolExecutor, created lazily
         self._min_track_age = self.ec.get("min_track_age_frames", 8)
         self._ignore_zones  = self.ec.get("ignore_zones", [])
@@ -1527,6 +1539,8 @@ class VenueProcessor:
                                     key = _upload_snap(jpg, jid, ts, vid)
                                     if key:
                                         self._serve_snapshots[ts] = key
+                                        while len(self._serve_snapshots) > self._serve_snapshots_cap:
+                                            self._serve_snapshots.popitem(last=False)
                                 self._snap_executor.submit(_do_upload)
                                 self._snap_count += 1
                     except Exception as _se:

@@ -12,15 +12,14 @@ from typing import Dict
 os.environ.setdefault("YOLO_TELEMETRY",          "False")
 os.environ.setdefault("ULTRALYTICS_AUTOINSTALL", "False")
 
-# Limit CPU threads for live RTSP/HLS inference. Without these, PyTorch + MKL + OpenBLAS
-# each spawn threads equal to the number of vCPUs. With 2 concurrent camera jobs on a
-# 4-vCPU droplet, unconstrained threading causes 13+ threads per process, saturating all
-# CPUs and creating contention. Setting to 2 per process = 4 total threads = clean sharing.
-# Must be set before any torch/numpy import to take effect for MKL/OpenBLAS backends.
-os.environ.setdefault("OMP_NUM_THREADS",     "2")
-os.environ.setdefault("MKL_NUM_THREADS",     "2")
-os.environ.setdefault("OPENBLAS_NUM_THREADS","2")
-os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+# Pin all BLAS/OMP threadpools to 1. With ~10 camera processes on a 4-vCPU droplet,
+# each letting MKL/OpenBLAS spawn 2 threads = 20+ threads fighting over 4 cores. Systemd
+# unit already sets these to 1; defaulting to 1 here keeps parity when run outside systemd.
+# Must be set before any torch/numpy import.
+os.environ.setdefault("OMP_NUM_THREADS",     "1")
+os.environ.setdefault("MKL_NUM_THREADS",     "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS","1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
