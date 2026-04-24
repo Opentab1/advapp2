@@ -12,6 +12,7 @@ import authService from '../services/auth.service';
 import venueScopeService from '../services/venuescope.service';
 import type { VenueScopeJob } from '../services/venuescope.service';
 import { loadVenueSetting, saveVenueSetting, peekVenueSetting } from '../services/venueSettings.service';
+import venueSettingsService from '../services/venue-settings.service';
 import { PullToRefresh } from '../components/common/PullToRefresh';
 import { CSVImport } from '../components/common/CSVImport';
 import { isDemoAccount, generateDemoCapacityModel } from '../utils/demoData';
@@ -104,7 +105,12 @@ const ROLE_TEXT: Record<string, string> = {
 
 const DOW_MULT  = [0.40, 0.45, 0.50, 0.65, 1.00, 0.95, 0.55]; // Mon–Sun (date-fns: 0=Sun)
 const MONTH_MULT = [0, 0.72, 0.78, 0.92, 0.88, 0.91, 0.96, 0.94, 0.93, 0.87, 0.97, 0.85, 1.12];
-const GENERIC_PEAK = 120;   // concurrent headcount at Friday peak
+// Fallback only — the forecast should resolve through venue profile
+// (slowDayCovers / busyDayCovers interpolated by DOW) or the server's
+// stored prior. Hitting this constant means the owner never filled in a
+// baseline, so we keep a sensible industry default so the schedule
+// renders *something* instead of NaN.
+const GENERIC_PEAK = 120;
 const AVG_VISIT_SLOTS = 10; // 15-min slots per visit (2.5 hours)
 const SLOT_SHAPE_SUM  = 6.60; // sum of hour shapes × 1 slot-per-hour
 
@@ -116,12 +122,49 @@ function clientForecastForDate(
   capacity: number,
   covers_per_bartender: number,
   door_threshold: number,
+  // Venue's self-reported slow/busy night cover counts from onboarding
+  // (null when not configured — we then fall back to GENERIC_PEAK * dow_mult).
+  // These are the SAME inputs the server-side forecast uses, so the
+  // Staffing schedule and Events → Tonight's Forecast now agree.
+  slowDayCovers?: number | null,
+  busyDayCovers?: number | null,
 ): DayStaffing {
   const dow   = mondayDOW(d);
   const month = d.getMonth() + 1;
-  const concurrent_peak = GENERIC_PEAK * DOW_MULT[dow] * MONTH_MULT[month];
-  const total_yhat  = 4 * concurrent_peak * SLOT_SHAPE_SUM;
-  const mid_covers  = Math.max(1, Math.round(total_yhat / AVG_VISIT_SLOTS));
+
+  // Target total covers for this day — mirrors the server prior in
+  // venuescope/core/prophet_forecast/forecast_service.py._resolve_prior_peak:
+  //   slow_w = min(DOW_MULT), busy_w = max(DOW_MULT)
+  //   t      = (dow_mult - slow_w) / (busy_w - slow_w)
+  //   target = slow + t * (busy - slow)
+  // If the venue hasn't supplied slow/busy numbers, fall back to the
+  // legacy generic-peak calculation so existing deployments don't break.
+  let target_covers: number;
+  if (typeof slowDayCovers === 'number' && typeof busyDayCovers === 'number'
+      && busyDayCovers > 0) {
+    const slow_w = Math.min(...DOW_MULT);
+    const busy_w = Math.max(...DOW_MULT);
+    const raw    = (DOW_MULT[dow] - slow_w) / Math.max(1e-9, busy_w - slow_w);
+    const t      = Math.max(0, Math.min(1, raw));
+    target_covers = slowDayCovers + t * (busyDayCovers - slowDayCovers);
+  } else {
+    const concurrent_peak = GENERIC_PEAK * DOW_MULT[dow] * MONTH_MULT[month];
+    target_covers = 4 * concurrent_peak * SLOT_SHAPE_SUM / AVG_VISIT_SLOTS;
+  }
+
+  // Hard-cap at physical capacity — no schedule should predict more
+  // covers than the room actually fits. Matches the server's cap logic.
+  if (capacity && capacity > 0) target_covers = Math.min(target_covers, capacity);
+
+  const mid_covers = Math.max(1, Math.round(target_covers));
+
+  // Derive concurrent peak from total covers for staffing headcount:
+  //   peak ≈ covers × avg_visit_slots / (slots_per_hour × shape_integral)
+  // This inverts the server's aggregation so bartenders/door scale with
+  // the actual predicted crowd, not a fixed industry peak.
+  const concurrent_peak = (mid_covers * AVG_VISIT_SLOTS)
+                        / (SLOT_SHAPE_SUM * 4 || 1);
+
   const bartenders  = Math.max(1, Math.ceil(concurrent_peak / covers_per_bartender));
   const door        = concurrent_peak / Math.max(capacity, 1) >= door_threshold ? 1 : 0;
   const barback     = concurrent_peak / Math.max(capacity, 1) >= 0.40 ? 1 : 0;
@@ -377,6 +420,7 @@ function MonthScheduleView({
   bartenderStats,
   capacityModel,
   hourlyRates,
+  venueCapacity,
   onAddStaff,
   onDeleteStaff,
   onAddShift,
@@ -391,6 +435,7 @@ function MonthScheduleView({
   bartenderStats: Record<string, { drinks: number; shifts: number; theftFlags: number }>;
   capacityModel: BartenderCapModel | null;
   hourlyRates: HourlyRates;
+  venueCapacity: number;
   onAddStaff: () => void;
   onDeleteStaff: (id: string) => void;
   onAddShift: (date: string) => void;
@@ -402,8 +447,11 @@ function MonthScheduleView({
   const [autoFilling, setAutoFilling] = useState(false);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
-  // Physics config — use learned capacity model if available, else defaults
-  const capacity             = 150;
+  // Physics config — the capacity now comes from the venue's real profile
+  // (not a 150 hardcode) so the schedule and Events → Tonight's Forecast
+  // see the same cap. covers_per_bartender uses the learned model when
+  // available, else a 35 fallback that ballparks most bars.
+  const capacity             = venueCapacity;
   const covers_per_bartender = capacityModel?.source === 'learned' ? capacityModel.covers_per_bartender : 35;
   const door_threshold       = 0.55;
 
@@ -908,9 +956,23 @@ export function Staffing() {
   const [bartenderStats, setBartenderStats] = useState<Record<string, { drinks: number; shifts: number; theftFlags: number }>>({});
   const [capacityModel,  setCapacityModel]  = useState<BartenderCapModel | null>(null);
   const [hourlyRates,    setHourlyRates]    = useState<HourlyRates>({ bartender: 18, server: 15, door: 16, manager: 22 });
+  // Venue capacity drives the schedule's "expectedPeople" hard cap so the
+  // Month Schedule and Events → Tonight's Forecast don't disagree. Defaults
+  // to 150 only as a last-resort fallback for venues that haven't onboarded
+  // with a capacity value yet.
+  const [venueCapacity, setVenueCapacity] = useState<number>(150);
 
   const user    = authService.getStoredUser();
   const venueId = user?.venueId ?? '';
+
+  // Load venue capacity once per venue so the schedule's client forecast
+  // uses the same hard-cap the server prior does.
+  useEffect(() => {
+    if (!venueId) return;
+    venueSettingsService.loadSettingsFromCloud(venueId)
+      .then(s => { if (s?.capacity && s.capacity > 0) setVenueCapacity(s.capacity); })
+      .catch(() => { /* keep the 150 default */ });
+  }, [venueId]);
 
   const loadData = useCallback(async () => {
     if (!venueId) return;
@@ -1209,6 +1271,7 @@ export function Staffing() {
               bartenderStats={bartenderStats}
               capacityModel={capacityModel}
               hourlyRates={hourlyRates}
+              venueCapacity={venueCapacity}
               onAddStaff={() => setShowAddStaff(true)}
               onDeleteStaff={handleDeleteStaff}
               onAddShift={date => setShowAddShift(date)}
