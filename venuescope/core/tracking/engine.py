@@ -1478,10 +1478,21 @@ class VenueProcessor:
                         if self._snap_executor is None:
                             self._snap_executor = _cf.ThreadPoolExecutor(max_workers=2,
                                                                           thread_name_prefix="snap")
-                        # Encode once, upload for each event (usually 1 per frame)
-                        _thumb = cv2.resize(frame, (640, int(H * 640 / W)))
+                        # Encode once, upload for each event (usually 1 per frame).
+                        # Thumb size + JPEG quality control the clarity of the
+                        # Serve Detection modal — 640px @ q=75 produced visible
+                        # block artifacts when the modal stretched the frame up,
+                        # especially at night (IR grayscale amplifies JPEG
+                        # noise). Target 1280px @ q=90 but never upscale beyond
+                        # the source frame (a sub-stream feed at 704×480 gains
+                        # nothing from being re-sampled to 1280).
+                        _target_w = min(1280, W)
+                        if _target_w < W:
+                            _thumb = cv2.resize(frame, (_target_w, int(H * _target_w / W)))
+                        else:
+                            _thumb = frame
                         _ok, _buf = cv2.imencode('.jpg', _thumb,
-                                                 [cv2.IMWRITE_JPEG_QUALITY, 75])
+                                                 [cv2.IMWRITE_JPEG_QUALITY, 90])
                         if _ok:
                             _jpg = _buf.tobytes()
                             _jid = self.job_id
