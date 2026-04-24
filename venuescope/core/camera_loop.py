@@ -23,7 +23,7 @@ from core.config import DISABLED_MODES as _DISABLED_MODES
 
 # Occupancy (people_counter) runs every 20 minutes — frees camera bandwidth
 # for the high-priority modes: drink_count, bottle_counter, staff_activity.
-OCCUPANCY_INTERVAL = 1200  # seconds (20 minutes = 3x per hour)
+OCCUPANCY_INTERVAL = 900  # seconds (15 minutes = 4x per hour)
 
 # Modes that require YOLO inference — these run as continuous jobs and poll every 10s.
 _YOLO_MODES = {"drink_count", "bottle_count", "staff_activity", "after_hours",

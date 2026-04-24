@@ -848,7 +848,13 @@ class VenueProcessor:
         _motion_gate_enabled = (
             self.source_type == "rtsp"
             and not self._has_gpu
-            and self.mode in ("drink_count", "bottle_count")
+            # Expanded beyond bar cams — floor cameras running table_turns
+            # or table_service spend most of a shift looking at empty tables.
+            # Gate skips YOLO when foot-point pixels are static for 8s, which
+            # is >70% of peak-night time on a dining floor. Sanity timer
+            # guarantees a real inference every 30s regardless.
+            and self.mode in ("drink_count", "bottle_count",
+                              "table_turns", "table_service")
             and os.environ.get("VENUESCOPE_DISABLE_MOTION_GATE", "").lower() not in ("1","true","yes")
         )
         _motion_subtractor = cv2.createBackgroundSubtractorMOG2(

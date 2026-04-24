@@ -43,7 +43,7 @@ from core.analytics.table_tracker import TableTurnTracker, TableZone
 # Seconds between YOLO samples. 3s is a good default — seated people don't
 # move frame-to-frame so we can skip 95% of frames and still capture all
 # occupancy transitions within ~15s resolution.
-DEFAULT_SAMPLE_SEC = float(os.environ.get("VENUESCOPE_TABLE_SAMPLE_SEC", "3.0"))
+DEFAULT_SAMPLE_SEC = float(os.environ.get("VENUESCOPE_TABLE_SAMPLE_SEC", "4.0"))
 DEFAULT_CONF       = float(os.environ.get("VENUESCOPE_TABLE_CONF", "0.25"))
 DEFAULT_IMGSZ      = int(os.environ.get("VENUESCOPE_TABLE_IMGSZ", "640"))
 DEFAULT_MODEL      = os.environ.get("VENUESCOPE_TABLE_MODEL", "yolov8n.pt")
