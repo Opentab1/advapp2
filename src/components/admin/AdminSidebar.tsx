@@ -15,6 +15,7 @@ import {
   Sliders,
   ClipboardList,
   Sparkles,
+  FlaskConical,
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -40,6 +41,7 @@ const navItems: NavItem[] = [
   { id: 'venues',          label: 'Venues',           icon: Building2 },
   { id: 'cameras',         label: 'Cameras',          icon: Camera },
   { id: 'calibration',    label: 'Bar Calibration',  icon: Sliders },
+  { id: 'worker-tester',   label: 'Worker Tester',    icon: FlaskConical },
   { id: 'crm',             label: 'Sales CRM',        icon: Target },
   { id: 'users',           label: 'Users',            icon: Users },
   { id: 'analytics',       label: 'Analytics',        icon: BarChart3 },

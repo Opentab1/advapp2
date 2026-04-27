@@ -69,6 +69,11 @@ const BILLING_TABLE = 'VenueScopeBilling';
 // confidence threshold. Schema: PK=venueId, SK=eventId. A reviewer approves
 // or rejects each, updating the authoritative drink/bottle/visit count.
 const REVIEW_TABLE  = 'VenueScopeLowConfEvents';
+// Worker Tester — admin-only replay runs against historical NVR footage.
+// Created by an admin via /admin/test-runs, written to by the worker as it
+// processes the replay job. Schema lives in the docstring of the handlers
+// below. NEVER surfaced on the customer dashboard.
+const TEST_RUNS_TABLE = 'VenueScopeTestRuns';
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY ?? '';
 const STRIPE_PRICE  = process.env.STRIPE_PRICE_ID   ?? '';
 const STRIPE_WH_SEC = process.env.STRIPE_WEBHOOK_SECRET ?? '';
@@ -1836,6 +1841,222 @@ async function disableAutoSchedule() {
   }
 }
 
+// ─── Worker Tester (admin-only NVR replay) ────────────────────────────────────
+//
+// Item shape in VenueScopeTestRuns:
+//   runId            (PK, string, UUID)
+//   venueId          (string)
+//   createdAt        (ISO8601 string)
+//   createdBy        (string, email)
+//   replayDate       (string, "YYYY-MM-DD")
+//   replayStartTime  (string, "HH:MM" 24-hr venue-local)
+//   replayEndTime    (string, "HH:MM")
+//   replayTimezone   (string, IANA, e.g. "America/New_York")
+//   pauseLiveCams    (bool, pause production camera_loop jobs during this run)
+//   cameras          (JSON list: [{cameraId, cameraName, features:[...], groundTruth:{...}}])
+//   status           ("pending" | "running" | "complete" | "failed")
+//   progress         (number, 0-100)
+//   startedAt        (ISO string)
+//   completedAt      (ISO string)
+//   errorMessage     (string)
+//   liveCounts       (JSON map, updated by worker each cycle)
+//   results          (JSON map, set on completion: { perFeature, overallGrade, stabilityGrade, notes })
+//   workerHealth     (JSON map: { peakCpu, peakRss, droppedFrames, errorCount, restarts })
+
+function _parseTestRunItem(item) {
+  if (!item) return null;
+  const parseJson = (raw) => { try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
+  return {
+    runId:           s(item.runId),
+    venueId:         s(item.venueId),
+    createdAt:       s(item.createdAt),
+    createdBy:       s(item.createdBy),
+    replayDate:      s(item.replayDate),
+    replayStartTime: s(item.replayStartTime),
+    replayEndTime:   s(item.replayEndTime),
+    replayTimezone:  s(item.replayTimezone) || 'America/New_York',
+    pauseLiveCams:   b(item.pauseLiveCams),
+    cameras:         parseJson(s(item.camerasJson))     || [],
+    status:          s(item.status) || 'pending',
+    progress:        n(item.progress),
+    startedAt:       s(item.startedAt),
+    completedAt:     s(item.completedAt),
+    errorMessage:    s(item.errorMessage),
+    liveCounts:      parseJson(s(item.liveCountsJson))  || {},
+    results:         parseJson(s(item.resultsJson))     || null,
+    workerHealth:    parseJson(s(item.workerHealthJson))|| null,
+  };
+}
+
+async function listTestRuns(qs) {
+  const venueId = qs.venueId;
+  const limit   = Math.min(Number(qs.limit) || 50, 200);
+  try {
+    const raw = venueId
+      ? await ddb.send(new ScanCommand({
+          TableName: TEST_RUNS_TABLE,
+          FilterExpression: 'venueId = :v',
+          ExpressionAttributeValues: { ':v': { S: venueId } },
+        }))
+      : await ddb.send(new ScanCommand({ TableName: TEST_RUNS_TABLE }));
+    const items = (raw.Items ?? []).map(_parseTestRunItem).filter(Boolean);
+    items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    return ok({ runs: items.slice(0, limit), count: items.length });
+  } catch (e) {
+    if (e.name === 'ResourceNotFoundException') {
+      return ok({ runs: [], count: 0, note: 'VenueScopeTestRuns table not yet created' });
+    }
+    throw e;
+  }
+}
+
+async function getTestRun(runId) {
+  if (!runId) return err(400, 'runId required');
+  try {
+    const r = await ddb.send(new GetItemCommand({
+      TableName: TEST_RUNS_TABLE,
+      Key: { runId: { S: runId } },
+    }));
+    if (!r.Item) return err(404, 'Test run not found');
+    return ok(_parseTestRunItem(r.Item));
+  } catch (e) {
+    if (e.name === 'ResourceNotFoundException') return err(503, 'Test runs table not yet created');
+    throw e;
+  }
+}
+
+async function createTestRun(body) {
+  if (!body?.venueId)          return err(400, 'venueId is required');
+  if (!body?.replayDate)       return err(400, 'replayDate is required (YYYY-MM-DD)');
+  if (!body?.replayStartTime)  return err(400, 'replayStartTime is required (HH:MM)');
+  if (!body?.replayEndTime)    return err(400, 'replayEndTime is required (HH:MM)');
+  if (!Array.isArray(body?.cameras) || !body.cameras.length) {
+    return err(400, 'cameras must be a non-empty array');
+  }
+  // Lightweight UUID v4 — Lambda runtime has no built-in randomUUID guarantee
+  // for older Node versions. crypto.randomUUID() is available on Node 14.17+.
+  const { randomUUID } = await import('crypto');
+  const runId     = randomUUID();
+  const createdAt = new Date().toISOString();
+  const createdBy = (body.createdBy ?? 'admin').slice(0, 200);
+  try {
+    await ddb.send(new PutItemCommand({
+      TableName: TEST_RUNS_TABLE,
+      Item: {
+        runId:           { S: runId },
+        venueId:         { S: String(body.venueId) },
+        createdAt:       { S: createdAt },
+        createdBy:       { S: createdBy },
+        replayDate:      { S: String(body.replayDate) },
+        replayStartTime: { S: String(body.replayStartTime) },
+        replayEndTime:   { S: String(body.replayEndTime) },
+        replayTimezone:  { S: String(body.replayTimezone || 'America/New_York') },
+        pauseLiveCams:   { BOOL: !!body.pauseLiveCams },
+        camerasJson:     { S: JSON.stringify(body.cameras) },
+        status:          { S: 'pending' },
+        progress:        { N: '0' },
+      },
+    }));
+    return ok({ runId, status: 'pending', createdAt });
+  } catch (e) {
+    if (e.name === 'ResourceNotFoundException') return err(503, 'Test runs table not yet created — run setup');
+    throw e;
+  }
+}
+
+async function updateTestRunStatus(runId, body) {
+  if (!runId) return err(400, 'runId required');
+  const sets = [];
+  const names  = {};
+  const values = {};
+  if (typeof body?.status === 'string') {
+    sets.push('#st = :st');
+    names['#st']  = 'status';
+    values[':st'] = { S: body.status };
+  }
+  if (typeof body?.progress === 'number') {
+    sets.push('progress = :p');
+    values[':p'] = { N: String(body.progress) };
+  }
+  if (typeof body?.startedAt === 'string') {
+    sets.push('startedAt = :sa');
+    values[':sa'] = { S: body.startedAt };
+  }
+  if (typeof body?.completedAt === 'string') {
+    sets.push('completedAt = :ca');
+    values[':ca'] = { S: body.completedAt };
+  }
+  if (typeof body?.errorMessage === 'string') {
+    sets.push('errorMessage = :em');
+    values[':em'] = { S: body.errorMessage.slice(0, 2000) };
+  }
+  if (!sets.length) return err(400, 'no fields to update');
+  try {
+    const res = await ddb.send(new UpdateItemCommand({
+      TableName: TEST_RUNS_TABLE,
+      Key: { runId: { S: runId } },
+      UpdateExpression: 'SET ' + sets.join(', '),
+      ExpressionAttributeNames:  Object.keys(names).length ? names : undefined,
+      ExpressionAttributeValues: values,
+      ConditionExpression: 'attribute_exists(runId)',
+      ReturnValues: 'ALL_NEW',
+    }));
+    return ok(_parseTestRunItem(res.Attributes ?? {}));
+  } catch (e) {
+    if (e.name === 'ConditionalCheckFailedException') return err(404, 'Test run not found');
+    if (e.name === 'ResourceNotFoundException')       return err(503, 'Test runs table not yet created');
+    throw e;
+  }
+}
+
+async function appendTestRunResults(runId, body) {
+  if (!runId) return err(400, 'runId required');
+  const sets   = [];
+  const values = {};
+  if (body?.liveCounts && typeof body.liveCounts === 'object') {
+    sets.push('liveCountsJson = :lc');
+    values[':lc'] = { S: JSON.stringify(body.liveCounts).slice(0, 380000) };
+  }
+  if (body?.results && typeof body.results === 'object') {
+    sets.push('resultsJson = :r');
+    values[':r'] = { S: JSON.stringify(body.results).slice(0, 380000) };
+  }
+  if (body?.workerHealth && typeof body.workerHealth === 'object') {
+    sets.push('workerHealthJson = :wh');
+    values[':wh'] = { S: JSON.stringify(body.workerHealth).slice(0, 380000) };
+  }
+  if (!sets.length) return err(400, 'one of liveCounts | results | workerHealth required');
+  try {
+    const res = await ddb.send(new UpdateItemCommand({
+      TableName: TEST_RUNS_TABLE,
+      Key: { runId: { S: runId } },
+      UpdateExpression: 'SET ' + sets.join(', '),
+      ExpressionAttributeValues: values,
+      ConditionExpression: 'attribute_exists(runId)',
+      ReturnValues: 'ALL_NEW',
+    }));
+    return ok(_parseTestRunItem(res.Attributes ?? {}));
+  } catch (e) {
+    if (e.name === 'ConditionalCheckFailedException') return err(404, 'Test run not found');
+    if (e.name === 'ResourceNotFoundException')       return err(503, 'Test runs table not yet created');
+    throw e;
+  }
+}
+
+async function deleteTestRun(runId) {
+  if (!runId) return err(400, 'runId required');
+  try {
+    await ddb.send(new DeleteItemCommand({
+      TableName: TEST_RUNS_TABLE,
+      Key: { runId: { S: runId } },
+    }));
+    return ok({ runId, deleted: true });
+  } catch (e) {
+    if (e.name === 'ResourceNotFoundException') return ok({ runId, deleted: true });
+    throw e;
+  }
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const handler = async (event, context) => {
@@ -1928,6 +2149,17 @@ export const handler = async (event, context) => {
     if (method === 'POST'  && reviewApprove)                                   return reviewEvent(decodeURIComponent(reviewApprove[1]), 'approved', body);
     if (method === 'POST'  && reviewReject)                                    return reviewEvent(decodeURIComponent(reviewReject[1]), 'rejected', body);
     if (method === 'POST'  && rawPath === '/admin/review-queue/bulk')          return reviewBulk(body);
+
+    // Worker Tester — admin-only NVR replay runs
+    if (method === 'GET'    && rawPath === '/admin/test-runs')         return listTestRuns(qs);
+    if (method === 'POST'   && rawPath === '/admin/test-runs')         return createTestRun(body);
+    const testRunMatch        = rawPath.match(/^\/admin\/test-runs\/([^/]+)$/);
+    const testRunStatusMatch  = rawPath.match(/^\/admin\/test-runs\/([^/]+)\/status$/);
+    const testRunResultsMatch = rawPath.match(/^\/admin\/test-runs\/([^/]+)\/results$/);
+    if (method === 'GET'    && testRunMatch)                           return getTestRun(decodeURIComponent(testRunMatch[1]));
+    if (method === 'PATCH'  && testRunStatusMatch)                     return updateTestRunStatus(decodeURIComponent(testRunStatusMatch[1]), body);
+    if (method === 'POST'   && testRunResultsMatch)                    return appendTestRunResults(decodeURIComponent(testRunResultsMatch[1]), body);
+    if (method === 'DELETE' && testRunMatch)                           return deleteTestRun(decodeURIComponent(testRunMatch[1]));
 
     // Admin Settings
     if (method === 'GET'   && rawPath === '/admin/settings')           return getAdminSettings();

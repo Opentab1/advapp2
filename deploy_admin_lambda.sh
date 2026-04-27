@@ -22,6 +22,26 @@ USER_POOL_ID="us-east-2_sMY1wYEF9"
 
 echo "Deploying Admin API to account $ACCOUNT in $REGION..."
 
+# ── 0. DDB tables (create if missing) ─────────────────────────
+
+ensure_table() {
+  local TABLE_NAME="$1"
+  if aws dynamodb describe-table --table-name "$TABLE_NAME" --region "$REGION" >/dev/null 2>&1; then
+    echo "  → Table $TABLE_NAME exists"
+  else
+    aws dynamodb create-table \
+      --table-name "$TABLE_NAME" \
+      --attribute-definitions AttributeName=runId,AttributeType=S \
+      --key-schema AttributeName=runId,KeyType=HASH \
+      --billing-mode PAY_PER_REQUEST \
+      --region "$REGION" >/dev/null
+    echo "  ✓ Created $TABLE_NAME"
+  fi
+}
+
+echo "Ensuring DDB tables exist..."
+ensure_table VenueScopeTestRuns
+
 # ── 1. IAM Role ──────────────────────────────────────────────
 
 echo "Creating/updating IAM role..."
@@ -91,7 +111,9 @@ INLINE_POLICY=$(cat <<EOF
         "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeJobs",
         "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeJobs/*",
         "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeLowConfEvents",
-        "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeLowConfEvents/*"
+        "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeLowConfEvents/*",
+        "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeTestRuns",
+        "arn:aws:dynamodb:${REGION}:${ACCOUNT}:table/VenueScopeTestRuns/*"
       ]
     }
   ]

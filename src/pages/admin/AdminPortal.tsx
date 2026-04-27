@@ -19,6 +19,7 @@ import { AlertsInbox } from './AlertsInbox';
 import { ReviewQueue } from './ReviewQueue';
 import { AccuracySLA } from './AccuracySLA';
 import { OnboardVenue } from './OnboardVenue';
+import { WorkerTester } from './WorkerTester';
 import authService from '../../services/auth.service';
 
 const ADMIN_API_CONFIGURED = !!(import.meta.env.VITE_ADMIN_API_URL ?? '').trim();
@@ -107,6 +108,7 @@ function AdminPortalInner() {
           {activeTab === 'venues'          && <ErrorBoundary key="venues"><VenuesManagement /></ErrorBoundary>}
           {activeTab === 'cameras'         && <ErrorBoundary key="cameras"><CamerasManagement /></ErrorBoundary>}
           {activeTab === 'calibration'    && <ErrorBoundary key="calibration"><BarCalibration /></ErrorBoundary>}
+          {activeTab === 'worker-tester'   && <ErrorBoundary key="worker-tester"><WorkerTester /></ErrorBoundary>}
           {activeTab === 'alerts'          && <ErrorBoundary key="alerts"><AlertsInbox /></ErrorBoundary>}
           {activeTab === 'review-queue'    && <ErrorBoundary key="review-queue"><ReviewQueue /></ErrorBoundary>}
           {activeTab === 'accuracy'        && <ErrorBoundary key="accuracy"><AccuracySLA /></ErrorBoundary>}
