@@ -12,12 +12,18 @@ Quirks of this NVR's playback delivery:
   - HEVC 2560x1944 (Bento4-repackaged) vs Lavf-encoded live H264
   - Each HTTP response delivers ~1.8-4s of video then closes the connection
   - On reconnect, the server REPLAYS from the same starttime — so naive
-    reconnect causes duplicate frames
+    ffmpeg `-reconnect_at_eof` causes duplicate frames
 
-Solution: an ffmpeg subprocess bridges the playback stream into a local HLS
-m3u8 manifest that the existing pyav-based _HLSCapture can read. ffmpeg's
-`-reconnect_at_eof` + `-t {duration}` handles fragment boundaries cleanly
-and stops at the requested end time.
+Phase 2 (this module) gives us:
+  - URL builder
+  - Single-fragment ffmpeg bridge for *manual* per-fragment use
+
+Phase 3 (planned) will add a smart-reconnect loop that:
+  - Tracks the wall-clock seconds of video we've consumed so far
+  - On each EOF, recomputes starttime = original_start + consumed_seconds
+  - Spawns a fresh ffmpeg per fragment, appending to the same local HLS
+    manifest with monotonic media-sequence numbers
+  - Worker reads the growing manifest the same as any live HLS feed
 
 Config carried on the venue record (nvrPlaybackTemplate) so each venue
 can carry its own URL pattern as we onboard more vendors.
