@@ -123,13 +123,18 @@ echo "Packaging + uploading Lambda code..."
 cd "$(dirname "$0")/lambda/admin-api"
 rm -f lambda.zip
 
-# Ensure node deps are installed locally so the zip carries everything
-# the runtime doesn't bundle (e.g., s3-request-presigner).
-if [ ! -d node_modules/@aws-sdk/s3-request-presigner ]; then
-  echo "  installing node deps..."
-  [ -f package.json ] || npm init -y --silent >/dev/null
-  npm install @aws-sdk/s3-request-presigner @aws-sdk/client-s3 --silent --no-audit --no-fund
-fi
+# Wipe any stale node_modules — we ONLY want @aws-sdk/s3-request-presigner
+# bundled. Bundling @aws-sdk/client-s3 pulls in @aws-sdk/xml-builder which
+# requires @nodable/entities as ESM, and the Lambda runtime CJS loader
+# can't import that. The runtime already includes a working client-s3, so
+# we let the runtime resolution find it via fallback.
+rm -rf node_modules package-lock.json
+echo "  installing node deps (presigner only)..."
+[ -f package.json ] || npm init -y --silent >/dev/null
+npm install @aws-sdk/s3-request-presigner@3.583.0 --silent --no-audit --no-fund --no-save
+# Strip any @aws-sdk/client-s3 that may have hitched in as a transitive
+# dependency — runtime's version is the source of truth.
+rm -rf node_modules/@aws-sdk/client-s3 node_modules/@aws-sdk/xml-builder node_modules/@nodable
 
 zip -qr lambda.zip index.mjs node_modules/
 SIZE=$(du -h lambda.zip | cut -f1)
