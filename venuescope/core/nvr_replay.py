@@ -186,13 +186,15 @@ class _HlsManifestWriter:
         (self.out_dir / f"seg_{seq:05d}.ts.dur").write_text(f"{frag_duration:.3f}")
 
         if self.remux_only:
-            # Codec-copy is ~10× faster than re-encode. PyAV decodes HEVC
-            # natively in the worker pipeline so there's no need to transcode.
+            # Codec-copy is ~10× faster than re-encode. The mpegts muxer
+            # in modern ffmpeg handles both H264 and HEVC fragments without
+            # an explicit bitstream filter — and applying a codec-specific
+            # bsf to the wrong codec is a hard error. Drop the bsf and let
+            # the muxer figure it out.
             cmd = [
                 "ffmpeg", "-y", "-loglevel", "error",
                 "-i", str(frag_mp4),
                 "-c", "copy", "-an",
-                "-bsf:v", "hevc_mp4toannexb",  # HEVC needs annexb in TS
                 "-f", "mpegts",
                 str(out_ts),
             ]
