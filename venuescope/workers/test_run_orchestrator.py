@@ -370,21 +370,23 @@ def _run_one_camera(run_id: str, run: Dict[str, Any], cam_spec: Dict[str, Any],
     )
 
     # 5. Engine-phase progress loop — push live counts as they accumulate
-    last_push = 0.0
+    last_push       = 0.0
+    engine_started  = time.time()
+    # Estimated engine wall-clock budget: footage seconds × 5 (re-encode cost)
+    engine_budget_s = max(60.0, replay.progress.consumed_sec * 5.0)
     while engine_proc and engine_proc.poll() is None:
         time.sleep(2.0)
-        try: health.sample(engine_proc.pid)
-        except Exception: pass
+        try:
+            health.sample(engine_proc.pid)
+        except Exception as e:
+            log.debug("health.sample failed: %s", e)
         live_counts[camera_id] = _read_engine_counts(progress_path)
-        # Phase 2: engine = 50-100%. We can't easily read engine % so smooth
-        # toward 95 over a generous time budget; final 100% comes when the
-        # subprocess exits.
-        elapsed = time.time() - (last_push or time.time())
         if time.time() - last_push >= 5.0:
-            # Estimate based on approximated engine throughput
-            est = 50 + min(45, (time.time() - (engine_proc and engine_proc.create_time
-                                if hasattr(engine_proc, "create_time") else time.time())) / 30.0)
-            _patch_test_run(run_id, progress=round(min(95, est), 1),
+            # Phase 2 = 50-95% of overall, scaled by elapsed/budget. Last 5%
+            # only fills in after subprocess exit.
+            engine_pct = min(1.0, (time.time() - engine_started) / engine_budget_s)
+            overall_pct = 50.0 + 45.0 * engine_pct
+            _patch_test_run(run_id, progress=round(overall_pct, 1),
                             liveCounts=live_counts)
             last_push = time.time()
 
@@ -429,7 +431,7 @@ def execute(run_id: str) -> int:
     log.info("replay window UTC: %s -> %s", start_utc.isoformat(), end_utc.isoformat())
 
     _patch_test_run(run_id, status="running",
-                    startedAt=datetime.utcnow().isoformat() + "Z",
+                    startedAt=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                     progress=0)
 
     health = HealthCollector()
@@ -475,7 +477,7 @@ def execute(run_id: str) -> int:
     _patch_test_run(
         run_id,
         status="complete" if error_message is None else "failed",
-        completedAt=datetime.utcnow().isoformat() + "Z",
+        completedAt=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         progress=100,
         results=final_results,
         workerHealth=health_summary.to_dict(),

@@ -135,11 +135,13 @@ class HealthCollector:
         self._counters[summary_field] = self._counters.get(summary_field, 0) + by
 
     def finalize(self, *, completed: bool, notes: Optional[List[str]] = None) -> HealthSummary:
-        peak_cpu  = max((s.process_pcpu   for s in self._samples), default=0.0)
-        peak_rss  = max((s.process_rss_mb for s in self._samples), default=0.0)
-        peak_load = max((s.system_load_1m for s in self._samples), default=0.0)
-        peak_swap = max((s.swap_pct       for s in self._samples), default=0.0)
-        duration  = (self._samples[-1].ts - self._samples[0].ts) if len(self._samples) >= 2 else 0.0
+        # Always coerce to numeric values — DDB serializes `None` differently
+        # than `0.0` and the stability rubric assumes numeric comparisons.
+        peak_cpu  = float(max((s.process_pcpu   for s in self._samples), default=0.0) or 0.0)
+        peak_rss  = float(max((s.process_rss_mb for s in self._samples), default=0.0) or 0.0)
+        peak_load = float(max((s.system_load_1m for s in self._samples), default=0.0) or 0.0)
+        peak_swap = float(max((s.swap_pct       for s in self._samples), default=0.0) or 0.0)
+        duration  = float((self._samples[-1].ts - self._samples[0].ts) if len(self._samples) >= 2 else 0.0)
         timeline  = [
             {
                 "t":     round(s.ts - (self._t_start or s.ts), 1),
@@ -179,14 +181,18 @@ def derive_stability(summary: HealthSummary, *, n_cores: int = 4) -> str:
       - Peak swap > 50%
       - Any errors or worker restarts during the run
       - Dropped frames > 5% of total samples (proxy)
+
+    "No samples collected" is NOT unstable on its own — it just means the
+    health collector couldn't attach to the engine subprocess (often a
+    permission or short-lifetime issue). We assume stable in that case.
     """
     if not summary.completed:
         return "unstable"
     if summary.error_count > 0 or summary.restarts > 0:
         return "unstable"
-    if summary.peak_load_1m > 1.5 * n_cores:
+    if summary.peak_load_1m and summary.peak_load_1m > 1.5 * n_cores:
         return "unstable"
-    if summary.peak_swap_pct > 50:
+    if summary.peak_swap_pct and summary.peak_swap_pct > 50:
         return "unstable"
     if summary.samples > 0 and summary.dropped_frames > 0.05 * summary.samples:
         return "unstable"
