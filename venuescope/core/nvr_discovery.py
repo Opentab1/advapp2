@@ -30,11 +30,13 @@ from urllib.parse import urlparse
 log = logging.getLogger(__name__)
 
 # Priority bands of TCP ports to scan. Ordered by where consumer NVRs
-# typically land after UPnP allocation or CGN port mapping.
+# typically land after UPnP allocation or CGN port mapping. Empirically
+# Blind Goat's NVR has used ports 15007 and 58024 — both within the
+# common 8000-65535 range, so we sweep that broadly first.
 PORT_BANDS: tuple[tuple[int, int], ...] = (
-    (8000, 9999),
-    (30000, 65535),
-    (1024, 29999),
+    (8000,  29999),    # most consumer NVR HTTP/HLS allocations land here
+    (30000, 65535),    # ephemeral / CGN range
+    (1024,  7999),     # less common, last resort
 )
 
 # Keywords in the response Content-Type that confirm we hit the HLS service.
@@ -103,17 +105,46 @@ def _probe_hls(ip: str, port: int, path: str, timeout: float = 3.5) -> bool:
     return bool(_VIDEO_CT_RE.search(ct_match.group(1)))
 
 
-def _iter_priority_ports(prev_port: Optional[int]) -> Iterable[int]:
-    """Yield ports to try, in priority order, deduped."""
+def _iter_priority_ports(
+    prev_port: Optional[int],
+    *,
+    cached_port: Optional[int] = None,
+    proximity: int = 500,
+) -> Iterable[int]:
+    """Yield ports to try, in priority order, deduped.
+
+    Order:
+      1. cached_port (last successful discovery for this host)
+      2. prev_port   (current value in DDB)
+      3. ports near cached_port (±proximity)
+      4. PORT_BANDS in declared order
+    """
     seen: set[int] = set()
-    if prev_port is not None and 1 <= prev_port <= 65535:
-        seen.add(prev_port)
-        yield prev_port
+
+    def _emit(p: int):
+        if 1 <= p <= 65535 and p not in seen:
+            seen.add(p)
+            return p
+        return None
+
+    for hint in (cached_port, prev_port):
+        if hint is not None:
+            v = _emit(hint)
+            if v is not None:
+                yield v
+
+    if cached_port is not None:
+        for delta in range(1, proximity + 1):
+            for cand in (cached_port - delta, cached_port + delta):
+                v = _emit(cand)
+                if v is not None:
+                    yield v
+
     for lo, hi in PORT_BANDS:
         for p in range(lo, hi + 1):
-            if p not in seen:
-                seen.add(p)
-                yield p
+            v = _emit(p)
+            if v is not None:
+                yield v
 
 
 def discover_port(
@@ -121,6 +152,7 @@ def discover_port(
     path: str,
     *,
     prev_port: Optional[int] = None,
+    cached_port: Optional[int] = None,
     max_workers: int = 200,
     open_timeout: float = 1.2,
     probe_timeout: float = 5.0,
@@ -149,7 +181,7 @@ def discover_port(
     if not ip:
         return None
 
-    candidates = list(_iter_priority_ports(prev_port))
+    candidates = list(_iter_priority_ports(prev_port, cached_port=cached_port))
     if band_limit:
         candidates = candidates[:band_limit]
 

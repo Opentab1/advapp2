@@ -61,6 +61,9 @@ log = logging.getLogger("nvr_watchdog")
 
 # Per-host failure counter (host => consecutive failures)
 _failures: Dict[str, int] = {}
+# host => last port seen working. Persists across DDB rewrites so the next
+# discovery starts with the smartest hint (current code does cached_port
+# first in _iter_priority_ports, ahead of the dead prev_port).
 _last_known_port: Dict[str, int] = {}
 _last_recovery_at: Dict[str, float] = {}  # cooldown so we don't re-scan repeatedly
 
@@ -160,12 +163,16 @@ def _check_endpoint(ddb, endpoint: str, cams: List[dict]) -> None:
     """Probe an endpoint, escalate to discovery if persistently failing."""
     # Use the first camera's URL to probe — they all share the same host:port.
     sample_url  = cams[0].get("rtspUrl", {}).get("S", "")
-    sample_path = parse_endpoint_from_url(sample_url)[2] or "/"
+    host_only, port_only, sample_path = parse_endpoint_from_url(sample_url)
+    sample_path = sample_path or "/"
     if _probe_camera_alive(sample_url):
         if _failures.get(endpoint):
             _safe_log("info", "endpoint_recovered", endpoint=endpoint,
                       previousFailures=_failures[endpoint])
         _failures[endpoint] = 0
+        # Cache last-known good port per host for future discovery hints
+        if host_only and port_only:
+            _last_known_port[host_only] = port_only
         return
 
     _failures[endpoint] = _failures.get(endpoint, 0) + 1
@@ -199,11 +206,13 @@ def _check_endpoint(ddb, endpoint: str, cams: List[dict]) -> None:
               ddnsHostname=ddns_host)
 
     _last_recovery_at[endpoint] = now
+    cached_hint = _last_known_port.get(host)
     t0 = time.time()
     new_port = discover_port(
         scan_host,
         sample_path,
         prev_port=port,
+        cached_port=cached_hint,
         max_workers=200,
         open_timeout=1.0,
         probe_timeout=4.0,
@@ -225,7 +234,8 @@ def _check_endpoint(ddb, endpoint: str, cams: List[dict]) -> None:
               newPort=new_port, scanSeconds=round(elapsed, 1),
               camerasUpdated=n_updated)
 
-    # Reset failure counter — worker will pick up new URLs on next retry
+    # Cache + reset
+    _last_known_port[host] = new_port
     _failures[endpoint] = 0
 
 
