@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { FlaskConical, Plus, Trash2, RefreshCw, Activity } from 'lucide-react';
+import { FlaskConical, Plus, Trash2, RefreshCw, Activity, ChevronDown } from 'lucide-react';
 import { useAdminVenue } from '../../contexts/AdminVenueContext';
 import {
   listTestRuns,
   deleteTestRun,
   TestRun,
   FeatureGrade,
+  FEATURE_LABELS,
 } from '../../services/workerTester.service';
+import { WorkerTesterNewRunModal } from '../../components/admin/WorkerTesterNewRunModal';
+import authService from '../../services/auth.service';
 
 const STATUS_COLORS: Record<string, string> = {
   pending:  'bg-gray-500/15 text-gray-300 border-gray-500/30',
@@ -31,6 +34,13 @@ export function WorkerTester() {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [createdBy, setCreatedBy] = useState('admin');
+  useEffect(() => {
+    authService.getCurrentAuthenticatedUser()
+      .then(u => u?.email && setCreatedBy(u.email))
+      .catch(() => { /* no-op — fall back to 'admin' */ });
+  }, []);
 
   const refresh = async () => {
     setLoading(true);
@@ -172,23 +182,43 @@ export function WorkerTester() {
 
                 {/* Final grade */}
                 {run.results && run.results.overallGrade && (
-                  <div className="mt-3 flex items-center gap-3">
-                    <div className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-white/5 border border-white/10">
-                      <span className={`text-2xl font-black ${GRADE_COLORS[run.results.overallGrade]}`}>
-                        {run.results.overallGrade}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="text-[11px] uppercase tracking-wider text-gray-500">Stability</p>
-                      <p className={`text-sm font-semibold ${run.results.stabilityGrade === 'stable' ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {run.results.stabilityGrade ?? '—'}
-                      </p>
+                  <div className="mt-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-white/5 border border-white/10">
+                        <span className={`text-2xl font-black ${GRADE_COLORS[run.results.overallGrade]}`}>
+                          {run.results.overallGrade}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wider text-gray-500">Stability</p>
+                        <p className={`text-sm font-semibold ${run.results.stabilityGrade === 'stable' ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {run.results.stabilityGrade ?? '—'}
+                        </p>
+                      </div>
+                      <div className="flex-1" />
+                      <button
+                        onClick={() => setExpanded(s => {
+                          const next = new Set(s);
+                          if (next.has(run.runId)) next.delete(run.runId);
+                          else next.add(run.runId);
+                          return next;
+                        })}
+                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
+                      >
+                        Details
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 transition-transform ${expanded.has(run.runId) ? 'rotate-180' : ''}`}
+                        />
+                      </button>
                     </div>
                     {run.results.notes?.length ? (
-                      <div className="text-[11px] text-amber-300/80 max-w-md">
+                      <div className="text-[11px] text-amber-300/80 mt-2">
                         {run.results.notes.slice(0, 2).join(' · ')}
                       </div>
                     ) : null}
+                    {expanded.has(run.runId) && (
+                      <FeatureBreakdown results={run.results} />
+                    )}
                   </div>
                 )}
 
@@ -212,25 +242,73 @@ export function WorkerTester() {
         ))}
       </div>
 
-      {/* Modal placeholder — full form ships in Phase 5 */}
-      {showNew && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setShowNew(false)}>
-          <div className="rounded-2xl bg-zinc-900 border border-white/10 p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
-            <h2 className="text-lg font-bold text-white mb-2">New Test Run</h2>
-            <p className="text-sm text-gray-400">
-              The full form (date/time picker, camera + feature selection, ground truth entry)
-              ships in Phase 5. The foundation, Lambda CRUD, and DDB table are in place — you
-              can already POST to <code className="text-amber-400">/admin/test-runs</code>.
-            </p>
-            <button
-              onClick={() => setShowNew(false)}
-              className="mt-4 w-full py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
+      {/* New Run modal */}
+      <WorkerTesterNewRunModal
+        open={showNew}
+        venueId={venueId || ''}
+        createdBy={createdBy}
+        onClose={() => setShowNew(false)}
+        onCreated={() => { refresh(); }}
+      />
+    </div>
+  );
+}
+
+// ── Per-feature breakdown component (renders inside the run card) ─────────
+
+interface FeatureBreakdownProps {
+  results: NonNullable<TestRun['results']>;
+}
+
+export function FeatureBreakdown({ results }: FeatureBreakdownProps) {
+  const features = Object.entries(results.perFeature || {});
+  if (!features.length) return null;
+  return (
+    <div className="mt-3 border-t border-white/5 pt-3 space-y-2">
+      <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">
+        Feature breakdown
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {features.map(([fname, fdata]) => {
+          const grade = fdata.grade as FeatureGrade | null;
+          const colors: Record<string, string> = {
+            A: 'text-emerald-400',
+            B: 'text-lime-400',
+            C: 'text-amber-400',
+            D: 'text-orange-400',
+            F: 'text-red-400',
+          };
+          const cls = grade ? colors[grade] : 'text-gray-500';
+          return (
+            <div key={fname} className="rounded-lg bg-white/[0.03] border border-white/5 p-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-300 font-medium">
+                  {(FEATURE_LABELS as Record<string, string>)[fname] || fname}
+                </span>
+                <span className={`text-base font-black ${cls}`}>
+                  {grade ?? '—'}
+                </span>
+              </div>
+              <div className="text-[10px] text-gray-500 mt-1">
+                detected {fdata.detected ?? 0}
+                {fdata.expected != null && (
+                  <span> · expected {fdata.expected}</span>
+                )}
+                {fdata.errorPct != null && (
+                  <span> · {(fdata.errorPct * 100).toFixed(1)}% error</span>
+                )}
+              </div>
+              {fdata.notes && fdata.notes.length > 0 && (
+                <ul className="mt-1.5 space-y-0.5">
+                  {fdata.notes.slice(0, 2).map((n: string, i: number) => (
+                    <li key={i} className="text-[10px] text-amber-300/80">• {n}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
