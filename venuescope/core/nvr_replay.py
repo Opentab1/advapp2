@@ -139,10 +139,14 @@ class _HlsManifestWriter:
     YOLO's preprocessing path simple and bounds CPU on the droplet.
     """
 
-    def __init__(self, out_dir: Path, *, segment_target_w: int = 1280, remux_only: bool = True):
-        """If remux_only, ffmpeg copies the codec without re-encoding (fast).
-        Set False to downscale + re-encode to H264 — only useful if a
-        downstream consumer can't decode HEVC."""
+    def __init__(self, out_dir: Path, *, segment_target_w: int = 1280, remux_only: bool = False):
+        """Default is re-encode (remux_only=False) for reliability.
+
+        The Blind Goat NVR sends Bento4-repackaged HEVC fragments with
+        malformed extradata that breaks ffmpeg's auto-applied bitstream
+        filter when copy-muxing into MPEG-TS. Re-encoding via libx264 is
+        slower (~2-3x wall clock per fragment) but always succeeds AND
+        downscales 2K → 1280p which the worker pipeline wants anyway."""
         self.out_dir = out_dir
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.manifest = out_dir / "index.m3u8"
