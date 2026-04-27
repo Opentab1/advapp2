@@ -1,0 +1,31 @@
+[Unit]
+Description=VenueScope NVR Watchdog (auto-recovers from external IP/port changes)
+After=network-online.target venuescope-worker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/venuescope/venuescope
+EnvironmentFile=/opt/venuescope/venuescope/.env
+ExecStart=/opt/venuescope/venv/bin/python workers/nvr_watchdog.py
+Restart=always
+RestartSec=15
+StartLimitInterval=300
+StartLimitBurst=10
+
+# Watchdog itself is light; cap memory so a runaway scan can't push the box.
+MemoryMax=300M
+CPUQuota=80%
+
+Environment=PYTHONUNBUFFERED=1
+# Tunables: override via .env or systemctl edit
+Environment=VS_NVR_WATCHDOG_INTERVAL=60
+Environment=VS_NVR_WATCHDOG_FAIL_AFTER=2
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=venuescope-nvr-watchdog
+
+[Install]
+WantedBy=multi-user.target
