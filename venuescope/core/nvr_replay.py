@@ -234,13 +234,13 @@ class _HlsManifestWriter:
 # ── Main download loop ──────────────────────────────────────────────────
 
 _PARALLEL_WORKERS = int(os.environ.get("VS_REPLAY_PARALLEL", "4"))
-# Empirically the NVR delivers 45-88s of video per parallel request when
-# 4 connections are active. Setting chunk_sec=60 means consecutive fetches
-# usually have <30s overlap (fine, manifest dedup handles it) and the
-# total fragment count for a 30-min window drops from 180 → 30 → matching
-# actual delivery rate. Adjust via VS_REPLAY_CHUNK_SEC env if a different
-# NVR delivers different fragment sizes.
-_CHUNK_SEC        = int(os.environ.get("VS_REPLAY_CHUNK_SEC", "60"))
+# 30s is the sweet spot: small enough that NVR's variable delivery
+# (5s-88s per request) doesn't leave large gaps in coverage, large
+# enough that we don't waste bandwidth on heavy overlap. Earlier
+# chunk_sec=60 left 55s gaps when NVR returned a tiny 5s fragment;
+# at chunk_sec=30 the worst-case gap is 25s, and the engine's
+# stateful analyzers tolerate that without losing tracks.
+_CHUNK_SEC        = int(os.environ.get("VS_REPLAY_CHUNK_SEC", "30"))
 
 
 def _run_replay(job: ReplayJob) -> None:

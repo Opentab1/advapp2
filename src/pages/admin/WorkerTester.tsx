@@ -5,8 +5,10 @@ import { useAdminVenue } from '../../contexts/AdminVenueContext';
 import {
   listTestRuns,
   deleteTestRun,
+  getSnapshotUrl,
   TestRun,
   FeatureGrade,
+  ServeEvent,
   FEATURE_LABELS,
 } from '../../services/workerTester.service';
 import { WorkerTesterNewRunModal } from '../../components/admin/WorkerTesterNewRunModal';
@@ -237,7 +239,10 @@ export function WorkerTester() {
                       </div>
                     ) : null}
                     {expanded.has(run.runId) && (
-                      <FeatureBreakdown results={run.results} />
+                      <>
+                        <FeatureBreakdown results={run.results} />
+                        <ServeEventsGallery liveCounts={run.liveCounts} />
+                      </>
                     )}
                   </div>
                 )}
@@ -330,5 +335,93 @@ export function FeatureBreakdown({ results }: FeatureBreakdownProps) {
         })}
       </div>
     </div>
+  );
+}
+
+// ── ServeEventsGallery — admin-only screenshot verification ─────────────────
+
+interface ServeEventsGalleryProps {
+  liveCounts: TestRun['liveCounts'];
+}
+
+export function ServeEventsGallery({ liveCounts }: ServeEventsGalleryProps) {
+  // Gather all _events arrays across cameras
+  const events: Array<ServeEvent & { cameraId: string }> = [];
+  for (const [cid, payload] of Object.entries(liveCounts || {})) {
+    const evList = (payload as any)?._events;
+    if (Array.isArray(evList)) {
+      for (const e of evList) events.push({ ...e, cameraId: cid });
+    }
+  }
+  if (!events.length) return null;
+
+  return (
+    <div className="mt-3 border-t border-white/5 pt-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">
+          Detected serves ({events.length})
+        </div>
+        <div className="text-[10px] text-gray-600">
+          click a snapshot to verify
+        </div>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {events.slice(0, 24).map((e, i) => (
+          <ServeThumb key={i} event={e} />
+        ))}
+      </div>
+      {events.length > 24 && (
+        <div className="text-[10px] text-gray-500 mt-2">
+          showing first 24 of {events.length} serves
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ServeThumb({ event }: { event: ServeEvent & { cameraId: string } }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+
+  const handleClick = async () => {
+    if (url) {
+      window.open(url, '_blank');
+      return;
+    }
+    if (!event.snapshot) {
+      setError('no snapshot');
+      return;
+    }
+    setLoading(true);
+    try {
+      const u = await getSnapshotUrl(event.snapshot);
+      setUrl(u);
+      window.open(u, '_blank');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const ts = `${Math.floor(event.t / 60)}:${String(Math.floor(event.t % 60)).padStart(2, '0')}`;
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={!event.snapshot || loading}
+      className="text-left rounded-lg bg-white/[0.03] border border-white/10 hover:border-fuchsia-500/40 p-2 disabled:opacity-50 transition-colors"
+      title={event.reason || 'serve event'}
+    >
+      <div className="aspect-video bg-black/30 rounded mb-1.5 flex items-center justify-center text-[10px] text-gray-500">
+        {loading ? 'loading…' : (event.snapshot ? '🎬 serve snapshot' : 'no img')}
+      </div>
+      <div className="text-[11px] text-white font-mono">+{ts}</div>
+      <div className="text-[10px] text-gray-500">
+        score {event.score?.toFixed(2)} · {event.station || '—'}
+      </div>
+      {error && <div className="text-[10px] text-red-300/80 mt-0.5">{error}</div>}
+    </button>
   );
 }

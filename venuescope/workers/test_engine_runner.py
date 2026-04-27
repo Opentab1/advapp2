@@ -265,14 +265,36 @@ def main(argv=None):
     # not just what was decoded from the manifest. review_events tells us
     # how many candidate serves the analyzer flagged before aggregation.
     quality = (summary.get("quality") or {})
+
+    # Per-event detail — each detected serve's timestamp + S3 snapshot key.
+    # Caps at 200 events to keep the DDB attribute under 400KB even on a
+    # full-shift run. Admin UI uses these to render the verification gallery.
+    raw_events = summary.get("review_events") or []
+    snapshots  = summary.get("serve_snapshots") or {}  # {t_sec: s3_key}
+    events: List[Dict[str, Any]] = []
+    for e in raw_events[:200]:
+        if not isinstance(e, dict): continue
+        t_sec = float(e.get("t_sec", 0.0) or 0.0)
+        events.append({
+            "t":           round(t_sec, 1),
+            "score":       round(float(e.get("serve_score", 0.0) or 0.0), 3),
+            "station":     str(e.get("station_id", "") or ""),
+            "track":       int(e.get("track_id", 0) or 0),
+            "reason":      str(e.get("review_reason", "") or ""),
+            # Map t_sec → snapshot S3 key (engine writes these async during run)
+            "snapshot":    snapshots.get(t_sec) or e.get("snapshot") or None,
+            "clip":        e.get("clip"),
+        })
+
     diagnostics = {
         "_processed_frames":  int(quality.get("processed_frames", 0)),
         "_dropped_frames":    int(quality.get("dropped_frames", 0)),
         "_avg_conf":          float(quality.get("avg_detection_conf", 0.0) or 0.0),
         "_video_seconds":     float(summary.get("video_seconds", 0.0) or 0.0),
-        "_review_events":     len(summary.get("review_events") or []),
+        "_review_events":     len(raw_events),
         "_peak_occupancy":    int(summary.get("peak_occupancy", 0)),
         "_warnings":          list(quality.get("warnings") or []),
+        "_events":            events,
     }
     out = {**counts, **diagnostics}
     log.info("final counts: %s  diagnostics: processed=%d dropped=%d avg_conf=%.3f video_sec=%.1f review=%d peak_ppl=%d",

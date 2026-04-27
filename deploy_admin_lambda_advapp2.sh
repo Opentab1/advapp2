@@ -89,9 +89,26 @@ if not patched:
         ],
         "Resource": new_arns,
     })
+# Grant s3:GetObject on the snapshots bucket so /admin/snapshot-url can
+# mint presigned URLs for serve-snapshot images. Idempotent — only adds
+# the statement if it isn't already present.
+s3_arns = [
+    f"arn:aws:s3:::venuescope-media",
+    f"arn:aws:s3:::venuescope-media/*",
+]
+has_s3 = any(
+    any(a.startswith("s3:") for a in (s.get("Action") if isinstance(s.get("Action"), list) else [s.get("Action", "")]))
+    for s in doc.get("Statement", [])
+)
+if not has_s3:
+    doc.setdefault("Statement", []).append({
+        "Effect": "Allow",
+        "Action": ["s3:GetObject"],
+        "Resource": s3_arns,
+    })
 with open('/tmp/new_policy.json', 'w') as f:
     json.dump(doc, f)
-print("  ✓ policy patched")
+print("  ✓ policy patched (DDB test runs + S3 snapshots)")
 PY
 
 aws iam put-role-policy \
@@ -105,7 +122,16 @@ echo
 echo "Packaging + uploading Lambda code..."
 cd "$(dirname "$0")/lambda/admin-api"
 rm -f lambda.zip
-zip -q lambda.zip index.mjs
+
+# Ensure node deps are installed locally so the zip carries everything
+# the runtime doesn't bundle (e.g., s3-request-presigner).
+if [ ! -d node_modules/@aws-sdk/s3-request-presigner ]; then
+  echo "  installing node deps..."
+  [ -f package.json ] || npm init -y --silent >/dev/null
+  npm install @aws-sdk/s3-request-presigner @aws-sdk/client-s3 --silent --no-audit --no-fund
+fi
+
+zip -qr lambda.zip index.mjs node_modules/
 SIZE=$(du -h lambda.zip | cut -f1)
 echo "  → packaged lambda.zip ($SIZE)"
 

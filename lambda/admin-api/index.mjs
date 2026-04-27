@@ -56,6 +56,8 @@ import {
 import { SESClient, SendEmailCommand, VerifyEmailIdentityCommand, GetIdentityVerificationAttributesCommand } from '@aws-sdk/client-ses';
 import { EventBridgeClient, PutRuleCommand, PutTargetsCommand, DeleteRuleCommand, RemoveTargetsCommand, ListRulesCommand } from '@aws-sdk/client-eventbridge';
 import { LambdaClient, AddPermissionCommand, RemovePermissionCommand } from '@aws-sdk/client-lambda';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHmac, timingSafeEqual } from 'crypto';
 
 const REGION       = process.env.REGION || 'us-east-2';
@@ -84,6 +86,8 @@ const ddb          = new DynamoDBClient({ region: REGION });
 const ses          = new SESClient({ region: REGION });
 const eventsClient = new EventBridgeClient({ region: REGION });
 const lambdaClient = new LambdaClient({ region: REGION });
+const s3           = new S3Client({ region: REGION });
+const SNAPSHOTS_BUCKET = process.env.SNAPSHOTS_BUCKET || 'venuescope-media';
 const FROM_EMAIL   = process.env.SES_FROM_EMAIL || 'reports@advizia.online';
 const PORTAL_URL   = process.env.PORTAL_URL     || 'https://advizia.online/admin';
 
@@ -2043,6 +2047,26 @@ async function appendTestRunResults(runId, body) {
   }
 }
 
+async function getSnapshotUrl(qs) {
+  const key = qs?.key;
+  if (!key) return err(400, 'key parameter required');
+  // Sanity guard — only mint URLs for keys in our snapshots namespace
+  if (key.includes('..') || key.startsWith('/')) {
+    return err(400, 'invalid key');
+  }
+  try {
+    const url = await getSignedUrl(
+      s3,
+      new GetObjectCommand({ Bucket: SNAPSHOTS_BUCKET, Key: key }),
+      { expiresIn: 3600 },  // 1 hr
+    );
+    return ok({ url });
+  } catch (e) {
+    return err(500, `presign failed: ${e.message}`);
+  }
+}
+
+
 async function deleteTestRun(runId) {
   if (!runId) return err(400, 'runId required');
   try {
@@ -2160,6 +2184,7 @@ export const handler = async (event, context) => {
     if (method === 'PATCH'  && testRunStatusMatch)                     return updateTestRunStatus(decodeURIComponent(testRunStatusMatch[1]), body);
     if (method === 'POST'   && testRunResultsMatch)                    return appendTestRunResults(decodeURIComponent(testRunResultsMatch[1]), body);
     if (method === 'DELETE' && testRunMatch)                           return deleteTestRun(decodeURIComponent(testRunMatch[1]));
+    if (method === 'GET'    && rawPath === '/admin/snapshot-url')      return getSnapshotUrl(qs);
 
     // Admin Settings
     if (method === 'GET'   && rawPath === '/admin/settings')           return getAdminSettings();

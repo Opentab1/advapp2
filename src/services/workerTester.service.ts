@@ -68,7 +68,11 @@ export interface TestRun {
   startedAt?:      string;
   completedAt?:    string;
   errorMessage?:   string;
-  liveCounts:      Record<string, Record<string, number>>; // cameraId → feature → count
+  /** Free-form payload from the engine. Per-camera mix of feature counts
+   *  (drink_count, people_count, …) plus underscored diagnostic fields
+   *  (`_processed_frames`, `_avg_conf`, …) and `_events` — a list of per-serve
+   *  detail records the admin UI uses to render the verification gallery. */
+  liveCounts:      Record<string, Record<string, any>>;
   results:         TestRunResults | null;
   workerHealth:    WorkerHealth   | null;
 }
@@ -105,6 +109,22 @@ export async function createTestRun(input: CreateTestRunInput): Promise<{ runId:
 
 export async function deleteTestRun(runId: string): Promise<void> {
   await adminFetch(`/admin/test-runs/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+}
+
+/** Mint a 1-hour presigned URL for a serve-snapshot S3 key. */
+export async function getSnapshotUrl(key: string): Promise<string> {
+  const r = await adminFetch(`/admin/snapshot-url?key=${encodeURIComponent(key)}`);
+  return r.url;
+}
+
+export interface ServeEvent {
+  t:        number;
+  score:    number;
+  station:  string;
+  track:    number;
+  reason:   string;
+  snapshot?: string | null;
+  clip?:     string | null;
 }
 
 // ============ Helpers ============
