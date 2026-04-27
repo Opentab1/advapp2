@@ -71,17 +71,39 @@ class ReplayJob:
 # ── HTTP fragment fetch ─────────────────────────────────────────────────
 
 def _fetch_fragment(url: str, out_path: Path, *, timeout: float = 30.0) -> int:
-    """Download one playback fragment to disk. Returns bytes written."""
+    """Download one playback fragment to disk. Returns bytes written.
+
+    The NVR signals end-of-fragment by closing the connection mid-stream,
+    which the requests library raises as ConnectionResetError or
+    ChunkedEncodingError. We treat this as "fragment complete" and keep
+    whatever bytes we already received — that's the actual fragment.
+    """
     import requests
+    from requests.exceptions import ChunkedEncodingError, ConnectionError as RequestsConnectionError
     bytes_written = 0
-    with requests.get(url, stream=True, timeout=timeout) as r:
+    # Fresh session per fetch — the NVR closing the connection poisons
+    # any pooled keep-alive sockets we might reuse.
+    sess = requests.Session()
+    try:
+        r = sess.get(url, stream=True, timeout=timeout)
         r.raise_for_status()
         with open(out_path, "wb") as fh:
-            for chunk in r.iter_content(65536):
-                if not chunk:
-                    break
-                fh.write(chunk)
-                bytes_written += len(chunk)
+            try:
+                for chunk in r.iter_content(65536):
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    bytes_written += len(chunk)
+            except (ChunkedEncodingError, RequestsConnectionError, ConnectionResetError) as e:
+                # Server closed mid-stream — that's the fragment boundary.
+                # Anything we have on disk is a complete fragment up to that point.
+                if bytes_written == 0:
+                    raise  # genuinely failed, no data
+                log.debug("[nvr_replay] fragment ended via connection close: %s (%d bytes)",
+                          type(e).__name__, bytes_written)
+        r.close()
+    finally:
+        sess.close()
     return bytes_written
 
 
