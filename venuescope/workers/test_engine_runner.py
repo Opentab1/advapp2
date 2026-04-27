@@ -65,6 +65,12 @@ def _extract_counts(summary: Dict[str, Any]) -> Dict[str, int]:
             if isinstance(v, dict):
                 total += int(v.get("drinks", 0))
         counts["drink_count"] = total
+    # Test runs don't carry a shift/bartender registry, so summary["bartenders"]
+    # is empty and the loop above sets drink_count=0 even when serves were
+    # detected. Fall back to review_events length — those are the candidate
+    # serves the drink_counter analyzer recorded.
+    if not counts.get("drink_count") and "review_events" in summary:
+        counts["drink_count"] = len(summary.get("review_events") or [])
 
     if "bottles" in summary and isinstance(summary["bottles"], dict):
         total = 0
