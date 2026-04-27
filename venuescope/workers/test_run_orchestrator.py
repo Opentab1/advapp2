@@ -451,6 +451,14 @@ def _run_one_camera(run_id: str, run: Dict[str, Any], cam_spec: Dict[str, Any],
         engine_proc.terminate()
         try: engine_proc.wait(timeout=5)
         except Exception: engine_proc.kill()
+    # One last read AFTER the engine exits — the engine writes a final
+    # snapshot (with diagnostics) right before returning. Earlier reads
+    # in the polling loop only see the live progress writer's snapshots
+    # which lack the per-feature diagnostic fields.
+    final_counts = _read_engine_counts(progress_path)
+    if final_counts:
+        live_counts[camera_id] = final_counts
+        _patch_test_run(run_id, liveCounts=live_counts)
 
     final = _read_engine_counts(progress_path)
     log.info("camera %s done — counts=%s", camera_id, final)

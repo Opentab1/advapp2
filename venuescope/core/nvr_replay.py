@@ -139,14 +139,15 @@ class _HlsManifestWriter:
     YOLO's preprocessing path simple and bounds CPU on the droplet.
     """
 
-    def __init__(self, out_dir: Path, *, segment_target_w: int = 1280, remux_only: bool = False):
-        """Default is re-encode (remux_only=False) for reliability.
+    def __init__(self, out_dir: Path, *, segment_target_w: int = 1280, remux_only: bool = True):
+        """Default is REMUX (codec-copy). Re-encoding lost too much detection
+        signal in tests — detected drinks at peak hour dropped from 1 → 0.
 
-        The Blind Goat NVR sends Bento4-repackaged HEVC fragments with
-        malformed extradata that breaks ffmpeg's auto-applied bitstream
-        filter when copy-muxing into MPEG-TS. Re-encoding via libx264 is
-        slower (~2-3x wall clock per fragment) but always succeeds AND
-        downscales 2K → 1280p which the worker pipeline wants anyway."""
+        Per-fragment fallback: if remux fails (some HEVC fragments have
+        malformed extradata that ffmpeg refuses), we retry that single
+        fragment with libx264 re-encode at native resolution. Mixed-codec
+        manifests work fine in the worker's pyav reader.
+        """
         self.out_dir = out_dir
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.manifest = out_dir / "index.m3u8"
@@ -189,32 +190,38 @@ class _HlsManifestWriter:
         # Persist duration sidecar for manifest regen
         (self.out_dir / f"seg_{seq:05d}.ts.dur").write_text(f"{frag_duration:.3f}")
 
+        remux_cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", str(frag_mp4),
+            "-c", "copy", "-an",
+            "-f", "mpegts",
+            str(out_ts),
+        ]
+        reencode_cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", str(frag_mp4),
+            # Native resolution preserves detection signal for night-mode
+            # YOLO; the worker resizes internally to imgsz anyway.
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-an",
+            "-f", "mpegts",
+            str(out_ts),
+        ]
+
+        rc = -1
         if self.remux_only:
-            # Codec-copy is ~10× faster than re-encode. The mpegts muxer
-            # in modern ffmpeg handles both H264 and HEVC fragments without
-            # an explicit bitstream filter — and applying a codec-specific
-            # bsf to the wrong codec is a hard error. Drop the bsf and let
-            # the muxer figure it out.
-            cmd = [
-                "ffmpeg", "-y", "-loglevel", "error",
-                "-i", str(frag_mp4),
-                "-c", "copy", "-an",
-                "-f", "mpegts",
-                str(out_ts),
-            ]
+            rc = subprocess.run(remux_cmd, capture_output=True).returncode
+            if rc != 0:
+                # Retry with re-encode for this single fragment
+                log.warning("[nvr_replay] remux failed for %s, retrying with re-encode",
+                            frag_mp4.name)
+                rc = subprocess.run(reencode_cmd, capture_output=True).returncode
         else:
-            cmd = [
-                "ffmpeg", "-y", "-loglevel", "error",
-                "-i", str(frag_mp4),
-                "-vf", f"scale={self.target_w}:-2",
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
-                "-an",
-                "-f", "mpegts",
-                str(out_ts),
-            ]
-        rc = subprocess.run(cmd, capture_output=True).returncode
+            rc = subprocess.run(reencode_cmd, capture_output=True).returncode
+
         if rc != 0:
-            log.error("[nvr_replay] ffmpeg transcode failed for %s", frag_mp4)
+            log.error("[nvr_replay] ffmpeg transcode failed for %s (both remux + re-encode)",
+                      frag_mp4)
         else:
             self._write_manifest(end=False)
         return out_ts
