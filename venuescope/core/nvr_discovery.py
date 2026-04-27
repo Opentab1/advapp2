@@ -181,11 +181,38 @@ def discover_port(
     if not ip:
         return None
 
+    # ── Fast path: when we have hints (cached_port or prev_port), skip the
+    # TCP-then-HTTP two-phase dance and HTTP-probe a tight set of likely
+    # ports directly. Recovers in <3s for the common "port jumped a bit
+    # but NVR still reachable" case.
+    fast_candidates: list[int] = []
+    seen: set[int] = set()
+    for hint in (cached_port, prev_port):
+        if hint and 1 <= hint <= 65535 and hint not in seen:
+            seen.add(hint)
+            fast_candidates.append(hint)
+    if cached_port:
+        for delta in range(1, 51):  # ±50 around cache
+            for cand in (cached_port - delta, cached_port + delta):
+                if 1 <= cand <= 65535 and cand not in seen:
+                    seen.add(cand)
+                    fast_candidates.append(cand)
+    if fast_candidates:
+        log.info("[nvr_discovery] fast-path probing %d candidates near hints "
+                 "(cached=%s prev=%s)", len(fast_candidates), cached_port, prev_port)
+        for port in fast_candidates:
+            if _probe_hls(ip, port, path, probe_timeout):
+                log.info("[nvr_discovery] FAST-PATH MATCH host=%s port=%d", host, port)
+                return port
+
+    # ── Slow path: full TCP scan + HTTP confirm
     candidates = list(_iter_priority_ports(prev_port, cached_port=cached_port))
+    # Drop already-tried fast-path candidates so we don't redo them
+    candidates = [p for p in candidates if p not in seen]
     if band_limit:
         candidates = candidates[:band_limit]
 
-    log.info("[nvr_discovery] scanning %s (%s) %d ports — phase 1 (TCP open)",
+    log.info("[nvr_discovery] slow-path scanning %s (%s) %d ports — phase 1 (TCP open)",
              host, ip, len(candidates))
 
     open_ports: list[int] = []
