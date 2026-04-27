@@ -266,6 +266,11 @@ class _HLSCapture:
         self._dup_remaining = 0
         self._last_frame    = None
         self._queue_drops   = 0   # frames dropped due to full queue
+        # Pause/resume gate. When the engine motion-gate detects an idle bar,
+        # it sets _paused so this background thread tears down the HTTP+pyav
+        # pipeline (the dominant CPU cost). resume() reopens the stream.
+        self._paused = threading.Event()
+        self._wake   = threading.Event()
         self._thread = threading.Thread(target=self._bg, daemon=True)
         self._thread.start()
         # Wait up to 20 s for first frame
@@ -337,7 +342,7 @@ class _HLSCapture:
         try:
             container = self._av.open(sio, format="mp4")
             for frame in container.decode(video=0):
-                if self._stop.is_set():
+                if self._stop.is_set() or self._paused.is_set():
                     break
                 pts = (float(frame.pts * frame.time_base)
                        if frame.pts is not None else -1.0)
@@ -370,8 +375,15 @@ class _HLSCapture:
         import time as _time
         last_pts = -1.0
         while not self._stop.is_set():
+            if self._paused.is_set():
+                # Idle bar — sit on the wake event instead of churning pyav.
+                # Wakes immediately when resume() fires, or after 2s as a
+                # safety check in case _wake was missed.
+                self._wake.wait(timeout=2.0)
+                self._wake.clear()
+                continue
             last_pts = self._stream_connection(last_pts)
-            if not self._stop.is_set():
+            if not self._stop.is_set() and not self._paused.is_set():
                 _time.sleep(1.0)   # brief pause before reconnect
 
     # ── Public cap interface ───────────────────────────────────────────────
@@ -380,6 +392,11 @@ class _HLSCapture:
         import queue
         if not self._opened:
             return False, None
+        # Paused → return the last decoded frame so the engine's motion
+        # subtractor stays fed without keeping pyav running. MOG2 on
+        # identical pixels converges to motion_ratio≈0, keeping idle stable.
+        if self._paused.is_set() and self._last_frame is not None:
+            return True, self._last_frame
         # Return cached frame for remaining duplicates before fetching a new one
         if self._dup_remaining > 0 and self._last_frame is not None:
             self._dup_remaining -= 1
@@ -390,14 +407,28 @@ class _HLSCapture:
             self._dup_remaining = self._dup_factor - 1
             return True, frame
         except queue.Empty:
+            # Race: paused after enter but before queue drain. Serve cached.
+            if self._paused.is_set() and self._last_frame is not None:
+                return True, self._last_frame
             self._opened = False
             return False, None
 
     def isOpened(self) -> bool:
         return self._opened
 
+    def pause(self):
+        """Tear down the active HLS connection + pyav decoder until resume()."""
+        self._paused.set()
+
+    def resume(self):
+        """Reopen the HLS connection and resume frame delivery."""
+        self._paused.clear()
+        self._wake.set()
+
     def release(self):
         self._stop.set()
+        self._paused.clear()    # let _bg exit cleanly
+        self._wake.set()
         self._opened = False
         try:
             while not self._q.empty():
@@ -876,6 +907,7 @@ class VenueProcessor:
         _IDLE_ENTER_AFTER   = 8.0   # seconds of stillness before we drop to idle sampling
         _IDLE_SANITY_EVERY  = 30.0  # force a YOLO inference at least this often
         _last_yolo_wall_t   = 0.0   # last actual model.track invocation wall time
+        _cap_paused         = False # tracks whether we have paused the HLS decoder
         # Fraction of pixels that must change vs the learned background to
         # flag motion. 3% of a typical cropped yolo_frame ≈ a forearm-sized
         # moving blob; below 3% is almost always HLS compression noise (TV
@@ -1265,15 +1297,31 @@ class VenueProcessor:
                 _since_yolo = _wall_now - _last_yolo_wall_t
                 if _idle_secs > _IDLE_ENTER_AFTER and _since_yolo < _IDLE_SANITY_EVERY:
                     # Empty frame, recent sanity pass — skip YOLO this round.
-                    # Also sleep ~2s so the background HLS decoder blocks on
-                    # a full queue; otherwise pyav keeps decoding every frame
-                    # at consumer rate and burns ~25% CPU per cam even with
-                    # YOLO disabled. This drops effective consumer rate from
-                    # 2 fps → 0.5 fps during idle, which is plenty given the
-                    # 30s sanity timer still runs a full inference on schedule.
+                    # Pause the HLS decoder entirely (close the HTTP stream
+                    # + tear down pyav). This is the dominant CPU cost on
+                    # idle bar cams; without pausing, the bg decoder thread
+                    # burns ~50-70% per cam continuously even when YOLO is
+                    # gated. cap.read() returns the cached frame while paused
+                    # so the motion subtractor stays fed. The 30s sanity
+                    # timer fires resume() below to re-check for motion.
+                    if not _cap_paused and hasattr(cap, 'pause'):
+                        try:
+                            cap.pause()
+                            _cap_paused = True
+                        except Exception:
+                            pass
                     frame_idx += 1
                     time.sleep(2.0)
                     continue
+                # Exiting idle path: motion detected or sanity timer fired.
+                # Resume HLS decoder so the YOLO call below sees fresh frames.
+                if _cap_paused and hasattr(cap, 'resume'):
+                    try:
+                        cap.resume()
+                        _cap_paused = False
+                        time.sleep(0.4)  # let pyav deliver one fresh frame
+                    except Exception:
+                        _cap_paused = False
                 _last_yolo_wall_t = _wall_now
 
             results = model.track(yolo_frame, persist=True,
