@@ -77,6 +77,10 @@ CAMERAS_TABLE   = "VenueScopeCameras"
 
 REPLAY_BASE_DIR = Path(os.environ.get("VS_REPLAY_DIR", "/tmp/venuescope-replays"))
 
+# Lambda admin API — fallback when direct DDB writes fail (IAM not granted
+# to the droplet for the new test-runs table). Read from .env.
+ADMIN_API_URL = os.environ.get("VITE_ADMIN_API_URL", "").rstrip("/")
+
 
 # ── Grading ──────────────────────────────────────────────────────────────
 
@@ -104,21 +108,44 @@ def worst_grade(grades: List[str]) -> Optional[str]:
 # ── DDB helpers ─────────────────────────────────────────────────────────
 
 def _get_test_run(run_id: str) -> Dict[str, Any]:
-    ddb = _ddb_client()
-    r = ddb.get_item(TableName=TEST_RUNS_TABLE, Key={"runId": {"S": run_id}})
-    item = r.get("Item")
-    if not item:
-        raise RuntimeError(f"Test run {run_id} not found")
-    cameras_json = item.get("camerasJson", {}).get("S", "[]")
+    """Fetch a test run spec. Tries direct DDB first, falls back to the
+    Lambda admin API if the droplet's IAM user can't read the table."""
+    try:
+        ddb = _ddb_client()
+        r = ddb.get_item(TableName=TEST_RUNS_TABLE, Key={"runId": {"S": run_id}})
+        item = r.get("Item")
+        if item:
+            cameras_json = item.get("camerasJson", {}).get("S", "[]")
+            return {
+                "runId":           run_id,
+                "venueId":         item.get("venueId", {}).get("S", ""),
+                "replayDate":      item.get("replayDate", {}).get("S", ""),
+                "replayStartTime": item.get("replayStartTime", {}).get("S", ""),
+                "replayEndTime":   item.get("replayEndTime", {}).get("S", ""),
+                "replayTimezone":  item.get("replayTimezone", {}).get("S", "America/New_York"),
+                "cameras":         json.loads(cameras_json),
+                "pauseLiveCams":   item.get("pauseLiveCams", {}).get("BOOL", False),
+            }
+    except Exception as e:
+        log.info("direct DDB read failed (%s) — falling back to admin API", type(e).__name__)
+    # Fallback: HTTP to admin Lambda
+    if not ADMIN_API_URL:
+        raise RuntimeError(
+            f"Test run {run_id} not found via DDB and VITE_ADMIN_API_URL not set"
+        )
+    import requests
+    r = requests.get(f"{ADMIN_API_URL}/admin/test-runs/{run_id}", timeout=15)
+    r.raise_for_status()
+    data = r.json()
     return {
-        "runId":           run_id,
-        "venueId":         item.get("venueId", {}).get("S", ""),
-        "replayDate":      item.get("replayDate", {}).get("S", ""),
-        "replayStartTime": item.get("replayStartTime", {}).get("S", ""),
-        "replayEndTime":   item.get("replayEndTime", {}).get("S", ""),
-        "replayTimezone":  item.get("replayTimezone", {}).get("S", "America/New_York"),
-        "cameras":         json.loads(cameras_json),
-        "pauseLiveCams":   item.get("pauseLiveCams", {}).get("BOOL", False),
+        "runId":           data["runId"],
+        "venueId":         data["venueId"],
+        "replayDate":      data["replayDate"],
+        "replayStartTime": data["replayStartTime"],
+        "replayEndTime":   data["replayEndTime"],
+        "replayTimezone":  data.get("replayTimezone", "America/New_York"),
+        "cameras":         data["cameras"],
+        "pauseLiveCams":   data.get("pauseLiveCams", False),
     }
 
 
@@ -135,38 +162,67 @@ def _get_live_url(camera_id: str, venue_id: str) -> Optional[str]:
 
 
 def _patch_test_run(run_id: str, **fields) -> None:
-    """Apply a partial update to a test run row (used for status + progress)."""
+    """Apply a partial update to a test run row. Uses the Lambda admin API
+    so the droplet doesn't need direct DDB write permission to the new
+    test-runs table — the Lambda role already has it."""
     if not fields: return
+    if not ADMIN_API_URL:
+        # Last-resort direct DDB attempt — works only if IAM is granted.
+        return _patch_via_ddb(run_id, fields)
+    import requests
+    # Split fields by which endpoint owns them
+    status_keys  = {"status", "progress", "startedAt", "completedAt", "errorMessage"}
+    results_keys = {"liveCounts", "results", "workerHealth"}
+    status_body  = {k: v for k, v in fields.items() if k in status_keys}
+    results_body = {k: v for k, v in fields.items() if k in results_keys}
+    if status_body:
+        try:
+            r = requests.patch(f"{ADMIN_API_URL}/admin/test-runs/{run_id}/status",
+                               json=status_body, timeout=15)
+            r.raise_for_status()
+        except Exception as e:
+            log.warning("status patch failed: %s", e)
+    if results_body:
+        try:
+            r = requests.post(f"{ADMIN_API_URL}/admin/test-runs/{run_id}/results",
+                              json=results_body, timeout=15)
+            r.raise_for_status()
+        except Exception as e:
+            log.warning("results patch failed: %s", e)
+
+
+def _patch_via_ddb(run_id: str, fields: Dict[str, Any]) -> None:
+    """Direct DDB write — only works if droplet IAM user has access to
+    VenueScopeTestRuns. Kept as a fallback path."""
     ddb = _ddb_client()
     sets, names, values = [], {}, {}
     field_to_attr = {
-        "status":           ("#st",       "status",      "S"),
-        "progress":         ("progress",  None,          "N"),
-        "startedAt":        ("startedAt", None,          "S"),
-        "completedAt":      ("completedAt", None,        "S"),
-        "errorMessage":     ("errorMessage", None,       "S"),
-        "liveCounts":       ("liveCountsJson", None,     "S"),
-        "results":          ("resultsJson",   None,      "S"),
-        "workerHealth":     ("workerHealthJson", None,   "S"),
+        "status":       ("status",            "status", "S"),
+        "progress":     ("progress",          None,     "N"),
+        "startedAt":    ("startedAt",         None,     "S"),
+        "completedAt":  ("completedAt",       None,     "S"),
+        "errorMessage": ("errorMessage",      None,     "S"),
+        "liveCounts":   ("liveCountsJson",    None,     "S"),
+        "results":      ("resultsJson",       None,     "S"),
+        "workerHealth": ("workerHealthJson",  None,     "S"),
     }
-    for key, val in fields.items():
+    for i, (key, val) in enumerate(fields.items()):
         if key not in field_to_attr: continue
-        attr, name_alias, kind = field_to_attr[key]
-        ph_name = attr if not name_alias else attr
-        ph_val  = f":{key[:3]}"
+        attr, alias, kind = field_to_attr[key]
+        # Use placeholder for reserved keyword "status"
+        ph_name = f"#a{i}" if alias else attr
+        ph_val  = f":v{i}"
+        if alias:
+            names[ph_name] = alias
         if kind == "N":
             values[ph_val] = {"N": str(val)}
-        elif kind == "S":
-            payload = json.dumps(val) if isinstance(val, (dict, list)) else str(val)
-            values[ph_val] = {"S": payload}
+        else:
+            values[ph_val] = {"S": json.dumps(val) if isinstance(val, (dict, list)) else str(val)}
         sets.append(f"{ph_name} = {ph_val}")
-        if name_alias:
-            names[ph_name] = name_alias
-    update = "SET " + ", ".join(sets)
     ddb.update_item(
         TableName=TEST_RUNS_TABLE,
         Key={"runId": {"S": run_id}},
-        UpdateExpression=update,
+        UpdateExpression="SET " + ", ".join(sets),
         ExpressionAttributeValues=values,
         ExpressionAttributeNames=names if names else None,
     )
