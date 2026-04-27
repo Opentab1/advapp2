@@ -227,7 +227,11 @@ def main(argv=None):
         source=src,
         # Treat as file source — local manifest, finite, no aws_sync push.
         source_type="file",
-        model_profile="balanced",
+        # "fast" matches live worker's night-mode CPU override:
+        # yolov8n@480 stride=3, ~80ms/inference. With sub-stream input from
+        # nvr_playback, this gives realtime (~1 hr footage = ~1 hr wall clock).
+        # "balanced" was 4× slower (yolov8s@640) and pushed runs to 10× wall.
+        model_profile="fast",
         bar_config=bar_config,
         shift=None,
         extra_config=extra_config,

@@ -44,7 +44,10 @@ log = logging.getLogger(__name__)
 # Default URL template used when the venue record carries no override.
 # Tested working against The Blind Goat NVR on 2026-04-27.
 DEFAULT_PLAYBACK_TEMPLATE = (
-    "http://{host}:{port}/hls/live/{channel}/0/livetop.mp4?starttime={start}"
+    # Sub-stream (1) instead of main (0) — matches what the live worker
+    # actually consumes for floor + bar cams. Lower resolution = faster
+    # decode + smaller model fits the data, so test runs at realtime.
+    "http://{host}:{port}/hls/live/{channel}/1/livetop.mp4?starttime={start}"
 )
 
 
