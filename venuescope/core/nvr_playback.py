@@ -47,7 +47,12 @@ DEFAULT_PLAYBACK_TEMPLATE = (
     # Sub-stream (1) instead of main (0) — matches what the live worker
     # actually consumes for floor + bar cams. Lower resolution = faster
     # decode + smaller model fits the data, so test runs at realtime.
-    "http://{host}:{port}/hls/live/{channel}/1/livetop.mp4?starttime={start}"
+    #
+    # &duration=300 hint: empirically the NVR honors duration as a "give
+    # me a long fragment" hint, returning 8-12s of video per request
+    # instead of the default ~1.8s. Drops fragment count by 6× and brings
+    # replay download to ~0.8× realtime (close enough to minute-for-minute).
+    "http://{host}:{port}/hls/live/{channel}/1/livetop.mp4?starttime={start}&duration=300"
 )
 
 
