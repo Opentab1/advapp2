@@ -33,7 +33,7 @@ const METRIC_CONFIG: Record<MetricType, {
 }> = {
   occupancy: {
     title: 'Occupancy',
-    color: '#00F19F',     // WHOOP Teal
+    color: '#FF5A30',     // WHOOP Teal
     bgColor: 'bg-teal-500/10',
     borderColor: 'border-teal-500/30',
     icon: Users,
@@ -54,7 +54,7 @@ const METRIC_CONFIG: Record<MetricType, {
   },
   pulse: {
     title: 'Pulse Score',
-    color: '#16EC06',     // WHOOP High Green
+    color: '#4ade80',     // WHOOP High Green
     bgColor: 'bg-green-500/10',
     borderColor: 'border-green-500/30',
     icon: TrendingUp,

@@ -173,10 +173,10 @@ export function DataChart({ data, metric, title, color = '#0093E7', timeRange = 
         display: false
       },
       tooltip: {
-        backgroundColor: '#0E131A',
-        titleColor: '#FFFFFF',
-        bodyColor: '#A6B0BF',
-        borderColor: '#1C222B',
+        backgroundColor: '#13131A',
+        titleColor: '#F5EFE6',
+        bodyColor: '#D4CFC4',
+        borderColor: '#2A2A2D',
         borderWidth: 1,
         padding: 12,
         cornerRadius: 8,
@@ -211,11 +211,11 @@ export function DataChart({ data, metric, title, color = '#0093E7', timeRange = 
           displayFormats: timeSettings.displayFormats
         },
         grid: {
-          color: '#2A3441',  // WHOOP chart grid
+          color: '#2A2A2D',
           drawBorder: false
         },
         ticks: {
-          color: '#6C7684',  // WHOOP muted text
+          color: '#A8A59E',
           font: {
             size: 11,
             family: 'Inter'
@@ -226,11 +226,11 @@ export function DataChart({ data, metric, title, color = '#0093E7', timeRange = 
       },
       y: {
         grid: {
-          color: '#2A3441',  // WHOOP chart grid
+          color: '#2A2A2D',
           drawBorder: false
         },
         ticks: {
-          color: '#6C7684',  // WHOOP muted text
+          color: '#A8A59E',
           font: {
             size: 11,
             family: 'Inter'

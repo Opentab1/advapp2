@@ -246,17 +246,17 @@ export const POLLING_INTERVALS = {
 // ============ COLORS (WHOOP Palette) ============
 
 export const SCORE_COLORS = {
-  optimal: '#16EC06',  // WHOOP High Recovery Green
-  good: '#FFDE00',     // WHOOP Medium Recovery Yellow
-  poor: '#FF0026',     // WHOOP Low Recovery Red
-  neutral: '#6C7684',  // WHOOP Muted Text
+  optimal: '#4ade80',
+  good: '#FFDE00',
+  poor: '#FF0026',
+  neutral: '#A8A59E',
 } as const;
 
 export const RING_COLORS = {
-  pulse: '#16EC06',      // WHOOP High Recovery Green
-  dwell: '#0093E7',      // WHOOP Strain Blue
-  reputation: '#FFDE00', // WHOOP Medium Recovery Yellow
-  crowd: '#00F19F',      // WHOOP Teal
+  pulse: '#4ade80',
+  dwell: '#0093E7',
+  reputation: '#FFDE00',
+  crowd: '#FF5A30',
 } as const;
 
 // ============ ACTION PRIORITIES ============

@@ -43,7 +43,7 @@ const METRIC_CONFIG: Record<DisplayableMetric, {
   score: { 
     icon: Zap, 
     label: 'Score', 
-    color: '#00F19F',
+    color: '#FF5A30',
     unit: '',
     getValue: (d) => d.score,
   },
@@ -64,7 +64,7 @@ const METRIC_CONFIG: Record<DisplayableMetric, {
   crowd: { 
     icon: Users, 
     label: 'Guests', 
-    color: '#00F19F',
+    color: '#FF5A30',
     unit: '',
     getValue: (d) => d.occupancy,
   },

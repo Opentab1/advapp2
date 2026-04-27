@@ -8,90 +8,106 @@ export default {
   theme: {
     extend: {
       colors: {
-        // WHOOP Exact Color Palette
-        
-        // Base / Structural Colors
+        // ── Run-of-Show palette ─────────────────────────────────────────
+        // Keys preserved for source-stability (we have hundreds of usages of
+        // `bg-whoop-panel`, `text-text-primary`, `text-teal`, etc. across
+        // the app), values remapped to the new palette.
+
+        // Base / Structural
         whoop: {
-          bg: '#000000',           // Primary Background - true black
-          panel: '#0B0F14',        // Elevated Panels - cards, containers
-          'panel-secondary': '#101518', // Secondary Panels - sub-cards, modals
-          divider: '#1C222B',      // Divider / Grid Lines
+          bg: '#0A0A0B',                 // Pure black — page background
+          panel: '#13131A',              // Panel dark — card backgrounds
+          'panel-secondary': '#13131A',  // Same panel dark, no second tier
+          'panel-orange': '#2A1208',     // Highlighted panels (orange-tinted dark)
+          divider: '#2A2A2D',            // Borders / outlines
         },
-        
-        // Text Colors
+
+        // Text
         text: {
-          primary: '#FFFFFF',      // Headlines, key stats
-          secondary: '#A6B0BF',    // Labels, captions
-          muted: '#6C7684',        // Disabled / metadata
+          primary: '#F5EFE6',            // Cream — headlines, primary text
+          secondary: '#D4CFC4',          // Light gray — body text
+          muted: '#A8A59E',              // Muted gray — secondary labels
+          tertiary: '#888888',           // Mid gray — footer / tertiary
         },
-        
-        // Semantic / Performance Colors - Recovery
+
+        // Recovery (kept semantic — green/yellow/red are universal data colors)
         recovery: {
-          high: '#16EC06',         // 67-100% - Green
-          medium: '#FFDE00',       // 34-66% - Yellow
-          low: '#FF0026',          // 0-33% - Red
+          high: '#4ade80',
+          medium: '#FFDE00',
+          low: '#FF0026',
         },
-        
-        // Strain / Activity
+
+        // Strain / Activity (chart accents — kept blue for distinguishability)
         strain: {
-          DEFAULT: '#0093E7',      // Strain Blue
-          light: '#2FB8FF',        // Strain Gradient End
-        },
-        
-        // Sleep
-        sleep: {
-          DEFAULT: '#7BA1BB',      // Sleep Primary
-          accent: '#9FC3DA',       // Sleep Accent
-        },
-        
-        // CTA / Highlight
-        teal: {
-          DEFAULT: '#00F19F',      // WHOOP Teal - Primary CTA
-          dark: '#00C884',         // Teal Pressed / Dark
-        },
-        
-        // Chart & Visualization
-        chart: {
-          baseline: '#1F2630',
-          grid: '#2A3441',
-          tooltip: '#0E131A',
-        },
-        
-        // Legacy warm palette mapped to WHOOP colors
-        warm: {
-          50: '#FFFFFF',           // text-primary
-          100: '#E5E5E5',
-          200: '#A6B0BF',          // text-secondary
-          300: '#8A94A3',
-          400: '#6C7684',          // text-muted
-          500: '#2A3441',          // chart-grid
-          600: '#1C222B',          // divider
-          700: '#101518',          // panel-secondary
-          800: '#0B0F14',          // panel
-          900: '#000000',          // bg
-        },
-        
-        // Semantic colors
-        success: '#16EC06',        // Recovery high green
-        warning: '#FFDE00',        // Recovery medium yellow
-        error: '#FF0026',          // Recovery low red
-        
-        // Primary accent (teal for CTAs)
-        primary: {
-          DEFAULT: '#00F19F',
-          light: '#2FB8FF',
-          dark: '#00C884',
-          50: '#E6FFF6',
-          100: '#B3FFE6',
-          500: '#00F19F',
-          600: '#00C884',
-        },
-        
-        // Legacy cyan alias -> strain blue
-        cyan: {
           DEFAULT: '#0093E7',
           light: '#2FB8FF',
-          dark: '#0077B6'
+        },
+
+        // Sleep (chart accent)
+        sleep: {
+          DEFAULT: '#7BA1BB',
+          accent: '#9FC3DA',
+        },
+
+        // BRAND ACCENT — was teal, now burnt orange
+        // The token name `teal` is preserved app-wide; only the value changes.
+        teal: {
+          DEFAULT: '#FF5A30',            // Burnt orange — primary brand accent
+          dark: '#E54A20',               // Pressed / hover
+        },
+
+        // Burnt-orange aliases for clarity in new code (same value as teal.*)
+        burnt: {
+          DEFAULT: '#FF5A30',
+          light:   '#FF7A50',
+          dark:    '#E54A20',
+        },
+
+        // Cream / dark text shorthands
+        cream: '#F5EFE6',
+
+        // Charts
+        chart: {
+          baseline: '#1F2630',
+          grid: '#2A2A2D',
+          tooltip: '#13131A',
+        },
+
+        // Legacy warm scale — re-mapped to Run-of-Show grays + cream
+        warm: {
+          50:  '#F5EFE6',                // cream
+          100: '#D4CFC4',                // light gray
+          200: '#D4CFC4',
+          300: '#A8A59E',                // muted gray
+          400: '#A8A59E',
+          500: '#666666',                // mid gray
+          600: '#2A2A2D',                // border
+          700: '#13131A',                // panel
+          800: '#13131A',
+          900: '#0A0A0B',                // bg
+        },
+
+        // Semantic
+        success: '#4ade80',              // Used SPARINGLY per palette
+        warning: '#FFDE00',
+        error:   '#FF0026',
+
+        // Primary CTA — now burnt orange
+        primary: {
+          DEFAULT: '#FF5A30',
+          light:   '#FF7A50',
+          dark:    '#E54A20',
+          50:  '#FFF1ED',
+          100: '#FFD7C8',
+          500: '#FF5A30',
+          600: '#E54A20',
+        },
+
+        // Legacy cyan alias kept (charts only)
+        cyan: {
+          DEFAULT: '#0093E7',
+          light:   '#2FB8FF',
+          dark:    '#0077B6',
         },
       },
       fontFamily: {
@@ -107,9 +123,9 @@ export default {
         'soft': '0 1px 3px rgba(0, 0, 0, 0.3)',
         'card': '0 4px 12px rgba(0, 0, 0, 0.4)',
         'card-hover': '0 8px 24px rgba(0, 0, 0, 0.5)',
-        'button': '0 2px 8px rgba(0, 241, 159, 0.25)',
-        'button-hover': '0 4px 16px rgba(0, 241, 159, 0.35)',
-        'teal-glow': '0 0 20px rgba(0, 241, 159, 0.3)',
+        'button': '0 2px 8px rgba(255, 90, 48, 0.25)',
+        'button-hover': '0 4px 16px rgba(255, 90, 48, 0.35)',
+        'teal-glow': '0 0 20px rgba(255, 90, 48, 0.3)',
       },
       borderRadius: {
         'xl': '12px',

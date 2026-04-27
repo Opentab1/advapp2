@@ -58,10 +58,10 @@ export function TrendModal({
 
   const getMetricColor = (metric: ChartMetric): string => {
     switch (metric) {
-      case 'score': return '#00F19F';
+      case 'score': return '#FF5A30';
       case 'avgStay': return '#0093E7';
       case 'guests': return '#FFDE00';
-      default: return '#00F19F';
+      default: return '#FF5A30';
     }
   };
 

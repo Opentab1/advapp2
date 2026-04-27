@@ -34,7 +34,7 @@ interface ChartProps {
 export function AreaChart({
   data,
   height = 120,
-  color = '#00F19F',
+  color = '#FF5A30',
   showLabels = true,
   showValues = false,
   animationDelay = 0,
@@ -235,7 +235,7 @@ export function AreaChart({
 export function BarChart({
   data,
   height = 100,
-  color = '#00F19F',
+  color = '#FF5A30',
   showLabels = true,
   animationDelay = 0,
 }: ChartProps) {
@@ -295,7 +295,7 @@ interface HorizontalBarProps {
   suffix?: string;
 }
 
-export function HorizontalBar({ label, value, maxValue, color = '#00F19F', suffix = '' }: HorizontalBarProps) {
+export function HorizontalBar({ label, value, maxValue, color = '#FF5A30', suffix = '' }: HorizontalBarProps) {
   const percentage = (value / maxValue) * 100;
   
   return (
@@ -326,7 +326,7 @@ interface SparkLineProps {
   height?: number;
 }
 
-export function SparkLine({ data, color = '#00F19F', width = 60, height = 20 }: SparkLineProps) {
+export function SparkLine({ data, color = '#FF5A30', width = 60, height = 20 }: SparkLineProps) {
   if (data.length < 2) return null;
   
   const max = Math.max(...data);
@@ -396,7 +396,7 @@ interface LegacyMiniChartProps {
 
 export function MiniChart({ 
   data, 
-  color = '#00F19F', 
+  color = '#FF5A30', 
   threshold, 
   thresholdLabel,
   height = 60 

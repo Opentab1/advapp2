@@ -10,40 +10,46 @@
 
 @layer base {
   :root {
-    /* WHOOP Exact Color Palette */
-    
+    /* Run-of-Show Palette — pure black + burnt orange + cream */
+
     /* Base / Structural */
-    --bg-primary: #000000;
-    --bg-panel: #0B0F14;
-    --bg-panel-secondary: #101518;
-    --border-color: #1C222B;
-    
+    --bg-primary: #0A0A0B;
+    --bg-panel: #13131A;
+    --bg-panel-secondary: #13131A;
+    --bg-panel-orange: #2A1208;
+    --border-color: #2A2A2D;
+
     /* Text */
-    --text-primary: #FFFFFF;
-    --text-secondary: #A6B0BF;
-    --text-muted: #6C7684;
-    
+    --text-primary: #F5EFE6;       /* cream */
+    --text-secondary: #D4CFC4;     /* light gray */
+    --text-muted: #A8A59E;         /* muted gray */
+    --text-tertiary: #888888;
+
     /* Semantic - Recovery */
-    --recovery-high: #16EC06;
+    --recovery-high: #4ade80;
     --recovery-medium: #FFDE00;
     --recovery-low: #FF0026;
-    
-    /* Strain */
+
+    /* Strain (chart accent) */
     --strain: #0093E7;
     --strain-light: #2FB8FF;
-    
-    /* Sleep */
+
+    /* Sleep (chart accent) */
     --sleep: #7BA1BB;
     --sleep-accent: #9FC3DA;
-    
-    /* CTA */
-    --teal: #00F19F;
-    --teal-dark: #00C884;
-    
+
+    /* CTA — burnt orange (token name preserved app-wide) */
+    --teal: #FF5A30;
+    --teal-dark: #E54A20;
+    --burnt: #FF5A30;
+    --burnt-light: #FF7A50;
+    --burnt-dark: #E54A20;
+    --cream: #F5EFE6;
+
     /* Charts */
     --chart-baseline: #1F2630;
-    --chart-grid: #2A3441;
-    --chart-tooltip: #0E131A;
+    --chart-grid: #2A2A2D;
+    --chart-tooltip: #13131A;
   }
 
   * {
@@ -127,7 +133,7 @@
 
   .btn-primary:hover {
     background: var(--teal-dark);
-    box-shadow: 0 0 20px rgba(0, 241, 159, 0.3);
+    box-shadow: 0 0 20px rgba(255, 90, 48, 0.3);
   }
 
   .btn-primary:active {
@@ -166,7 +172,7 @@
   textarea:focus {
     border-color: var(--teal);
     @apply outline-none ring-2;
-    --tw-ring-color: rgba(0, 241, 159, 0.3);
+    --tw-ring-color: rgba(255, 90, 48, 0.3);
   }
 
   select option {
@@ -183,8 +189,8 @@
 
   /* Selection */
   ::selection {
-    background: rgba(0, 241, 159, 0.3);
-    color: white;
+    background: rgba(255, 90, 48, 0.3);
+    color: var(--cream);
   }
 
   /* Spinner */

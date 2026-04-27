@@ -83,7 +83,7 @@ const FACTOR_CONFIG: Record<FactorType, {
     title: 'Vibe Match',
     icon: Sparkles,
     unit: '',
-    color: '#00F19F',
+    color: '#FF5A30',
     gradient: 'from-primary/20 to-primary/10',
   },
 };

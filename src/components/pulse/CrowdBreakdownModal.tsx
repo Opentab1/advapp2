@@ -207,7 +207,7 @@ export function CrowdBreakdownModal({
                 <AreaChart
                   data={chartData}
                   height={140}
-                  color="#00F19F"
+                  color="#FF5A30"
                   showLabels={true}
                   showValues={false}
                   animationDelay={0.1}
@@ -523,8 +523,8 @@ export function CrowdBreakdownModal({
               <HorizontalBar label="Tue" value={Math.round(peakOccupancy * 0.45)} maxValue={peakOccupancy * 1.2} color="#6b7280" />
               <HorizontalBar label="Wed" value={Math.round(peakOccupancy * 0.5)} maxValue={peakOccupancy * 1.2} color="#6b7280" />
               <HorizontalBar label="Thu" value={Math.round(peakOccupancy * 0.65)} maxValue={peakOccupancy * 1.2} color="#f59e0b" />
-              <HorizontalBar label="Fri" value={Math.round(peakOccupancy * 0.95)} maxValue={peakOccupancy * 1.2} color="#00F19F" />
-              <HorizontalBar label="Sat" value={Math.round(peakOccupancy * 1.1)} maxValue={peakOccupancy * 1.2} color="#00F19F" />
+              <HorizontalBar label="Fri" value={Math.round(peakOccupancy * 0.95)} maxValue={peakOccupancy * 1.2} color="#FF5A30" />
+              <HorizontalBar label="Sat" value={Math.round(peakOccupancy * 1.1)} maxValue={peakOccupancy * 1.2} color="#FF5A30" />
               <HorizontalBar label="Sun" value={Math.round(peakOccupancy * 0.55)} maxValue={peakOccupancy * 1.2} color="#f59e0b" />
             </div>
           </div>

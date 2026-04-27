@@ -29,8 +29,8 @@ export function GlowRing({
   
   // Determine color based on score - WHOOP Recovery palette
   const getColor = () => {
-    if (score === null) return { main: '#6C7684', glow: 'transparent' };
-    if (score >= SCORE_THRESHOLDS.optimal) return { main: '#16EC06', glow: 'rgba(22, 236, 6, 0.4)' };
+    if (score === null) return { main: '#A8A59E', glow: 'transparent' };
+    if (score >= SCORE_THRESHOLDS.optimal) return { main: '#4ade80', glow: 'rgba(74, 222, 128, 0.4)' };
     if (score >= SCORE_THRESHOLDS.good) return { main: '#FFDE00', glow: 'rgba(255, 222, 0, 0.4)' };
     return { main: '#FF0026', glow: 'rgba(255, 0, 38, 0.4)' };
   };
@@ -69,7 +69,7 @@ export function GlowRing({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#1C222B"
+          stroke="#2A2A2D"
           strokeWidth={strokeWidth}
         />
         
