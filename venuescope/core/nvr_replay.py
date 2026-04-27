@@ -139,11 +139,15 @@ class _HlsManifestWriter:
     YOLO's preprocessing path simple and bounds CPU on the droplet.
     """
 
-    def __init__(self, out_dir: Path, *, segment_target_w: int = 1280):
+    def __init__(self, out_dir: Path, *, segment_target_w: int = 1280, remux_only: bool = True):
+        """If remux_only, ffmpeg copies the codec without re-encoding (fast).
+        Set False to downscale + re-encode to H264 — only useful if a
+        downstream consumer can't decode HEVC."""
         self.out_dir = out_dir
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.manifest = out_dir / "index.m3u8"
         self.target_w = segment_target_w
+        self.remux_only = remux_only
         self._seq = 0
         # Bootstrap the manifest with a header that worker pyav can open.
         self._write_manifest(end=False)
@@ -181,16 +185,27 @@ class _HlsManifestWriter:
         # Persist duration sidecar for manifest regen
         (self.out_dir / f"seg_{seq:05d}.ts.dur").write_text(f"{frag_duration:.3f}")
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-loglevel", "error",
-            "-i", str(frag_mp4),
-            "-vf", f"scale={self.target_w}:-2",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
-            "-an",
-            "-f", "mpegts",
-            str(out_ts),
-        ]
+        if self.remux_only:
+            # Codec-copy is ~10× faster than re-encode. PyAV decodes HEVC
+            # natively in the worker pipeline so there's no need to transcode.
+            cmd = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-i", str(frag_mp4),
+                "-c", "copy", "-an",
+                "-bsf:v", "hevc_mp4toannexb",  # HEVC needs annexb in TS
+                "-f", "mpegts",
+                str(out_ts),
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-i", str(frag_mp4),
+                "-vf", f"scale={self.target_w}:-2",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+                "-an",
+                "-f", "mpegts",
+                str(out_ts),
+            ]
         rc = subprocess.run(cmd, capture_output=True).returncode
         if rc != 0:
             log.error("[nvr_replay] ffmpeg transcode failed for %s", frag_mp4)
