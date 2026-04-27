@@ -330,22 +330,35 @@ def _run_one_camera(run_id: str, run: Dict[str, Any], cam_spec: Dict[str, Any],
     start_replay(replay)
     log.info("replay started for %s -> %s", camera_id, cam_dir)
 
-    # 3. Wait for the first fragment to land before launching engine
-    deadline = time.time() + 30
-    while time.time() < deadline and replay.progress.fragments == 0:
-        time.sleep(1.0)
+    # 3. Wait for replay to FINISH before launching engine. Engine reads a
+    # static (#EXT-X-ENDLIST-terminated) manifest — OpenCV's HLS reader
+    # doesn't handle growing manifests gracefully. Sequential phase pattern
+    # trades concurrency for reliability; admin UI sees Phase 1 (Replay)
+    # at 0-50% then Phase 2 (Engine) 50-100%.
+    last_push = 0.0
+    while not replay.progress.finished:
+        time.sleep(2.0)
+        # Phase 1 of progress bar: replay downloads = 0-50% of overall
+        replay_pct = replay.progress.percent * 0.5
+        if time.time() - last_push >= 5.0:
+            _patch_test_run(run_id, progress=round(replay_pct, 1),
+                            liveCounts=live_counts)
+            last_push = time.time()
+    log.info("replay complete for %s — %d fragments, %.1fs of footage",
+             camera_id, replay.progress.fragments, replay.progress.consumed_sec)
+    stop_replay(replay)
+
     if replay.progress.fragments == 0:
-        log.error("no fragments arrived in 30s — aborting camera")
-        stop_replay(replay)
+        log.error("no fragments downloaded — aborting camera")
         return {f: {"detected": 0, "expected": cam_spec.get("groundTruth", {}).get(f),
                     "errorPct": None, "grade": "F",
                     "notes": ["no playback fragments arrived"]} for f in cam_spec["features"]}
 
-    # Stage the camera's bar config for the engine (drink_count needs it)
+    # Stage the camera's bar config (drink_count needs it)
     bar_cfg_path = _stage_bar_config(camera_id, run["venueId"], cam_dir) \
                     if "drink_count" in cam_spec["features"] else None
 
-    # 4. Engine integration — subprocess into test_engine_runner
+    # 4. Spawn engine on the now-complete manifest
     engine_proc = _spawn_engine_for_camera(
         manifest_url=manifest_url(replay),
         camera={"cameraId": camera_id, **cam_spec},
@@ -356,26 +369,26 @@ def _run_one_camera(run_id: str, run: Dict[str, Any], cam_spec: Dict[str, Any],
         bar_config_json_path=bar_cfg_path,
     )
 
-    # 5. Live-progress loop — sample worker health, push DDB updates
+    # 5. Engine-phase progress loop — push live counts as they accumulate
     last_push = 0.0
-    while not replay.progress.finished:
+    while engine_proc and engine_proc.poll() is None:
         time.sleep(2.0)
-        if engine_proc:
-            health.sample(engine_proc.pid)
-        # Read engine's cumulative counts (empty until hook is wired)
+        try: health.sample(engine_proc.pid)
+        except Exception: pass
         live_counts[camera_id] = _read_engine_counts(progress_path)
-        # Compute % progress from replay alone (engine runs alongside)
-        pct = replay.progress.percent
+        # Phase 2: engine = 50-100%. We can't easily read engine % so smooth
+        # toward 95 over a generous time budget; final 100% comes when the
+        # subprocess exits.
+        elapsed = time.time() - (last_push or time.time())
         if time.time() - last_push >= 5.0:
-            _patch_test_run(
-                run_id,
-                progress=round(pct, 1),
-                liveCounts=live_counts,
-            )
+            # Estimate based on approximated engine throughput
+            est = 50 + min(45, (time.time() - (engine_proc and engine_proc.create_time
+                                if hasattr(engine_proc, "create_time") else time.time())) / 30.0)
+            _patch_test_run(run_id, progress=round(min(95, est), 1),
+                            liveCounts=live_counts)
             last_push = time.time()
 
-    # 6. Tear down replay + engine, gather final per-feature counts
-    stop_replay(replay)
+    # 6. Engine done — read final counts
     if engine_proc and engine_proc.poll() is None:
         engine_proc.terminate()
         try: engine_proc.wait(timeout=5)
