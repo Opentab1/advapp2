@@ -54,6 +54,9 @@ from core.nvr_replay import (   # noqa: E402
 from core.worker_health import (  # noqa: E402
     HealthCollector, derive_stability,
 )
+from core.test_grader import (    # noqa: E402
+    grade_run, grade_for_error, worst_grade,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,29 +85,7 @@ REPLAY_BASE_DIR = Path(os.environ.get("VS_REPLAY_DIR", "/tmp/venuescope-replays"
 ADMIN_API_URL = os.environ.get("VITE_ADMIN_API_URL", "").rstrip("/")
 
 
-# ── Grading ──────────────────────────────────────────────────────────────
-
-GRADE_THRESHOLDS = (
-    (0.05, "A"),
-    (0.15, "B"),
-    (0.25, "C"),
-    (0.50, "D"),
-)
-
-def grade_for_error(error_pct: float) -> str:
-    for cap, letter in GRADE_THRESHOLDS:
-        if error_pct <= cap:
-            return letter
-    return "F"
-
-WORST_GRADE_ORDER = "ABCDF"
-
-def worst_grade(grades: List[str]) -> Optional[str]:
-    if not grades:
-        return None
-    return max(grades, key=lambda g: WORST_GRADE_ORDER.index(g))
-
-
+# Grading lives in core.test_grader (imported above) — see GRADE_RUBRIC there.
 # ── DDB helpers ─────────────────────────────────────────────────────────
 
 def _get_test_run(run_id: str) -> Dict[str, Any]:
@@ -422,43 +403,33 @@ def execute(run_id: str) -> int:
         log.exception("orchestrator failed")
         error_message = f"{type(e).__name__}: {e}"
 
-    # Aggregate per-feature across cameras (sum counts; grade on summed error)
-    agg: Dict[str, Dict[str, Any]] = {}
+    # Aggregate detected counts and ground truth across all cameras for the
+    # run. We sum since cameras typically watch different bars / floor zones
+    # and ground truth is the operator's total for the whole replay window.
+    agg_counts: Dict[str, int] = {}
+    agg_gt:     Dict[str, int] = {}
+    requested:  set = set()
     for cam_id, feats in per_camera_results.items():
         for fname, fdata in feats.items():
-            slot = agg.setdefault(fname, {"detected": 0, "expected": 0,
-                                           "notes": [], "_grades_per_cam": []})
-            slot["detected"] += fdata["detected"] or 0
-            slot["expected"] += fdata["expected"] or 0
-            if fdata.get("grade"):
-                slot["_grades_per_cam"].append(fdata["grade"])
-            slot["notes"].extend([f"{cam_id}: {n}" for n in fdata.get("notes", [])])
+            requested.add(fname)
+            agg_counts[fname] = agg_counts.get(fname, 0) + (fdata["detected"] or 0)
+            if fdata["expected"] is not None:
+                agg_gt[fname] = agg_gt.get(fname, 0) + int(fdata["expected"])
 
-    # Final per-feature grade based on aggregate counts
-    for fname, slot in agg.items():
-        exp = slot["expected"]
-        if exp:
-            err = abs(slot["detected"] - exp) / float(exp)
-            slot["errorPct"] = round(err, 3)
-            slot["grade"]    = grade_for_error(err)
-        else:
-            slot["errorPct"] = None
-            slot["grade"]    = None
-        del slot["_grades_per_cam"]
-
-    overall = worst_grade([s["grade"] for s in agg.values() if s.get("grade")])
     health_summary = health.finalize(
         completed=(error_message is None),
         notes=[error_message] if error_message else [],
     )
     stability = derive_stability(health_summary)
 
-    final_results = {
-        "perFeature":     agg,
-        "overallGrade":   overall,
-        "stabilityGrade": stability,
-        "notes":          health_summary.notes,
-    }
+    graded = grade_run(
+        feature_counts=agg_counts,
+        ground_truth=agg_gt,
+        stability=stability,
+        stability_notes=health_summary.notes,
+        requested_features=sorted(requested),
+    )
+    final_results = graded.to_dict()
     _patch_test_run(
         run_id,
         status="complete" if error_message is None else "failed",
