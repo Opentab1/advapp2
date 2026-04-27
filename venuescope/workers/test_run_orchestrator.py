@@ -79,6 +79,11 @@ TEST_RUNS_TABLE = "VenueScopeTestRuns"
 CAMERAS_TABLE   = "VenueScopeCameras"
 
 REPLAY_BASE_DIR = Path(os.environ.get("VS_REPLAY_DIR", "/tmp/venuescope-replays"))
+# Persistent cache of replays keyed by (venue, camera, date, start, end) so
+# repeat runs of the same window reuse the same fragments + transcoded
+# segments. Killing the NVR-side variability means the engine sees identical
+# input across runs — much better signal when iterating on accuracy.
+REPLAY_CACHE_DIR = Path(os.environ.get("VS_REPLAY_CACHE", "/var/lib/venuescope/replay-cache"))
 
 # Lambda admin API — fallback when direct DDB writes fail (IAM not granted
 # to the droplet for the new test-runs table). Read from .env.
@@ -314,21 +319,51 @@ def _run_one_camera(run_id: str, run: Dict[str, Any], cam_spec: Dict[str, Any],
                     "errorPct": None, "grade": "F",
                     "notes": ["camera not found or no rtspUrl"]} for f in cam_spec["features"]}
 
-    # 2. Spawn replay
+    # 2. Cache layer — reuse replays for identical (venue, cam, date, window).
+    # Two test runs of the exact same window get identical fragments + the
+    # same engine input, isolating accuracy-iteration from NVR variability.
+    cache_key = (
+        f"{run['venueId']}__{camera_id}__"
+        f"{run['replayDate']}__{run['replayStartTime'].replace(':','')}"
+        f"-{run['replayEndTime'].replace(':','')}"
+    )
+    cache_dir   = REPLAY_CACHE_DIR / cache_key
+    cache_done  = cache_dir / ".replay_complete"
+
     cam_dir = REPLAY_BASE_DIR / run_id / camera_id
     if cam_dir.exists():
         shutil.rmtree(cam_dir)
     cam_dir.mkdir(parents=True, exist_ok=True)
     progress_path = cam_dir / "engine_counts.json"
 
-    replay = ReplayJob(
-        live_url=live_url,
-        start_dt=start_utc,
-        end_dt=end_utc,
-        out_dir=cam_dir,
-    )
-    start_replay(replay)
-    log.info("replay started for %s -> %s", camera_id, cam_dir)
+    if cache_done.exists():
+        # Cache hit — copy fragments + manifest into the per-run dir so
+        # the engine reads from a stable path the orchestrator owns.
+        log.info("CACHE HIT for %s — reusing fragments from %s", cache_key, cache_dir)
+        for src in cache_dir.iterdir():
+            if src.name == ".replay_complete":
+                continue
+            dst = cam_dir / src.name
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+        # Construct a fake "finished" replay job — engine just needs the manifest
+        replay = ReplayJob(live_url=live_url, start_dt=start_utc, end_dt=end_utc, out_dir=cam_dir)
+        # Pre-populate progress so the orchestrator's wait loop exits immediately
+        replay.progress.consumed_sec = (end_utc - start_utc).total_seconds()
+        replay.progress.target_sec   = replay.progress.consumed_sec
+        replay.progress.fragments    = sum(1 for _ in cam_dir.glob("seg_*.ts"))
+        replay.progress.finished     = True
+    else:
+        replay = ReplayJob(
+            live_url=live_url,
+            start_dt=start_utc,
+            end_dt=end_utc,
+            out_dir=cam_dir,
+        )
+        start_replay(replay)
+        log.info("replay started (cache miss for %s)", cache_key)
 
     # 3. Wait for replay to FINISH before launching engine. Engine reads a
     # static (#EXT-X-ENDLIST-terminated) manifest — OpenCV's HLS reader
@@ -347,6 +382,27 @@ def _run_one_camera(run_id: str, run: Dict[str, Any], cam_spec: Dict[str, Any],
     log.info("replay complete for %s — %d fragments, %.1fs of footage",
              camera_id, replay.progress.fragments, replay.progress.consumed_sec)
     stop_replay(replay)
+
+    # Populate cache for future runs of the same window. Skip if we just
+    # served from cache — directory is already populated.
+    if not cache_done.exists() and replay.progress.fragments > 0:
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            for src in cam_dir.iterdir():
+                if src.name in ("engine_counts.json", "engine.log"):
+                    continue   # don't pollute cache with engine artifacts
+                dst = cache_dir / src.name
+                if dst.exists():
+                    if dst.is_dir(): shutil.rmtree(dst)
+                    else: dst.unlink()
+                if src.is_dir():
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
+            cache_done.write_text(datetime.now(timezone.utc).isoformat())
+            log.info("cached replay → %s", cache_dir)
+        except Exception as e:
+            log.warning("cache write failed for %s: %s", cache_key, e)
 
     if replay.progress.fragments == 0:
         log.error("no fragments downloaded — aborting camera")

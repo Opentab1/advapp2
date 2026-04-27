@@ -255,8 +255,27 @@ def main(argv=None):
 
     writer.stop()
     counts = _extract_counts(summary)
-    log.info("final counts: %s", counts)
-    output_path.write_text(json.dumps(counts))
+
+    # Diagnostic fields — help debug "engine ran but counted nothing" cases.
+    # quality.processed_frames is what VenueProcessor actually inferred on,
+    # not just what was decoded from the manifest. review_events tells us
+    # how many candidate serves the analyzer flagged before aggregation.
+    quality = (summary.get("quality") or {})
+    diagnostics = {
+        "_processed_frames":  int(quality.get("processed_frames", 0)),
+        "_dropped_frames":    int(quality.get("dropped_frames", 0)),
+        "_avg_conf":          float(quality.get("avg_detection_conf", 0.0) or 0.0),
+        "_video_seconds":     float(summary.get("video_seconds", 0.0) or 0.0),
+        "_review_events":     len(summary.get("review_events") or []),
+        "_peak_occupancy":    int(summary.get("peak_occupancy", 0)),
+        "_warnings":          list(quality.get("warnings") or []),
+    }
+    out = {**counts, **diagnostics}
+    log.info("final counts: %s  diagnostics: processed=%d dropped=%d avg_conf=%.3f video_sec=%.1f review=%d peak_ppl=%d",
+             counts, diagnostics["_processed_frames"], diagnostics["_dropped_frames"],
+             diagnostics["_avg_conf"], diagnostics["_video_seconds"],
+             diagnostics["_review_events"], diagnostics["_peak_occupancy"])
+    output_path.write_text(json.dumps(out))
     return 0
 
 
