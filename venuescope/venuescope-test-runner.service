@@ -1,0 +1,29 @@
+[Unit]
+Description=VenueScope Test Runner (admin-only NVR replay executor)
+After=network-online.target venuescope-worker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/venuescope/venuescope
+EnvironmentFile=/opt/venuescope/venuescope/.env
+ExecStart=/opt/venuescope/venv/bin/python -m workers.test_run_orchestrator --daemon --interval 30
+Restart=always
+RestartSec=15
+StartLimitInterval=300
+StartLimitBurst=10
+
+# A test run can spawn YOLO subprocesses + ffmpeg — leave it room without
+# letting it dominate the worker.
+MemoryMax=2G
+CPUQuota=200%
+
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=venuescope-test-runner
+
+[Install]
+WantedBy=multi-user.target

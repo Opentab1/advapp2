@@ -443,10 +443,61 @@ def execute(run_id: str) -> int:
     return 0 if error_message is None else 1
 
 
+def _list_pending(limit: int = 50) -> List[Dict[str, Any]]:
+    """Fetch all runs in 'pending' status. Uses the Lambda admin API
+    (the droplet's IAM user can't scan the new test-runs table)."""
+    if not ADMIN_API_URL:
+        log.warning("daemon mode requires VITE_ADMIN_API_URL — skipping poll")
+        return []
+    import requests
+    try:
+        r = requests.get(f"{ADMIN_API_URL}/admin/test-runs?limit={limit}", timeout=15)
+        r.raise_for_status()
+        return [run for run in (r.json().get("runs") or []) if run.get("status") == "pending"]
+    except Exception as e:
+        log.warning("pending poll failed: %s", e)
+        return []
+
+
+def daemon_loop(interval_sec: int = 30) -> int:
+    """Poll for pending runs; execute each found run sequentially.
+
+    Sequential (not parallel) by design — running multiple replays at
+    once would multiply CPU pressure on the same droplet that's serving
+    live cameras. One-at-a-time keeps the worker tester resource cost
+    predictable.
+    """
+    log.info("daemon_loop started — polling every %ds", interval_sec)
+    while True:
+        try:
+            pending = _list_pending()
+            if pending:
+                log.info("daemon_loop: %d pending runs", len(pending))
+                # Process oldest first
+                pending.sort(key=lambda r: r.get("createdAt", ""))
+                for run in pending:
+                    rid = run.get("runId")
+                    if not rid: continue
+                    try:
+                        execute(rid)
+                    except Exception as e:
+                        log.exception("execute failed for run %s: %s", rid, e)
+        except Exception as e:
+            log.exception("daemon tick failed: %s", e)
+        time.sleep(interval_sec)
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Worker Tester — execute one test run by id")
-    ap.add_argument("run_id", help="UUID of a test run in VenueScopeTestRuns")
+    ap = argparse.ArgumentParser(description="Worker Tester — execute test runs")
+    ap.add_argument("run_id", nargs="?", default=None,
+                    help="UUID of a specific run; omit to start daemon mode")
+    ap.add_argument("--daemon", action="store_true",
+                    help="Poll for pending runs in a loop (systemd-style service)")
+    ap.add_argument("--interval", type=int, default=30,
+                    help="Daemon poll interval seconds (default 30)")
     args = ap.parse_args()
+    if args.daemon or not args.run_id:
+        return daemon_loop(args.interval)
     return execute(args.run_id)
 
 
