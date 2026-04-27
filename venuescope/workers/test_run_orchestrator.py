@@ -131,15 +131,39 @@ def _get_test_run(run_id: str) -> Dict[str, Any]:
 
 
 def _get_live_url(camera_id: str, venue_id: str) -> Optional[str]:
+    item = _get_camera_item(camera_id, venue_id)
+    if not item:
+        return None
+    return item.get("rtspUrl", {}).get("S", "") or None
+
+
+def _get_camera_item(camera_id: str, venue_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch the full camera record from DDB."""
     ddb = _ddb_client()
     r = ddb.get_item(
         TableName=CAMERAS_TABLE,
         Key={"cameraId": {"S": camera_id}, "venueId": {"S": venue_id}},
     )
-    item = r.get("Item")
+    return r.get("Item")
+
+
+def _stage_bar_config(camera_id: str, venue_id: str, out_dir: Path) -> Optional[str]:
+    """If the camera has a barConfigJson stored, write it to a temp file
+    so we can pass --bar-config-json to test_engine_runner. Returns the
+    file path, or None if no config exists.
+
+    Without bar config, drink_count returns 0 — the engine doesn't know
+    where the bar line is or which polygon is the customer side.
+    """
+    item = _get_camera_item(camera_id, venue_id)
     if not item:
         return None
-    return item.get("rtspUrl", {}).get("S", "") or None
+    cfg_json = item.get("barConfigJson", {}).get("S", "")
+    if not cfg_json or not cfg_json.strip():
+        return None
+    out_path = out_dir / "bar_config.json"
+    out_path.write_text(cfg_json)
+    return str(out_path)
 
 
 def _patch_test_run(run_id: str, **fields) -> None:
@@ -317,6 +341,10 @@ def _run_one_camera(run_id: str, run: Dict[str, Any], cam_spec: Dict[str, Any],
                     "errorPct": None, "grade": "F",
                     "notes": ["no playback fragments arrived"]} for f in cam_spec["features"]}
 
+    # Stage the camera's bar config for the engine (drink_count needs it)
+    bar_cfg_path = _stage_bar_config(camera_id, run["venueId"], cam_dir) \
+                    if "drink_count" in cam_spec["features"] else None
+
     # 4. Engine integration — subprocess into test_engine_runner
     engine_proc = _spawn_engine_for_camera(
         manifest_url=manifest_url(replay),
@@ -325,6 +353,7 @@ def _run_one_camera(run_id: str, run: Dict[str, Any], cam_spec: Dict[str, Any],
         features=cam_spec["features"],
         progress_path=progress_path,
         venue_id=run["venueId"],
+        bar_config_json_path=bar_cfg_path,
     )
 
     # 5. Live-progress loop — sample worker health, push DDB updates
@@ -439,7 +468,7 @@ def execute(run_id: str) -> int:
         workerHealth=health_summary.to_dict(),
         errorMessage=(error_message or ""),
     )
-    log.info("done — overall=%s stability=%s", overall, stability)
+    log.info("done — overall=%s stability=%s", graded.overallGrade, stability)
     return 0 if error_message is None else 1
 
 
