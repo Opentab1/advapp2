@@ -202,14 +202,19 @@ export function WorkerTester() {
                   </div>
                 )}
 
-                {/* Final grade */}
-                {run.results && run.results.overallGrade && (
+                {/* Final grade — render whenever we have results,
+                    even if overallGrade is null (no ground truth set). */}
+                {run.results && (
                   <div className="mt-3">
                     <div className="flex items-center gap-3">
                       <div className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-white/5 border border-white/10">
-                        <span className={`text-2xl font-black ${GRADE_COLORS[run.results.overallGrade]}`}>
-                          {run.results.overallGrade}
-                        </span>
+                        {run.results.overallGrade ? (
+                          <span className={`text-2xl font-black ${GRADE_COLORS[run.results.overallGrade]}`}>
+                            {run.results.overallGrade}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-500 font-semibold tracking-wider">N/A</span>
+                        )}
                       </div>
                       <div>
                         <p className="text-[11px] uppercase tracking-wider text-gray-500">Stability</p>
