@@ -246,23 +246,40 @@ def _build_replay_window(run: Dict[str, Any]):
 
 def _spawn_engine_for_camera(*, manifest_url: str, camera: Dict[str, Any],
                               run_id: str, features: List[str],
-                              progress_path: Path) -> Optional[subprocess.Popen]:
-    """Launch the worker engine pointed at the local replay manifest.
+                              progress_path: Path,
+                              venue_id: str,
+                              bar_config_json_path: Optional[str] = None,
+                              ) -> Optional[subprocess.Popen]:
+    """Launch test_engine_runner against the local replay manifest.
 
-    HOOK POINT: this currently logs intent only. The next iteration plugs
-    into the existing VenueProcessor (worker_daemon.run_job) by submitting
-    a special test-mode job whose results route to `progress_path` + the
-    test-runs DDB row instead of the live VenueScopeJobs/Cameras rows.
-
-    Returning None signals the orchestrator to skip-ahead to grading using
-    whatever counts the engine wrote (or zeros).
+    Spawns the worker engine in a subprocess so:
+      - It has its own memory + GIL (won't block orchestrator's loop)
+      - We can sample its CPU/RSS via psutil for the health badge
+      - A crash in the engine doesn't take out the orchestrator
     """
-    log.warning(
-        "[engine-hook] not yet wired — Phase 3.5 will wire VenueProcessor here. "
-        "manifest=%s features=%s camera=%s",
-        manifest_url, features, camera.get("cameraId"),
+    cam_id = camera.get("cameraId", "unknown")
+    cmd = [
+        sys.executable, "-m", "workers.test_engine_runner",
+        "--manifest",   manifest_url,
+        "--modes",      ",".join(features),
+        "--output",     str(progress_path),
+        "--camera-id",  cam_id,
+        "--venue-id",   venue_id,
+        "--max-seconds", "0",
+    ]
+    if bar_config_json_path:
+        cmd += ["--bar-config-json", bar_config_json_path]
+
+    log.info("spawning engine for %s: %s", cam_id, " ".join(cmd))
+    log_path = progress_path.parent / "engine.log"
+    log_fh = open(log_path, "ab")
+    return subprocess.Popen(
+        cmd,
+        cwd=str(BASE),
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
-    return None
 
 
 def _read_engine_counts(progress_path: Path) -> Dict[str, int]:
@@ -319,13 +336,14 @@ def _run_one_camera(run_id: str, run: Dict[str, Any], cam_spec: Dict[str, Any],
                     "errorPct": None, "grade": "F",
                     "notes": ["no playback fragments arrived"]} for f in cam_spec["features"]}
 
-    # 4. Engine integration hook
+    # 4. Engine integration — subprocess into test_engine_runner
     engine_proc = _spawn_engine_for_camera(
         manifest_url=manifest_url(replay),
         camera={"cameraId": camera_id, **cam_spec},
         run_id=run_id,
         features=cam_spec["features"],
         progress_path=progress_path,
+        venue_id=run["venueId"],
     )
 
     # 5. Live-progress loop — sample worker health, push DDB updates
