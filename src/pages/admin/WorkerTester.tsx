@@ -176,7 +176,27 @@ export function WorkerTester() {
                         style={{ width: `${Math.max(0, Math.min(100, run.progress))}%` }}
                       />
                     </div>
-                    <p className="text-[11px] text-gray-500 mt-1">{Math.round(run.progress)}% complete</p>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      {Math.round(run.progress)}% complete
+                      {(() => {
+                        if (!run.startedAt || run.progress < 2) return null;
+                        const startMs = Date.parse(run.startedAt);
+                        if (Number.isNaN(startMs)) return null;
+                        const elapsedMs = Date.now() - startMs;
+                        const totalMs = elapsedMs * 100 / run.progress;
+                        const remainMs = Math.max(0, totalMs - elapsedMs);
+                        const fmt = (ms: number) => {
+                          const m = Math.floor(ms / 60000);
+                          const s = Math.floor((ms % 60000) / 1000);
+                          return m > 0 ? `${m}m ${s}s` : `${s}s`;
+                        };
+                        return (
+                          <span className="text-gray-400 ml-2">
+                            · elapsed {fmt(elapsedMs)} · ~{fmt(remainMs)} remaining
+                          </span>
+                        );
+                      })()}
+                    </p>
                   </div>
                 )}
 
