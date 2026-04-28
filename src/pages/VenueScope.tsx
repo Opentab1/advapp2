@@ -3491,6 +3491,25 @@ function DrinkLogSection({ job }: { job: VenueScopeJob | null }) {
     }
   } catch { /* no-op */ }
 
+  // Worker's bartenderBreakdown.timestamps[] sometimes contains every
+  // candidate serve including borderline ones below the accept threshold,
+  // so the log count drifts above the headline drink_count. Reconcile by
+  // (1) preferring score >= 0.30 (matches the analyzer's accept threshold),
+  // and (2) capping at totalDrinks as a safety net for older worker
+  // versions that don't write drink_scores.
+  const totalForJob = Number(job.totalDrinks ?? 0);
+  if (entries.length > totalForJob) {
+    const hasScores = entries.some(e => (e.score ?? 0) > 0);
+    if (hasScores) {
+      entries = entries.filter(e => (e.score ?? 0) >= 0.30);
+    }
+    if (totalForJob > 0 && entries.length > totalForJob) {
+      entries = [...entries]
+        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+        .slice(0, totalForJob);
+    }
+  }
+
   if (entries.length === 0 && reviewEntries.length === 0) return null;
 
   // Most recent first
