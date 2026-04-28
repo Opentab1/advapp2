@@ -2081,6 +2081,244 @@ async function deleteTestRun(runId) {
   }
 }
 
+// ─── Per-venue droplet provisioning (DigitalOcean) ────────────────────────────
+//
+// Self-service automation for the per-venue droplet model. When the admin
+// clicks "Provision Droplet" in the venue settings UI, this Lambda calls
+// the DO API to clone a new droplet from the master snapshot, injects
+// `VS_VENUE_ID=<venueId>` via cloud-init user-data, and stores the droplet
+// metadata on the venue's DDB record. Total wall time: ~3-5 min.
+//
+// Required env vars (set in Lambda console):
+//   DO_API_TOKEN          DigitalOcean Personal Access Token, full access scope
+//   DO_SNAPSHOT_ID        DO snapshot ID to clone from (e.g. 226490598).
+//                         Take a fresh snapshot any time the worker code or
+//                         dependencies change materially.
+//   DO_DEFAULT_REGION     Default region for new venue droplets (e.g. tor1)
+//   DO_DEFAULT_SIZE       Default plan slug (e.g. c-2 for CPU-Optimized 2/4)
+//   DO_DEFAULT_SSH_KEY_ID Numeric ID of the operator SSH key to attach
+//
+// DDB schema additions on VenueScopeVenues records:
+//   dropletId       (N)  DO droplet numeric ID
+//   dropletStatus   (S)  provisioning | active | failed | none
+//   dropletIp       (S)  public IPv4 (filled in once the droplet is up)
+//   dropletRegion   (S)  e.g. tor1
+//   provisionedAt   (S)  ISO timestamp
+
+const DO_API_BASE = 'https://api.digitalocean.com/v2';
+
+async function _doApi(path, opts = {}) {
+  const token = process.env.DO_API_TOKEN;
+  if (!token) {
+    const e = new Error('DO_API_TOKEN env var not set on Lambda — '
+      + 'generate a token at https://cloud.digitalocean.com/account/api/tokens '
+      + 'and add it to this Lambda\'s environment variables.');
+    e._userVisible = true;
+    throw e;
+  }
+  const res = await fetch(`${DO_API_BASE}${path}`, {
+    ...opts,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type':  'application/json',
+      ...(opts.headers || {}),
+    },
+  });
+  const text = await res.text();
+  let json = {};
+  try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
+  if (!res.ok) {
+    const msg = json.message || json.id || `DO API ${res.status}`;
+    const e = new Error(`DO API: ${msg}`);
+    e._status = res.status;
+    e._body   = json;
+    throw e;
+  }
+  return json;
+}
+
+function _userDataForVenue(venueId) {
+  // cloud-init user-data: runs once on first boot. Sets VS_VENUE_ID in the
+  // worker's .env, restarts the worker, and the venue-affinity filter (in
+  // worker_daemon.py) automatically scopes all DDB queries to this venue.
+  return `#!/bin/bash
+set -e
+ENV_FILE=/opt/venuescope/venuescope/.env
+VENUE_ID=${JSON.stringify(venueId)}
+if grep -q '^VS_VENUE_ID=' "$ENV_FILE" 2>/dev/null; then
+  sed -i "s/^VS_VENUE_ID=.*/VS_VENUE_ID=$VENUE_ID/" "$ENV_FILE"
+else
+  echo "VS_VENUE_ID=$VENUE_ID" >> "$ENV_FILE"
+fi
+# Re-enable the worker (snapshot may have been taken with worker disabled)
+systemctl enable venuescope-worker venuescope-worker-nightly-restart.timer venuescope-worker-3am-restart.timer 2>/dev/null || true
+systemctl start venuescope-worker-nightly-restart.timer venuescope-worker-3am-restart.timer 2>/dev/null || true
+# Tester orchestrator: only the dedicated tester host runs it; new per-venue
+# production droplets should not have it active.
+systemctl stop    venuescope-test-runner 2>/dev/null || true
+systemctl disable venuescope-test-runner 2>/dev/null || true
+# Restart worker with the new VS_VENUE_ID picked up
+systemctl restart venuescope-worker || true
+`;
+}
+
+async function provisionDroplet(venueId, body = {}) {
+  if (!venueId) return err(400, 'venueId required');
+
+  // Read current venue record so we can refuse re-provisioning over an
+  // existing live droplet (protects against accidental double-spend).
+  const ven = await ddb.send(new GetItemCommand({
+    TableName: VENUES_TABLE,
+    Key: { venueId: { S: venueId } },
+  }));
+  if (!ven.Item) return err(404, `venue ${venueId} not found`);
+  const existingStatus = ven.Item?.dropletStatus?.S;
+  if (existingStatus === 'provisioning' || existingStatus === 'active') {
+    return err(409, `venue ${venueId} already has a droplet `
+      + `(status=${existingStatus}, id=${ven.Item?.dropletId?.N}). `
+      + `Destroy it first via DELETE /admin/venues/${venueId}/droplet, `
+      + `or use force=true to override.`);
+  }
+
+  const snapshotId = String(body.snapshotId || process.env.DO_SNAPSHOT_ID || '');
+  const region     = String(body.region   || process.env.DO_DEFAULT_REGION || 'tor1');
+  const size       = String(body.size     || process.env.DO_DEFAULT_SIZE   || 'c-2');
+  const sshKeyId   = body.sshKeyId        || process.env.DO_DEFAULT_SSH_KEY_ID;
+  if (!snapshotId)   return err(500, 'DO_SNAPSHOT_ID env var not set');
+  if (!sshKeyId)     return err(500, 'DO_DEFAULT_SSH_KEY_ID env var not set');
+
+  const name = `worker-${venueId}`;
+  const userData = _userDataForVenue(venueId);
+
+  let created;
+  try {
+    created = await _doApi('/droplets', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        region,
+        size,
+        image: Number(snapshotId),
+        ssh_keys: [Number(sshKeyId)],
+        backups: false,
+        ipv6: false,
+        monitoring: true,
+        tags: [`venue:${venueId}`, 'role:production-worker', 'managed-by:lambda'],
+        user_data: userData,
+      }),
+    });
+  } catch (e) {
+    return err(e._status || 500, e.message || 'DO provision failed');
+  }
+
+  const droplet = created.droplet || {};
+  const provisionedAt = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+
+  // Stamp venue record with droplet metadata. IP fills in later once the
+  // droplet is fully booted (poll via GET /admin/venues/{id}/droplet).
+  await ddb.send(new UpdateItemCommand({
+    TableName: VENUES_TABLE,
+    Key: { venueId: { S: venueId } },
+    UpdateExpression: 'SET dropletId = :id, dropletStatus = :st, '
+                    + 'dropletRegion = :rg, dropletSize = :sz, '
+                    + 'provisionedAt = :ts',
+    ExpressionAttributeValues: {
+      ':id': { N: String(droplet.id) },
+      ':st': { S: 'provisioning' },
+      ':rg': { S: region },
+      ':sz': { S: size },
+      ':ts': { S: provisionedAt },
+    },
+  }));
+
+  return ok({
+    venueId,
+    dropletId:     droplet.id,
+    dropletStatus: 'provisioning',
+    dropletRegion: region,
+    dropletSize:   size,
+    name:          droplet.name,
+    provisionedAt,
+    note: 'Droplet is booting. Poll GET /admin/venues/{id}/droplet for status + IP.',
+  });
+}
+
+async function getDroplet(venueId) {
+  if (!venueId) return err(400, 'venueId required');
+  const ven = await ddb.send(new GetItemCommand({
+    TableName: VENUES_TABLE,
+    Key: { venueId: { S: venueId } },
+  }));
+  if (!ven.Item) return err(404, `venue ${venueId} not found`);
+  const it = ven.Item;
+  const dropletId = Number(it?.dropletId?.N || 0);
+  if (!dropletId) {
+    return ok({ venueId, dropletStatus: 'none' });
+  }
+  // Fetch current state from DO
+  let live;
+  try {
+    live = await _doApi(`/droplets/${dropletId}`);
+  } catch (e) {
+    return err(e._status || 500, e.message || 'DO lookup failed');
+  }
+  const d = live.droplet || {};
+  const v4 = (d.networks?.v4 || []).find(n => n.type === 'public')?.ip_address || '';
+  const status = d.status === 'active' ? 'active' : (d.status || 'unknown');
+
+  // Update DDB if IP just landed
+  if (v4 && (it?.dropletIp?.S || '') !== v4) {
+    await ddb.send(new UpdateItemCommand({
+      TableName: VENUES_TABLE,
+      Key: { venueId: { S: venueId } },
+      UpdateExpression: 'SET dropletIp = :ip, dropletStatus = :st',
+      ExpressionAttributeValues: {
+        ':ip': { S: v4 },
+        ':st': { S: status },
+      },
+    }));
+  }
+
+  return ok({
+    venueId,
+    dropletId,
+    dropletStatus: status,
+    dropletIp:     v4,
+    dropletRegion: it?.dropletRegion?.S || '',
+    dropletSize:   it?.dropletSize?.S   || '',
+    provisionedAt: it?.provisionedAt?.S  || '',
+    name:          d.name,
+  });
+}
+
+async function destroyDroplet(venueId) {
+  if (!venueId) return err(400, 'venueId required');
+  const ven = await ddb.send(new GetItemCommand({
+    TableName: VENUES_TABLE,
+    Key: { venueId: { S: venueId } },
+  }));
+  if (!ven.Item) return err(404, `venue ${venueId} not found`);
+  const dropletId = Number(ven.Item?.dropletId?.N || 0);
+  if (dropletId) {
+    try {
+      await _doApi(`/droplets/${dropletId}`, { method: 'DELETE' });
+    } catch (e) {
+      // 404 means it was already gone — proceed to clear DDB
+      if (e._status !== 404) {
+        return err(e._status || 500, e.message || 'DO destroy failed');
+      }
+    }
+  }
+  await ddb.send(new UpdateItemCommand({
+    TableName: VENUES_TABLE,
+    Key: { venueId: { S: venueId } },
+    UpdateExpression: 'REMOVE dropletId, dropletIp, dropletRegion, '
+                    + 'dropletSize, provisionedAt SET dropletStatus = :st',
+    ExpressionAttributeValues: { ':st': { S: 'none' } },
+  }));
+  return ok({ venueId, dropletId, dropletStatus: 'destroyed' });
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const handler = async (event, context) => {
@@ -2117,6 +2355,13 @@ export const handler = async (event, context) => {
     if (method === 'POST'   && emailConfigMatch)                       return saveVenueEmailConfig(decodeURIComponent(emailConfigMatch[1]), body);
     const deleteVenueMatch = rawPath.match(/^\/admin\/venues\/([^/]+)$/);
     if (method === 'DELETE' && deleteVenueMatch)                       return deleteVenue(deleteVenueMatch[1]);
+
+    // Per-venue droplet provisioning (Step 7 — auto-onboarding for new venues)
+    const dropletMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/droplet$/);
+    const provisionMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/provision-droplet$/);
+    if (method === 'POST'   && provisionMatch)                         return provisionDroplet(decodeURIComponent(provisionMatch[1]), body);
+    if (method === 'GET'    && dropletMatch)                           return getDroplet(decodeURIComponent(dropletMatch[1]));
+    if (method === 'DELETE' && dropletMatch)                           return destroyDroplet(decodeURIComponent(dropletMatch[1]));
 
     // Email reports + global settings
     if (method === 'GET'   && rawPath === '/admin/email/settings')          return getEmailGlobalSettings();

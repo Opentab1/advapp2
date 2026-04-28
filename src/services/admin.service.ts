@@ -398,6 +398,83 @@ class AdminService {
     }
   }
 
+  // ============ DROPLET PROVISIONING (Step 7) ============
+
+  /**
+   * Provision a new DigitalOcean droplet for a venue. Clones from the master
+   * snapshot (Lambda env: DO_SNAPSHOT_ID), injects VS_VENUE_ID via cloud-init,
+   * tags it `venue:<id>`. Returns immediately with status=provisioning;
+   * poll getDroplet() until status=active and dropletIp is populated.
+   */
+  async provisionDroplet(venueId: string, options?: {
+    snapshotId?: string;
+    region?: string;
+    size?: string;
+    sshKeyId?: number;
+  }): Promise<{
+    venueId: string;
+    dropletId: number;
+    dropletStatus: string;
+    dropletRegion: string;
+    dropletSize: string;
+    name: string;
+    provisionedAt: string;
+    note?: string;
+  }> {
+    const data = await adminFetch(
+      `/admin/venues/${encodeURIComponent(venueId)}/provision-droplet`,
+      { method: 'POST', body: JSON.stringify(options || {}) },
+    );
+    this.logAuditEntry({
+      action: 'Droplet Provisioned',
+      actionType: 'create',
+      targetType: 'venue',
+      targetName: venueId,
+      details: `Started DO droplet ${data.dropletId} (${data.dropletSize}, ${data.dropletRegion})`,
+    });
+    return data;
+  }
+
+  /**
+   * Get current state of a venue's droplet. Polls DO API for live status +
+   * IP. Cache-updates the venue record when the IP first appears.
+   */
+  async getDroplet(venueId: string): Promise<{
+    venueId: string;
+    dropletId?: number;
+    dropletStatus: 'none' | 'provisioning' | 'active' | 'failed' | string;
+    dropletIp?: string;
+    dropletRegion?: string;
+    dropletSize?: string;
+    provisionedAt?: string;
+    name?: string;
+  }> {
+    return adminFetch(`/admin/venues/${encodeURIComponent(venueId)}/droplet`);
+  }
+
+  /**
+   * Destroy the droplet attached to a venue. Soft-clears the DDB metadata
+   * even if DO reports 404 (droplet already gone).
+   */
+  async destroyDroplet(venueId: string): Promise<{
+    venueId: string;
+    dropletId?: number;
+    dropletStatus: string;
+  }> {
+    const data = await adminFetch(
+      `/admin/venues/${encodeURIComponent(venueId)}/droplet`,
+      { method: 'DELETE' },
+    );
+    this.logAuditEntry({
+      action: 'Droplet Destroyed',
+      actionType: 'delete',
+      targetType: 'venue',
+      targetName: venueId,
+      details: `Destroyed DO droplet ${data.dropletId} for venue ${venueId}`,
+    });
+    return data;
+  }
+
   // ============ USER OPERATIONS ============
 
   async listUsers(): Promise<AdminUser[]> {
