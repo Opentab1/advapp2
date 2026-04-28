@@ -373,7 +373,7 @@ export function ServeEventsGallery({ liveCounts }: ServeEventsGalleryProps) {
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {events.slice(0, 24).map((e, i) => (
-          <ServeThumb key={i} event={e} onZoom={(url) => setLightbox({ url, event: e })} />
+          <ServeThumb key={i} index={i} event={e} onZoom={(url) => setLightbox({ url, event: e })} />
         ))}
       </div>
       {events.length > 24 && (
@@ -417,25 +417,34 @@ export function ServeEventsGallery({ liveCounts }: ServeEventsGalleryProps) {
 function ServeThumb({
   event,
   onZoom,
+  index,
 }: {
   event: ServeEvent & { cameraId: string };
   onZoom: (url: string) => void;
+  index: number;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
   // Auto-fetch the presigned URL on mount so the thumbnail renders inline.
+  // Stagger by index so 16+ tiles don't fire concurrently and trip the
+  // browser's per-host connection cap; retry once on transient failure.
   useEffect(() => {
     let cancelled = false;
     if (!event.snapshot) return;
     setLoading(true);
-    getSnapshotUrl(event.snapshot)
-      .then((u) => { if (!cancelled) setUrl(u); })
-      .catch((e) => { if (!cancelled) setError((e as Error).message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [event.snapshot]);
+    const stagger = Math.min(index, 12) * 80;
+    const fetchOnce = () => getSnapshotUrl(event.snapshot!);
+    const t = setTimeout(() => {
+      fetchOnce()
+        .catch(() => new Promise(r => setTimeout(r, 400)).then(fetchOnce))
+        .then((u) => { if (!cancelled) setUrl(u); })
+        .catch((e) => { if (!cancelled) setError((e as Error).message); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, stagger);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [event.snapshot, index]);
 
   const handleClick = () => {
     if (url) onZoom(url);
