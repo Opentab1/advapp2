@@ -76,6 +76,10 @@ const REVIEW_TABLE  = 'VenueScopeLowConfEvents';
 // processes the replay job. Schema lives in the docstring of the handlers
 // below. NEVER surfaced on the customer dashboard.
 const TEST_RUNS_TABLE = 'VenueScopeTestRuns';
+// POS receipts — ground truth uploaded per-shift by venue operators.
+// PK: venueId (S), SK: shiftStartIso (S). Used by GET /admin/venues/{id}/accuracy
+// to grade the worker's drink/bottle counts against the POS-rung totals.
+const POS_TABLE = 'VenueScopePosReceipts';
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY ?? '';
 const STRIPE_PRICE  = process.env.STRIPE_PRICE_ID   ?? '';
 const STRIPE_WH_SEC = process.env.STRIPE_WEBHOOK_SECRET ?? '';
@@ -2081,6 +2085,345 @@ async function deleteTestRun(runId) {
   }
 }
 
+// ─── POS receipts + accuracy reconciliation ─────────────────────────────────
+//
+// "95% accurate" is unverifiable without ground truth. This is the ground
+// truth: per-shift POS-rung totals uploaded by the venue operator, compared
+// against the worker's detected counts to produce A-F accuracy grades the
+// admin Accuracy SLA dashboard reads.
+//
+// DDB schema (VenueScopePosReceipts):
+//   PK: venueId (S)        e.g. "theblindgoat"
+//   SK: shiftStartIso (S)  e.g. "2026-04-26T19:30:00-04:00"
+//   attrs: shiftEndIso (S), posDrinkCount (N), posBottleCount (N),
+//          uploadedAt (S), uploadedBy (S), source (S)  // csv|manual|pos-api
+//
+// Worker count aggregation (read-side):
+//   Query VenueScopeJobs by venueId where finished_at falls in the window,
+//   sum each job's drink_count + bottle_count from summary_json.
+//
+// Routes:
+//   POST   /admin/venues/{id}/pos-receipts        ← CSV body, multi-row
+//   GET    /admin/venues/{id}/pos-receipts        ← list (?limit=50)
+//   DELETE /admin/venues/{id}/pos-receipts/{iso}  ← remove a single shift
+//   GET    /admin/venues/{id}/accuracy?from=&to=  ← reconciliation results
+
+const POS_CSV_REQUIRED = ['shift_start_iso', 'shift_end_iso', 'drink_count'];
+
+function _parseCsv(csvText) {
+  // Tiny CSV parser. Handles quoted fields, commas in quotes, CRLF lines.
+  // Returns { headers: [...], rows: [{col: val, ...}] }.
+  const lines = csvText.replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  let headers = null;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const cells = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') inQ = false;
+        else cur += ch;
+      } else {
+        if (ch === '"') inQ = true;
+        else if (ch === ',') { cells.push(cur); cur = ''; }
+        else cur += ch;
+      }
+    }
+    cells.push(cur);
+    if (!headers) {
+      headers = cells.map(h => h.trim().toLowerCase());
+    } else {
+      const row = {};
+      headers.forEach((h, i) => { row[h] = (cells[i] ?? '').trim(); });
+      out.push(row);
+    }
+  }
+  return { headers: headers ?? [], rows: out };
+}
+
+function _gradeFromErrorPct(err) {
+  if (err <= 0.05) return 'A';
+  if (err <= 0.15) return 'B';
+  if (err <= 0.25) return 'C';
+  if (err <= 0.50) return 'D';
+  return 'F';
+}
+
+async function uploadPosReceipts(venueId, body, headers = {}) {
+  if (!venueId) return err(400, 'venueId required');
+  // Body is either:
+  //   - raw CSV text (when Content-Type: text/csv)
+  //   - JSON { csv: "..." } from the admin UI
+  //   - JSON { receipts: [{shift_start_iso, ...}] } for direct manual entry
+  let csvText = null;
+  let receipts = null;
+  if (typeof body === 'string') {
+    csvText = body;
+  } else if (body && typeof body === 'object') {
+    if (typeof body.csv === 'string') csvText = body.csv;
+    else if (Array.isArray(body.receipts)) receipts = body.receipts;
+  }
+  if (!csvText && !receipts) {
+    return err(400, 'send a CSV body (Content-Type: text/csv) or '
+                  + '{csv: "..."} JSON or {receipts: [...]} JSON');
+  }
+
+  let parsed = [];
+  if (csvText) {
+    const { headers: hdrs, rows } = _parseCsv(csvText);
+    const missing = POS_CSV_REQUIRED.filter(c => !hdrs.includes(c));
+    if (missing.length) {
+      return err(400, `CSV missing required columns: ${missing.join(', ')} `
+                    + `(found: ${hdrs.join(', ')})`);
+    }
+    parsed = rows;
+  } else {
+    parsed = receipts.map(r => ({
+      shift_start_iso: String(r.shift_start_iso || r.shiftStartIso || ''),
+      shift_end_iso:   String(r.shift_end_iso   || r.shiftEndIso   || ''),
+      drink_count:     String(r.drink_count     ?? r.drinkCount     ?? ''),
+      bottle_count:    String(r.bottle_count    ?? r.bottleCount    ?? ''),
+    }));
+  }
+
+  // Validate + write each row
+  const uploadedAt = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  const uploadedBy = String(body?.uploadedBy || 'admin');
+  const written = [];
+  const skipped = [];
+  for (const r of parsed) {
+    const startIso = (r.shift_start_iso || '').trim();
+    const endIso   = (r.shift_end_iso   || '').trim();
+    const drinkN   = Number(r.drink_count);
+    if (!startIso || !endIso || !Number.isFinite(drinkN) || drinkN < 0) {
+      skipped.push({ row: r, reason: 'invalid required fields' });
+      continue;
+    }
+    const item = {
+      venueId:        { S: venueId },
+      shiftStartIso:  { S: startIso },
+      shiftEndIso:    { S: endIso },
+      posDrinkCount:  { N: String(Math.floor(drinkN)) },
+      uploadedAt:     { S: uploadedAt },
+      uploadedBy:     { S: uploadedBy },
+      source:         { S: 'csv' },
+    };
+    const bottleStr = (r.bottle_count || '').trim();
+    if (bottleStr && bottleStr.toLowerCase() !== 'none' && bottleStr.toLowerCase() !== 'null') {
+      const b = Number(bottleStr);
+      if (Number.isFinite(b) && b >= 0) item.posBottleCount = { N: String(Math.floor(b)) };
+    }
+    try {
+      await ddb.send(new PutItemCommand({ TableName: POS_TABLE, Item: item }));
+      written.push({ shiftStartIso: startIso, drinks: drinkN });
+    } catch (e) {
+      if (e.name === 'ResourceNotFoundException') {
+        return err(503, `${POS_TABLE} table doesn't exist yet. Create with: `
+          + `aws dynamodb create-table --table-name ${POS_TABLE} `
+          + `--attribute-definitions AttributeName=venueId,AttributeType=S `
+          + `AttributeName=shiftStartIso,AttributeType=S `
+          + `--key-schema AttributeName=venueId,KeyType=HASH `
+          + `AttributeName=shiftStartIso,KeyType=RANGE `
+          + `--billing-mode PAY_PER_REQUEST --region us-east-2`);
+      }
+      skipped.push({ row: r, reason: `${e.name}: ${e.message}` });
+    }
+  }
+  return ok({
+    venueId,
+    written: written.length,
+    skipped: skipped.length,
+    receipts: written,
+    errors:   skipped,
+  });
+}
+
+async function listPosReceipts(venueId, qs = {}) {
+  if (!venueId) return err(400, 'venueId required');
+  const limit = Math.min(parseInt(qs.limit || '500', 10), 1000);
+  try {
+    const res = await ddb.send(new QueryCommand({
+      TableName: POS_TABLE,
+      KeyConditionExpression: 'venueId = :v',
+      ExpressionAttributeValues: { ':v': { S: venueId } },
+      ScanIndexForward: false,  // most recent shifts first
+      Limit: limit,
+    }));
+    const items = (res.Items ?? []).map(it => ({
+      venueId:         it.venueId?.S,
+      shiftStartIso:   it.shiftStartIso?.S,
+      shiftEndIso:     it.shiftEndIso?.S,
+      posDrinkCount:   Number(it.posDrinkCount?.N || 0),
+      posBottleCount:  it.posBottleCount?.N ? Number(it.posBottleCount.N) : null,
+      uploadedAt:      it.uploadedAt?.S,
+      uploadedBy:      it.uploadedBy?.S,
+      source:          it.source?.S,
+    }));
+    return ok({ venueId, count: items.length, receipts: items });
+  } catch (e) {
+    if (e.name === 'ResourceNotFoundException')
+      return ok({ venueId, count: 0, receipts: [], note: `${POS_TABLE} not yet created` });
+    throw e;
+  }
+}
+
+async function deletePosReceipt(venueId, shiftStartIso) {
+  if (!venueId || !shiftStartIso) return err(400, 'venueId + shiftStartIso required');
+  try {
+    await ddb.send(new DeleteItemCommand({
+      TableName: POS_TABLE,
+      Key: { venueId: { S: venueId }, shiftStartIso: { S: shiftStartIso } },
+    }));
+    return ok({ venueId, shiftStartIso, deleted: true });
+  } catch (e) {
+    if (e.name === 'ResourceNotFoundException')
+      return ok({ venueId, shiftStartIso, deleted: true });
+    throw e;
+  }
+}
+
+async function _aggregateWorkerCounts(venueId, fromIso, toIso) {
+  // Sum drink_count + bottle_count from VenueScopeJobs whose finished_at
+  // falls in the window. The worker pushes per-segment job records with
+  // summary_json containing the counts; we sum across all cameras for the
+  // venue and the window.
+  //
+  // Note: VenueScopeJobs schema uses createdAt and finishedAt (ISO strings).
+  // We filter by createdAt within the window (start of segment).
+  const fromMs = new Date(fromIso).getTime();
+  const toMs   = new Date(toIso).getTime();
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs))
+    throw new Error(`Invalid window: from=${fromIso} to=${toIso}`);
+
+  let drinks  = 0;
+  let bottles = 0;
+  let jobs    = 0;
+  let lastEvaluatedKey = undefined;
+
+  do {
+    const res = await ddb.send(new ScanCommand({
+      TableName: JOBS_TABLE,
+      FilterExpression: 'venueId = :v AND createdAt BETWEEN :a AND :b',
+      ExpressionAttributeValues: {
+        ':v': { S: venueId },
+        ':a': { S: fromIso },
+        ':b': { S: toIso },
+      },
+      ExclusiveStartKey: lastEvaluatedKey,
+    }));
+    for (const item of (res.Items ?? [])) {
+      jobs++;
+      const sjStr = item.summary_json?.S;
+      if (!sjStr) continue;
+      try {
+        const sj = JSON.parse(sjStr);
+        const d = Number(sj.drink_count ?? sj.today_drinks ?? 0);
+        const b = Number(sj.bottle_count ?? 0);
+        if (Number.isFinite(d)) drinks  += Math.max(0, d);
+        if (Number.isFinite(b)) bottles += Math.max(0, b);
+      } catch { /* corrupt summary_json — skip */ }
+    }
+    lastEvaluatedKey = res.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  return { drinks, bottles, jobs };
+}
+
+async function getAccuracy(venueId, qs = {}) {
+  if (!venueId) return err(400, 'venueId required');
+  const fromIso = qs.from || qs.shiftStartIso;
+  const toIso   = qs.to   || qs.shiftEndIso;
+
+  // Pull all POS receipts for this venue (or filter by window if from/to given)
+  let receipts = [];
+  try {
+    const res = await ddb.send(new QueryCommand({
+      TableName: POS_TABLE,
+      KeyConditionExpression: 'venueId = :v',
+      ExpressionAttributeValues: { ':v': { S: venueId } },
+      ScanIndexForward: false,
+      Limit: 1000,
+    }));
+    receipts = (res.Items ?? []).map(it => ({
+      shiftStartIso: it.shiftStartIso?.S,
+      shiftEndIso:   it.shiftEndIso?.S,
+      drinks:        Number(it.posDrinkCount?.N || 0),
+      bottles:       it.posBottleCount?.N ? Number(it.posBottleCount.N) : null,
+    }));
+  } catch (e) {
+    if (e.name !== 'ResourceNotFoundException') throw e;
+  }
+
+  // Optional window filter
+  if (fromIso) receipts = receipts.filter(r => r.shiftStartIso >= fromIso);
+  if (toIso)   receipts = receipts.filter(r => r.shiftEndIso   <= toIso);
+
+  // Reconcile each shift against worker counts
+  const results = [];
+  for (const r of receipts) {
+    const wc = await _aggregateWorkerCounts(venueId, r.shiftStartIso, r.shiftEndIso);
+    const expected = Math.max(0, r.drinks);
+    const errPct = expected > 0 ? Math.abs(wc.drinks - expected) / expected : 0;
+    const grade  = expected > 0 ? _gradeFromErrorPct(errPct) : 'n/a';
+    const notes  = [];
+    if (expected === 0 && wc.drinks > 0) {
+      notes.push(`FALSE_POSITIVES: POS shows 0 drinks but worker detected ${wc.drinks}`);
+    } else if (expected > 0 && wc.drinks < expected * 0.7) {
+      notes.push(`UNDER_COUNT: detected ${wc.drinks} of ${expected} (-${Math.round((1 - wc.drinks/expected) * 100)}%)`);
+    } else if (expected > 0 && wc.drinks > expected * 1.3) {
+      notes.push(`OVER_COUNT: detected ${wc.drinks} of ${expected} (+${Math.round((wc.drinks/expected - 1) * 100)}%)`);
+    }
+
+    const rec = {
+      shiftStartIso:    r.shiftStartIso,
+      shiftEndIso:      r.shiftEndIso,
+      detectedDrinks:   wc.drinks,
+      expectedDrinks:   expected,
+      drinkErrorPct:    Math.round(errPct * 1000) / 1000,
+      drinkGrade:       grade,
+      jobsAggregated:   wc.jobs,
+      notes,
+    };
+    if (r.bottles !== null && r.bottles !== undefined) {
+      const expB  = Math.max(0, r.bottles);
+      const errB  = expB > 0 ? Math.abs(wc.bottles - expB) / expB : 0;
+      rec.detectedBottles = wc.bottles;
+      rec.expectedBottles = expB;
+      rec.bottleErrorPct  = Math.round(errB * 1000) / 1000;
+      rec.bottleGrade     = expB > 0 ? _gradeFromErrorPct(errB) : 'n/a';
+    }
+    results.push(rec);
+  }
+
+  // Roll up
+  let totalExpected = 0, totalDetected = 0;
+  for (const r of results) {
+    totalExpected += r.expectedDrinks;
+    totalDetected += r.detectedDrinks;
+  }
+  const overallErr   = totalExpected > 0
+    ? Math.abs(totalDetected - totalExpected) / totalExpected : 0;
+  const overallGrade = totalExpected > 0 ? _gradeFromErrorPct(overallErr) : 'n/a';
+
+  return ok({
+    venueId,
+    from:           fromIso || null,
+    to:             toIso   || null,
+    shifts:         results,
+    overall: {
+      shiftsCompared: results.length,
+      detectedDrinks: totalDetected,
+      expectedDrinks: totalExpected,
+      drinkErrorPct:  Math.round(overallErr * 1000) / 1000,
+      drinkGrade:     overallGrade,
+    },
+  });
+}
+
 // ─── Per-venue droplet provisioning (DigitalOcean) ────────────────────────────
 //
 // Self-service automation for the per-venue droplet model. When the admin
@@ -2355,6 +2698,20 @@ export const handler = async (event, context) => {
     if (method === 'POST'   && emailConfigMatch)                       return saveVenueEmailConfig(decodeURIComponent(emailConfigMatch[1]), body);
     const deleteVenueMatch = rawPath.match(/^\/admin\/venues\/([^/]+)$/);
     if (method === 'DELETE' && deleteVenueMatch)                       return deleteVenue(deleteVenueMatch[1]);
+
+    // POS receipts + accuracy reconciliation (Phase 3.2)
+    const posUploadMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/pos-receipts$/);
+    const posDeleteMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/pos-receipts\/(.+)$/);
+    const accuracyMatch  = rawPath.match(/^\/admin\/venues\/([^/]+)\/accuracy$/);
+    if (method === 'POST'   && posUploadMatch) {
+      // Accept raw CSV in body OR JSON {csv|receipts: ...}
+      const ct = (event.headers?.['content-type'] || event.headers?.['Content-Type'] || '').toLowerCase();
+      const bodyToPass = ct.includes('text/csv') ? (event.body || '') : body;
+      return uploadPosReceipts(decodeURIComponent(posUploadMatch[1]), bodyToPass, event.headers || {});
+    }
+    if (method === 'GET'    && posUploadMatch)  return listPosReceipts(decodeURIComponent(posUploadMatch[1]), qs);
+    if (method === 'DELETE' && posDeleteMatch)  return deletePosReceipt(decodeURIComponent(posDeleteMatch[1]), decodeURIComponent(posDeleteMatch[2]));
+    if (method === 'GET'    && accuracyMatch)   return getAccuracy(decodeURIComponent(accuracyMatch[1]), qs);
 
     // Per-venue droplet provisioning (Step 7 — auto-onboarding for new venues)
     const dropletMatch = rawPath.match(/^\/admin\/venues\/([^/]+)\/droplet$/);

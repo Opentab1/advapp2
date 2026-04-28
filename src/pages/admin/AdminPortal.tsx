@@ -18,6 +18,7 @@ import { OpsMonitor } from './OpsMonitor';
 import { AlertsInbox } from './AlertsInbox';
 import { ReviewQueue } from './ReviewQueue';
 import { AccuracySLA } from './AccuracySLA';
+import { PosReceipts } from './PosReceipts';
 import { OnboardVenue } from './OnboardVenue';
 import { WorkerTester } from './WorkerTester';
 import authService from '../../services/auth.service';
@@ -112,6 +113,7 @@ function AdminPortalInner() {
           {activeTab === 'alerts'          && <ErrorBoundary key="alerts"><AlertsInbox /></ErrorBoundary>}
           {activeTab === 'review-queue'    && <ErrorBoundary key="review-queue"><ReviewQueue /></ErrorBoundary>}
           {activeTab === 'accuracy'        && <ErrorBoundary key="accuracy"><AccuracySLA /></ErrorBoundary>}
+          {activeTab === 'pos-receipts'    && <ErrorBoundary key="pos-receipts"><PosReceipts /></ErrorBoundary>}
           {activeTab === 'onboard'         && <ErrorBoundary key="onboard"><OnboardVenue /></ErrorBoundary>}
           {activeTab === 'users'           && <ErrorBoundary key="users"><UsersManagement /></ErrorBoundary>}
           {activeTab === 'analytics'       && <ErrorBoundary key="analytics"><SystemAnalytics /></ErrorBoundary>}

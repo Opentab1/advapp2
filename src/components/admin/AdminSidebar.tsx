@@ -16,6 +16,7 @@ import {
   ClipboardList,
   Sparkles,
   FlaskConical,
+  Receipt,
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -38,6 +39,7 @@ const navItems: NavItem[] = [
   { id: 'alerts',          label: 'Alerts Inbox',     icon: Bell },
   { id: 'review-queue',    label: 'Review Queue',     icon: ClipboardList },
   { id: 'accuracy',        label: 'Accuracy SLA',     icon: Target },
+  { id: 'pos-receipts',    label: 'POS Receipts',     icon: Receipt },
   { id: 'venues',          label: 'Venues',           icon: Building2 },
   { id: 'cameras',         label: 'Cameras',          icon: Camera },
   { id: 'calibration',    label: 'Bar Calibration',  icon: Sliders },
