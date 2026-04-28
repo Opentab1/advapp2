@@ -358,6 +358,7 @@ export function ServeEventsGallery({ liveCounts }: ServeEventsGalleryProps) {
       for (const e of evList) events.push({ ...e, cameraId: cid });
     }
   }
+  const [lightbox, setLightbox] = useState<{ url: string; event: ServeEvent } | null>(null);
   if (!events.length) return null;
 
   return (
@@ -367,12 +368,12 @@ export function ServeEventsGallery({ liveCounts }: ServeEventsGalleryProps) {
           Detected serves ({events.length})
         </div>
         <div className="text-[10px] text-gray-600">
-          click a snapshot to verify
+          click a snapshot to enlarge
         </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {events.slice(0, 24).map((e, i) => (
-          <ServeThumb key={i} event={e} />
+          <ServeThumb key={i} event={e} onZoom={(url) => setLightbox({ url, event: e })} />
         ))}
       </div>
       {events.length > 24 && (
@@ -380,34 +381,64 @@ export function ServeEventsGallery({ liveCounts }: ServeEventsGalleryProps) {
           showing first 24 of {events.length} serves
         </div>
       )}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-6"
+          onClick={() => setLightbox(null)}
+        >
+          <div
+            className="relative max-w-5xl w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={lightbox.url}
+              alt="serve snapshot"
+              className="w-full h-auto rounded-lg border border-white/10"
+            />
+            <div className="mt-3 flex items-center justify-between text-xs text-gray-300">
+              <div className="font-mono">
+                +{Math.floor(lightbox.event.t / 60)}:{String(Math.floor(lightbox.event.t % 60)).padStart(2, '0')}
+                <span className="text-gray-500"> · score {lightbox.event.score?.toFixed(2)} · {lightbox.event.station || '—'}</span>
+              </div>
+              <button
+                onClick={() => setLightbox(null)}
+                className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ServeThumb({ event }: { event: ServeEvent & { cameraId: string } }) {
+function ServeThumb({
+  event,
+  onZoom,
+}: {
+  event: ServeEvent & { cameraId: string };
+  onZoom: (url: string) => void;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
-  const handleClick = async () => {
-    if (url) {
-      window.open(url, '_blank');
-      return;
-    }
-    if (!event.snapshot) {
-      setError('no snapshot');
-      return;
-    }
+  // Auto-fetch the presigned URL on mount so the thumbnail renders inline.
+  useEffect(() => {
+    let cancelled = false;
+    if (!event.snapshot) return;
     setLoading(true);
-    try {
-      const u = await getSnapshotUrl(event.snapshot);
-      setUrl(u);
-      window.open(u, '_blank');
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
+    getSnapshotUrl(event.snapshot)
+      .then((u) => { if (!cancelled) setUrl(u); })
+      .catch((e) => { if (!cancelled) setError((e as Error).message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [event.snapshot]);
+
+  const handleClick = () => {
+    if (url) onZoom(url);
   };
 
   const ts = `${Math.floor(event.t / 60)}:${String(Math.floor(event.t % 60)).padStart(2, '0')}`;
@@ -415,12 +446,18 @@ function ServeThumb({ event }: { event: ServeEvent & { cameraId: string } }) {
   return (
     <button
       onClick={handleClick}
-      disabled={!event.snapshot || loading}
+      disabled={!url}
       className="text-left rounded-lg bg-white/[0.03] border border-white/10 hover:border-fuchsia-500/40 p-2 disabled:opacity-50 transition-colors"
       title={event.reason || 'serve event'}
     >
-      <div className="aspect-video bg-black/30 rounded mb-1.5 flex items-center justify-center text-[10px] text-gray-500">
-        {loading ? 'loading…' : (event.snapshot ? '🎬 serve snapshot' : 'no img')}
+      <div className="aspect-video bg-black/30 rounded mb-1.5 overflow-hidden flex items-center justify-center">
+        {url ? (
+          <img src={url} alt="serve" className="w-full h-full object-cover" loading="lazy" />
+        ) : (
+          <span className="text-[10px] text-gray-500">
+            {loading ? 'loading…' : (event.snapshot ? 'no preview' : 'no img')}
+          </span>
+        )}
       </div>
       <div className="text-[11px] text-white font-mono">+{ts}</div>
       <div className="text-[10px] text-gray-500">
