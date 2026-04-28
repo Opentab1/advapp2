@@ -101,6 +101,34 @@ function worstBand(bands: AccuracyBand[]): AccuracyBand {
  */
 async function scoreDrinkCount(venueId: string): Promise<FeatureAccuracy> {
   const target  = ACCURACY_TARGETS.drink_count.target;
+
+  // Prefer POS-derived ground truth when the operator has uploaded receipts.
+  // Falls back to the proxy (worker confidence × unrung-drink fraction) when
+  // there's no POS data yet.
+  try {
+    const { getAccuracy } = await import('./pos.service');
+    const acc = await getAccuracy(venueId);
+    if (acc?.overall && acc.overall.shiftsCompared > 0) {
+      const errPct = acc.overall.drinkErrorPct ?? 0;
+      const value  = Math.max(0, Math.min(100, (1 - errPct) * 100));
+      return {
+        feature: 'drink_count', label: FEATURE_LABEL.drink_count,
+        metric: 'pct_accuracy', target, value,
+        sampleSize: acc.overall.shiftsCompared,
+        band: bandForPctAccuracy(value, target),
+        narrative:
+          `POS reconciliation across ${acc.overall.shiftsCompared} shift` +
+          `${acc.overall.shiftsCompared === 1 ? '' : 's'}: detected ` +
+          `${acc.overall.detectedDrinks} of ${acc.overall.expectedDrinks} ` +
+          `drinks (${(errPct * 100).toFixed(1)}% error). ` +
+          `Grade ${acc.overall.drinkGrade}.`,
+        detailLink: 'pos-receipts',
+      };
+    }
+  } catch (e) {
+    // POS service / table not available → fall through to proxy
+  }
+
   try {
     const jobs = await adminService.listJobs(venueId, 50);
     const drinkJobs = jobs.filter(j =>
@@ -110,7 +138,8 @@ async function scoreDrinkCount(venueId: string): Promise<FeatureAccuracy> {
       return {
         feature: 'drink_count', label: FEATURE_LABEL.drink_count,
         metric: 'pct_accuracy', target, sampleSize: 0, band: 'no-data',
-        narrative: 'No completed drink_count shifts yet for this venue.',
+        narrative: 'No completed drink_count shifts yet for this venue. Upload POS receipts on the POS Receipts page to start grading.',
+        detailLink: 'pos-receipts',
       };
     }
     // Proxy accuracy: weighted average of confidenceScore, penalized by unrungDrinks fraction

@@ -33,7 +33,7 @@ echo "  Role:    $ROLE_NAME"
 echo "  Account: $ACCOUNT"
 echo
 
-# ── DDB table ─────────────────────────────────────────────────
+# ── DDB tables ────────────────────────────────────────────────
 echo "Ensuring VenueScopeTestRuns table exists..."
 if aws dynamodb describe-table --table-name VenueScopeTestRuns --region "$REGION" >/dev/null 2>&1; then
   echo "  → exists"
@@ -46,6 +46,24 @@ else
     --region "$REGION" >/dev/null
   echo "  ✓ created — waiting for ACTIVE..."
   aws dynamodb wait table-exists --table-name VenueScopeTestRuns --region "$REGION"
+fi
+
+# POS receipts table (Phase 3.2). Composite key — one item per shift per
+# venue. Used by /admin/venues/{id}/pos-receipts + /admin/venues/{id}/accuracy.
+echo "Ensuring VenueScopePosReceipts table exists..."
+if aws dynamodb describe-table --table-name VenueScopePosReceipts --region "$REGION" >/dev/null 2>&1; then
+  echo "  → exists"
+else
+  aws dynamodb create-table \
+    --table-name VenueScopePosReceipts \
+    --attribute-definitions AttributeName=venueId,AttributeType=S \
+                            AttributeName=shiftStartIso,AttributeType=S \
+    --key-schema AttributeName=venueId,KeyType=HASH \
+                 AttributeName=shiftStartIso,KeyType=RANGE \
+    --billing-mode PAY_PER_REQUEST \
+    --region "$REGION" >/dev/null
+  echo "  ✓ created — waiting for ACTIVE..."
+  aws dynamodb wait table-exists --table-name VenueScopePosReceipts --region "$REGION"
 fi
 echo
 
@@ -67,6 +85,8 @@ acct = os.environ['ACCOUNT']
 new_arns = [
     f"arn:aws:dynamodb:us-east-2:{acct}:table/VenueScopeTestRuns",
     f"arn:aws:dynamodb:us-east-2:{acct}:table/VenueScopeTestRuns/*",
+    f"arn:aws:dynamodb:us-east-2:{acct}:table/VenueScopePosReceipts",
+    f"arn:aws:dynamodb:us-east-2:{acct}:table/VenueScopePosReceipts/*",
 ]
 patched = False
 for stmt in doc.get("Statement", []):
