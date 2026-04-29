@@ -32,16 +32,17 @@ interface NavItem {
   badge?: number;
 }
 
+// Cameras / Ops Monitor / Accuracy SLA were removed from this nav — their
+// content now lives inside the per-venue dashboard (Venues → click a venue
+// → tabs). The standalone routes still exist in AdminPortal for direct
+// deep-links if anything links there, just no sidebar entry.
 const navItems: NavItem[] = [
   { id: 'dashboard',       label: 'Dashboard',        icon: LayoutDashboard },
   { id: 'onboard',         label: 'Onboard Venue',    icon: Sparkles },
-  { id: 'ops',             label: 'Ops Monitor',      icon: Activity },
+  { id: 'venues',          label: 'Venues',           icon: Building2 },
   { id: 'alerts',          label: 'Alerts Inbox',     icon: Bell },
   { id: 'review-queue',    label: 'Review Queue',     icon: ClipboardList },
-  { id: 'accuracy',        label: 'Accuracy SLA',     icon: Target },
   { id: 'pos-receipts',    label: 'POS Receipts',     icon: Receipt },
-  { id: 'venues',          label: 'Venues',           icon: Building2 },
-  { id: 'cameras',         label: 'Cameras',          icon: Camera },
   { id: 'calibration',    label: 'Bar Calibration',  icon: Sliders },
   { id: 'worker-tester',   label: 'Worker Tester',    icon: FlaskConical },
   { id: 'crm',             label: 'Sales CRM',        icon: Target },

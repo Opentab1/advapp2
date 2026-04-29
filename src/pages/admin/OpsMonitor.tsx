@@ -215,7 +215,7 @@ interface VenueRow {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export function OpsMonitor() {
+export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
   const { venues, loadingVenues, selectedVenueId } = useAdminVenue();
 
   // Venue health table data
@@ -451,7 +451,7 @@ export function OpsMonitor() {
           <p className="text-gray-400 text-sm mt-1">Droplet health · worker controls · venue monitoring</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <VenueSelector />
+          {!embedded && <VenueSelector />}
           {lastUpdated && (
             <div className="flex items-center gap-2 text-xs text-gray-500">
               <Clock className="w-3.5 h-3.5" />

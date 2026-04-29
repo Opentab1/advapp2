@@ -906,7 +906,7 @@ function CameraLivePreview({ label, proxyBase, rtspUrl, barConfigJson, tableZone
 
 // ─── Venue Camera Section ─────────────────────────────────────────────────────
 
-function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName: string }) {
+export function VenueCameraSection({ venueId, venueName }: { venueId: string; venueName: string }) {
   const [expanded, setExpanded] = useState(false);
   const [cameras, setCameras] = useState<AdminCamera[]>([]);
   const [loading, setLoading] = useState(true);

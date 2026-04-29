@@ -1,13 +1,18 @@
 /**
- * VenueDetail — single venue dashboard.
+ * VenueDetail — single venue dashboard with internal tabs.
  *
- * One screen that shows everything we know about a venue: profile, droplet
- * status, cameras, recent jobs. Reached by clicking a venue's name on the
- * Venues Management list. Replaces the prior pattern of bouncing between
- * the Venues, Cameras, and Ops Monitor tabs to piece this together.
+ * The One Place for everything we know about a venue. Tabs:
+ *   Overview · Cameras · Ops · Accuracy · Jobs
  *
- * Edits (add/edit camera, deep ops) still live in their dedicated pages —
- * this page is the at-a-glance landing surface and links out for those.
+ * Each tab renders the same content the standalone admin page used to
+ * show, but scoped to this venue. The sidebar no longer surfaces
+ * Cameras / Ops Monitor / Accuracy SLA as standalone items — they live
+ * inside the venue page now. Standalone implementations are still
+ * reachable via direct routes if anything links there, just not from
+ * the sidebar.
+ *
+ * VenueDetail sets `selectedVenueId` in AdminVenueContext on mount so
+ * embedded OpsMonitor + AccuracySLA auto-filter to this venue.
  */
 
 import { useEffect, useState } from 'react';
@@ -15,15 +20,19 @@ import { motion } from 'framer-motion';
 import {
   ArrowLeft, Building2, MapPin, User, Mail, Camera as CameraIcon,
   Activity, Clock, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
-  ExternalLink,
+  LayoutDashboard, Target, Briefcase,
 } from 'lucide-react';
 import adminService, {
   AdminVenue, AdminCamera, AdminJob,
 } from '../../services/admin.service';
 import { DropletPanel } from '../../components/admin/DropletPanel';
+import { useAdminVenue } from '../../contexts/AdminVenueContext';
 import venueSettingsService from '../../services/venue-settings.service';
 import { isVenueOpenNow, nextOpenLabel, type V2BusinessHours }
   from '../../utils/venueHours';
+import { VenueCameraSection } from './CamerasManagement';
+import { OpsMonitor }   from './OpsMonitor';
+import { AccuracySLA }  from './AccuracySLA';
 
 interface VenueDetailProps {
   venue: AdminVenue;
@@ -31,14 +40,39 @@ interface VenueDetailProps {
   onBack: () => void;
 }
 
+type TabId = 'overview' | 'cameras' | 'ops' | 'accuracy' | 'jobs';
+
+const TABS: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'overview', label: 'Overview',  icon: LayoutDashboard },
+  { id: 'cameras',  label: 'Cameras',   icon: CameraIcon      },
+  { id: 'ops',      label: 'Ops',       icon: Activity        },
+  { id: 'accuracy', label: 'Accuracy',  icon: Target          },
+  { id: 'jobs',     label: 'Jobs',      icon: Briefcase       },
+];
+
 export function VenueDetail({ venue, displayName, onBack }: VenueDetailProps) {
+  const [activeTab, setActiveTab] = useState<TabId>('overview');
+  const { setSelectedVenueId } = useAdminVenue();
+
+  // Pin the admin venue context to this venue while the detail page is open.
+  // Embedded OpsMonitor + AccuracySLA read selectedVenueId via useAdminVenue
+  // and auto-scope. Restore on unmount so the standalone pages aren't stuck
+  // filtered if the user navigates back to one via an old link.
+  useEffect(() => {
+    setSelectedVenueId(venue.venueId);
+    // Don't clear on unmount — users coming back here should keep their
+    // last venue selected. Setting null on unmount would break VenueSelector
+    // continuity in standalone pages.
+  }, [venue.venueId, setSelectedVenueId]);
+
+  // ── Overview-tab data ──────────────────────────────────────────────────
   const [cameras, setCameras] = useState<AdminCamera[]>([]);
   const [jobs, setJobs]       = useState<AdminJob[]>([]);
   const [hours, setHours]     = useState<V2BusinessHours | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
 
-  const refresh = async () => {
+  const refreshOverview = async () => {
     setLoading(true);
     setError(null);
     try {
@@ -48,26 +82,22 @@ export function VenueDetail({ venue, displayName, onBack }: VenueDetailProps) {
       ]);
       setCameras(cams);
       setJobs(recentJobs);
-      // Pull cloud-synced business hours so the same schedule the worker
-      // gates on shows up here. Failing closed (null) is fine — just hides
-      // the hours card.
       try {
-        const cloudHours = await venueSettingsService.loadSettingsFromCloud(venue.venueId);
-        const bh = cloudHours?.businessHours as V2BusinessHours | undefined;
+        const cloud = await venueSettingsService.loadSettingsFromCloud(venue.venueId);
+        const bh = cloud?.businessHours as V2BusinessHours | undefined;
         setHours(bh && bh.days ? bh : null);
-      } catch {
-        setHours(null);
-      }
+      } catch { setHours(null); }
     } catch (e: any) {
-      setError(e?.message || 'Failed to load venue detail');
+      setError(e?.message || 'Failed to load venue overview');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [venue.venueId]);
+  useEffect(() => { refreshOverview(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [venue.venueId]);
 
-  // ── Quick-glance computed signals ────────────────────────────────────────
+  // Computed header signals — same on every tab so the user always knows
+  // they're on the right venue.
   const enabledCameras = cameras.filter(c => c.enabled).length;
   const recalNeeded    = cameras.filter(c => c.needsRecalibration).length;
   const venueIsOpen    = isVenueOpenNow(hours ?? null);
@@ -82,7 +112,7 @@ export function VenueDetail({ venue, displayName, onBack }: VenueDetailProps) {
     <div className="min-h-screen p-4 md:p-6 lg:p-8">
       <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}>
         {/* ── Header ── */}
-        <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
+        <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
           <div className="flex items-center gap-4">
             <button
               onClick={onBack}
@@ -103,122 +133,249 @@ export function VenueDetail({ venue, displayName, onBack }: VenueDetailProps) {
               </div>
             </div>
           </div>
-          <button
-            onClick={refresh}
-            disabled={loading}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          {activeTab === 'overview' && (
+            <button
+              onClick={refreshOverview}
+              disabled={loading}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          )}
         </div>
 
-        {error && (
+        {/* ── Tab nav ── */}
+        <div className="flex gap-2 mb-6 flex-wrap border-b border-white/5">
+          {TABS.map(t => {
+            const Icon = t.icon;
+            const active = activeTab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setActiveTab(t.id)}
+                className={`flex items-center gap-2 px-4 py-2 -mb-px text-sm font-medium transition-colors border-b-2 ${
+                  active
+                    ? 'text-purple-300 border-purple-400'
+                    : 'text-gray-400 border-transparent hover:text-white hover:border-white/20'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {error && activeTab === 'overview' && (
           <div className="mb-6 p-4 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
             {error}
           </div>
         )}
 
-        {/* ── At-a-glance stat tiles ── */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-          <StatTile
-            label="Cameras"
-            value={`${enabledCameras}/${cameras.length}`}
-            sub={recalNeeded > 0 ? `${recalNeeded} need recal` : 'all healthy'}
-            tone={recalNeeded > 0 ? 'warn' : 'ok'}
-            icon={<CameraIcon className="w-4 h-4" />}
+        {/* ── Tab contents ── */}
+        {activeTab === 'overview' && (
+          <OverviewTab
+            venue={venue}
+            cameras={cameras}
+            jobs={jobs}
+            hours={hours}
+            stats={{
+              enabledCameras, totalCameras: cameras.length, recalNeeded,
+              venueIsOpen, nextOpen, todayDrinks, liveJobs, theftFlags,
+            }}
           />
-          <StatTile
-            label="Status now"
-            value={venueIsOpen ? 'Open' : 'Closed'}
-            sub={venueIsOpen ? 'worker active' : (nextOpen ? `opens ${nextOpen}` : 'no schedule set')}
-            tone={venueIsOpen ? 'ok' : 'muted'}
-            icon={<Clock className="w-4 h-4" />}
-          />
-          <StatTile
-            label="Today's drinks"
-            value={todayDrinks > 0 ? `${todayDrinks}` : '—'}
-            sub={liveJobs > 0 ? `${liveJobs} live job${liveJobs !== 1 ? 's' : ''}` : 'no live jobs'}
-            tone="ok"
-            icon={<Activity className="w-4 h-4" />}
-          />
-          <StatTile
-            label="Theft flags"
-            value={`${theftFlags}`}
-            sub={`across ${jobs.length} recent job${jobs.length !== 1 ? 's' : ''}`}
-            tone={theftFlags > 0 ? 'warn' : 'ok'}
-            icon={<AlertTriangle className="w-4 h-4" />}
-          />
-        </div>
+        )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* ── Left column: profile + droplet + business hours ── */}
-          <div className="lg:col-span-1 space-y-6">
-            <Section title="Profile">
-              <ProfileRow icon={<User className="w-3.5 h-3.5" />} label="Owner"
-                value={venue.ownerName || venue.ownerEmail || '—'} />
-              <ProfileRow icon={<Mail className="w-3.5 h-3.5" />} label="Email"
-                value={venue.ownerEmail || '—'} />
-              <ProfileRow icon={<MapPin className="w-3.5 h-3.5" />} label="Location"
-                value={venue.locationName || venue.locationId || '—'} />
-              <ProfileRow icon={<Building2 className="w-3.5 h-3.5" />} label="Capacity"
-                value={venue.capacity ? `${venue.capacity} guests` : '—'} />
-              <ProfileRow icon={<Activity className="w-3.5 h-3.5" />} label="Tier"
-                value={venue.venueTier ? prettyTier(venue.venueTier) : '—'} />
-            </Section>
-
-            <Section title="Worker Droplet">
-              <DropletPanel venueId={venue.venueId} venueName={venue.venueName} />
-            </Section>
-
-            <Section title="Business Hours">
-              {hours ? <HoursTable hours={hours} /> : (
-                <p className="text-sm text-gray-500">
-                  No schedule saved. The worker defaults to always-on for venues without a schedule.
-                  Hours are configured by the venue owner in <span className="text-gray-300">Settings → Business Hours</span>.
-                </p>
-              )}
-            </Section>
+        {activeTab === 'cameras' && (
+          <div className="-mx-2">
+            <VenueCameraSection venueId={venue.venueId} venueName={venue.venueName} />
           </div>
+        )}
 
-          {/* ── Right column: cameras + recent jobs ── */}
-          <div className="lg:col-span-2 space-y-6">
-            <Section title={`Cameras (${cameras.length})`}
-              right={<ManageLink label="Manage cameras" hash="cameras" />}>
-              {loading && cameras.length === 0 ? (
-                <p className="text-sm text-gray-500">Loading cameras…</p>
-              ) : cameras.length === 0 ? (
-                <p className="text-sm text-gray-500">
-                  No cameras registered yet. Add cameras from the
-                  <span className="text-gray-300"> Cameras Management</span> page.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {cameras.map(cam => <CameraRow key={cam.cameraId} cam={cam} />)}
-                </div>
-              )}
-            </Section>
-
-            <Section title="Recent Jobs"
-              right={<ManageLink label="Open Ops Monitor" hash="ops" />}>
-              {loading && jobs.length === 0 ? (
-                <p className="text-sm text-gray-500">Loading jobs…</p>
-              ) : jobs.length === 0 ? (
-                <p className="text-sm text-gray-500">No jobs yet for this venue.</p>
-              ) : (
-                <div className="space-y-2">
-                  {jobs.map(job => <JobRow key={job.jobId} job={job} />)}
-                </div>
-              )}
-            </Section>
+        {activeTab === 'ops' && (
+          <div className="-m-4 md:-m-6 lg:-m-8">
+            {/* Embedded OpsMonitor inherits selectedVenueId from context.
+                The `embedded` flag hides its built-in venue selector since
+                we already know which venue we're on. */}
+            <OpsMonitor embedded />
           </div>
-        </div>
+        )}
+
+        {activeTab === 'accuracy' && (
+          <div className="-m-4 md:-m-6 lg:-m-8">
+            <AccuracySLA embedded />
+          </div>
+        )}
+
+        {activeTab === 'jobs' && (
+          <JobsTab venueId={venue.venueId} />
+        )}
       </motion.div>
     </div>
   );
 }
 
-// ─── Subcomponents ───────────────────────────────────────────────────────
+// ─── Overview Tab ────────────────────────────────────────────────────────
+
+function OverviewTab({
+  venue, cameras, jobs, hours, stats,
+}: {
+  venue: AdminVenue;
+  cameras: AdminCamera[];
+  jobs: AdminJob[];
+  hours: V2BusinessHours | null;
+  stats: {
+    enabledCameras: number; totalCameras: number; recalNeeded: number;
+    venueIsOpen: boolean; nextOpen: string | null;
+    todayDrinks: number; liveJobs: number; theftFlags: number;
+  };
+}) {
+  return (
+    <>
+      {/* At-a-glance tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+        <StatTile
+          label="Cameras"
+          value={`${stats.enabledCameras}/${stats.totalCameras}`}
+          sub={stats.recalNeeded > 0 ? `${stats.recalNeeded} need recal` : 'all healthy'}
+          tone={stats.recalNeeded > 0 ? 'warn' : 'ok'}
+          icon={<CameraIcon className="w-4 h-4" />}
+        />
+        <StatTile
+          label="Status now"
+          value={stats.venueIsOpen ? 'Open' : 'Closed'}
+          sub={stats.venueIsOpen ? 'worker active' : (stats.nextOpen ? `opens ${stats.nextOpen}` : 'no schedule set')}
+          tone={stats.venueIsOpen ? 'ok' : 'muted'}
+          icon={<Clock className="w-4 h-4" />}
+        />
+        <StatTile
+          label="Today's drinks"
+          value={stats.todayDrinks > 0 ? `${stats.todayDrinks}` : '—'}
+          sub={stats.liveJobs > 0 ? `${stats.liveJobs} live job${stats.liveJobs !== 1 ? 's' : ''}` : 'no live jobs'}
+          tone="ok"
+          icon={<Activity className="w-4 h-4" />}
+        />
+        <StatTile
+          label="Theft flags"
+          value={`${stats.theftFlags}`}
+          sub={`across ${jobs.length} recent job${jobs.length !== 1 ? 's' : ''}`}
+          tone={stats.theftFlags > 0 ? 'warn' : 'ok'}
+          icon={<AlertTriangle className="w-4 h-4" />}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left: profile / droplet / hours */}
+        <div className="lg:col-span-1 space-y-6">
+          <Section title="Profile">
+            <ProfileRow icon={<User className="w-3.5 h-3.5" />} label="Owner"
+              value={venue.ownerName || venue.ownerEmail || '—'} />
+            <ProfileRow icon={<Mail className="w-3.5 h-3.5" />} label="Email"
+              value={venue.ownerEmail || '—'} />
+            <ProfileRow icon={<MapPin className="w-3.5 h-3.5" />} label="Location"
+              value={venue.locationName || venue.locationId || '—'} />
+            <ProfileRow icon={<Building2 className="w-3.5 h-3.5" />} label="Capacity"
+              value={venue.capacity ? `${venue.capacity} guests` : '—'} />
+            <ProfileRow icon={<Activity className="w-3.5 h-3.5" />} label="Tier"
+              value={venue.venueTier ? prettyTier(venue.venueTier) : '—'} />
+          </Section>
+
+          <Section title="Worker Droplet">
+            <DropletPanel venueId={venue.venueId} venueName={venue.venueName} />
+          </Section>
+
+          <Section title="Business Hours">
+            {hours ? <HoursTable hours={hours} /> : (
+              <p className="text-sm text-gray-500">
+                No schedule saved. The worker defaults to always-on for venues without a schedule.
+                Hours are configured by the venue owner in <span className="text-gray-300">Settings → Business Hours</span>.
+              </p>
+            )}
+          </Section>
+        </div>
+
+        {/* Right: cameras summary + recent jobs */}
+        <div className="lg:col-span-2 space-y-6">
+          <Section title={`Cameras (${cameras.length})`}>
+            {cameras.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                No cameras registered yet. Add cameras from the Cameras tab above.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {cameras.map(cam => <CameraRow key={cam.cameraId} cam={cam} />)}
+              </div>
+            )}
+          </Section>
+
+          <Section title="Recent Jobs (last 10)">
+            {jobs.length === 0 ? (
+              <p className="text-sm text-gray-500">No jobs yet for this venue.</p>
+            ) : (
+              <div className="space-y-2">
+                {jobs.map(job => <JobRow key={job.jobId} job={job} />)}
+              </div>
+            )}
+          </Section>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Jobs Tab — paginated full job list ──────────────────────────────────
+
+function JobsTab({ venueId }: { venueId: string }) {
+  const [jobs, setJobs] = useState<AdminJob[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [limit, setLimit] = useState(50);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const data = await adminService.listJobs(venueId, limit);
+      setJobs(data);
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [venueId, limit]);
+
+  return (
+    <Section
+      title={`Jobs (${jobs.length}${jobs.length === limit ? `, capped at ${limit}` : ''})`}
+      right={
+        <div className="flex items-center gap-2">
+          <select
+            value={limit}
+            onChange={e => setLimit(parseInt(e.target.value, 10))}
+            className="text-xs bg-white/5 border border-white/10 rounded px-2 py-1 text-gray-300"
+          >
+            <option value={25}>Last 25</option>
+            <option value={50}>Last 50</option>
+            <option value={100}>Last 100</option>
+            <option value={250}>Last 250</option>
+          </select>
+          <button onClick={refresh} disabled={loading} className="btn-secondary text-xs flex items-center gap-1">
+            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+      }>
+      {loading && jobs.length === 0 ? (
+        <p className="text-sm text-gray-500">Loading jobs…</p>
+      ) : jobs.length === 0 ? (
+        <p className="text-sm text-gray-500">No jobs for this venue.</p>
+      ) : (
+        <div className="space-y-2">
+          {jobs.map(j => <JobRow key={j.jobId} job={j} />)}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ─── Subcomponents (shared across tabs) ──────────────────────────────────
 
 function Section({ title, right, children }:
   { title: string; right?: React.ReactNode; children: React.ReactNode }) {
@@ -372,18 +529,6 @@ function HoursTable({ hours }: { hours: V2BusinessHours }) {
         );
       })}
     </div>
-  );
-}
-
-function ManageLink({ label, hash }: { label: string; hash: string }) {
-  return (
-    <a
-      href={`#${hash}`}
-      className="text-xs text-purple-400 hover:text-purple-300 inline-flex items-center gap-1"
-      title={`Open ${label}`}
-    >
-      {label} <ExternalLink className="w-3 h-3" />
-    </a>
   );
 }
 

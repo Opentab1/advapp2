@@ -83,7 +83,7 @@ function FeatureCard({ feature }: { feature: FeatureAccuracy }) {
   );
 }
 
-export function AccuracySLA() {
+export function AccuracySLA({ embedded = false }: { embedded?: boolean } = {}) {
   const { selectedVenue, venues } = useAdminVenue();
 
   const [snapshots, setSnapshots] = useState<VenueAccuracySnapshot[]>([]);
@@ -157,7 +157,7 @@ export function AccuracySLA() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <VenueSelector />
+          {!embedded && <VenueSelector />}
           <div className="flex items-center gap-1 bg-white/5 rounded p-0.5 text-xs">
             <button
               onClick={() => setViewMode('current')}
