@@ -1,14 +1,19 @@
 /**
- * PullToRefresh - Native-feeling pull to refresh gesture
+ * PullToRefresh - Native pull-to-refresh implementation.
  *
- * Only engages drag when the parent scroll container is at the very top.
- * Otherwise framer-motion's drag handler hijacks vertical touch on mobile
- * and the user can't scroll the page at all (the bug that hid content on
- * Live + Staffing Schedule on phone-width viewports).
+ * Why hand-rolled instead of framer-motion drag:
+ *   The drag prop on motion.div captures touch gestures unconditionally,
+ *   which on mobile prevents native scroll on every page that wraps in
+ *   PullToRefresh. With native touch events we can call preventDefault
+ *   ONLY when we're actively pulling down from the top — every other
+ *   gesture flows through to the browser's scroll handler.
+ *
+ * onTouchMove is attached as a non-passive listener so preventDefault
+ * actually works. React's synthetic onTouchMove is passive by default.
  */
 
 import { ReactNode, useState, useRef, useEffect } from 'react';
-import { motion, useMotionValue, useTransform, PanInfo } from 'framer-motion';
+import { motion, useMotionValue, useTransform } from 'framer-motion';
 import { RefreshCw } from 'lucide-react';
 
 interface PullToRefreshProps {
@@ -17,69 +22,146 @@ interface PullToRefreshProps {
   disabled?: boolean;
 }
 
-function findScrollParent(el: HTMLElement | null): HTMLElement | Window {
+const TRIGGER_PX = 80;
+const RESISTANCE = 0.45; // 1 - elasticity; pull feels firmer than 1:1
+
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
   let p: HTMLElement | null = el?.parentElement ?? null;
   while (p) {
     const oy = getComputedStyle(p).overflowY;
     if (oy === 'auto' || oy === 'scroll') return p;
     p = p.parentElement;
   }
-  return window;
+  return null;
 }
 
 export function PullToRefresh({ children, onRefresh, disabled }: PullToRefreshProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [atTop, setAtTop] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const y = useMotionValue(0);
 
-  // Track whether the parent scroll container is at the top. Drag is only
-  // enabled when atTop is true, so mid-page touch gestures fall through to
-  // native scroll instead of being captured by framer-motion.
+  // Refs hold the per-gesture state so we don't re-render on every touchmove.
+  const startYRef = useRef<number | null>(null);
+  const scrollParentRef = useRef<HTMLElement | null>(null);
+  const activePullRef = useRef(false);
+
+  const rotation = useTransform(y, [0, TRIGGER_PX], [0, 360]);
+  const opacity = useTransform(y, [0, TRIGGER_PX / 2, TRIGGER_PX], [0, 0.5, 1]);
+  const scale = useTransform(y, [0, TRIGGER_PX], [0.5, 1]);
+  const indicatorY = useTransform(y, [0, TRIGGER_PX], [-40, 20]);
+
   useEffect(() => {
-    const parent = findScrollParent(containerRef.current);
-    const readTop = () => {
-      const top = parent === window
-        ? window.scrollY
-        : (parent as HTMLElement).scrollTop;
-      setAtTop(top <= 0);
+    const node = containerRef.current;
+    if (!node) return;
+
+    scrollParentRef.current = findScrollParent(node);
+
+    const isAtTop = () => {
+      const sp = scrollParentRef.current;
+      if (sp) return sp.scrollTop <= 0;
+      return window.scrollY <= 0;
     };
-    parent.addEventListener('scroll', readTop, { passive: true });
-    readTop();
-    return () => parent.removeEventListener('scroll', readTop as EventListener);
-  }, []);
 
-  const rotation = useTransform(y, [0, 80], [0, 360]);
-  const opacity = useTransform(y, [0, 40, 80], [0, 0.5, 1]);
-  const scale = useTransform(y, [0, 80], [0.5, 1]);
+    const onTouchStart = (e: TouchEvent) => {
+      if (disabled || isRefreshing) return;
+      if (!isAtTop()) {
+        startYRef.current = null;
+        return;
+      }
+      startYRef.current = e.touches[0]?.clientY ?? null;
+      activePullRef.current = false;
+    };
 
-  const handleDragEnd = async (_: any, info: PanInfo) => {
-    if (disabled || isRefreshing) return;
+    const onTouchMove = (e: TouchEvent) => {
+      if (startYRef.current === null) return;
+      if (disabled || isRefreshing) return;
 
-    if (info.offset.y > 80) {
-      setIsRefreshing(true);
+      const currentY = e.touches[0]?.clientY ?? 0;
+      const deltaY = currentY - startYRef.current;
 
-      // Haptic feedback if available
-      if ('vibrate' in navigator) {
-        navigator.vibrate(10);
+      // Only engage if user is pulling DOWN. Upward gestures fall through
+      // to native scroll so the page can scroll past the top.
+      if (deltaY <= 0) {
+        if (activePullRef.current) {
+          // Pull was active but user reversed direction — reset.
+          activePullRef.current = false;
+          y.set(0);
+        }
+        return;
       }
 
-      try {
-        await onRefresh();
-      } finally {
-        setIsRefreshing(false);
+      // If the parent has scrolled in the meantime (rare), abort.
+      if (!isAtTop()) {
+        startYRef.current = null;
+        activePullRef.current = false;
+        y.set(0);
+        return;
       }
-    }
-  };
 
-  const dragEnabled = !disabled && !isRefreshing && atTop;
+      activePullRef.current = true;
+      // Block native scroll for THIS gesture only — preventDefault here
+      // is what tells the browser "I'm handling this drag, don't scroll".
+      // Outside this branch, the browser scrolls normally.
+      if (e.cancelable) e.preventDefault();
+      y.set(deltaY * RESISTANCE);
+    };
+
+    const onTouchEnd = async () => {
+      if (startYRef.current === null) return;
+      const wasActive = activePullRef.current;
+      const pulled = y.get();
+      startYRef.current = null;
+      activePullRef.current = false;
+
+      if (!wasActive) {
+        y.set(0);
+        return;
+      }
+
+      if (pulled >= TRIGGER_PX) {
+        if ('vibrate' in navigator) navigator.vibrate(10);
+        setIsRefreshing(true);
+        // Hold the indicator at the trigger threshold while refreshing.
+        y.set(TRIGGER_PX);
+        try {
+          await onRefresh();
+        } finally {
+          setIsRefreshing(false);
+          y.set(0);
+        }
+      } else {
+        // Spring back to 0 — small animation via JS-driven step. Snap is
+        // acceptable since the gesture didn't reach the trigger.
+        y.set(0);
+      }
+    };
+
+    const onTouchCancel = () => {
+      startYRef.current = null;
+      activePullRef.current = false;
+      y.set(0);
+    };
+
+    // Non-passive so preventDefault works inside the active-pull branch.
+    node.addEventListener('touchstart', onTouchStart, { passive: true });
+    node.addEventListener('touchmove',  onTouchMove,  { passive: false });
+    node.addEventListener('touchend',   onTouchEnd,   { passive: true });
+    node.addEventListener('touchcancel', onTouchCancel, { passive: true });
+
+    return () => {
+      node.removeEventListener('touchstart',  onTouchStart);
+      node.removeEventListener('touchmove',   onTouchMove);
+      node.removeEventListener('touchend',    onTouchEnd);
+      node.removeEventListener('touchcancel', onTouchCancel);
+    };
+  }, [disabled, isRefreshing, onRefresh, y]);
 
   return (
     <div ref={containerRef} className="relative">
       {/* Pull indicator */}
       <motion.div
         className="absolute left-1/2 -translate-x-1/2 top-0 z-10 pointer-events-none"
-        style={{ opacity, scale, y: useTransform(y, [0, 80], [-40, 20]) }}
+        style={{ opacity, scale, y: indicatorY }}
       >
         <motion.div
           className={`w-10 h-10 rounded-full flex items-center justify-center ${
@@ -93,18 +175,8 @@ export function PullToRefresh({ children, onRefresh, disabled }: PullToRefreshPr
         </motion.div>
       </motion.div>
 
-      {/* Content. Drag y-axis only enabled when at top of scroll. dragElastic
-          is asymmetric: 0.4 going down (visible pull) and 0 going up (so the
-          gesture stays at y=0 when the user is just trying to scroll up). */}
-      <motion.div
-        drag={dragEnabled ? 'y' : false}
-        dragDirectionLock
-        dragConstraints={{ top: 0, bottom: 0 }}
-        dragElastic={{ top: 0, bottom: 0.4 }}
-        onDragEnd={handleDragEnd}
-        style={{ y }}
-        className="touch-pan-y"
-      >
+      {/* Content. Translates with motion value `y` during active pull only. */}
+      <motion.div style={{ y }}>
         {children}
       </motion.div>
     </div>
