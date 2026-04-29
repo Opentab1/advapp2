@@ -72,32 +72,37 @@ interface CelebrationState {
   detail?: string;
 }
 
-// ── Business hours helper ────────────────────────────────────────────────────
-function getBusinessHours(): { open: string; close: string } | null {
-  try {
-    const saved = localStorage.getItem('pulse_biz_hours');
-    if (saved) return JSON.parse(saved);
-  } catch { /* ignore */ }
+// ── Business hours helpers ──────────────────────────────────────────────────
+// Reads the V2 schedule (per-day + timezone) from venue-settings (cloud-synced).
+// Falls back to the legacy localStorage `{open, close}` shape if the V2 data
+// isn't present yet — this preserves behavior for venues that haven't saved
+// hours through the new Settings UI.
+import { isVenueOpenNow as _isVenueOpenNowV2, nextOpenLabel as _nextOpenLabelV2,
+         type V2BusinessHours } from '../utils/venueHours';
+
+function loadVenueHours(venueId: string): V2BusinessHours | null {
+  const v2 = venueSettingsService.getBusinessHours(venueId);
+  if (v2 && v2.days) return v2 as V2BusinessHours;
+  // Legacy single-time format → treat as same hours every day.
+  if (v2 && v2.open && v2.close) {
+    const day = { open: v2.open, close: v2.close, closed: false };
+    return {
+      timezone: v2.timezone || 'America/New_York',
+      days: { mon: day, tue: day, wed: day, thu: day, fri: day, sat: day, sun: day },
+    };
+  }
   return null;
 }
 
-function isBarOpen(hours: { open: string; close: string }): boolean {
-  const now = new Date();
-  const [oH, oM] = hours.open.split(':').map(Number);
-  const [cH, cM] = hours.close.split(':').map(Number);
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  const openMin = oH * 60 + oM;
-  const closeMin = cH * 60 + cM;
-  // Overnight: e.g. 17:00 – 02:00
-  if (closeMin <= openMin) return nowMin >= openMin || nowMin < closeMin;
-  return nowMin >= openMin && nowMin < closeMin;
+function isBarOpenV2(hours: V2BusinessHours | null): boolean {
+  // No saved schedule → default open (matches worker fail-open behavior).
+  if (!hours) return true;
+  return _isVenueOpenNowV2(hours);
 }
 
-function formatTime12(t: string): string {
-  const [h, m] = t.split(':').map(Number);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const h12 = h % 12 || 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+function nextOpenAt(hours: V2BusinessHours | null): string | null {
+  if (!hours) return null;
+  return _nextOpenLabelV2(hours);
 }
 
 // ── Dual Ring Hero ────────────────────────────────────────────────────────────
@@ -192,6 +197,7 @@ function TripleRingHero({
   hasTheftFlag,
   unrungDrinks,
   alwaysOpen,
+  hours,
   onTap,
 }: {
   totalDrinks: number | null;
@@ -204,10 +210,10 @@ function TripleRingHero({
   hasTheftFlag: boolean;
   unrungDrinks?: number;
   alwaysOpen?: boolean;
+  hours?: V2BusinessHours | null;
   onTap?: () => void;
 }) {
-  const hours = getBusinessHours();
-  const open = hours ? isBarOpen(hours) : null;
+  const open = hours !== undefined ? isBarOpenV2(hours ?? null) : null;
   const isClosed = alwaysOpen ? false : (open === false);
 
   // Ring 1 — Drinks % vs historical avg for this DOW (fallback: % of 150-drink scale)
@@ -260,8 +266,8 @@ function TripleRingHero({
           <span className={`text-xs font-semibold uppercase tracking-wide ${isClosed ? 'text-warm-500' : 'text-green-400'}`}>
             {isClosed ? 'Bar Closed' : open === true ? 'Shift Active' : 'Tonight'}
           </span>
-          {hours && isClosed && (
-            <span className="text-xs text-warm-600">· Opens {formatTime12(hours.open)}</span>
+          {hours && isClosed && nextOpenAt(hours) && (
+            <span className="text-xs text-warm-600">· Opens {nextOpenAt(hours)}</span>
           )}
         </div>
         {hasTheftFlag && !isClosed && (
@@ -326,10 +332,19 @@ function TripleRingHero({
 export function Live() {
   const user = authService.getStoredUser();
   const venueId = user?.venueId || '';
-  
+
   // Use display name (custom name if set by admin, otherwise venueId/venueName)
   const { displayName } = useDisplayName();
   const venueName = displayName || user?.venueName || 'Your Venue';
+
+  // Operating hours — re-evaluates each render so the closed banner flips
+  // automatically when the clock crosses open/close. Demo accounts are always
+  // treated as open. The worker uses the same schedule (with 15-min warmup
+  // and 15-min cooldown) to gate its own inference + DDB writes.
+  const venueHours = loadVenueHours(venueId);
+  const venueIsAlwaysOpen = isDemoAccount(venueId);
+  const venueIsClosed = !venueIsAlwaysOpen && venueHours !== null && !isBarOpenV2(venueHours);
+  const venueNextOpenLabel = venueIsClosed ? nextOpenAt(venueHours) : null;
   
   // Modal state
   const [activeModal, setActiveModal] = useState<ModalType>(null);
@@ -622,6 +637,30 @@ export function Live() {
     <PullToRefresh onRefresh={handleRefresh} disabled={pulseData.loading}>
       <div className="space-y-5">
 
+      {/* ── Closed banner ── */}
+      {/* Shows up when current time is outside the venue's operating hours
+          (with the same 15-min warmup/cooldown the worker uses). The worker
+          stops sending data during these windows, so the rings/feeds below
+          will show "—" — the banner explains why and tells the customer
+          when we'll be back. */}
+      {venueIsClosed && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 px-4 py-4 bg-warm-800 border border-warm-700 rounded-2xl"
+        >
+          <span className="w-2.5 h-2.5 rounded-full bg-warm-500 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white">Venue closed</p>
+            <p className="text-xs text-warm-400 mt-0.5">
+              {venueNextOpenLabel
+                ? `See you at ${venueNextOpenLabel}`
+                : 'Live data resumes when the bar reopens'}
+            </p>
+          </div>
+        </motion.div>
+      )}
+
       {/* ── Alert banners ── */}
       {pulseData.hasTheftFlag && (
         <motion.div
@@ -724,7 +763,8 @@ export function Live() {
         avgDwellLastWeekSameDay={avgDwellLastWeekSameDay}
         hasTheftFlag={pulseData.hasTheftFlag}
         unrungDrinks={latestJobMeta?.unrungDrinks}
-        alwaysOpen={isDemoAccount(venueId)}
+        alwaysOpen={venueIsAlwaysOpen}
+        hours={venueHours}
         onTap={() => setActiveModal('livestats')}
       />
       
