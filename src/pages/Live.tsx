@@ -128,7 +128,10 @@ function Ring({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <div className="relative w-36 h-36">
+      {/* w-24 (96px) on mobile so three rings + gaps fit a 375px iPhone SE
+          (375 - 32px container padding = 343px; 3 × 96 + 2 × 8 gap = 304).
+          Restored to w-36 (144px) at sm+ where viewport is wider. */}
+      <div className="relative w-24 h-24 sm:w-36 sm:h-36">
         <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
           {/* Track — always visible */}
           <circle
