@@ -1,74 +1,106 @@
 /**
- * OnboardVenue — single guided flow to go from "new customer signed" to
- * "data flowing" in under 4 hours.
+ * OnboardVenue — guided flow from "new customer signed" to "data flowing."
  *
- * Steps (user clicks Next between each):
- *   1. Venue basics         → creates DDB venue record + Cognito owner user
- *   2. Cameras              → adds N camera rows with RTSP URL + modes
- *   3. Pre-flight           → probes each camera (open + decode first frame + fps)
- *   4. POS connect          → OAuth placeholder (Square / Toast)
- *   5. Staff invites        → optional, AdminCreateUser per teammate
- *   6. Done                 → summary + links to Cameras / Ops Monitor
+ * Step order matters: each step's success unlocks the next. Specifically the
+ * droplet has to come BEFORE cameras + pre-flight because the venue's NVR
+ * router only allowlists the droplet's IP — probing the cameras from any
+ * other source (e.g. an admin Lambda) gives misleading results.
  *
- * Every step writes its work immediately so a crash mid-wizard doesn't lose
- * progress — the operator can re-enter at any step. All actions reuse existing
- * admin.service methods, so DB / Cognito / Stripe semantics match the
- * individual admin pages.
+ *   1. Venue basics           creates DDB row + Cognito owner user
+ *   2. Worker droplet         provisions $42/mo droplet, waits for active,
+ *                             auto-sets camProxyUrl, surfaces IP for the
+ *                             venue to add to their NVR allowlist
+ *   3. Cameras                registers RTSP / HLS URLs in DDB
+ *   4. Business hours         per-day schedule + timezone (gates the worker)
+ *   5. Pre-flight             probes each camera FROM the droplet
+ *   6. POS connect            placeholder
+ *   7. Staff invites          optional Cognito users
+ *   8. Done                   summary + links
+ *
+ * State persists in localStorage keyed by venueId so a refresh mid-wizard
+ * doesn't lose progress past whatever's already hit DynamoDB.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Building2, Camera, ShieldCheck, CreditCard, Users, CheckCircle2,
   ArrowLeft, ArrowRight, Loader2, Plus, Trash2, AlertCircle,
-  ExternalLink, Copy,
+  ExternalLink, Copy, Server, Clock, RefreshCw,
 } from 'lucide-react';
 import adminService, { type VenueTier } from '../../services/admin.service';
+import venueSettingsService from '../../services/venue-settings.service';
 
 // ─── Step metadata ───────────────────────────────────────────────────────────
 
-type StepId = 'venue' | 'cameras' | 'preflight' | 'pos' | 'staff' | 'done';
+type StepId =
+  | 'venue' | 'droplet' | 'cameras' | 'hours'
+  | 'preflight' | 'pos' | 'staff' | 'done';
 
 const STEPS: Array<{ id: StepId; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { id: 'venue',     label: 'Venue basics',     icon: Building2 },
+  { id: 'droplet',   label: 'Worker droplet',   icon: Server },
   { id: 'cameras',   label: 'Cameras',          icon: Camera },
+  { id: 'hours',     label: 'Business hours',   icon: Clock },
   { id: 'preflight', label: 'Pre-flight',       icon: ShieldCheck },
   { id: 'pos',       label: 'POS connect',      icon: CreditCard },
   { id: 'staff',     label: 'Staff invites',    icon: Users },
   { id: 'done',      label: 'Done',             icon: CheckCircle2 },
 ];
 
+// Valid worker analysis modes. Free-text in the old wizard let typos through
+// silently; checkboxes mean only valid modes can ship.
+const VALID_MODES = [
+  { id: 'drink_count',    label: 'Drink count'    },
+  { id: 'bottle_count',   label: 'Bottle count'   },
+  { id: 'people_count',   label: 'People count'   },
+  { id: 'table_turns',    label: 'Table turns'    },
+  { id: 'table_service',  label: 'Table service'  },
+  { id: 'staff_activity', label: 'Staff activity' },
+  { id: 'after_hours',    label: 'After hours'    },
+] as const;
+type ModeId = typeof VALID_MODES[number]['id'];
+
+const COMMON_TIMEZONES = [
+  { id: 'America/New_York',    label: 'Eastern (ET)'  },
+  { id: 'America/Chicago',     label: 'Central (CT)'  },
+  { id: 'America/Denver',      label: 'Mountain (MT)' },
+  { id: 'America/Phoenix',     label: 'Arizona (no DST)' },
+  { id: 'America/Los_Angeles', label: 'Pacific (PT)'  },
+  { id: 'America/Anchorage',   label: 'Alaska (AKT)'  },
+  { id: 'Pacific/Honolulu',    label: 'Hawaii (HT)'   },
+];
+
+const DEFAULT_HOURS = (): Record<string, { open: string; close: string; closed: boolean }> => ({
+  mon: { open: '12:00', close: '02:00', closed: false },
+  tue: { open: '12:00', close: '02:00', closed: false },
+  wed: { open: '12:00', close: '02:00', closed: false },
+  thu: { open: '12:00', close: '02:00', closed: false },
+  fri: { open: '12:00', close: '03:00', closed: false },
+  sat: { open: '12:00', close: '03:00', closed: false },
+  sun: { open: '12:00', close: '02:00', closed: false },
+});
+
 // ─── Form state types ────────────────────────────────────────────────────────
 
 interface VenueForm {
-  venueName:   string;
-  venueId:     string;        // slug derived from venueName unless overridden
+  venueName:    string;
+  venueId:      string;
   locationName: string;
-  ownerEmail:  string;
-  ownerName:   string;
-  // Forecast onboarding profile — feeds the prior model so tonight's
-  // forecast is scaled to this venue instead of industry averages. All
-  // four fields together eliminate the 2-week cold-start problem.
-  venueTier:     VenueTier;
-  capacity:      string;          // keep as string for controlled input
+  ownerEmail:   string;
+  ownerName:    string;
+  venueTier:    VenueTier;
+  capacity:      string;
   slowDayCovers: string;
   busyDayCovers: string;
 }
 
 interface CameraForm {
-  name:       string;
-  rtspUrl:    string;
-  modes:      string;         // comma-separated, e.g. "drink_count,bottle_count"
+  name:         string;
+  rtspUrl:      string;          // RTSP or HLS HTTP — both accepted
+  modes:        ModeId[];        // multi-select; was free-text before
   modelProfile: 'fast' | 'balanced' | 'accurate';
-  // Set after admin.service.addCamera returns
-  cameraId?:  string;
-  // Populated by preflight step
-  preflight?: {
-    ok: boolean;
-    reason: string;
-    width?: number;
-    height?: number;
-    fps?: number;
-  };
+  cameraId?:    string;
+  preflight?: { ok: boolean; reason: string; width?: number; height?: number; fps?: number };
 }
 
 interface StaffForm {
@@ -77,10 +109,36 @@ interface StaffForm {
   role:  'manager' | 'staff';
 }
 
+interface DropletState {
+  dropletStatus?: string;
+  dropletId?:     number;
+  dropletIp?:     string;
+  dropletRegion?: string;
+  dropletSize?:   string;
+  provisionedAt?: string;
+}
+
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 32) || 'venue';
+}
+
+/** Accept rtsp://, http://, or https:// — the worker handles both stream types.
+ *  The old wizard's hard rtsp:// requirement rejected Blind Goat's working
+ *  HLS HTTP URLs, which is the format most NVRs actually serve. */
+function isValidStreamUrl(u: string): boolean {
+  const s = u.trim().toLowerCase();
+  if (!s) return false;
+  return s.startsWith('rtsp://') || s.startsWith('http://') || s.startsWith('https://');
+}
+
+/** Auto-derive the camera-proxy URL the consumer Live page uses to render
+ *  preview thumbnails. Pattern: https://{ip-with-dashes}.sslip.io/cam .
+ *  sslip.io is a free wildcard-DNS service that gives any-IP an HTTPS-able
+ *  hostname (used for letsencrypt cert issuance against per-droplet IPs). */
+function camProxyUrlFor(ip: string): string {
+  return `https://${ip.replace(/\./g, '-')}.sslip.io/cam`;
 }
 
 // ─── Step header (progress rail) ─────────────────────────────────────────────
@@ -90,8 +148,8 @@ function ProgressRail({ currentIdx }: { currentIdx: number }) {
     <div className="flex items-center gap-0">
       {STEPS.map((step, i) => {
         const Icon = step.icon;
-        const done  = i < currentIdx;
-        const curr  = i === currentIdx;
+        const done = i < currentIdx;
+        const curr = i === currentIdx;
         return (
           <div key={step.id} className="flex items-center flex-1">
             <div className={`flex items-center gap-2 ${curr ? 'text-white' : done ? 'text-cyan-400' : 'text-gray-500'}`}>
@@ -115,44 +173,134 @@ function ProgressRail({ currentIdx }: { currentIdx: number }) {
   );
 }
 
+// ─── Persistence ─────────────────────────────────────────────────────────────
+
+interface PersistedState {
+  stepIdx: number;
+  venue: VenueForm;
+  venueCreated: boolean;
+  ownerTempPassword: string | null;
+  droplet: DropletState | null;
+  cameras: CameraForm[];
+  bizDays: Record<string, { open: string; close: string; closed: boolean }>;
+  bizTimezone: string;
+  posProvider: '' | 'square' | 'toast';
+  posSkipped: boolean;
+  staff: StaffForm[];
+  savedAt: number;
+}
+
+const STORAGE_KEY = 'pulse_onboard_wizard_v2';
+
+function loadPersisted(): PersistedState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedState;
+    // Drop persisted state older than 7 days — likely abandoned.
+    if (Date.now() - (parsed.savedAt ?? 0) > 7 * 86400 * 1000) return null;
+    return parsed;
+  } catch { return null; }
+}
+
+function savePersisted(s: PersistedState) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...s, savedAt: Date.now() })); }
+  catch { /* localStorage may be full or disabled — non-fatal */ }
+}
+
+function clearPersisted() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+}
+
 // ─── Main page ───────────────────────────────────────────────────────────────
 
 export function OnboardVenue() {
-  const [stepIdx, setStepIdx] = useState(0);
+  const persisted = useRef(loadPersisted()).current;
+
+  const [stepIdx, setStepIdx] = useState(persisted?.stepIdx ?? 0);
   const [busy,    setBusy]    = useState(false);
   const [err,     setErr]     = useState<string | null>(null);
   const [msg,     setMsg]     = useState<string | null>(null);
 
   // Step 1 — venue
-  const [venue, setVenue] = useState<VenueForm>({
+  const [venue, setVenue] = useState<VenueForm>(persisted?.venue ?? {
     venueName: '', venueId: '', locationName: 'Main', ownerEmail: '', ownerName: '',
     venueTier: 'small_bar', capacity: '', slowDayCovers: '', busyDayCovers: '',
   });
-  const [venueCreated, setVenueCreated] = useState(false);
-  const [ownerTempPassword, setOwnerTempPassword] = useState<string | null>(null);
+  const [venueCreated, setVenueCreated] = useState(persisted?.venueCreated ?? false);
+  const [ownerTempPassword, setOwnerTempPassword] = useState<string | null>(persisted?.ownerTempPassword ?? null);
 
-  // Step 2 — cameras
-  const [cameras, setCameras] = useState<CameraForm[]>([{
-    name: 'Bar Cam', rtspUrl: '', modes: 'drink_count,bottle_count', modelProfile: 'balanced',
+  // Step 2 — droplet
+  const [droplet, setDroplet] = useState<DropletState | null>(persisted?.droplet ?? null);
+
+  // Step 3 — cameras
+  const [cameras, setCameras] = useState<CameraForm[]>(persisted?.cameras ?? [{
+    name: 'Bar Cam', rtspUrl: '', modes: ['drink_count', 'bottle_count'], modelProfile: 'balanced',
   }]);
+  const [cameraErrors, setCameraErrors] = useState<Record<number, string>>({});
 
-  // Step 3 — preflight results live on the cameras[] itself
+  // Step 4 — hours
+  const [bizDays, setBizDays] = useState(persisted?.bizDays ?? DEFAULT_HOURS());
+  const [bizTimezone, setBizTimezone] = useState(persisted?.bizTimezone ?? 'America/New_York');
 
-  // Step 4 — POS (placeholder)
-  const [posProvider, setPosProvider] = useState<'' | 'square' | 'toast'>('');
-  const [posSkipped,  setPosSkipped]  = useState(false);
+  // Step 5 — preflight runs from droplet; results live on cameras[]
 
-  // Step 5 — staff
-  const [staff, setStaff] = useState<StaffForm[]>([]);
+  // Step 6 — POS
+  const [posProvider, setPosProvider] = useState<'' | 'square' | 'toast'>(persisted?.posProvider ?? '');
+  const [posSkipped,  setPosSkipped]  = useState(persisted?.posSkipped ?? false);
+
+  // Step 7 — staff
+  const [staff, setStaff] = useState<StaffForm[]>(persisted?.staff ?? []);
 
   const currentStep = STEPS[stepIdx];
 
-  // ── venueId auto-derive ─────────────────────────────────────────────────
-  const computedVenueId = useMemo(() => {
-    return venue.venueId || slugify(venue.venueName);
-  }, [venue.venueId, venue.venueName]);
+  // venueId auto-derived from name unless overridden
+  const computedVenueId = useMemo(
+    () => venue.venueId || slugify(venue.venueName),
+    [venue.venueId, venue.venueName],
+  );
 
-  // ── Actions per step ────────────────────────────────────────────────────
+  // ── Persist on every meaningful state change ────────────────────────────
+  useEffect(() => {
+    savePersisted({
+      stepIdx, venue, venueCreated, ownerTempPassword, droplet,
+      cameras, bizDays, bizTimezone, posProvider, posSkipped, staff,
+      savedAt: Date.now(),
+    });
+  }, [stepIdx, venue, venueCreated, ownerTempPassword, droplet,
+      cameras, bizDays, bizTimezone, posProvider, posSkipped, staff]);
+
+  // ── Droplet polling: while we're on the droplet step, refresh status
+  //    every 8s if it's still booting. ─────────────────────────────────────
+  useEffect(() => {
+    if (currentStep.id !== 'droplet') return;
+    if (!venueCreated) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      try {
+        const d = await adminService.getDroplet(computedVenueId);
+        if (cancelled) return;
+        setDroplet(d);
+        // Auto-set the camProxyUrl in venue settings the moment the droplet
+        // gets an IP. Without this, the consumer Live page shows broken
+        // preview thumbnails on day 1.
+        if (d.dropletIp && d.dropletStatus === 'active') {
+          try { await venueSettingsService.saveCamProxyUrl(computedVenueId, camProxyUrlFor(d.dropletIp)); }
+          catch { /* fall through; admin can set this later from Settings */ }
+        }
+        const next = d.dropletStatus === 'provisioning' ? 8000 : 30000;
+        timer = setTimeout(tick, next);
+      } catch (e) {
+        if (cancelled) return;
+        timer = setTimeout(tick, 30000);
+      }
+    };
+    tick();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [currentStep.id, venueCreated, computedVenueId]);
+
+  // ── Step submit handlers ────────────────────────────────────────────────
 
   async function submitVenueStep() {
     setErr(null); setMsg(null);
@@ -180,9 +328,7 @@ export function OnboardVenue() {
         slowDayCovers: slowN     > 0 ? slowN     : undefined,
         busyDayCovers: busyN     > 0 ? busyN     : undefined,
       });
-      if (!res.success) {
-        setErr(res.message); return;
-      }
+      if (!res.success) { setErr(res.message); return; }
       setVenueCreated(true);
       setOwnerTempPassword(res.tempPassword ?? null);
       setVenue(v => ({ ...v, venueId: computedVenueId }));
@@ -193,32 +339,57 @@ export function OnboardVenue() {
     } finally { setBusy(false); }
   }
 
+  async function provisionDropletStep() {
+    setErr(null); setMsg(null);
+    if (!confirm(`Provision a $42/mo CPU-Optimized droplet (2 vCPU / 4 GB) `
+      + `for "${venue.venueName}"?\n\n`
+      + `Boots from the master snapshot in TOR1 with VS_VENUE_ID=${computedVenueId}. `
+      + `Takes 3-5 min.`)) return;
+    setBusy(true);
+    try {
+      const data = await adminService.provisionDroplet(computedVenueId);
+      setDroplet({ ...droplet, ...data });
+      setMsg('Droplet provisioning started. Polling for active status…');
+    } catch (e: any) {
+      setErr(e?.message ?? 'Failed to start droplet provisioning');
+    } finally { setBusy(false); }
+  }
+
+  function validateCameras(): boolean {
+    const errs: Record<number, string> = {};
+    cameras.forEach((c, i) => {
+      if (!c.name.trim())              errs[i] = 'Name required.';
+      else if (!c.rtspUrl.trim())      errs[i] = 'Stream URL required.';
+      else if (!isValidStreamUrl(c.rtspUrl))
+        errs[i] = 'URL must start with rtsp://, http://, or https://';
+      else if (!c.modes.length)        errs[i] = 'Pick at least one mode.';
+    });
+    setCameraErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
+
   async function submitCamerasStep() {
     setErr(null); setMsg(null);
-    // Validate cameras
-    for (const c of cameras) {
-      if (!c.name.trim() || !c.rtspUrl.trim() || !c.modes.trim()) {
-        setErr('Each camera needs a name, RTSP URL, and at least one mode.');
-        return;
-      }
-      if (!c.rtspUrl.toLowerCase().startsWith('rtsp://')) {
-        setErr(`"${c.name}": RTSP URL must start with rtsp://`);
-        return;
-      }
+    if (!validateCameras()) {
+      setErr('Fix the camera issues above before continuing.');
+      return;
     }
     setBusy(true);
     try {
       const updated: CameraForm[] = [];
       for (const c of cameras) {
-        if (c.cameraId) { updated.push(c); continue; }  // already added
+        if (c.cameraId) { updated.push(c); continue; }
         const res = await adminService.createCamera({
-          venueId: computedVenueId,
-          name: c.name.trim(),
-          rtspUrl: c.rtspUrl.trim(),
-          modes: c.modes.trim(),
+          venueId:      computedVenueId,
+          name:         c.name.trim(),
+          rtspUrl:      c.rtspUrl.trim(),
+          modes:        c.modes.join(','),
           modelProfile: c.modelProfile,
-          enabled: true,
-          segmentSeconds: 15,
+          enabled:      true,
+          // 1800 = 30-min segments, the value live RTSP wants. The old
+          // hardcoded 15 made workers re-spawn jobs every 15 seconds for
+          // a live stream — 200x more launch overhead than necessary.
+          segmentSeconds: 1800,
         });
         if (!res.success) {
           setErr(`Camera "${c.name}": ${res.message}`);
@@ -228,39 +399,50 @@ export function OnboardVenue() {
         updated.push({ ...c, cameraId: res.cameraId });
       }
       setCameras(updated);
-      setStepIdx(2);
+      setStepIdx(3);
       setMsg(`${updated.length} camera(s) registered`);
     } catch (e: any) {
       setErr(e?.message ?? 'Failed to register cameras');
     } finally { setBusy(false); }
   }
 
-  async function runPreflight() {
+  async function submitHoursStep() {
     setErr(null); setMsg(null);
     setBusy(true);
     try {
-      // Use the probeCameras admin endpoint (hits droplet which has the
-      // OpenCV / ffmpeg deps). Falls back to naive reachability check if not
-      // wired; tolerates either shape.
+      const ok = await venueSettingsService.saveBusinessHours(computedVenueId, {
+        timezone: bizTimezone,
+        days:     bizDays,
+      });
+      if (!ok) { setErr('Failed to save business hours'); return; }
+      setStepIdx(4);
+      setMsg('Hours saved. Worker will gate on/off accordingly.');
+    } catch (e: any) {
+      setErr(e?.message ?? 'Failed to save business hours');
+    } finally { setBusy(false); }
+  }
+
+  async function runPreflight() {
+    setErr(null); setMsg(null);
+    if (!droplet?.dropletIp) {
+      setErr('Provision the droplet first — pre-flight probes from there.');
+      return;
+    }
+    setBusy(true);
+    try {
       const results = await adminService.probeCameras?.(
-        cameras.map(c => ({ name: c.name, rtspUrl: c.rtspUrl }))
+        cameras.map(c => ({ name: c.name, rtspUrl: c.rtspUrl })),
       ).catch(() => null);
 
       setCameras(curr => curr.map((c, i) => {
         const r = results?.[i];
-        if (!r) {
-          return { ...c, preflight: { ok: false, reason: 'probe endpoint unavailable' } };
-        }
+        if (!r) return { ...c, preflight: { ok: false, reason: 'probe endpoint unavailable' } };
         return { ...c, preflight: r };
       }));
       const anyBad = results && results.some((r: any) => !r.ok);
-      if (anyBad) {
-        setErr('One or more cameras failed pre-flight. Check URLs / port forwarding.');
-      } else if (results) {
-        setMsg('All cameras green.');
-      } else {
-        setMsg('Probe endpoint not deployed yet — mark results manually below, or deploy then re-run.');
-      }
+      if (anyBad)        setErr('One or more cameras failed pre-flight. Confirm the droplet IP is on the venue\'s NVR allowlist, then retry.');
+      else if (results)  setMsg('All cameras green.');
+      else               setMsg('Probe endpoint not deployed yet.');
     } catch (e: any) {
       setErr(e?.message ?? 'Pre-flight failed');
     } finally { setBusy(false); }
@@ -269,33 +451,37 @@ export function OnboardVenue() {
   async function submitStaffStep() {
     setErr(null); setMsg(null);
     const toCreate = staff.filter(s => s.email.trim() && s.name.trim());
-    if (toCreate.length === 0) {
-      setStepIdx(5); return;   // skip — no staff to invite
-    }
+    if (toCreate.length === 0) { setStepIdx(7); return; }
     setBusy(true);
     try {
       for (const s of toCreate) {
         const res = await adminService.createUser({
-          email: s.email.trim(), name: s.name.trim(),
-          venueId: computedVenueId, venueName: venue.venueName.trim(),
-          role: s.role,
+          email:     s.email.trim(),
+          name:      s.name.trim(),
+          venueId:   computedVenueId,
+          venueName: venue.venueName.trim(),
+          role:      s.role,
         });
-        if (!res.success) {
-          setErr(`${s.email}: ${res.message}`);
-          return;
-        }
+        if (!res.success) { setErr(`${s.email}: ${res.message}`); return; }
       }
-      setStepIdx(5);
+      setStepIdx(7);
       setMsg(`${toCreate.length} staff user(s) invited via Cognito`);
     } catch (e: any) {
       setErr(e?.message ?? 'Failed to invite staff');
     } finally { setBusy(false); }
   }
 
+  function startNewVenue() {
+    clearPersisted();
+    window.location.reload();
+  }
+
   // ── Step bodies ─────────────────────────────────────────────────────────
 
   const body = () => {
     switch (currentStep.id) {
+
+      // ─── 1. Venue basics ───────────────────────────────────────────────
       case 'venue': return (
         <div className="flex flex-col gap-4 max-w-2xl">
           <p className="text-sm text-gray-400">
@@ -314,62 +500,42 @@ export function OnboardVenue() {
             <Field label="Location name" value={venue.locationName}
               onChange={v => setVenue(s => ({ ...s, locationName: v }))}
               placeholder="Main" />
-            <Field label="Owner name" value={venue.ownerName}
-              onChange={v => setVenue(s => ({ ...s, ownerName: v }))}
-              placeholder="Pat Owner" />
             <Field label="Owner email" value={venue.ownerEmail} type="email"
               onChange={v => setVenue(s => ({ ...s, ownerEmail: v }))}
-              placeholder="pat@venue.com" />
-          </div>
-
-          {/* Forecast onboarding profile — decides tonight's prior so the
-              day-1 forecast resembles this venue instead of industry avg. */}
-          {!venueCreated && (
-            <div className="mt-2 bg-white/5 border border-white/10 rounded-lg p-4">
-              <div className="text-sm font-semibold text-white mb-1">
-                Forecast baseline <span className="text-xs text-gray-500 font-normal">· optional, strongly recommended</span>
-              </div>
-              <div className="text-xs text-gray-500 mb-3">
-                Tonight's forecast uses these as the prior until ~7 days of real
-                data arrive. Without them every venue starts with the same
-                industry-average guess.
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Venue type</label>
-                  <select
-                    value={venue.venueTier}
-                    onChange={e => setVenue(s => ({ ...s, venueTier: e.target.value as VenueTier }))}
-                    className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500">
-                    <option value="small_bar">Small bar (cocktail, dive, ≤ 60 cap)</option>
-                    <option value="mid_bar">Mid bar / lounge (60–150 cap)</option>
-                    <option value="large_bar">Large bar / sports bar (150+ cap)</option>
-                    <option value="restaurant">Restaurant (dinner service)</option>
-                    <option value="nightclub">Nightclub (late peak)</option>
-                    <option value="mixed">Mixed (restaurant → bar)</option>
-                  </select>
-                </div>
-                <Field label="Legal capacity (hard cap)" value={venue.capacity} type="number"
-                  onChange={v => setVenue(s => ({ ...s, capacity: v }))}
-                  placeholder="e.g. 60"
-                  help="Physical/fire-code max. Forecast never exceeds this." />
-                <Field label="Typical slow-night covers" value={venue.slowDayCovers} type="number"
-                  onChange={v => setVenue(s => ({ ...s, slowDayCovers: v }))}
-                  placeholder="e.g. 15 (Tuesday)"
-                  help="Headcount on your slowest normal night." />
-                <Field label="Typical busy-night covers" value={venue.busyDayCovers} type="number"
-                  onChange={v => setVenue(s => ({ ...s, busyDayCovers: v }))}
-                  placeholder="e.g. 80 (Saturday)"
-                  help="Headcount on your busiest normal night." />
-              </div>
+              placeholder="owner@venue.com" />
+            <Field label="Owner name" value={venue.ownerName}
+              onChange={v => setVenue(s => ({ ...s, ownerName: v }))}
+              placeholder="Jane Doe" />
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-400">Venue tier</label>
+              <select
+                className="bg-white/5 border border-white/10 rounded text-white text-sm px-2 py-1.5"
+                value={venue.venueTier}
+                onChange={e => setVenue(s => ({ ...s, venueTier: e.target.value as VenueTier }))}
+              >
+                <option value="small_bar">Small bar (≤50 covers)</option>
+                <option value="mid_bar">Mid bar (50–120)</option>
+                <option value="large_bar">Large bar (120–250)</option>
+                <option value="restaurant">Restaurant</option>
+                <option value="nightclub">Nightclub</option>
+                <option value="mixed">Mixed</option>
+              </select>
             </div>
-          )}
+            <Field label="Legal capacity (hard cap)" value={venue.capacity} type="number"
+              onChange={v => setVenue(s => ({ ...s, capacity: v }))}
+              placeholder="60"
+              help="Physical/fire-code max. Forecast never exceeds this." />
+            <Field label="Typical slow-night covers" value={venue.slowDayCovers} type="number"
+              onChange={v => setVenue(s => ({ ...s, slowDayCovers: v }))}
+              placeholder="15" />
+            <Field label="Typical busy-night covers" value={venue.busyDayCovers} type="number"
+              onChange={v => setVenue(s => ({ ...s, busyDayCovers: v }))}
+              placeholder="80" />
+          </div>
 
           {venueCreated && ownerTempPassword && (
             <div className="bg-cyan-500/10 border border-cyan-500/30 rounded p-3 text-sm">
-              <div className="text-cyan-300 font-semibold mb-1">
-                ✓ Venue + owner user created
-              </div>
+              <div className="text-cyan-300 font-semibold mb-1">✓ Venue + owner user created</div>
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-gray-400">Temp password:</span>
                 <code className="bg-black/40 px-2 py-0.5 rounded">{ownerTempPassword}</code>
@@ -384,24 +550,106 @@ export function OnboardVenue() {
         </div>
       );
 
+      // ─── 2. Droplet ────────────────────────────────────────────────────
+      case 'droplet': {
+        const status = droplet?.dropletStatus ?? 'none';
+        return (
+          <div className="flex flex-col gap-4 max-w-2xl">
+            <p className="text-sm text-gray-400">
+              Each venue runs on its own DigitalOcean droplet. The droplet IP
+              is the only outside address the venue's NVR will allowlist —
+              that's why we provision before configuring cameras.
+            </p>
+
+            {status === 'none' && (
+              <div className="bg-white/5 border border-white/10 rounded p-4 flex items-start gap-3">
+                <Server className="w-5 h-5 text-cyan-400 mt-0.5" />
+                <div className="flex-1">
+                  <div className="font-semibold text-white text-sm">No droplet yet</div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    Spins up a $42/mo CPU-Optimized droplet (2 vCPU / 4 GB) in TOR1
+                    from the master snapshot. Pre-configured with VS_VENUE_ID=
+                    <code className="text-cyan-300">{computedVenueId}</code>.
+                  </div>
+                  <button onClick={provisionDropletStep} disabled={busy}
+                    className="mt-3 inline-flex items-center gap-1 bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-3 py-1.5 rounded disabled:opacity-40">
+                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Server className="w-3.5 h-3.5" />}
+                    Provision droplet
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {status === 'provisioning' && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded p-4 flex items-start gap-3">
+                <Loader2 className="w-5 h-5 text-amber-300 mt-0.5 animate-spin" />
+                <div className="flex-1">
+                  <div className="font-semibold text-amber-200 text-sm">Booting droplet…</div>
+                  <div className="text-xs text-amber-300/80 mt-0.5">
+                    id={droplet?.dropletId}, region={droplet?.dropletRegion ?? '…'}.
+                    Auto-refreshing every 8s. Should take 3–5 minutes.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {(status === 'active' || status === 'new') && droplet?.dropletIp && (
+              <div className="space-y-3">
+                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded p-4 flex items-start gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5" />
+                  <div className="flex-1">
+                    <div className="font-semibold text-emerald-300 text-sm">Droplet active</div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="text-xs text-gray-400">IP:</span>
+                      <code className="text-sm font-mono text-white bg-black/40 px-2 py-0.5 rounded">
+                        {droplet.dropletIp}
+                      </code>
+                      <button onClick={() => navigator.clipboard?.writeText(droplet.dropletIp!)}
+                        className="text-gray-400 hover:text-white p-1 rounded">
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {droplet.dropletRegion} · {droplet.dropletSize} · id={droplet.dropletId}
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded p-3 text-sm text-amber-200">
+                  <strong>Action required at the venue:</strong> add{' '}
+                  <code className="bg-black/40 px-1 py-0.5 rounded">{droplet.dropletIp}</code>{' '}
+                  to the NVR's outbound allowlist (or router port-forward source-IP filter).
+                  Without this, no camera streams will reach our worker.
+                </div>
+              </div>
+            )}
+
+            {status !== 'none' && status !== 'provisioning' && status !== 'active' && status !== 'new' && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-sm text-red-300">
+                Droplet status: <code>{status}</code>. Something went wrong — check Venues page or DigitalOcean console.
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      // ─── 3. Cameras ────────────────────────────────────────────────────
       case 'cameras': return (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-gray-400">
-            Register each camera's RTSP URL and which detections to run on it.
-            You can always add more later from the Cameras tab.
+            Register each camera's stream URL and which detections to run.
+            Both <code>rtsp://</code> and <code>http://…/hls/…</code> are accepted —
+            most NVRs serve HLS HTTP for the live preview.
           </p>
           {cameras.map((c, i) => (
             <div key={i} className="bg-white/5 border border-white/10 rounded p-3 grid grid-cols-1 md:grid-cols-12 gap-2">
-              <Field wrapperClass="md:col-span-3" label={`Camera ${i + 1} name`} value={c.name}
+              <Field wrapperClass="md:col-span-3" label={`Camera ${i + 1} name`}
+                value={c.name}
                 onChange={v => setCameras(a => a.map((x, j) => j === i ? { ...x, name: v } : x))}
                 placeholder="Bar Cam" disabled={!!c.cameraId} />
-              <Field wrapperClass="md:col-span-5" label="RTSP URL" value={c.rtspUrl}
+              <Field wrapperClass="md:col-span-7" label="Stream URL" value={c.rtspUrl}
                 onChange={v => setCameras(a => a.map((x, j) => j === i ? { ...x, rtspUrl: v } : x))}
-                placeholder="rtsp://user:pass@ip:port/Streaming/Channels/101"
+                placeholder="rtsp://… or http://…:15007/hls/live/CH1/0/livetop.mp4"
                 disabled={!!c.cameraId} />
-              <Field wrapperClass="md:col-span-2" label="Modes" value={c.modes}
-                onChange={v => setCameras(a => a.map((x, j) => j === i ? { ...x, modes: v } : x))}
-                placeholder="drink_count,bottle_count" disabled={!!c.cameraId} />
               <div className="md:col-span-2 flex flex-col gap-1">
                 <label className="text-xs text-gray-400">Profile</label>
                 <select
@@ -416,6 +664,46 @@ export function OnboardVenue() {
                   <option>accurate</option>
                 </select>
               </div>
+
+              <div className="md:col-span-12">
+                <label className="text-xs text-gray-400 block mb-1">Modes</label>
+                <div className="flex flex-wrap gap-2">
+                  {VALID_MODES.map(m => {
+                    const checked = c.modes.includes(m.id);
+                    return (
+                      <label key={m.id} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded border cursor-pointer ${
+                        c.cameraId ? 'opacity-60 cursor-not-allowed' : ''
+                      } ${
+                        checked
+                          ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300'
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
+                      }`}>
+                        <input
+                          type="checkbox"
+                          className="hidden"
+                          disabled={!!c.cameraId}
+                          checked={checked}
+                          onChange={e => setCameras(a => a.map((x, j) => {
+                            if (j !== i) return x;
+                            const next = e.target.checked
+                              ? [...x.modes, m.id]
+                              : x.modes.filter(mm => mm !== m.id);
+                            return { ...x, modes: next };
+                          }))}
+                        />
+                        {m.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {cameraErrors[i] && (
+                <div className="md:col-span-12 text-xs text-red-300 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Camera {i + 1}: {cameraErrors[i]}
+                </div>
+              )}
               {c.cameraId ? (
                 <div className="md:col-span-12 text-xs text-cyan-300">
                   ✓ Registered as <code className="text-xs">{c.cameraId}</code>
@@ -432,7 +720,7 @@ export function OnboardVenue() {
           <button
             onClick={() => setCameras(a => [...a, {
               name: `Camera ${a.length + 1}`, rtspUrl: '',
-              modes: 'drink_count,bottle_count', modelProfile: 'balanced',
+              modes: ['drink_count'], modelProfile: 'balanced',
             }])}
             className="self-start inline-flex items-center gap-1 bg-white/5 hover:bg-white/10 text-white text-sm px-3 py-1.5 rounded"
           >
@@ -441,44 +729,114 @@ export function OnboardVenue() {
         </div>
       );
 
+      // ─── 4. Business hours ─────────────────────────────────────────────
+      case 'hours': return (
+        <div className="flex flex-col gap-4 max-w-2xl">
+          <p className="text-sm text-gray-400">
+            Worker only runs (and only writes to DDB) during these hours,
+            with a 15-minute warmup before open and 15-minute cooldown after close.
+            Customer dashboards show "Venue closed" outside this window.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-400">Timezone</label>
+              <select
+                className="bg-white/5 border border-white/10 rounded text-white text-sm px-2 py-1.5"
+                value={bizTimezone}
+                onChange={e => setBizTimezone(e.target.value)}
+              >
+                {COMMON_TIMEZONES.map(tz => (
+                  <option key={tz.id} value={tz.id}>{tz.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {(['mon','tue','wed','thu','fri','sat','sun'] as const).map(day => {
+              const d = bizDays[day];
+              return (
+                <div key={day} className="flex items-center gap-3 bg-white/5 border border-white/10 rounded px-3 py-2">
+                  <span className="text-sm text-gray-300 w-12 uppercase">{day}</span>
+                  <label className="inline-flex items-center gap-1 text-xs text-gray-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!d.closed}
+                      onChange={e => setBizDays(prev => ({ ...prev, [day]: { ...d, closed: !e.target.checked } }))}
+                    />
+                    Open
+                  </label>
+                  <input
+                    type="time"
+                    value={d.open}
+                    onChange={e => setBizDays(prev => ({ ...prev, [day]: { ...d, open: e.target.value } }))}
+                    disabled={d.closed}
+                    className="bg-black/30 border border-white/10 rounded text-white text-sm px-2 py-1 disabled:opacity-40"
+                  />
+                  <span className="text-xs text-gray-500">to</span>
+                  <input
+                    type="time"
+                    value={d.close}
+                    onChange={e => setBizDays(prev => ({ ...prev, [day]: { ...d, close: e.target.value } }))}
+                    disabled={d.closed}
+                    className="bg-black/30 border border-white/10 rounded text-white text-sm px-2 py-1 disabled:opacity-40"
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-gray-500">
+            Close time after midnight (e.g. <code>02:00</code>) is interpreted as 2 AM the next day.
+          </p>
+        </div>
+      );
+
+      // ─── 5. Pre-flight ─────────────────────────────────────────────────
       case 'preflight': return (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-gray-400">
-            We probe each camera's RTSP URL, decode one frame, and report
-            resolution + fps. If any fail, fix the URL (or NVR port-forward)
-            before running the first detection.
+            We probe each camera's URL <strong>from the droplet</strong>{droplet?.dropletIp ? ` (${droplet.dropletIp})` : ''} —
+            same network vantage point the worker uses. If any fail, the
+            issue is almost always the NVR allowlist not yet including the
+            droplet IP.
           </p>
           <div className="flex gap-2">
-            <button onClick={runPreflight} disabled={busy}
+            <button onClick={runPreflight} disabled={busy || !droplet?.dropletIp}
               className="inline-flex items-center gap-1 bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-3 py-1.5 rounded disabled:opacity-40">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
               Run pre-flight
             </button>
+            {!droplet?.dropletIp && (
+              <span className="text-xs text-amber-300 flex items-center gap-1">
+                <AlertCircle className="w-3.5 h-3.5" /> Droplet must be active first
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {cameras.map((c, i) => (
               <div key={i} className="bg-white/5 border border-white/10 rounded p-3">
-                <div className="flex items-center justify-between">
-                  <div className="font-semibold text-white text-sm">{c.name}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-semibold text-white text-sm truncate">{c.name}</div>
                   {c.preflight && (c.preflight.ok ? (
-                    <span className="text-green-400 text-xs">✓ {c.preflight.width}×{c.preflight.height} @ {c.preflight.fps?.toFixed(1)}fps</span>
+                    <span className="text-green-400 text-xs whitespace-nowrap">
+                      ✓ {c.preflight.width}×{c.preflight.height} @ {c.preflight.fps?.toFixed(1)}fps
+                    </span>
                   ) : (
-                    <span className="text-red-400 text-xs">✗ {c.preflight.reason}</span>
+                    <span className="text-red-400 text-xs whitespace-nowrap">✗ {c.preflight.reason}</span>
                   ))}
                 </div>
-                <code className="text-xs text-gray-500 break-all">{c.rtspUrl}</code>
+                <code className="text-xs text-gray-500 break-all block mt-1">{c.rtspUrl}</code>
               </div>
             ))}
           </div>
         </div>
       );
 
+      // ─── 6. POS connect ────────────────────────────────────────────────
       case 'pos': return (
         <div className="flex flex-col gap-3 max-w-2xl">
           <p className="text-sm text-gray-400">
             Connect the venue's POS so drink counts reconcile automatically.
-            Needed to close the 99% accuracy SLA loop. Can be skipped here and
-            added later from Settings.
+            Skipping is fine — owner can hook this up later from Settings → POS.
           </p>
           <div className="flex gap-2">
             <button
@@ -498,14 +856,13 @@ export function OnboardVenue() {
           </div>
           {posProvider && !posSkipped && (
             <div className="bg-yellow-500/10 border border-yellow-500/30 rounded p-3 text-sm text-yellow-200">
-              POS OAuth flow is not wired into this wizard yet — the venue owner
-              can connect it from Settings → POS after their first login. That
-              path is already built and working.
+              POS OAuth flow isn't wired into this wizard yet — owner can connect
+              from Settings → POS after first login.
             </div>
           )}
           <div className="flex gap-2">
             <button
-              onClick={() => { setPosSkipped(true); setStepIdx(4); }}
+              onClick={() => { setPosSkipped(true); setStepIdx(6); }}
               className="text-sm text-gray-400 hover:text-white px-3 py-1.5"
             >
               Skip for now →
@@ -514,11 +871,12 @@ export function OnboardVenue() {
         </div>
       );
 
+      // ─── 7. Staff invites ──────────────────────────────────────────────
       case 'staff': return (
         <div className="flex flex-col gap-3 max-w-2xl">
           <p className="text-sm text-gray-400">
             Optionally invite staff now. Each gets a Cognito user with a temp
-            password. Can always be done later from the Users tab.
+            password. Can be done later from the Users tab.
           </p>
           {staff.map((s, i) => (
             <div key={i} className="bg-white/5 border border-white/10 rounded p-3 grid grid-cols-12 gap-2">
@@ -556,29 +914,33 @@ export function OnboardVenue() {
         </div>
       );
 
+      // ─── 8. Done ───────────────────────────────────────────────────────
       case 'done': return (
         <div className="flex flex-col items-center text-center gap-4 py-6">
           <CheckCircle2 className="w-16 h-16 text-green-400" />
           <div>
             <h3 className="text-2xl font-bold text-white">Venue onboarded</h3>
             <p className="text-sm text-gray-400 mt-1">
-              {venue.venueName} ({computedVenueId}) is ready. The worker polls DynamoDB
-              every 60s — cameras will start collecting data on the next cycle.
+              {venue.venueName} ({computedVenueId}) is ready. Worker on droplet
+              {droplet?.dropletIp ? ` ${droplet.dropletIp}` : ''} polls DynamoDB
+              every 60s — cameras start collecting data on the next cycle, gated
+              by the schedule you set.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-3 max-w-md w-full text-sm">
-            <div className="bg-white/5 border border-white/10 rounded p-3">
-              <div className="text-xs text-gray-400">Cameras</div>
-              <div className="text-2xl font-bold text-white">{cameras.length}</div>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded p-3">
-              <div className="text-xs text-gray-400">Users</div>
-              <div className="text-2xl font-bold text-white">{1 + staff.length}</div>
-            </div>
+          <div className="grid grid-cols-3 gap-3 max-w-md w-full text-sm">
+            <Stat label="Cameras" value={cameras.length} />
+            <Stat label="Users"   value={1 + staff.length} />
+            <Stat label="Droplet" value={droplet?.dropletIp ?? '—'} small />
           </div>
           <div className="flex gap-2 pt-2">
-            <a href="#/admin/ops" className="inline-flex items-center gap-1 bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-4 py-2 rounded">
-              <ExternalLink className="w-3.5 h-3.5" /> Watch it come alive (Ops Monitor)
+            <button
+              onClick={startNewVenue}
+              className="inline-flex items-center gap-1 bg-white/5 hover:bg-white/10 text-white text-sm px-4 py-2 rounded"
+            >
+              Onboard another venue
+            </button>
+            <a href="#admin/venues" className="inline-flex items-center gap-1 bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-4 py-2 rounded">
+              <ExternalLink className="w-3.5 h-3.5" /> Open venue dashboard
             </a>
           </div>
         </div>
@@ -589,15 +951,34 @@ export function OnboardVenue() {
   // ── Footer nav ──────────────────────────────────────────────────────────
   const nextAction = () => {
     switch (currentStep.id) {
-      case 'venue':      return { label: venueCreated ? 'Next' : 'Create venue', fn: venueCreated ? () => setStepIdx(1) : submitVenueStep };
-      case 'cameras':    return { label: 'Register + next', fn: submitCamerasStep };
-      case 'preflight':  return { label: 'Next', fn: () => setStepIdx(3) };
-      case 'pos':        return { label: posProvider ? 'Next' : 'Skip', fn: () => setStepIdx(4) };
-      case 'staff':      return { label: staff.length > 0 ? 'Invite + finish' : 'Finish', fn: submitStaffStep };
-      case 'done':       return { label: '', fn: () => {} };
+      case 'venue':
+        return { label: venueCreated ? 'Next' : 'Create venue',
+                 fn: venueCreated ? () => setStepIdx(1) : submitVenueStep,
+                 disabled: false };
+      case 'droplet':
+        return { label: 'Next',
+                 fn: () => setStepIdx(2),
+                 disabled: !(droplet?.dropletStatus === 'active' || droplet?.dropletStatus === 'new') };
+      case 'cameras':
+        return { label: 'Register + next',
+                 fn: submitCamerasStep, disabled: false };
+      case 'hours':
+        return { label: 'Save + next',
+                 fn: submitHoursStep, disabled: false };
+      case 'preflight':
+        return { label: 'Next',
+                 fn: () => setStepIdx(5), disabled: false };
+      case 'pos':
+        return { label: posProvider ? 'Next' : 'Skip',
+                 fn: () => setStepIdx(6), disabled: false };
+      case 'staff':
+        return { label: staff.length > 0 ? 'Invite + finish' : 'Finish',
+                 fn: submitStaffStep, disabled: false };
+      case 'done':
+        return { label: '', fn: () => {}, disabled: true };
     }
   };
-  const next = nextAction();
+  const next = nextAction()!;
 
   return (
     <div className="flex flex-col gap-4">
@@ -609,15 +990,23 @@ export function OnboardVenue() {
               Onboard Venue
             </h2>
             <p className="text-sm text-gray-400 mt-1">
-              Guided flow from "new customer signed" to "data flowing" — target &lt; 4 hours.
+              Guided flow from "new customer signed" to "data flowing."
             </p>
           </div>
-          <div className="text-xs text-gray-500">Step {stepIdx + 1} of {STEPS.length}</div>
+          <div className="flex items-center gap-3">
+            {persisted && persisted.venueCreated && (
+              <button onClick={startNewVenue} title="Discard saved progress, start fresh"
+                className="text-xs text-gray-500 hover:text-red-300 inline-flex items-center gap-1">
+                <RefreshCw className="w-3 h-3" /> Reset wizard
+              </button>
+            )}
+            <div className="text-xs text-gray-500">Step {stepIdx + 1} of {STEPS.length}</div>
+          </div>
         </div>
         <ProgressRail currentIdx={stepIdx} />
       </div>
 
-      <div className="glass-card p-5 min-h-[300px]">
+      <div className="glass-card p-5 min-h-[320px]">
         <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <currentStep.icon className="w-5 h-5 text-cyan-400" />
           {currentStep.label}
@@ -652,7 +1041,7 @@ export function OnboardVenue() {
             <ArrowLeft className="w-4 h-4" /> Back
           </button>
           <button
-            onClick={next.fn} disabled={busy}
+            onClick={next.fn} disabled={busy || next.disabled}
             className="inline-flex items-center gap-1 bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-4 py-2 rounded disabled:opacity-40"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
@@ -664,7 +1053,7 @@ export function OnboardVenue() {
   );
 }
 
-// ─── Small controlled input ─────────────────────────────────────────────────
+// ─── Small subcomponents ─────────────────────────────────────────────────────
 
 function Field({
   label, value, onChange, placeholder, type = 'text', help, wrapperClass = '', disabled,
@@ -683,6 +1072,15 @@ function Field({
                    focus:outline-none focus:border-cyan-400"
       />
       {help && <div className="text-xs text-gray-500">{help}</div>}
+    </div>
+  );
+}
+
+function Stat({ label, value, small }: { label: string; value: string | number; small?: boolean }) {
+  return (
+    <div className="bg-white/5 border border-white/10 rounded p-3">
+      <div className="text-xs text-gray-400">{label}</div>
+      <div className={`${small ? 'text-sm' : 'text-2xl'} font-bold text-white truncate`}>{value}</div>
     </div>
   );
 }
