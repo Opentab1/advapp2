@@ -27,6 +27,10 @@ interface DropletState {
   dropletRegion?: string;
   dropletSize?: string;
   provisionedAt?: string;
+  // Set by the Lambda when DDB has the droplet wired but the live DO call
+  // failed (e.g. DO_API_TOKEN not configured). Surface so the admin knows
+  // the IP/region shown is from our cache, not a fresh DO read.
+  doApiError?: string;
 }
 
 export function DropletPanel({ venueId, venueName }: DropletPanelProps) {
@@ -155,6 +159,13 @@ export function DropletPanel({ venueId, venueName }: DropletPanelProps) {
           <div className="text-[11px] text-amber-300/80">
             Add this IP to the venue's NVR allowlist before cameras will stream.
           </div>
+          {state?.doApiError && (
+            <div className="text-[11px] text-amber-300/80 flex items-start gap-1">
+              <span className="font-semibold">cached:</span>
+              <span>live DO lookup failed — values shown are from our DDB record.
+                {state.doApiError.includes('DO_API_TOKEN') && ' Set DO_API_TOKEN on the Lambda to refresh.'}</span>
+            </div>
+          )}
           <button
             onClick={handleDestroy}
             disabled={busy}

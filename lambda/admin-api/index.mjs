@@ -2598,12 +2598,30 @@ async function getDroplet(venueId) {
   if (!dropletId) {
     return ok({ venueId, dropletStatus: 'none' });
   }
-  // Fetch current state from DO
+  // DDB-cached values become the fallback when the DO API isn't reachable —
+  // either because DO_API_TOKEN isn't set yet or DO is having an outage. The
+  // admin UI still shows the wired droplet's id/IP/region/size from our own
+  // record so operators aren't blocked on a missing env var.
+  const cached = {
+    venueId,
+    dropletId,
+    dropletStatus: it?.dropletStatus?.S || 'unknown',
+    dropletIp:     it?.dropletIp?.S     || '',
+    dropletRegion: it?.dropletRegion?.S || '',
+    dropletSize:   it?.dropletSize?.S   || '',
+    provisionedAt: it?.provisionedAt?.S || '',
+  };
+
+  // Try to fetch live state from DO. If we don't have a token or DO returns
+  // an error, fall back to the cached row instead of 500-ing the UI.
   let live;
   try {
     live = await _doApi(`/droplets/${dropletId}`);
   } catch (e) {
-    return err(e._status || 500, e.message || 'DO lookup failed');
+    return ok({
+      ...cached,
+      doApiError: e.message || 'DO lookup failed',
+    });
   }
   const d = live.droplet || {};
   const v4 = (d.networks?.v4 || []).find(n => n.type === 'public')?.ip_address || '';
@@ -2626,10 +2644,10 @@ async function getDroplet(venueId) {
     venueId,
     dropletId,
     dropletStatus: status,
-    dropletIp:     v4,
+    dropletIp:     v4 || cached.dropletIp,
     dropletRegion: it?.dropletRegion?.S || '',
     dropletSize:   it?.dropletSize?.S   || '',
-    provisionedAt: it?.provisionedAt?.S  || '',
+    provisionedAt: it?.provisionedAt?.S || '',
     name:          d.name,
   });
 }
