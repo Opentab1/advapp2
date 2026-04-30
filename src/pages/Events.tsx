@@ -245,6 +245,13 @@ function buildClientForecast(
   capacity: number,
   historicalJobs: VenueScopeJob[] = [],
   avgDrinkPrice = 28,
+  // Operator-reported slow/busy covers from the wizard. When provided, the
+  // pooled prior is interpolated between these by DOW (slowest day → slow
+  // covers, busiest day → busy covers) instead of the generic capacity*0.55
+  // fallback. Cold-start forecasts on day one match what the operator told
+  // us during onboarding.
+  slowDayCovers?: number | null,
+  busyDayCovers?: number | null,
 ): TonightForecast {
   const now   = new Date();
   const dow   = now.getDay();        // 0=Sun … 6=Sat
@@ -293,7 +300,13 @@ function buildClientForecast(
   // ── Step 3: Bayesian blend — venue data vs pooled prior ──────────────────────
   // alpha ramps from 0 (cold start) → 1 (90 days fully observed)
   const alpha     = Math.min(daysOfHistory / 90, 1.0);
-  const pooledPeak = capacity * 0.55;
+  // Operator-supplied prior beats the generic capacity*0.55 fallback when
+  // available — average of slow + busy is a fair "typical-night" anchor.
+  const operatorPeak = (typeof slowDayCovers === 'number' && typeof busyDayCovers === 'number'
+                       && busyDayCovers > 0)
+    ? (slowDayCovers + busyDayCovers) / 2
+    : null;
+  const pooledPeak = operatorPeak ?? capacity * 0.55;
   const venuePeak  = Math.max(...Object.values(venueDowAvg), pooledPeak);
 
   const blendedDowMult: Record<number, number> = {};
@@ -309,8 +322,8 @@ function buildClientForecast(
   // ── Step 4: Forecast mid-point ────────────────────────────────────────────────
   const venueOverallAvg = nights.length > 0
     ? nights.reduce((s, n) => s + n.covers, 0) / nights.length
-    : capacity * 0.55;
-  const blendedBase = alpha * venueOverallAvg + (1 - alpha) * (capacity * 0.55);
+    : pooledPeak;
+  const blendedBase = alpha * venueOverallAvg + (1 - alpha) * pooledPeak;
   const dowMult  = blendedDowMult[dow] ?? DOW_MULT[dow] ?? 0.55;
   const monthMult = MONTH_MULT[month] ?? 1.0;
 
@@ -715,6 +728,8 @@ function TonightTab({ venueId }: { venueId: string }) {
     // Load venue settings + 90 days of job history + pre-computed forecast in parallel
     let cap = 150;
     let avgDrinkPrice = 28;
+    let slowCovers: number | null = null;
+    let busyCovers: number | null = null;
     let historicalJobs: VenueScopeJob[] = [];
     let storedForecast: Record<string, unknown> | null = null;
     const ninetyDaysAgo = Math.floor(Date.now() / 1000) - 90 * 86400;
@@ -731,6 +746,8 @@ function TonightTab({ venueId }: { venueId: string }) {
       ]);
       if (settings?.capacity)      { cap = settings.capacity; setVenueCapacity(settings.capacity); }
       if (settings?.avgDrinkPrice) { avgDrinkPrice = settings.avgDrinkPrice; }
+      if (typeof settings?.slowDayCovers === 'number' && settings.slowDayCovers > 0) slowCovers = settings.slowDayCovers;
+      if (typeof settings?.busyDayCovers === 'number' && settings.busyDayCovers > 0) busyCovers = settings.busyDayCovers;
       historicalJobs = jobs;
       storedForecast = stored;
       if (yesterday) setLastNight(yesterday);
@@ -744,7 +761,7 @@ function TonightTab({ venueId }: { venueId: string }) {
     }
 
     // Client-side Layer 1 fallback — venue-personalized baseline, no backend needed
-    setForecast(buildClientForecast(cap, historicalJobs, avgDrinkPrice));
+    setForecast(buildClientForecast(cap, historicalJobs, avgDrinkPrice, slowCovers, busyCovers));
     setUsingClientModel(true);
     setLoading(false);
   }, [venueId]);
@@ -1267,10 +1284,20 @@ interface IdeaForecast {
   factors: { dow: number; dowLabel: string; month: number; monthLabel: string; lift: number; liftLabel: string; holiday: number; holidayLabel: string; };
 }
 
-function runIdeaModel(idea: CalendarEventIdea, capacity: number): IdeaForecast {
+function runIdeaModel(
+  idea: CalendarEventIdea,
+  capacity: number,
+  slowDayCovers?: number | null,
+  busyDayCovers?: number | null,
+): IdeaForecast {
   const d = idea.date;
   const concept = getIdeaConcept(idea);
-  const base = capacity * 0.55;
+  // Anchor the prior to operator-supplied slow/busy covers when available;
+  // otherwise fall back to the capacity*0.55 generic average.
+  const base = (typeof slowDayCovers === 'number' && typeof busyDayCovers === 'number'
+                && busyDayCovers > 0)
+    ? (slowDayCovers + busyDayCovers) / 2
+    : capacity * 0.55;
   const dow = DOW_MULT[(d.getDay() + 6) % 7] ?? 0.65;
   const month = MONTH_MULT[d.getMonth() + 1] ?? 1.0;
   const lift = IDEA_EVENT_LIFT[concept] ?? 1.10;
@@ -1299,9 +1326,16 @@ function runIdeaModel(idea: CalendarEventIdea, capacity: number): IdeaForecast {
 
 // ─── Idea Card ────────────────────────────────────────────────────────────────
 
-function IdeaCard({ idea, capacity }: { idea: CalendarEventIdea; capacity: number }) {
+function IdeaCard({
+  idea, capacity, slowDayCovers, busyDayCovers,
+}: {
+  idea: CalendarEventIdea;
+  capacity: number;
+  slowDayCovers?: number | null;
+  busyDayCovers?: number | null;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const fc = runIdeaModel(idea, capacity);
+  const fc = runIdeaModel(idea, capacity, slowDayCovers, busyDayCovers);
   const diffColor = idea.difficulty === 'Easy'
     ? 'text-green-400 bg-green-500/10 border-green-500/30'
     : idea.difficulty === 'Medium'
@@ -1434,7 +1468,13 @@ function IdeaCard({ idea, capacity }: { idea: CalendarEventIdea; capacity: numbe
 
 // ─── Ideas Tab ────────────────────────────────────────────────────────────────
 
-function IdeasTab({ capacity }: { capacity: number }) {
+function IdeasTab({
+  capacity, slowDayCovers, busyDayCovers,
+}: {
+  capacity: number;
+  slowDayCovers?: number | null;
+  busyDayCovers?: number | null;
+}) {
   const [filter, setFilter] = useState<'All' | 'Easy' | 'Medium' | 'Hard'>('All');
   // Memoize so the list is generated once — prevents framer-motion ghost cards on re-render
   const ideas = useMemo(() => generateCalendarEvents(new Date(), 3), []);
@@ -1466,7 +1506,8 @@ function IdeasTab({ capacity }: { capacity: number }) {
       ) : (
         <div className="space-y-3">
           {filtered.map(idea => (
-            <IdeaCard key={idea.id} idea={idea} capacity={capacity} />
+            <IdeaCard key={idea.id} idea={idea} capacity={capacity}
+              slowDayCovers={slowDayCovers} busyDayCovers={busyDayCovers} />
           ))}
         </div>
       )}
@@ -1485,6 +1526,8 @@ export default function Events() {
   const [concepts, setConcepts] = useState<ConceptStat[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [venueCapacity, setVenueCapacity] = useState(150);
+  const [slowDayCovers, setSlowDayCovers] = useState<number | null>(null);
+  const [busyDayCovers, setBusyDayCovers] = useState<number | null>(null);
 
   useEffect(() => {
     if (isDemoAccount(venueId)) { setVenueCapacity(500); return; }
@@ -1492,6 +1535,8 @@ export default function Events() {
     if (cap) setVenueCapacity(cap);
     venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
       if (s?.capacity) setVenueCapacity(s.capacity);
+      if (typeof s?.slowDayCovers === 'number' && s.slowDayCovers > 0) setSlowDayCovers(s.slowDayCovers);
+      if (typeof s?.busyDayCovers === 'number' && s.busyDayCovers > 0) setBusyDayCovers(s.busyDayCovers);
     }).catch(() => {});
   }, [venueId]);
 
@@ -1567,7 +1612,8 @@ export default function Events() {
       {activeTab === 'tonight' && <TonightTab venueId={venueId} />}
 
       {/* Ideas Tab */}
-      {activeTab === 'ideas' && <IdeasTab capacity={venueCapacity} />}
+      {activeTab === 'ideas' && <IdeasTab capacity={venueCapacity}
+        slowDayCovers={slowDayCovers} busyDayCovers={busyDayCovers} />}
 
       {/* Attendance Forecaster Tab */}
       {activeTab === 'attendance' && <ForecastPage />}

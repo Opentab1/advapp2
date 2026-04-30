@@ -71,8 +71,22 @@ interface AttendanceResult {
   factors: Record<string, number>;
 }
 
-function runModel(concept: string, date: Date, capacity: number, cover: number, weatherRisk: string): AttendanceResult {
-  const base    = capacity * 0.55;
+function runModel(
+  concept: string,
+  date: Date,
+  capacity: number,
+  cover: number,
+  weatherRisk: string,
+  // Optional operator-supplied prior. When set, anchors the baseline to the
+  // mid-point between slow and busy nightly covers; otherwise falls back to
+  // the generic 55%-of-capacity industry assumption.
+  slowDayCovers?: number | null,
+  busyDayCovers?: number | null,
+): AttendanceResult {
+  const base    = (typeof slowDayCovers === 'number' && typeof busyDayCovers === 'number'
+                  && busyDayCovers > 0)
+    ? (slowDayCovers + busyDayCovers) / 2
+    : capacity * 0.55;
   const dow     = DOW_MULTIPLIER[(date.getDay() + 6) % 7] ?? 0.65;
   const month   = MONTH_MULTIPLIER[date.getMonth() + 1] ?? 1.0;
   const lift    = EVENT_LIFT[concept] ?? 1.10;
@@ -655,12 +669,23 @@ export function Forecast() {
   const [weather,    setWeather]    = useState<WeatherResult | null>(null);
   const [reddit,     setReddit]     = useState<RedditResult | null>(null);
   const [composite,  setComposite]  = useState<CompositeResult | null>(null);
+  const [slowDayCovers, setSlowDayCovers] = useState<number | null>(null);
+  const [busyDayCovers, setBusyDayCovers] = useState<number | null>(null);
 
   useEffect(() => {
     const addr = venueSettingsService.getAddress(venueId);
     if (addr?.city) setCity(addr.city);
     else venueSettingsService.getAddressFromCloud(venueId)
       .then(a => { if (a?.city) setCity(a.city); })
+      .catch(() => {});
+    // Pull operator-supplied slow/busy nightly covers so the model anchors
+    // its baseline to real venue data instead of the generic 55% prior.
+    venueSettingsService.loadSettingsFromCloud(venueId)
+      .then(s => {
+        if (typeof s?.slowDayCovers === 'number' && s.slowDayCovers > 0) setSlowDayCovers(s.slowDayCovers);
+        if (typeof s?.busyDayCovers === 'number' && s.busyDayCovers > 0) setBusyDayCovers(s.busyDayCovers);
+        if (s?.capacity && s.capacity > 0) setCapacity(String(s.capacity));
+      })
       .catch(() => {});
   }, [venueId]);
 
@@ -682,7 +707,7 @@ export function Forecast() {
     const d   = new Date(date + 'T12:00:00');
 
     // Attendance model (synchronous)
-    const att = runModel(concept, d, cap, cov, weatherRisk);
+    const att = runModel(concept, d, cap, cov, weatherRisk, slowDayCovers, busyDayCovers);
     setAttendance(att);
 
     // Weather
@@ -693,7 +718,7 @@ export function Forecast() {
       setWeather(wx);
       if (wx.forecast_available && wx.risk !== 'unknown') {
         setWeatherRisk(wx.risk);
-        setAttendance(runModel(concept, d, cap, cov, wx.risk));
+        setAttendance(runModel(concept, d, cap, cov, wx.risk, slowDayCovers, busyDayCovers));
       }
     } else {
       wx = {
@@ -736,7 +761,7 @@ export function Forecast() {
     DOW_LABELS.forEach((day, i) => {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
-      map[day] = runModel(concept, d, cap, cov, weather?.risk && weather.risk !== 'unknown' ? weather.risk : weatherRisk);
+      map[day] = runModel(concept, d, cap, cov, weather?.risk && weather.risk !== 'unknown' ? weather.risk : weatherRisk, slowDayCovers, busyDayCovers);
     });
     setWeekResults(map);
   };

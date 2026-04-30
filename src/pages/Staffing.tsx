@@ -421,6 +421,8 @@ function MonthScheduleView({
   capacityModel,
   hourlyRates,
   venueCapacity,
+  slowDayCovers,
+  busyDayCovers,
   onAddStaff,
   onDeleteStaff,
   onAddShift,
@@ -436,6 +438,8 @@ function MonthScheduleView({
   capacityModel: BartenderCapModel | null;
   hourlyRates: HourlyRates;
   venueCapacity: number;
+  slowDayCovers: number | null;
+  busyDayCovers: number | null;
   onAddStaff: () => void;
   onDeleteStaff: (id: string) => void;
   onAddShift: (date: string) => void;
@@ -491,7 +495,8 @@ function MonthScheduleView({
       const existing = shifts.filter(s => s.date === dateStr && !s.suggested);
       if (existing.length > 0) return; // don't overwrite confirmed shifts
 
-      const rec = clientForecastForDate(day, capacity, covers_per_bartender, door_threshold);
+      const rec = clientForecastForDate(day, capacity, covers_per_bartender, door_threshold,
+        slowDayCovers, busyDayCovers);
 
       // Bartenders — on busy nights (isWeekend), start from highest-dph; on slow nights rotate
       const bartenderPool = rec.isWeekend ? sortedBartenders : byRole('bartender');
@@ -673,7 +678,8 @@ function MonthScheduleView({
             const dayShifts    = getShiftsForDay(dateStr);
             const confirmed    = dayShifts.filter(s => !s.suggested);
             const suggested    = dayShifts.filter(s => s.suggested);
-            const rec          = inMonth ? clientForecastForDate(day, capacity, covers_per_bartender, door_threshold) : null;
+            const rec          = inMonth ? clientForecastForDate(day, capacity, covers_per_bartender, door_threshold,
+                                                                  slowDayCovers, busyDayCovers) : null;
             const isExpanded   = expandedDay === dateStr;
 
             return (
@@ -744,7 +750,8 @@ function MonthScheduleView({
         {expandedDay && (() => {
           const day      = parseISO(expandedDay);
           const dayShifts = getShiftsForDay(expandedDay);
-          const rec       = clientForecastForDate(day, capacity, covers_per_bartender, door_threshold);
+          const rec       = clientForecastForDate(day, capacity, covers_per_bartender, door_threshold,
+                                                   slowDayCovers, busyDayCovers);
 
           // Labor cost estimate
           const laborCost = dayShifts.reduce((sum, s) => {
@@ -961,16 +968,25 @@ export function Staffing() {
   // to 150 only as a last-resort fallback for venues that haven't onboarded
   // with a capacity value yet.
   const [venueCapacity, setVenueCapacity] = useState<number>(150);
+  // Operator-reported nightly cover counts (from the onboarding wizard).
+  // When set, the schedule anchors its prior to these instead of the
+  // generic-peak fallback so day-one schedules look realistic.
+  const [slowDayCovers, setSlowDayCovers] = useState<number | null>(null);
+  const [busyDayCovers, setBusyDayCovers] = useState<number | null>(null);
 
   const user    = authService.getStoredUser();
   const venueId = user?.venueId ?? '';
 
-  // Load venue capacity once per venue so the schedule's client forecast
-  // uses the same hard-cap the server prior does.
+  // Load venue capacity + slow/busy covers once per venue so the schedule's
+  // client forecast uses the same hard-cap and prior the server uses.
   useEffect(() => {
     if (!venueId) return;
     venueSettingsService.loadSettingsFromCloud(venueId)
-      .then(s => { if (s?.capacity && s.capacity > 0) setVenueCapacity(s.capacity); })
+      .then(s => {
+        if (s?.capacity && s.capacity > 0) setVenueCapacity(s.capacity);
+        if (typeof s?.slowDayCovers === 'number' && s.slowDayCovers > 0) setSlowDayCovers(s.slowDayCovers);
+        if (typeof s?.busyDayCovers === 'number' && s.busyDayCovers > 0) setBusyDayCovers(s.busyDayCovers);
+      })
       .catch(() => { /* keep the 150 default */ });
   }, [venueId]);
 
@@ -1272,6 +1288,8 @@ export function Staffing() {
               capacityModel={capacityModel}
               hourlyRates={hourlyRates}
               venueCapacity={venueCapacity}
+              slowDayCovers={slowDayCovers}
+              busyDayCovers={busyDayCovers}
               onAddStaff={() => setShowAddStaff(true)}
               onDeleteStaff={handleDeleteStaff}
               onAddShift={date => setShowAddShift(date)}

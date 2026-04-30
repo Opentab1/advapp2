@@ -397,6 +397,25 @@ export function OnboardVenue() {
       setVenueCreated(true);
       setOwnerTempPassword(res.tempPassword ?? null);
       setVenue(v => ({ ...v, venueId: computedVenueId }));
+
+      // Mirror the forecast profile to /venue-settings so consumer-facing
+      // pages (Staffing schedule, Tonight forecast, Idea tester) can read
+      // these without an admin-key. The admin venues row is still source of
+      // truth for the operator-facing wizard; this is a read-side cache for
+      // the customer side. Fire-and-forget — failure here just means the
+      // customer pages will use the generic prior until the operator edits
+      // settings, which is the same state existing venues are already in.
+      try {
+        const existing = (await venueSettingsService.loadSettingsFromCloud(computedVenueId)) || {};
+        await venueSettingsService.saveSettingsToCloud(computedVenueId, {
+          ...existing,
+          ...(capacityN > 0 ? { capacity:      capacityN } : {}),
+          ...(slowN     > 0 ? { slowDayCovers: slowN }     : {}),
+          ...(busyN     > 0 ? { busyDayCovers: busyN }     : {}),
+          venueTier: venue.venueTier,
+        });
+      } catch { /* non-fatal */ }
+
       setStepIdx(1);
       setMsg(res.message);
     } catch (e: any) {

@@ -33,6 +33,13 @@ export interface VenueSettings {
   address?: VenueAddress;
   capacity?: number;  // Max capacity of the venue
   avgDrinkPrice?: number;  // Average drink price in dollars (for theft loss estimates)
+  // Operator-reported nightly cover counts from the onboarding wizard. The
+  // forecast/staffing engines anchor their cold-start prior to these instead
+  // of the generic capacity*0.55 fallback so a brand-new venue gets a
+  // realistic schedule on day one.
+  slowDayCovers?: number;
+  busyDayCovers?: number;
+  venueTier?: string;
   businessHours?: {
     // Legacy single-time format (migrated on read)
     open?: string;
