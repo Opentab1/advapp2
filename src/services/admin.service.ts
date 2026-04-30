@@ -95,10 +95,15 @@ export interface AdminVenue {
   busyDayCovers?: number | null;
 }
 
+// Tier picks the night-shape (when peaks hit) + avg visit duration in
+// the forecast service. Capacity + slow/busy covers cover magnitude, so
+// the four categories below are the only ones that actually change
+// behavior. Legacy values ('small_bar', 'mid_bar', 'large_bar') still
+// flow through the Python backend — _tier_to_shape_key falls back to the
+// bar shape — so existing rows render fine even though the dropdown
+// stops offering them.
 export type VenueTier =
-  | 'small_bar'
-  | 'mid_bar'
-  | 'large_bar'
+  | 'bar'
   | 'restaurant'
   | 'nightclub'
   | 'mixed';

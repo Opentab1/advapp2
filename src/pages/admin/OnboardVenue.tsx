@@ -254,7 +254,7 @@ export function OnboardVenue() {
   // Step 1 — venue
   const [venue, setVenue] = useState<VenueForm>(persisted?.venue ?? {
     venueName: '', venueId: '', locationName: 'Main', ownerEmail: '', ownerName: '',
-    venueTier: 'small_bar', capacity: '', slowDayCovers: '', busyDayCovers: '',
+    venueTier: 'bar', capacity: '', slowDayCovers: '', busyDayCovers: '',
   });
   const [venueCreated, setVenueCreated] = useState(persisted?.venueCreated ?? false);
   const [ownerTempPassword, setOwnerTempPassword] = useState<string | null>(persisted?.ownerTempPassword ?? null);
@@ -684,12 +684,10 @@ export function OnboardVenue() {
                 value={venue.venueTier}
                 onChange={e => setVenue(s => ({ ...s, venueTier: e.target.value as VenueTier }))}
               >
-                <option value="small_bar">Small bar (≤50 covers)</option>
-                <option value="mid_bar">Mid bar (50–120)</option>
-                <option value="large_bar">Large bar (120–250)</option>
-                <option value="restaurant">Restaurant</option>
-                <option value="nightclub">Nightclub</option>
-                <option value="mixed">Mixed</option>
+                <option value="bar">Bar — cocktail / dive / sports / pub (peaks 10-11 PM)</option>
+                <option value="restaurant">Restaurant — dinner-led (peaks 7-8 PM)</option>
+                <option value="nightclub">Nightclub — late closing (peaks midnight)</option>
+                <option value="mixed">Mixed — dinner then bar (two peaks)</option>
               </select>
             </div>
             <Field label="Legal capacity (hard cap)" value={venue.capacity} type="number"
