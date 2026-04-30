@@ -2680,6 +2680,35 @@ export const handler = async (event, context) => {
 
   if (method === 'OPTIONS') return { statusCode: 200, headers: cors, body: '' };
 
+  // ─── Shared-secret auth ────────────────────────────────────────────────
+  // Stop-gap: without this, every /admin/* route was world-callable, which
+  // leaked PII (owner emails) and allowed unauthenticated venue + Cognito
+  // user creation. Real fix is a Cognito JWT authorizer at the API Gateway
+  // level — that's the next session's work. For now: header-based shared
+  // secret. Frontend reads VITE_ADMIN_KEY from Amplify env, sends it as
+  // `x-admin-key` on every adminFetch call. Lambda compares against
+  // ADMIN_KEY in its env. Mismatch → 401.
+  //
+  // Caveat: the secret ships inside the client JS bundle, so anyone who
+  // scrapes the bundle can extract it. Closing that hole takes a real JWT
+  // authorizer. This still cuts off random scanners and unsophisticated
+  // attackers — most of the immediate threat.
+  if (rawPath !== '/health') {
+    const expected   = process.env.ADMIN_KEY;
+    const presented  = event.headers?.['x-admin-key']
+                    ?? event.headers?.['X-Admin-Key']
+                    ?? event.headers?.['X-ADMIN-KEY']
+                    ?? '';
+    if (!expected) {
+      // Lambda misconfigured — don't pretend things are fine. Operator
+      // needs to set ADMIN_KEY in the Lambda env via the deploy script.
+      console.warn('[admin-api] ADMIN_KEY env var not set — auth is OFF. SET IT.');
+    } else if (presented !== expected) {
+      return { statusCode: 401, headers: cors,
+               body: JSON.stringify({ error: 'unauthorized' }) };
+    }
+  }
+
   try {
     // Venues
     if (method === 'GET'   && rawPath === '/admin/venues')             return listVenues();

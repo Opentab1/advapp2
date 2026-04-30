@@ -43,11 +43,19 @@ async function opsFetch(path: string, options?: RequestInit) {
   return json;
 }
 
+// Shared-secret stop-gap auth (see lambda/admin-api/index.mjs comment).
+// Real fix is a Cognito JWT authorizer; this just cuts off random scanners.
+const ADMIN_KEY = (import.meta.env.VITE_ADMIN_KEY ?? '').trim();
+
 export async function adminFetch(path: string, options?: RequestInit) {
   if (!ADMIN_API) throw new Error('VITE_ADMIN_API_URL is not configured');
   const res = await fetch(`${ADMIN_API}${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(ADMIN_KEY ? { 'x-admin-key': ADMIN_KEY } : {}),
+      ...(options?.headers ?? {}),
+    },
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
