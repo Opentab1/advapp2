@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import adminService, { type VenueTier, type AdminCamera } from '../../services/admin.service';
 import venueSettingsService from '../../services/venue-settings.service';
+import { saveVenueSetting } from '../../services/venueSettings.service';
 import { createTestRun, getTestRun, type TestRun, type TestRunStatus,
          type FeatureGrade, FEATURE_LABELS } from '../../services/workerTester.service';
 
@@ -49,7 +50,7 @@ const STEPS: Array<{ id: StepId; label: string; icon: React.ComponentType<{ clas
   { id: 'autoconfig', label: 'Auto-config',      icon: Sparkles },
   { id: 'backtest',   label: 'Back-test',        icon: FlaskConical },
   { id: 'pos',        label: 'POS connect',      icon: CreditCard },
-  { id: 'staff',      label: 'Staff invites',    icon: Users },
+  { id: 'staff',      label: 'Staff roster',     icon: Users },
   { id: 'done',       label: 'Done',             icon: CheckCircle2 },
 ];
 
@@ -110,9 +111,16 @@ interface CameraForm {
 }
 
 interface StaffForm {
-  email: string;
+  // Required for everyone — drives the auto-staffing schedule on the
+  // consumer side. The wizard writes these into venueSettings.staffing
+  // so day-one schedules already have a roster to fill.
   name:  string;
-  role:  'manager' | 'staff';
+  // Work role (bartender, server, etc.) — picked up by Staffing.tsx
+  // ROLE_LABELS / ROLE_COLORS. NOT the Cognito permission role.
+  role:  'bartender' | 'server' | 'door' | 'manager' | 'other';
+  // Optional. When present, also invites the person as a Cognito user
+  // so they can log into the portal. Email-less rows are roster-only.
+  email: string;
 }
 
 interface DropletState {
@@ -621,24 +629,59 @@ export function OnboardVenue() {
 
   async function submitStaffStep() {
     setErr(null); setMsg(null);
-    const toCreate = staff.filter(s => s.email.trim() && s.name.trim());
-    if (toCreate.length === 0) { setStepIdx(9); return; }
+    const named = staff.filter(s => s.name.trim());
+    if (named.length === 0) { setStepIdx(9); return; }
     setBusy(true);
     try {
-      for (const s of toCreate) {
-        const res = await adminService.createUser({
-          email:     s.email.trim(),
-          name:      s.name.trim(),
-          venueId:   computedVenueId,
-          venueName: venue.venueName.trim(),
-          role:      s.role,
-        });
-        if (!res.success) { setErr(`${s.email}: ${res.message}`); return; }
+      // Step A — write the roster to venueSettings.staffing so the
+      // consumer's Staffing tab has names to schedule on day one. Color
+      // mirrors Staffing.tsx ROLE_COLORS so the calendar renders matching
+      // chips immediately.
+      const ROLE_COLOR: Record<string, string> = {
+        bartender: 'bg-purple-500', server: 'bg-cyan-500',
+        door:      'bg-amber-500', manager: 'bg-emerald-500',
+        other:     'bg-warm-500',
+      };
+      const roster = named.map(s => ({
+        id:    `cre-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name:  s.name.trim(),
+        role:  s.role,
+        color: ROLE_COLOR[s.role] ?? 'bg-warm-500',
+      }));
+      await saveVenueSetting('staffing',
+        { staff: roster, shifts: [] }, computedVenueId);
+
+      // Step B — invite anyone with an email as a Cognito user. Cognito
+      // role is the portal-permission role (manager → manager, everyone
+      // else → staff). Failure to invite isn't fatal — the roster is
+      // already saved and the operator can re-invite from the Users tab.
+      const toInvite = named.filter(s => s.email.trim());
+      let invited = 0;
+      const failures: string[] = [];
+      for (const s of toInvite) {
+        try {
+          const res = await adminService.createUser({
+            email:     s.email.trim(),
+            name:      s.name.trim(),
+            venueId:   computedVenueId,
+            venueName: venue.venueName.trim(),
+            role:      s.role === 'manager' ? 'manager' : 'staff',
+          });
+          if (res.success) invited++;
+          else             failures.push(`${s.email}: ${res.message}`);
+        } catch (e: any) {
+          failures.push(`${s.email}: ${e?.message ?? 'invite failed'}`);
+        }
       }
+
       setStepIdx(9);
-      setMsg(`${toCreate.length} staff user(s) invited via Cognito`);
+      const parts = [`${roster.length} on roster`];
+      if (invited)         parts.push(`${invited} invited`);
+      if (failures.length) parts.push(`${failures.length} invite failed (re-try from Users tab)`);
+      setMsg(parts.join(' · '));
+      if (failures.length) console.warn('[onboard] invite failures:', failures);
     } catch (e: any) {
-      setErr(e?.message ?? 'Failed to invite staff');
+      setErr(e?.message ?? 'Failed to save roster');
     } finally { setBusy(false); }
   }
 
@@ -1235,22 +1278,21 @@ export function OnboardVenue() {
         </div>
       );
 
-      // ─── 7. Staff invites ──────────────────────────────────────────────
+      // ─── 7. Staff roster ───────────────────────────────────────────────
       case 'staff': return (
-        <div className="flex flex-col gap-3 max-w-2xl">
+        <div className="flex flex-col gap-3 max-w-3xl">
           <p className="text-sm text-gray-400">
-            Optionally invite staff now. Each gets a Cognito user with a temp
-            password. Can be done later from the Users tab.
+            Add the team. These names + roles seed the auto-staffing schedule
+            on day one — the consumer's Staffing tab fills the month with
+            suggested shifts using exactly this roster. Email is optional;
+            include it to also invite the person as a portal login.
           </p>
           {staff.map((s, i) => (
             <div key={i} className="bg-white/5 border border-white/10 rounded p-3 grid grid-cols-12 gap-2">
-              <Field wrapperClass="col-span-5" label="Email" value={s.email} type="email"
-                onChange={v => setStaff(a => a.map((x, j) => j === i ? { ...x, email: v } : x))}
-                placeholder="alex@venue.com" />
               <Field wrapperClass="col-span-4" label="Name" value={s.name}
                 onChange={v => setStaff(a => a.map((x, j) => j === i ? { ...x, name: v } : x))}
-                placeholder="Alex" />
-              <div className="col-span-2 flex flex-col gap-1">
+                placeholder="Alex Martinez" />
+              <div className="col-span-3 flex flex-col gap-1">
                 <label className="text-xs text-gray-400">Role</label>
                 <select
                   className="bg-white/5 border border-white/10 rounded text-white text-sm px-2 py-1.5"
@@ -1258,10 +1300,17 @@ export function OnboardVenue() {
                   onChange={e => setStaff(a => a.map((x, j) =>
                     j === i ? { ...x, role: e.target.value as any } : x))}
                 >
-                  <option value="manager">manager</option>
-                  <option value="staff">staff</option>
+                  <option value="bartender">Bartender</option>
+                  <option value="server">Server</option>
+                  <option value="door">Door</option>
+                  <option value="manager">Manager</option>
+                  <option value="other">Other</option>
                 </select>
               </div>
+              <Field wrapperClass="col-span-4" label="Email (optional — for portal login)"
+                value={s.email} type="email"
+                onChange={v => setStaff(a => a.map((x, j) => j === i ? { ...x, email: v } : x))}
+                placeholder="alex@venue.com" />
               <button
                 onClick={() => setStaff(a => a.filter((_, j) => j !== i))}
                 className="col-span-1 text-red-300 hover:text-red-200 self-end pb-1.5">
@@ -1270,10 +1319,10 @@ export function OnboardVenue() {
             </div>
           ))}
           <button
-            onClick={() => setStaff(a => [...a, { email: '', name: '', role: 'manager' }])}
+            onClick={() => setStaff(a => [...a, { name: '', role: 'bartender', email: '' }])}
             className="self-start inline-flex items-center gap-1 bg-white/5 hover:bg-white/10 text-white text-sm px-3 py-1.5 rounded"
           >
-            <Plus className="w-3.5 h-3.5" /> Invite someone
+            <Plus className="w-3.5 h-3.5" /> Add team member
           </button>
         </div>
       );
@@ -1355,7 +1404,7 @@ export function OnboardVenue() {
         return { label: posProvider ? 'Next' : 'Skip',
                  fn: () => setStepIdx(8), disabled: false };
       case 'staff':
-        return { label: staff.length > 0 ? 'Invite + finish' : 'Finish',
+        return { label: staff.length > 0 ? 'Save roster + finish' : 'Finish',
                  fn: submitStaffStep, disabled: false };
       case 'done':
         return { label: '', fn: () => {}, disabled: true };
