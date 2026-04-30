@@ -1320,9 +1320,15 @@ export function OnboardVenue() {
                  fn: venueCreated ? () => setStepIdx(1) : submitVenueStep,
                  disabled: false };
       case 'droplet':
-        return { label: 'Next',
+        // Admin can either: (1) provision via the button, or (2) skip past
+        // and use a manually-provisioned droplet. Only block Next mid-provision
+        // so the polling effect doesn't get torn down. Empty / failed / active /
+        // new states all advance.
+        return { label: droplet?.dropletStatus === 'active' || droplet?.dropletStatus === 'new'
+                          ? 'Next'
+                          : 'Skip droplet',
                  fn: () => setStepIdx(2),
-                 disabled: !(droplet?.dropletStatus === 'active' || droplet?.dropletStatus === 'new') };
+                 disabled: droplet?.dropletStatus === 'provisioning' };
       case 'cameras':
         return { label: 'Register + next',
                  fn: submitCamerasStep, disabled: false };
