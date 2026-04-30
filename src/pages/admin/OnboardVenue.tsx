@@ -25,26 +25,32 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Building2, Camera, ShieldCheck, CreditCard, Users, CheckCircle2,
   ArrowLeft, ArrowRight, Loader2, Plus, Trash2, AlertCircle,
-  ExternalLink, Copy, Server, Clock, RefreshCw,
+  ExternalLink, Copy, Server, Clock, RefreshCw, Sparkles, FlaskConical,
+  Wand2,
 } from 'lucide-react';
-import adminService, { type VenueTier } from '../../services/admin.service';
+import adminService, { type VenueTier, type AdminCamera } from '../../services/admin.service';
 import venueSettingsService from '../../services/venue-settings.service';
+import { createTestRun, getTestRun, type TestRun, type TestRunStatus,
+         type FeatureGrade, FEATURE_LABELS } from '../../services/workerTester.service';
 
 // ─── Step metadata ───────────────────────────────────────────────────────────
 
 type StepId =
   | 'venue' | 'droplet' | 'cameras' | 'hours'
-  | 'preflight' | 'pos' | 'staff' | 'done';
+  | 'preflight' | 'autoconfig' | 'backtest'
+  | 'pos' | 'staff' | 'done';
 
 const STEPS: Array<{ id: StepId; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { id: 'venue',     label: 'Venue basics',     icon: Building2 },
-  { id: 'droplet',   label: 'Worker droplet',   icon: Server },
-  { id: 'cameras',   label: 'Cameras',          icon: Camera },
-  { id: 'hours',     label: 'Business hours',   icon: Clock },
-  { id: 'preflight', label: 'Pre-flight',       icon: ShieldCheck },
-  { id: 'pos',       label: 'POS connect',      icon: CreditCard },
-  { id: 'staff',     label: 'Staff invites',    icon: Users },
-  { id: 'done',      label: 'Done',             icon: CheckCircle2 },
+  { id: 'venue',      label: 'Venue basics',     icon: Building2 },
+  { id: 'droplet',    label: 'Worker droplet',   icon: Server },
+  { id: 'cameras',    label: 'Cameras',          icon: Camera },
+  { id: 'hours',      label: 'Business hours',   icon: Clock },
+  { id: 'preflight',  label: 'Pre-flight',       icon: ShieldCheck },
+  { id: 'autoconfig', label: 'Auto-config',      icon: Sparkles },
+  { id: 'backtest',   label: 'Back-test',        icon: FlaskConical },
+  { id: 'pos',        label: 'POS connect',      icon: CreditCard },
+  { id: 'staff',      label: 'Staff invites',    icon: Users },
+  { id: 'done',       label: 'Done',             icon: CheckCircle2 },
 ];
 
 // Valid worker analysis modes. Free-text in the old wizard let typos through
@@ -175,6 +181,13 @@ function ProgressRail({ currentIdx }: { currentIdx: number }) {
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
 
+interface AutoConfigEntry {
+  status:    'idle' | 'running' | 'suggested' | 'applied' | 'failed' | 'skipped';
+  suggested: any | null;       // barConfig dict OR list of tableZones
+  kind:      'bar' | 'tables' | null;
+  reason?:   string;
+}
+
 interface PersistedState {
   stepIdx: number;
   venue: VenueForm;
@@ -184,10 +197,26 @@ interface PersistedState {
   cameras: CameraForm[];
   bizDays: Record<string, { open: string; close: string; closed: boolean }>;
   bizTimezone: string;
+  autoConfig: Record<string, AutoConfigEntry>;
+  backtestDate: string;
+  backtestStartTime: string;
+  backtestEndTime: string;
+  backtestRunId: string | null;
   posProvider: '' | 'square' | 'toast';
   posSkipped: boolean;
   staff: StaffForm[];
   savedAt: number;
+}
+
+/** Pick the most recent Saturday (YYYY-MM-DD) — used as the default
+ *  back-test date because Saturday's the busiest, broadest test for
+ *  most venues. */
+function lastSaturdayISO(): string {
+  const d = new Date();
+  // weekday: Sun=0, Sat=6
+  const offset = (d.getDay() + 1) % 7;   // 0 if today is Saturday, else days since last Sat
+  d.setDate(d.getDate() - offset);
+  return d.toISOString().slice(0, 10);
 }
 
 const STORAGE_KEY = 'pulse_onboard_wizard_v2';
@@ -245,11 +274,21 @@ export function OnboardVenue() {
 
   // Step 5 — preflight runs from droplet; results live on cameras[]
 
-  // Step 6 — POS
+  // Step 6 — auto-config (per camera, keyed by cameraId)
+  const [autoConfig, setAutoConfig] = useState<Record<string, AutoConfigEntry>>(persisted?.autoConfig ?? {});
+
+  // Step 7 — back-test
+  const [backtestDate, setBacktestDate]           = useState(persisted?.backtestDate ?? lastSaturdayISO());
+  const [backtestStartTime, setBacktestStartTime] = useState(persisted?.backtestStartTime ?? '18:00');
+  const [backtestEndTime, setBacktestEndTime]     = useState(persisted?.backtestEndTime ?? '23:00');
+  const [backtestRunId, setBacktestRunId]         = useState<string | null>(persisted?.backtestRunId ?? null);
+  const [backtestRun, setBacktestRun]             = useState<TestRun | null>(null);
+
+  // Step 8 — POS
   const [posProvider, setPosProvider] = useState<'' | 'square' | 'toast'>(persisted?.posProvider ?? '');
   const [posSkipped,  setPosSkipped]  = useState(persisted?.posSkipped ?? false);
 
-  // Step 7 — staff
+  // Step 9 — staff
   const [staff, setStaff] = useState<StaffForm[]>(persisted?.staff ?? []);
 
   const currentStep = STEPS[stepIdx];
@@ -264,11 +303,37 @@ export function OnboardVenue() {
   useEffect(() => {
     savePersisted({
       stepIdx, venue, venueCreated, ownerTempPassword, droplet,
-      cameras, bizDays, bizTimezone, posProvider, posSkipped, staff,
+      cameras, bizDays, bizTimezone, autoConfig,
+      backtestDate, backtestStartTime, backtestEndTime, backtestRunId,
+      posProvider, posSkipped, staff,
       savedAt: Date.now(),
     });
   }, [stepIdx, venue, venueCreated, ownerTempPassword, droplet,
-      cameras, bizDays, bizTimezone, posProvider, posSkipped, staff]);
+      cameras, bizDays, bizTimezone, autoConfig,
+      backtestDate, backtestStartTime, backtestEndTime, backtestRunId,
+      posProvider, posSkipped, staff]);
+
+  // ── Back-test polling: while the test run is active, refresh every 5s ──
+  useEffect(() => {
+    if (currentStep.id !== 'backtest' || !backtestRunId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      try {
+        const r = await getTestRun(backtestRunId);
+        if (cancelled) return;
+        setBacktestRun(r);
+        if (r.status === 'pending' || r.status === 'running') {
+          timer = setTimeout(tick, 5000);
+        }
+      } catch {
+        if (cancelled) return;
+        timer = setTimeout(tick, 8000);
+      }
+    };
+    tick();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [currentStep.id, backtestRunId]);
 
   // ── Droplet polling: while we're on the droplet step, refresh status
   //    every 8s if it's still booting. ─────────────────────────────────────
@@ -448,10 +513,97 @@ export function OnboardVenue() {
     } finally { setBusy(false); }
   }
 
+  // ─── Auto-config handlers ──────────────────────────────────────────────
+  async function runAutoConfigForCamera(cam: CameraForm) {
+    if (!cam.cameraId) return;
+    const cid = cam.cameraId;
+    const wantsBar    = cam.modes.includes('drink_count');
+    const wantsTables = cam.modes.includes('table_turns') || cam.modes.includes('table_service');
+    if (!wantsBar && !wantsTables) {
+      // Camera doesn't need zones (e.g. people_count, after_hours).
+      setAutoConfig(s => ({ ...s, [cid]: { status: 'skipped', suggested: null, kind: null,
+                                            reason: 'no zone-based modes selected' } }));
+      return;
+    }
+    setAutoConfig(s => ({ ...s, [cid]: { status: 'running', suggested: null, kind: wantsBar ? 'bar' : 'tables' } }));
+    try {
+      // Existing service methods throw on failure and return the suggested
+      // shape directly: barConfig dict for zones, list of tableZones for tables.
+      const suggested = wantsBar
+        ? await adminService.autoDetectZones(computedVenueId, cid)
+        : await adminService.autoDetectTables(computedVenueId, cid);
+      if (!suggested || (Array.isArray(suggested) && suggested.length === 0)) {
+        setAutoConfig(s => ({ ...s, [cid]: { status: 'failed', suggested: null,
+                                              kind: wantsBar ? 'bar' : 'tables',
+                                              reason: wantsBar ? 'no bar line detected' : 'no tables detected' } }));
+        return;
+      }
+      setAutoConfig(s => ({ ...s, [cid]: { status: 'suggested', suggested,
+                                            kind: wantsBar ? 'bar' : 'tables' } }));
+    } catch (e: any) {
+      setAutoConfig(s => ({ ...s, [cid]: { status: 'failed', suggested: null,
+                                            kind: wantsBar ? 'bar' : 'tables',
+                                            reason: e?.message ?? 'detect failed' } }));
+    }
+  }
+
+  async function applyAutoConfigForCamera(cam: CameraForm) {
+    if (!cam.cameraId) return;
+    const cid = cam.cameraId;
+    const entry = autoConfig[cid];
+    if (!entry || entry.status !== 'suggested' || !entry.suggested) return;
+    try {
+      const fields: Partial<AdminCamera> = entry.kind === 'bar'
+        ? { barConfigJson: JSON.stringify(entry.suggested) }
+        : { tableZonesJson: JSON.stringify(entry.suggested) };
+      const ok = await adminService.updateCamera(cid, computedVenueId, fields);
+      if (!ok) {
+        setAutoConfig(s => ({ ...s, [cid]: { ...entry, status: 'failed', reason: 'updateCamera returned false' } }));
+        return;
+      }
+      setAutoConfig(s => ({ ...s, [cid]: { ...entry, status: 'applied' } }));
+    } catch (e: any) {
+      setAutoConfig(s => ({ ...s, [cid]: { ...entry, status: 'failed', reason: e?.message ?? 'updateCamera failed' } }));
+    }
+  }
+
+  // ─── Back-test handlers ────────────────────────────────────────────────
+  async function startBacktest() {
+    setErr(null); setMsg(null);
+    if (!cameras.some(c => c.cameraId)) {
+      setErr('Register at least one camera first.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const cameraSpecs = cameras.filter(c => c.cameraId).map(c => ({
+        cameraId:   c.cameraId!,
+        name:       c.name,
+        rtspUrl:    c.rtspUrl,
+        modes:      c.modes,
+        modelProfile: c.modelProfile,
+      } as any));
+      const res = await createTestRun({
+        venueId:         computedVenueId,
+        replayDate:      backtestDate,
+        replayStartTime: backtestStartTime,
+        replayEndTime:   backtestEndTime,
+        replayTimezone:  bizTimezone,
+        pauseLiveCams:   false,
+        cameras:         cameraSpecs,
+      });
+      setBacktestRunId(res.runId);
+      setBacktestRun(null); // polling effect will fill
+      setMsg(`Back-test queued (${res.runId.slice(0, 8)}…) — replaying ${backtestDate} ${backtestStartTime}-${backtestEndTime}`);
+    } catch (e: any) {
+      setErr(e?.message ?? 'Failed to queue back-test');
+    } finally { setBusy(false); }
+  }
+
   async function submitStaffStep() {
     setErr(null); setMsg(null);
     const toCreate = staff.filter(s => s.email.trim() && s.name.trim());
-    if (toCreate.length === 0) { setStepIdx(7); return; }
+    if (toCreate.length === 0) { setStepIdx(9); return; }
     setBusy(true);
     try {
       for (const s of toCreate) {
@@ -464,7 +616,7 @@ export function OnboardVenue() {
         });
         if (!res.success) { setErr(`${s.email}: ${res.message}`); return; }
       }
-      setStepIdx(7);
+      setStepIdx(9);
       setMsg(`${toCreate.length} staff user(s) invited via Cognito`);
     } catch (e: any) {
       setErr(e?.message ?? 'Failed to invite staff');
@@ -831,7 +983,202 @@ export function OnboardVenue() {
         </div>
       );
 
-      // ─── 6. POS connect ────────────────────────────────────────────────
+      // ─── 6. Auto-config ────────────────────────────────────────────────
+      case 'autoconfig': return (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-gray-400">
+            For each camera, the droplet samples ~25 frames and detects the
+            zones it needs based on the selected modes:{' '}
+            <strong>drink_count</strong> → bar line + bar zone polygon;{' '}
+            <strong>table_turns / table_service</strong> → table polygons.
+            Cameras with only people_count / after_hours don't need zones —
+            they auto-skip. Review the suggestion, click Apply, or Skip and
+            draw zones manually later in the camera editor.
+          </p>
+          {cameras.filter(c => c.cameraId).length === 0 ? (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded p-3 text-sm text-amber-200">
+              Register cameras first — the auto-detect runs against each
+              camera's stream URL via the droplet.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {cameras.filter(c => c.cameraId).map(cam => {
+                const entry = autoConfig[cam.cameraId!];
+                const wantsBar    = cam.modes.includes('drink_count');
+                const wantsTables = cam.modes.includes('table_turns') || cam.modes.includes('table_service');
+                const needsZones  = wantsBar || wantsTables;
+                return (
+                  <div key={cam.cameraId} className="bg-white/5 border border-white/10 rounded p-3">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-white">{cam.name}</div>
+                        <div className="text-[11px] text-gray-500">
+                          {cam.modes.join(', ')} · profile={cam.modelProfile}
+                        </div>
+                      </div>
+                      {!needsZones ? (
+                        <span className="text-xs text-gray-500">No zones needed</span>
+                      ) : !entry || entry.status === 'idle' ? (
+                        <button onClick={() => runAutoConfigForCamera(cam)}
+                          disabled={busy}
+                          className="inline-flex items-center gap-1 bg-cyan-600 hover:bg-cyan-500 text-white text-xs px-3 py-1.5 rounded">
+                          <Wand2 className="w-3.5 h-3.5" />
+                          Auto-detect {wantsBar ? 'bar zones' : 'table zones'}
+                        </button>
+                      ) : entry.status === 'running' ? (
+                        <span className="text-xs text-amber-300 inline-flex items-center gap-1">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Sampling frames…
+                        </span>
+                      ) : entry.status === 'suggested' ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-emerald-300">
+                            ✓ {entry.kind === 'bar'
+                              ? `${(entry.suggested?.stations?.length ?? 1)} bar zone(s) detected`
+                              : `${(entry.suggested?.length ?? 0)} table polygon(s) detected`}
+                          </span>
+                          <button onClick={() => applyAutoConfigForCamera(cam)}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-2 py-1 rounded">
+                            Apply
+                          </button>
+                          <button onClick={() => runAutoConfigForCamera(cam)}
+                            className="text-xs text-gray-400 hover:text-white">
+                            Re-run
+                          </button>
+                        </div>
+                      ) : entry.status === 'applied' ? (
+                        <span className="text-xs text-emerald-400 inline-flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Applied
+                        </span>
+                      ) : entry.status === 'failed' ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-red-300">✗ {entry.reason}</span>
+                          <button onClick={() => runAutoConfigForCamera(cam)}
+                            className="text-xs text-gray-400 hover:text-white">Retry</button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+
+      // ─── 7. Back-test ──────────────────────────────────────────────────
+      case 'backtest': return (
+        <div className="flex flex-col gap-3 max-w-3xl">
+          <p className="text-sm text-gray-400">
+            Replay a past night's NVR footage through the worker — same
+            engine that handles live, just pointed at recorded fragments.
+            Returns per-feature accuracy grades. Default is the most recent
+            Saturday 6pm-11pm because that's the busiest, broadest test for
+            most venues. Skip if you'd rather verify against live traffic.
+          </p>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-400">Date (NVR retention permitting)</label>
+              <input type="date" value={backtestDate}
+                onChange={e => setBacktestDate(e.target.value)}
+                disabled={!!backtestRunId}
+                className="bg-white/5 border border-white/10 rounded text-white text-sm px-2 py-1.5 disabled:opacity-60"
+              />
+            </div>
+            <Field label="Start time" value={backtestStartTime} type="time"
+              onChange={setBacktestStartTime} disabled={!!backtestRunId} />
+            <Field label="End time" value={backtestEndTime} type="time"
+              onChange={setBacktestEndTime} disabled={!!backtestRunId} />
+          </div>
+
+          {!backtestRunId && (
+            <div className="flex gap-2">
+              <button onClick={startBacktest} disabled={busy}
+                className="inline-flex items-center gap-1 bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-3 py-1.5 rounded disabled:opacity-40">
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
+                Start back-test
+              </button>
+            </div>
+          )}
+
+          {backtestRunId && (
+            <div className="space-y-3">
+              <div className="bg-white/5 border border-white/10 rounded p-3 flex items-center gap-3">
+                {backtestRun?.status === 'pending' || backtestRun?.status === 'running' ? (
+                  <>
+                    <Loader2 className="w-4 h-4 text-amber-300 animate-spin" />
+                    <div className="text-sm">
+                      <div className="text-amber-200">Replay {backtestRun?.status}…</div>
+                      <div className="text-xs text-gray-400">
+                        Progress: {backtestRun?.progress ?? 0}% · runId={backtestRunId.slice(0, 12)}…
+                      </div>
+                    </div>
+                  </>
+                ) : backtestRun?.status === 'complete' ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <div className="text-sm flex-1">
+                      <div className="text-emerald-300 font-semibold">
+                        Complete — overall grade: {backtestRun.results?.overallGrade ?? '—'}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Stability: {backtestRun.results?.stabilityGrade ?? '—'} ·
+                        Started {backtestRun.startedAt} · Finished {backtestRun.completedAt}
+                      </div>
+                    </div>
+                  </>
+                ) : backtestRun?.status === 'failed' ? (
+                  <>
+                    <AlertCircle className="w-4 h-4 text-red-400" />
+                    <div className="text-sm">
+                      <div className="text-red-300">Replay failed</div>
+                      <div className="text-xs text-gray-400">{backtestRun.errorMessage ?? 'see Worker Tester for details'}</div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-sm text-gray-400">Queued · waiting for worker pickup</div>
+                )}
+              </div>
+
+              {backtestRun?.results?.perFeature && (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {Object.entries(backtestRun.results.perFeature).map(([feat, r]) => {
+                    const label = (FEATURE_LABELS as any)[feat] ?? feat;
+                    const grade = r?.grade as FeatureGrade | undefined;
+                    const tone  = grade === 'A' || grade === 'B' ? 'text-emerald-300'
+                               : grade === 'C'                    ? 'text-amber-300'
+                               : grade === 'D' || grade === 'F'   ? 'text-red-300'
+                               : 'text-gray-500';
+                    return (
+                      <div key={feat} className="bg-white/5 border border-white/10 rounded p-2">
+                        <div className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</div>
+                        <div className={`text-2xl font-bold ${tone}`}>{grade ?? '—'}</div>
+                        {(r as any)?.detected != null && (
+                          <div className="text-[10px] text-gray-400">
+                            detected {(r as any).detected}
+                            {(r as any)?.truth != null && ` / truth ${(r as any).truth}`}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {(backtestRun?.status === 'complete' || backtestRun?.status === 'failed') && (
+                <div className="flex gap-2">
+                  <button onClick={() => { setBacktestRunId(null); setBacktestRun(null); }}
+                    className="text-sm text-gray-400 hover:text-white px-3 py-1.5">
+                    Run another window
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+
+      // ─── 8. POS connect ────────────────────────────────────────────────
       case 'pos': return (
         <div className="flex flex-col gap-3 max-w-2xl">
           <p className="text-sm text-gray-400">
@@ -862,7 +1209,7 @@ export function OnboardVenue() {
           )}
           <div className="flex gap-2">
             <button
-              onClick={() => { setPosSkipped(true); setStepIdx(6); }}
+              onClick={() => { setPosSkipped(true); setStepIdx(8); }}
               className="text-sm text-gray-400 hover:text-white px-3 py-1.5"
             >
               Skip for now →
@@ -968,9 +1315,22 @@ export function OnboardVenue() {
       case 'preflight':
         return { label: 'Next',
                  fn: () => setStepIdx(5), disabled: false };
+      case 'autoconfig':
+        return { label: 'Next',
+                 fn: () => setStepIdx(6), disabled: false };
+      case 'backtest':
+        return { label: 'Next',
+                 // Allow advancing without running a back-test (skip path)
+                 // OR after a complete run. Pending/running blocks Next so
+                 // we don't lose the polling effect when the operator
+                 // navigates away mid-run.
+                 fn: () => setStepIdx(7),
+                 disabled: !!backtestRunId
+                           && backtestRun?.status !== 'complete'
+                           && backtestRun?.status !== 'failed' };
       case 'pos':
         return { label: posProvider ? 'Next' : 'Skip',
-                 fn: () => setStepIdx(6), disabled: false };
+                 fn: () => setStepIdx(8), disabled: false };
       case 'staff':
         return { label: staff.length > 0 ? 'Invite + finish' : 'Finish',
                  fn: submitStaffStep, disabled: false };
