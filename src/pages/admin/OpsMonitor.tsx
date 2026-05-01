@@ -233,6 +233,7 @@ export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
   const [opsStatus,      setOpsStatus]      = useState<OpsStatus | null>(null);
   const [opsLoading,     setOpsLoading]     = useState(true);
   const [opsError,       setOpsError]       = useState<string | null>(null);
+  const [dropletIp,      setDropletIp]      = useState<string>('');
 
   // Live metrics (from prometheus-node-exporter via /ops/metrics)
   const [opsMetrics,     setOpsMetrics]     = useState<OpsMetrics | null>(null);
@@ -333,11 +334,19 @@ export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
 
   // ── Combined refresh ────────────────────────────────────────────────────────
 
+  const fetchDropletIp = useCallback(async () => {
+    if (!selectedVenueId) { setDropletIp(''); return; }
+    try {
+      const d = await adminService.getDroplet(selectedVenueId);
+      setDropletIp(d.dropletIp || '');
+    } catch { /* non-load-bearing — heading just falls back to '—' */ }
+  }, [selectedVenueId]);
+
   const fetchAll = useCallback(async () => {
     setCountdown(30);
-    await Promise.all([fetchVenueData(), fetchOpsStatus(), fetchOpsMetrics()]);
+    await Promise.all([fetchVenueData(), fetchOpsStatus(), fetchOpsMetrics(), fetchDropletIp()]);
     setLastUpdated(new Date());
-  }, [fetchVenueData, fetchOpsStatus, fetchOpsMetrics]);
+  }, [fetchVenueData, fetchOpsStatus, fetchOpsMetrics, fetchDropletIp]);
 
   useEffect(() => {
     fetchAll();
@@ -580,7 +589,7 @@ export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
             <Server className="w-5 h-5 text-cyan-400" />
-            Droplet — DigitalOcean (137.184.61.178)
+            Droplet — DigitalOcean ({dropletIp || '—'})
           </h2>
           {opsError && (
             <span className="text-xs text-red-400 flex items-center gap-1">
