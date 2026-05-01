@@ -389,6 +389,15 @@ export function SwitchDropletModal({
                   {reachMsg}. Update the venue router allowlist and retry.
                 </div>
               )}
+              <div className="pt-2 mt-2 border-t border-white/5">
+                <button onClick={goToDispose}
+                        className="w-full text-xs text-gray-400 hover:text-amber-300 underline underline-offset-2">
+                  Skip reachability check and continue →
+                </button>
+                <div className="text-[10px] text-gray-500 mt-1 text-center">
+                  Use only if you know the new droplet will reach cameras (e.g., you'll fix allowlist after).
+                </div>
+              </div>
             </div>
           )}
 
