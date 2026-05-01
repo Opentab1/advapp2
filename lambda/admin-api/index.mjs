@@ -148,7 +148,7 @@ function cameraFromItem(item) {
     venueId:         s(item.venueId),
     name:            s(item.name),
     rtspUrl:         s(item.rtspUrl),
-    modes:           s(item.modes) || 'drink_count',
+    modes:           s(item.modes),
     modelProfile:    s(item.modelProfile) || 'balanced',
     enabled:         b(item.enabled),
     segmentSeconds:  n(item.segmentSeconds),
@@ -401,7 +401,9 @@ async function resetUserPassword(email, body) {
 // ─── Cameras ──────────────────────────────────────────────────────────────────
 
 async function createCamera(body) {
-  const { venueId, name, rtspUrl, modes = 'drink_count', modelProfile = 'balanced',
+  // modes defaults to empty — operator picks features per camera after
+  // creation so we don't run YOLO on cameras that don't have a bar in frame.
+  const { venueId, name, rtspUrl, modes = '', modelProfile = 'balanced',
           segmentSeconds = 0, segmentInterval = 0, notes = '', enabled = true } = body;
   if (!venueId || !name || !rtspUrl)
     return err(400, 'Missing: venueId, name, rtspUrl');

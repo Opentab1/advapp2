@@ -271,8 +271,11 @@ export function OnboardVenue() {
   const [droplet, setDroplet] = useState<DropletState | null>(persisted?.droplet ?? null);
 
   // Step 3 — cameras
+  // Cameras come in with NO features. Operator manually enables drink_count
+  // (or other modes) on the specific cameras that actually have a bar in
+  // frame, so the worker doesn't waste RAM running YOLO on hallway cams.
   const [cameras, setCameras] = useState<CameraForm[]>(persisted?.cameras ?? [{
-    name: 'Bar Cam', rtspUrl: '', modes: ['drink_count', 'bottle_count'], modelProfile: 'balanced',
+    name: 'Bar Cam', rtspUrl: '', modes: [], modelProfile: 'balanced',
   }]);
   const [cameraErrors, setCameraErrors] = useState<Record<number, string>>({});
 
@@ -933,7 +936,7 @@ export function OnboardVenue() {
           <button
             onClick={() => setCameras(a => [...a, {
               name: `Camera ${a.length + 1}`, rtspUrl: '',
-              modes: ['drink_count'], modelProfile: 'balanced',
+              modes: [], modelProfile: 'balanced',
             }])}
             className="self-start inline-flex items-center gap-1 bg-white/5 hover:bg-white/10 text-white text-sm px-3 py-1.5 rounded"
           >
