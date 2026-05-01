@@ -7,13 +7,14 @@
  * State machine:
  *   none           → "Provision Droplet" button
  *   provisioning   → spinner + "Booting…" (auto-polls every 8s)
- *   active         → IP badge with copy-to-clipboard + "Destroy" button
+ *   active         → IP badge + "Switch droplet" + "Destroy" buttons
  *   failed/unknown → error state with retry
  */
 
 import { useEffect, useState } from 'react';
-import { Server, Loader2, Copy, Trash2 } from 'lucide-react';
+import { Server, Loader2, Copy, Trash2, ArrowLeftRight } from 'lucide-react';
 import adminService from '../../services/admin.service';
+import { SwitchDropletModal } from './SwitchDropletModal';
 
 export interface DropletPanelProps {
   venueId: string;
@@ -38,6 +39,7 @@ export function DropletPanel({ venueId, venueName }: DropletPanelProps) {
   const [busy, setBusy]   = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showSwitch, setShowSwitch] = useState(false);
 
   // Initial fetch + polling while provisioning.
   useEffect(() => {
@@ -166,15 +168,35 @@ export function DropletPanel({ venueId, venueName }: DropletPanelProps) {
                 {state.doApiError.includes('DO_API_TOKEN') && ' Set DO_API_TOKEN on the Lambda to refresh.'}</span>
             </div>
           )}
-          <button
-            onClick={handleDestroy}
-            disabled={busy}
-            className="btn-secondary text-xs flex items-center gap-1 text-red-400 border-red-500/30 hover:bg-red-500/10 disabled:opacity-60"
-          >
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-            Destroy droplet
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShowSwitch(true)}
+              disabled={busy}
+              className="btn-secondary text-xs flex items-center gap-1 text-amber-300 border-amber-500/30 hover:bg-amber-500/10 disabled:opacity-60"
+              title="Move this venue to a different droplet (provision new, resize, or pull from junk pool)"
+            >
+              <ArrowLeftRight className="w-3 h-3" /> Switch droplet
+            </button>
+            <button
+              onClick={handleDestroy}
+              disabled={busy}
+              className="btn-secondary text-xs flex items-center gap-1 text-red-400 border-red-500/30 hover:bg-red-500/10 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+              Destroy droplet
+            </button>
+          </div>
         </div>
+      )}
+      {showSwitch && state?.dropletIp && (
+        <SwitchDropletModal
+          venueId={venueId}
+          venueName={venueName}
+          currentDropletId={state.dropletId!}
+          currentDropletIp={state.dropletIp}
+          onClose={() => setShowSwitch(false)}
+          onComplete={() => { setShowSwitch(false); /* parent useEffect re-polls */ }}
+        />
       )}
       {status !== 'loading' && status !== 'none' && status !== 'provisioning' && status !== 'active' && status !== 'new' && (
         <div className="text-xs text-red-300/80">

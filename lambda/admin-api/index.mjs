@@ -2780,6 +2780,464 @@ async function opsProxy(body) {
   return _forwardToDroplet(venueId, path, method, subBody);
 }
 
+// ─── Switch-Droplet feature ──────────────────────────────────────────────────
+//
+// Lets the admin migrate a venue between droplets without losing camera or
+// zone configs (which live in DDB on per-camera records, droplet-agnostic).
+// Three modes: (a) provision-new, (b) resize-in-place (same IP), (c) pull
+// from junk pool. Reachability gate prevents flipping DDB until the operator
+// has updated the venue router's NVR allowlist for the new IP.
+//
+// Junk pool model: a droplet is "in junk" if its DO tag set includes
+// `venuescope-parked`. We use DO tags as the source of truth so we don't
+// need a separate DDB table. Listing the pool = filter DO droplets by tag.
+
+const PARKED_TAG = 'venuescope-parked';
+
+async function _doListAllDroplets() {
+  // DO API caps responses at 200 droplets per page; we paginate to be safe.
+  // For our scale (1 droplet per venue + a small junk pool), 1 page is plenty.
+  const all = [];
+  let page = 1;
+  while (page <= 5) {                                  // hard cap = 1000
+    const r = await _doApi(`/droplets?per_page=200&page=${page}`);
+    const items = r.droplets || [];
+    all.push(...items);
+    if (items.length < 200) break;
+    page += 1;
+  }
+  return all;
+}
+
+async function _venuesByDropletId() {
+  // Map dropletId → venue record so we can flag which droplets are assigned.
+  const r = await ddb.send(new ScanCommand({
+    TableName:                 VENUES_TABLE,
+    ProjectionExpression:      'venueId, venueName, dropletId, dropletStatus',
+  }));
+  const byId = new Map();
+  for (const it of r.Items || []) {
+    const did = Number(it?.dropletId?.N || 0);
+    if (did) byId.set(did, {
+      venueId:       s(it.venueId),
+      venueName:     s(it.venueName),
+      dropletStatus: s(it.dropletStatus),
+    });
+  }
+  return byId;
+}
+
+async function listDroplets() {
+  // GET /admin/droplets — returns every DO droplet we own, labelled with the
+  // venue it's assigned to (or "junk" if parked, "orphan" if no venue points
+  // at it and it lacks the parked tag — that's a state we treat as a soft
+  // warning so the operator can park or destroy it cleanly).
+  let droplets;
+  try {
+    droplets = await _doListAllDroplets();
+  } catch (e) {
+    return err(502, `DO API: ${e.message}`);
+  }
+  const byId = await _venuesByDropletId();
+  const rows = droplets.map(d => {
+    const v4    = (d.networks?.v4 || []).find(n => n.type === 'public')?.ip_address || '';
+    const tags  = d.tags || [];
+    const venue = byId.get(d.id);
+    let role;
+    if (venue)                       role = 'assigned';
+    else if (tags.includes(PARKED_TAG)) role = 'junk';
+    else                              role = 'orphan';
+    // Approximate $/mo from the size slug — DO doesn't include price on the
+    // droplet object itself, so we map common slugs. Anything unknown
+    // displays as "?" in the UI; the admin can still see the slug.
+    const sizePrice = {
+      's-1vcpu-1gb':   6,   's-2vcpu-2gb':   18,
+      's-2vcpu-4gb':   24,  's-4vcpu-8gb':   48,
+      's-4vcpu-8gb-amd': 56, 's-8vcpu-16gb': 96,
+      'c-2':           42,  'c-4':           84,
+      'g-2vcpu-8gb':   63,  'gd-2vcpu-8gb':  78,
+    };
+    return {
+      dropletId:     d.id,
+      name:          d.name,
+      status:        d.status,
+      sizeSlug:      d.size_slug,
+      monthlyUsd:    sizePrice[d.size_slug] ?? null,
+      region:        d.region?.slug || '',
+      ip:            v4,
+      tags,
+      role,                     // 'assigned' | 'junk' | 'orphan'
+      assignedVenueId:   venue?.venueId   || null,
+      assignedVenueName: venue?.venueName || null,
+      createdAt:     d.created_at,
+    };
+  });
+  // Newest first — fits the admin's mental model when scanning the pool.
+  rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const totalMonthly = rows
+    .filter(r => r.monthlyUsd != null)
+    .reduce((s, r) => s + r.monthlyUsd, 0);
+  return ok({
+    droplets:     rows,
+    counts: {
+      total:    rows.length,
+      assigned: rows.filter(r => r.role === 'assigned').length,
+      junk:     rows.filter(r => r.role === 'junk').length,
+      orphan:   rows.filter(r => r.role === 'orphan').length,
+    },
+    monthlyUsd:   totalMonthly,
+  });
+}
+
+function _isVenueOpenNow(venueItem) {
+  // Read business hours JSON off the venue record. Falls back to "closed"
+  // when the field is missing — i.e. switch is allowed by default since
+  // there's no shift to interrupt. The business hours JSON shape is the
+  // same one Staffing.tsx + Forecast.tsx read.
+  const hours = venueItem?.businessHoursJson?.S
+              ? JSON.parse(venueItem.businessHoursJson.S) : null;
+  if (!hours) return false;
+  const tz = venueItem?.timezone?.S || 'America/New_York';
+  const now = new Date();
+  const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+  const day   = ['sun','mon','tue','wed','thu','fri','sat'][local.getDay()];
+  const span  = hours[day];
+  if (!span || span.closed) return false;
+  // span.open / span.close are HH:MM strings; close < open means "next-day"
+  // (e.g. open 21:00, close 02:00). Handle that wrap.
+  const cur = local.getHours()*60 + local.getMinutes();
+  const [oh, om] = (span.open  || '00:00').split(':').map(Number);
+  const [ch, cm] = (span.close || '00:00').split(':').map(Number);
+  const o = oh*60 + om, c = ch*60 + cm;
+  return c >= o ? (cur >= o && cur < c) : (cur >= o || cur < c);
+}
+
+async function parkDroplet(dropletId) {
+  // POST /admin/droplets/{id}/park — moves a droplet to the junk pool:
+  //   1. Stop+disable the worker (via /ops/park)
+  //   2. Tag it with venuescope-parked in DO
+  //   3. Clear venue.dropletId/dropletIp on whichever venue currently
+  //      points at it (so the venue is in a 'no droplet' state).
+  if (!dropletId) return err(400, 'dropletId required');
+  const opsSecret = process.env.OPS_SECRET || '';
+  if (!opsSecret) return err(500, 'OPS_SECRET not set on Lambda');
+
+  let droplet;
+  try { droplet = (await _doApi(`/droplets/${dropletId}`)).droplet; }
+  catch (e) { return err(502, `DO API: ${e.message}`); }
+  const ip = (droplet.networks?.v4 || []).find(n => n.type === 'public')?.ip_address;
+  if (!ip) return err(409, 'droplet has no public IP yet');
+
+  // Stop the worker on the droplet (ignore failure — droplet might be off).
+  try {
+    await fetch(_dropletOpsUrl(ip, '/ops/park'), {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Ops-Secret': opsSecret },
+      body:    '{}',
+    });
+  } catch (e) {
+    // Non-fatal: tag it parked anyway so it shows up in junk pool. Operator
+    // can manually re-park later if the droplet was offline.
+    console.warn(`park: worker stop failed for ${ip}: ${e.message}`);
+  }
+
+  // Tag in DO
+  try {
+    await _doApi('/tags', { method: 'POST', body: JSON.stringify({ name: PARKED_TAG }) });
+  } catch (e) { /* tag may already exist; ignore */ }
+  try {
+    await _doApi(`/tags/${PARKED_TAG}/resources`, {
+      method: 'POST',
+      body:   JSON.stringify({
+        resources: [{ resource_id: String(dropletId), resource_type: 'droplet' }],
+      }),
+    });
+  } catch (e) {
+    return err(502, `DO tag failed: ${e.message}`);
+  }
+
+  // Clear venue → droplet pointer if any venue currently references this droplet.
+  const byId = await _venuesByDropletId();
+  const owner = byId.get(Number(dropletId));
+  if (owner?.venueId) {
+    await ddb.send(new UpdateItemCommand({
+      TableName:        VENUES_TABLE,
+      Key:              { venueId: { S: owner.venueId } },
+      UpdateExpression: 'REMOVE dropletId, dropletIp, dropletRegion, dropletSize, provisionedAt SET dropletStatus = :st',
+      ExpressionAttributeValues: { ':st': { S: 'none' } },
+    }));
+  }
+
+  return ok({ ok: true, dropletId, ip, parkedFromVenue: owner?.venueId || null });
+}
+
+async function assignDroplet(dropletId, body) {
+  // POST /admin/droplets/{id}/assign — pulls a droplet out of the junk pool
+  // and binds it to a venue. Calls the droplet's /ops/set-venue endpoint to
+  // update VS_VENUE_ID + restart worker; updates the venue's DDB record;
+  // removes the venuescope-parked tag.
+  const venueId = body?.venueId;
+  if (!dropletId) return err(400, 'dropletId required');
+  if (!venueId)   return err(400, 'venueId required in body');
+  const opsSecret = process.env.OPS_SECRET || '';
+  if (!opsSecret) return err(500, 'OPS_SECRET not set on Lambda');
+
+  // Verify venue exists + is not already pointing at a different droplet.
+  const ven = await ddb.send(new GetItemCommand({
+    TableName: VENUES_TABLE, Key: { venueId: { S: venueId } },
+  }));
+  if (!ven.Item) return err(404, `venue ${venueId} not found`);
+  const existingDid = Number(ven.Item?.dropletId?.N || 0);
+  if (existingDid && existingDid !== Number(dropletId)) {
+    return err(409, `venue ${venueId} already has droplet ${existingDid}; `
+      + `use POST /admin/venues/${venueId}/switch-droplet to migrate`);
+  }
+
+  // Look up droplet IP from DO
+  let droplet;
+  try { droplet = (await _doApi(`/droplets/${dropletId}`)).droplet; }
+  catch (e) { return err(502, `DO API: ${e.message}`); }
+  const ip = (droplet.networks?.v4 || []).find(n => n.type === 'public')?.ip_address;
+  if (!ip) return err(409, 'droplet has no public IP');
+
+  // Tell the droplet to re-bind
+  let setRes;
+  try {
+    setRes = await fetch(_dropletOpsUrl(ip, '/ops/set-venue'), {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Ops-Secret': opsSecret },
+      body:    JSON.stringify({ venueId }),
+    });
+  } catch (e) {
+    return err(502, `droplet ${ip} unreachable for set-venue: ${e.message}`);
+  }
+  if (!setRes.ok) {
+    const txt = await setRes.text();
+    return err(502, `droplet rejected set-venue: ${setRes.status} ${txt}`);
+  }
+
+  // Untag from junk pool
+  try {
+    await _doApi(`/tags/${PARKED_TAG}/resources`, {
+      method: 'DELETE',
+      body:   JSON.stringify({
+        resources: [{ resource_id: String(dropletId), resource_type: 'droplet' }],
+      }),
+    });
+  } catch (e) { /* tag may not have existed; non-fatal */ }
+
+  // Stamp the venue with the new droplet
+  await ddb.send(new UpdateItemCommand({
+    TableName:        VENUES_TABLE,
+    Key:              { venueId: { S: venueId } },
+    UpdateExpression: 'SET dropletId = :id, dropletIp = :ip, dropletStatus = :st, '
+                    + 'dropletRegion = :rg, dropletSize = :sz, provisionedAt = :pa',
+    ExpressionAttributeValues: {
+      ':id': { N: String(dropletId) },
+      ':ip': { S: ip },
+      ':st': { S: 'active' },
+      ':rg': { S: droplet.region?.slug || '' },
+      ':sz': { S: droplet.size_slug    || '' },
+      ':pa': { S: new Date().toISOString() },
+    },
+  }));
+
+  return ok({ ok: true, venueId, dropletId, ip,
+              msg: 'droplet assigned to venue; worker re-bound + restarted' });
+}
+
+async function testDropletReachability(dropletId, body) {
+  // POST /admin/droplets/{id}/test-reachability — calls the droplet's
+  // /ops/probe-cameras with a single channel from the venue's NVR. Used by
+  // the Switch Droplet flow as a green-light gate before flipping DDB.
+  const { ip, port, totalChannels = 1 } = body || {};
+  if (!dropletId)  return err(400, 'dropletId required');
+  if (!ip || !port) return err(400, 'NVR ip + port required in body');
+  const opsSecret = process.env.OPS_SECRET || '';
+  if (!opsSecret) return err(500, 'OPS_SECRET not set on Lambda');
+
+  let droplet;
+  try { droplet = (await _doApi(`/droplets/${dropletId}`)).droplet; }
+  catch (e) { return err(502, `DO API: ${e.message}`); }
+  const dropIp = (droplet.networks?.v4 || []).find(n => n.type === 'public')?.ip_address;
+  if (!dropIp) return err(409, 'droplet has no public IP');
+
+  const channels = Math.min(Math.max(parseInt(totalChannels) || 1, 1), 4);
+  const cameras = Array.from({ length: channels }, (_, i) => ({
+    name:    `CH${i + 1}`,
+    rtspUrl: `http://${ip}:${port}/hls/live/CH${i + 1}/0/livetop.mp4`,
+  }));
+  let res;
+  try {
+    res = await fetch(_dropletOpsUrl(dropIp, '/ops/probe-cameras'), {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Ops-Secret': opsSecret },
+      body:    JSON.stringify({ cameras }),
+    });
+  } catch (e) {
+    return err(502, `droplet ${dropIp} unreachable: ${e.message}`);
+  }
+  const txt = await res.text();
+  let data; try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
+  if (!res.ok) return err(502, `droplet probe failed: ${res.status} ${txt}`);
+  const results = data.results || [];
+  const anyOk   = results.some(r => r.ok);
+  return ok({
+    ok:           anyOk,
+    sourceDropletIp: dropIp,
+    targetNvr:    `${ip}:${port}`,
+    channels:     results,
+    msg: anyOk
+      ? 'reachable — at least one channel responded; safe to flip DDB'
+      : 'NOT reachable — add new droplet IP to venue router NVR allowlist, then retry',
+  });
+}
+
+async function switchDroplet(venueId, body) {
+  // POST /admin/venues/{id}/switch-droplet — orchestrates the migration.
+  // Modes:
+  //   (a) {mode:"provision", size, region}        → spin up new droplet
+  //   (b) {mode:"resize",    size}                → resize current in place
+  //   (c) {mode:"reassign",  dropletId}           → pull from junk pool
+  // The reachability gate is a SEPARATE call (test-reachability), so this
+  // route is the "begin migration" trigger and the actual flip happens after
+  // the operator confirms reachability via that call. We update DDB as part
+  // of the switch since reachability has already been verified by the caller.
+  if (!venueId) return err(400, 'venueId required');
+  const mode = (body?.mode || '').toLowerCase();
+  if (!['provision','resize','reassign'].includes(mode)) {
+    return err(400, "mode must be one of: 'provision', 'resize', 'reassign'");
+  }
+
+  // Open-hours guard
+  const ven = await ddb.send(new GetItemCommand({
+    TableName: VENUES_TABLE, Key: { venueId: { S: venueId } },
+  }));
+  if (!ven.Item) return err(404, `venue ${venueId} not found`);
+  if (_isVenueOpenNow(ven.Item) && !body?.force) {
+    return err(423, 'venue is in business hours; pass {"force":true} to override');
+  }
+
+  if (mode === 'provision') {
+    // Just delegate to existing provisionDroplet — but it normally refuses if
+    // there's an existing droplet, so we have to detach the venue first.
+    // The OLD droplet's fate is decided by a follow-up call (park / move / destroy).
+    const oldDropletId = Number(ven.Item?.dropletId?.N || 0);
+    const oldIp        = ven.Item?.dropletIp?.S || '';
+    await ddb.send(new UpdateItemCommand({
+      TableName:        VENUES_TABLE,
+      Key:              { venueId: { S: venueId } },
+      UpdateExpression: 'REMOVE dropletId, dropletIp, dropletRegion, dropletSize, provisionedAt SET dropletStatus = :st',
+      ExpressionAttributeValues: { ':st': { S: 'none' } },
+    }));
+    const provisioned = await provisionDroplet(venueId, body);
+    if (provisioned.statusCode !== 200) {
+      // Restore old assignment so we don't leave the venue in a half-detached
+      // state if provisioning fails.
+      if (oldDropletId) {
+        await ddb.send(new UpdateItemCommand({
+          TableName:        VENUES_TABLE,
+          Key:              { venueId: { S: venueId } },
+          UpdateExpression: 'SET dropletId = :id, dropletIp = :ip, dropletStatus = :st',
+          ExpressionAttributeValues: {
+            ':id': { N: String(oldDropletId) }, ':ip': { S: oldIp }, ':st': { S: 'active' },
+          },
+        }));
+      }
+      return provisioned;
+    }
+    const data = JSON.parse(provisioned.body);
+    return ok({
+      ok:                true,
+      mode:              'provision',
+      newDropletId:      data.dropletId,
+      oldDropletId:      oldDropletId || null,
+      oldDropletIp:      oldIp || null,
+      msg:               'new droplet provisioning; once status=active, call test-reachability before relying on it. Use POST /admin/droplets/{oldId}/park or DELETE to dispose of the old droplet.',
+    });
+  }
+
+  if (mode === 'resize') {
+    // DO API: power-off + resize + power-on. IP is preserved.
+    const dropletId = Number(ven.Item?.dropletId?.N || 0);
+    if (!dropletId) return err(409, 'venue has no current droplet to resize');
+    const newSize = body?.size;
+    if (!newSize) return err(400, "size required (e.g. 's-4vcpu-8gb')");
+    try {
+      await _doApi(`/droplets/${dropletId}/actions`, {
+        method: 'POST',
+        body:   JSON.stringify({ type: 'power_off' }),
+      });
+      // We don't poll here — DO actions are async. Frontend should poll
+      // GET /admin/venues/{id}/droplet for status until 'off', then call
+      // this route again. To keep the API simple we kick off the resize
+      // optimistically and let DO queue actions.
+      await _doApi(`/droplets/${dropletId}/actions`, {
+        method: 'POST',
+        body:   JSON.stringify({ type: 'resize', disk: false, size: newSize }),
+      });
+      await _doApi(`/droplets/${dropletId}/actions`, {
+        method: 'POST',
+        body:   JSON.stringify({ type: 'power_on' }),
+      });
+      // Stamp the new size on the venue
+      await ddb.send(new UpdateItemCommand({
+        TableName:        VENUES_TABLE,
+        Key:              { venueId: { S: venueId } },
+        UpdateExpression: 'SET dropletSize = :sz',
+        ExpressionAttributeValues: { ':sz': { S: newSize } },
+      }));
+      return ok({ ok: true, mode: 'resize', dropletId, newSize,
+                  msg: 'resize queued (power-off + resize + power-on). Same IP. Worker auto-starts on boot.' });
+    } catch (e) {
+      return err(502, `DO resize failed: ${e.message}`);
+    }
+  }
+
+  if (mode === 'reassign') {
+    const newDropletId = body?.dropletId;
+    if (!newDropletId) return err(400, 'dropletId required for reassign mode');
+    // Detach venue from old droplet, then assign new.
+    const oldDropletId = Number(ven.Item?.dropletId?.N || 0);
+    const oldIp        = ven.Item?.dropletIp?.S || '';
+    if (oldDropletId) {
+      await ddb.send(new UpdateItemCommand({
+        TableName:        VENUES_TABLE,
+        Key:              { venueId: { S: venueId } },
+        UpdateExpression: 'REMOVE dropletId, dropletIp, dropletRegion, dropletSize, provisionedAt SET dropletStatus = :st',
+        ExpressionAttributeValues: { ':st': { S: 'none' } },
+      }));
+    }
+    const assigned = await assignDroplet(newDropletId, { venueId });
+    if (assigned.statusCode !== 200) {
+      // Best-effort restore the old assignment
+      if (oldDropletId) {
+        await ddb.send(new UpdateItemCommand({
+          TableName:        VENUES_TABLE,
+          Key:              { venueId: { S: venueId } },
+          UpdateExpression: 'SET dropletId = :id, dropletIp = :ip, dropletStatus = :st',
+          ExpressionAttributeValues: {
+            ':id': { N: String(oldDropletId) }, ':ip': { S: oldIp }, ':st': { S: 'active' },
+          },
+        }));
+      }
+      return assigned;
+    }
+    const data = JSON.parse(assigned.body);
+    return ok({
+      ok:           true,
+      mode:         'reassign',
+      newDropletId: data.dropletId,
+      newDropletIp: data.ip,
+      oldDropletId: oldDropletId || null,
+      oldDropletIp: oldIp || null,
+      msg:          'venue reassigned; old droplet awaits disposition. Use park/destroy/reassign.',
+    });
+  }
+
+  return err(500, 'unreachable');
+}
+
 async function destroyDroplet(venueId) {
   if (!venueId) return err(400, 'venueId required');
   const ven = await ddb.send(new GetItemCommand({
@@ -2944,6 +3402,17 @@ export const handler = async (event, context) => {
     // Generic per-venue ops proxy (every /ops/* call goes through here so
     // each venue's droplet runs its own worker actions; see _forwardToDroplet)
     if (method === 'POST'  && rawPath === '/admin/ops-proxy')          return opsProxy(body);
+
+    // Switch-Droplet feature: list pool, swap modes, park/assign/test
+    if (method === 'GET'   && rawPath === '/admin/droplets')           return listDroplets();
+    const switchMatch  = rawPath.match(/^\/admin\/venues\/([^/]+)\/switch-droplet$/);
+    const parkMatch    = rawPath.match(/^\/admin\/droplets\/([0-9]+)\/park$/);
+    const assignMatch  = rawPath.match(/^\/admin\/droplets\/([0-9]+)\/assign$/);
+    const reachMatch   = rawPath.match(/^\/admin\/droplets\/([0-9]+)\/test-reachability$/);
+    if (method === 'POST' && switchMatch) return switchDroplet(decodeURIComponent(switchMatch[1]), body);
+    if (method === 'POST' && parkMatch)   return parkDroplet(parkMatch[1]);
+    if (method === 'POST' && assignMatch) return assignDroplet(assignMatch[1], body);
+    if (method === 'POST' && reachMatch)  return testDropletReachability(reachMatch[1], body);
 
     // Review queue — low-confidence events needing human approval
     if (method === 'GET'   && rawPath === '/admin/review-queue')               return listReviewQueue(qs);

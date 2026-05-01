@@ -473,6 +473,113 @@ class AdminService {
   }
 
   /**
+   * List every DO droplet we own, labelled by role: assigned (bound to a
+   * venue), junk (parked, awaiting re-assignment), or orphan (running but
+   * no venue references it and not parked — soft warning state).
+   */
+  async listDroplets(): Promise<{
+    droplets: Array<{
+      dropletId:     number;
+      name:          string;
+      status:        string;
+      sizeSlug:      string;
+      monthlyUsd:    number | null;
+      region:        string;
+      ip:            string;
+      tags:          string[];
+      role:          'assigned' | 'junk' | 'orphan';
+      assignedVenueId:   string | null;
+      assignedVenueName: string | null;
+      createdAt:     string;
+    }>;
+    counts: { total: number; assigned: number; junk: number; orphan: number };
+    monthlyUsd: number;
+  }> {
+    return adminFetch('/admin/droplets');
+  }
+
+  /**
+   * Switch a venue between droplets. mode='provision' spins up new; 'resize'
+   * keeps same IP and changes plan; 'reassign' pulls from junk pool. Reach-
+   * ability test must pass via testDropletReachability() before relying on
+   * the new assignment for live ingestion. Refuses during venue open hours
+   * unless force=true.
+   */
+  async switchDroplet(venueId: string, args: {
+    mode:       'provision' | 'resize' | 'reassign';
+    size?:      string;
+    region?:    string;
+    snapshotId?: string;
+    sshKeyId?:  number;
+    dropletId?: number;       // required for 'reassign'
+    force?:     boolean;       // override open-hours guard
+  }): Promise<any> {
+    const data = await adminFetch(
+      `/admin/venues/${encodeURIComponent(venueId)}/switch-droplet`,
+      { method: 'POST', body: JSON.stringify(args) },
+    );
+    this.logAuditEntry({
+      action: 'Droplet Switched',
+      actionType: 'update',
+      targetType: 'venue',
+      targetName: venueId,
+      details: `mode=${args.mode}, oldDroplet=${data.oldDropletId}, newDroplet=${data.newDropletId || data.dropletId}`,
+    });
+    return data;
+  }
+
+  /**
+   * Probe the venue's NVR from the new droplet. Use as the green-light gate
+   * after the operator has updated the venue router's NVR allowlist for the
+   * new droplet IP. Returns ok:true when at least one channel responds.
+   */
+  async testDropletReachability(dropletId: number, args: {
+    ip: string; port: string | number; totalChannels?: number;
+  }): Promise<{
+    ok:           boolean;
+    sourceDropletIp: string;
+    targetNvr:    string;
+    channels:     Array<{ ok: boolean; reason: string }>;
+    msg:          string;
+  }> {
+    return adminFetch(
+      `/admin/droplets/${dropletId}/test-reachability`,
+      { method: 'POST', body: JSON.stringify(args) },
+    );
+  }
+
+  /** Park a droplet — stops worker, tags as junk, clears venue assignment. */
+  async parkDroplet(dropletId: number): Promise<any> {
+    const data = await adminFetch(
+      `/admin/droplets/${dropletId}/park`, { method: 'POST', body: '{}' },
+    );
+    this.logAuditEntry({
+      action: 'Droplet Parked',
+      actionType: 'update',
+      targetType: 'system',
+      targetName: String(dropletId),
+      details: `parked from venue ${data.parkedFromVenue || '(none)'}`,
+    });
+    return data;
+  }
+
+  /** Pull a droplet out of junk pool and bind it to a venue. */
+  async assignDroplet(dropletId: number, venueId: string): Promise<any> {
+    const data = await adminFetch(
+      `/admin/droplets/${dropletId}/assign`,
+      { method: 'POST', body: JSON.stringify({ venueId }) },
+    );
+    this.logAuditEntry({
+      action: 'Droplet Assigned',
+      actionType: 'update',
+      targetType: 'system',
+      targetName: String(dropletId),
+      details: `assigned to venue ${venueId}`,
+    });
+    return data;
+  }
+
+  /**
    * Destroy the droplet attached to a venue. Soft-clears the DDB metadata
    * even if DO reports 404 (droplet already gone).
    */
