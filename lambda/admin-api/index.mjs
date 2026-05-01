@@ -657,26 +657,44 @@ async function listAlerts(venueId, limit = 50) {
 
 // ─── Camera Discovery ─────────────────────────────────────────────────────────
 
-async function probeCameras({ ip, port, totalChannels = 16 }) {
+async function probeCameras({ venueId, ip, port, totalChannels = 16 }) {
+  if (!venueId)     return err(400, 'venueId is required — Find Cameras must run from the venue\'s own droplet so probes are sourced from the dedicated worker IP, not a shared Lambda pool');
   if (!ip || !port) return err(400, 'ip and port are required');
   const channels = Math.min(Math.max(parseInt(totalChannels) || 16, 1), 32);
-  const results  = [];
-  await Promise.all(
-    Array.from({ length: channels }, (_, i) => i + 1).map(async (ch) => {
-      const url  = `http://${ip}:${port}/hls/live/CH${ch}/0/livetop.mp4`;
-      try {
-        const ctrl  = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 4000);
-        const res   = await fetch(url, { method: 'HEAD', signal: ctrl.signal });
-        clearTimeout(timer);
-        results.push({ channel: ch, url, online: res.ok || res.status === 206 || res.status === 302 });
-      } catch {
-        results.push({ channel: ch, url, online: false });
-      }
-    })
+
+  // Build the candidate camera list locally (cheap), then forward to the
+  // venue's droplet for the actual HEAD probes. Bounded at 4-at-a-time on
+  // the droplet side (see webhook_server.py /ops/probe-cameras) — that's
+  // the IDS-safe burst we agreed on. The droplet returns the same shape
+  // (`channels: [{channel, url, online}]`) the DiscoverModal already renders.
+  const cameras = Array.from({ length: channels }, (_, i) => {
+    const ch = i + 1;
+    return {
+      name:    `CH${ch}`,
+      rtspUrl: `http://${ip}:${port}/hls/live/CH${ch}/0/livetop.mp4`,
+    };
+  });
+  const upstream = await _forwardToDroplet(
+    venueId,
+    '/ops/probe-cameras',
+    'POST',
+    { cameras, throttle: 4 },
   );
-  results.sort((a, b) => a.channel - b.channel);
-  return ok({ channels: results });
+  // _forwardToDroplet returns a Lambda response shape already; we want to
+  // re-shape the droplet's per-camera result back into {channel, url, online}
+  // for the DiscoverModal. If the droplet returned an error, surface it.
+  if (upstream.statusCode !== 200) return upstream;
+  let parsed;
+  try { parsed = JSON.parse(upstream.body); } catch { parsed = {}; }
+  const dropletResults = parsed.results || parsed.cameras || [];
+  // Map back to channel-numbered shape the modal expects.
+  const channelsOut = dropletResults.map((r, idx) => ({
+    channel: idx + 1,
+    url:     cameras[idx].rtspUrl,
+    online:  !!r.ok,
+  }));
+  channelsOut.sort((a, b) => a.channel - b.channel);
+  return ok({ channels: channelsOut, sourceDroplet: parsed.sourceDroplet || true });
 }
 
 // ─── Review queue (low-confidence event approval) ────────────────────────────
@@ -2484,6 +2502,13 @@ function _userDataForVenue(venueId) {
   // cloud-init user-data: runs once on first boot. Sets VS_VENUE_ID in the
   // worker's .env, restarts the worker, and the venue-affinity filter (in
   // worker_daemon.py) automatically scopes all DDB queries to this venue.
+  // Also rewrites the Caddyfile site hostname from the master snapshot's
+  // baked-in `<old-ip>.sslip.io` to this droplet's own
+  // `<new-ip-with-dashes>.sslip.io` so the per-venue ops-proxy in the admin
+  // Lambda can reach `https://<this-ip>-with-dashes.sslip.io/ops/...` and
+  // hit the right Caddy site block. Without this, every new droplet would
+  // share the master's hostname and Caddy would fail TLS handshake on the
+  // mismatched IP.
   return `#!/bin/bash
 set -e
 ENV_FILE=/opt/venuescope/venuescope/.env
@@ -2492,6 +2517,17 @@ if grep -q '^VS_VENUE_ID=' "$ENV_FILE" 2>/dev/null; then
   sed -i "s/^VS_VENUE_ID=.*/VS_VENUE_ID=$VENUE_ID/" "$ENV_FILE"
 else
   echo "VS_VENUE_ID=$VENUE_ID" >> "$ENV_FILE"
+fi
+# Rewrite Caddyfile to this droplet's own sslip.io hostname so the admin
+# Lambda's per-venue ops proxy can reach it on a valid TLS cert.
+PUB_IP=$(curl -s --max-time 5 http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address || true)
+if [ -n "$PUB_IP" ] && [ -f /etc/caddy/Caddyfile ]; then
+  NEW_HOST=$(echo "$PUB_IP" | tr '.' '-').sslip.io
+  # Replace the FIRST <something>.sslip.io occurrence (the site label on
+  # line 1) with this droplet's own hostname. Other sslip.io references
+  # inside reverse_proxy stanzas stay untouched.
+  sed -i "0,/[0-9-]\\+\\.sslip\\.io/{s|[0-9-]\\+\\.sslip\\.io|$NEW_HOST|}" /etc/caddy/Caddyfile
+  systemctl reload caddy 2>/dev/null || systemctl restart caddy 2>/dev/null || true
 fi
 # Re-enable the worker (snapshot may have been taken with worker disabled)
 systemctl enable venuescope-worker venuescope-worker-nightly-restart.timer venuescope-worker-3am-restart.timer 2>/dev/null || true
@@ -2650,6 +2686,98 @@ async function getDroplet(venueId) {
     provisionedAt: it?.provisionedAt?.S || '',
     name:          d.name,
   });
+}
+
+// ─── Per-venue droplet ops proxy ─────────────────────────────────────────────
+//
+// Historical: every /ops/* call (probe-cameras, restart-worker, deploy,
+// cam-proxy, auto-detect-zones, …) hit a single shared droplet URL stored in
+// VITE_CALIBRATION_URL. That doesn't scale: one venue's IDS-flagged IP would
+// taint every other venue's calls, and per-venue worker actions all came from
+// the same egress pool.
+//
+// New routing: every /ops/* call goes through THIS Lambda first. The Lambda
+// reads the venue's dropletIp from VenueScopeVenues, refuses if the droplet
+// isn't `active`, then forwards to that venue's own droplet at
+// `https://<ip-with-dashes>.sslip.io<path>` (Caddy on each droplet auto-issues
+// a Let's Encrypt cert for its sslip.io hostname). Result: each venue's
+// network operations are sourced from its own droplet, IDS bans contained.
+
+async function _venueDropletInfo(venueId) {
+  // Reads droplet status + IP straight from DDB (no DO API call).
+  // We use the cached row because routing decisions need to be fast and
+  // tolerant of DO outages — once dropletIp is stamped on first boot, it
+  // doesn't change unless the droplet is destroyed/recreated.
+  const ven = await ddb.send(new GetItemCommand({
+    TableName: VENUES_TABLE,
+    Key: { venueId: { S: venueId } },
+  }));
+  if (!ven.Item) return { found: false };
+  return {
+    found:  true,
+    status: ven.Item?.dropletStatus?.S || 'none',
+    ip:     ven.Item?.dropletIp?.S     || '',
+  };
+}
+
+function _dropletOpsUrl(dropletIp, path) {
+  // Caddy on each droplet listens on the sslip.io hostname matching its IP
+  // (e.g. 137.184.61.178 → 137-184-61-178.sslip.io). Auto-issued TLS cert.
+  // Falls through to the existing /ops/*, /webhook, /forecast/* etc. routes.
+  const host = dropletIp.replaceAll('.', '-') + '.sslip.io';
+  const p    = path.startsWith('/') ? path : '/' + path;
+  return `https://${host}${p}`;
+}
+
+async function _forwardToDroplet(venueId, path, method = 'GET', body = undefined) {
+  if (!venueId)      return err(400, 'venueId required for ops routing');
+  if (!path)         return err(400, 'path required');
+  const opsSecret = process.env.OPS_SECRET || '';
+  if (!opsSecret) return err(500, 'OPS_SECRET env var not set on Lambda — '
+    + 'ops-proxy cannot authenticate to droplets without it.');
+
+  const info = await _venueDropletInfo(venueId);
+  if (!info.found) return err(404, `venue ${venueId} not found`);
+  if (info.status !== 'active') {
+    return err(409, `venue ${venueId} droplet is ${info.status || 'none'}; `
+      + `provision droplet first before any /ops/* call`);
+  }
+  if (!info.ip) {
+    return err(409, `venue ${venueId} has no dropletIp on file (cache miss); `
+      + `wait for provisioning to complete or call GET /admin/venues/${venueId}/droplet to refresh`);
+  }
+
+  const url = _dropletOpsUrl(info.ip, path);
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 25000);
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Ops-Secret': opsSecret,
+      },
+      body: body && method !== 'GET' ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    return err(502, `droplet ${info.ip} unreachable: ${e.message || e.name}`);
+  }
+  clearTimeout(timer);
+  const text = await res.text();
+  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  return { statusCode: res.status, headers: cors, body: JSON.stringify(data) };
+}
+
+async function opsProxy(body) {
+  // Generic forwarder: caller picks the path + method + body and we hand it
+  // off to the venue's droplet untouched. Used by the frontend `opsFetch`
+  // helper to route every /ops/* call per-venue without needing a separate
+  // Lambda route per endpoint.
+  const { venueId, path, method = 'GET', body: subBody } = (body || {});
+  return _forwardToDroplet(venueId, path, method, subBody);
 }
 
 async function destroyDroplet(venueId) {
@@ -2811,8 +2939,11 @@ export const handler = async (event, context) => {
     if (method === 'GET'   && rawPath === '/admin/alerts/reviewed')    return getReviewedAlerts();
     if (method === 'POST'  && rawPath === '/admin/alerts/reviewed')    return saveReviewedAlerts(body);
 
-    // Camera probing (NVR discovery)
+    // Camera probing (NVR discovery) — forwards to venue's own droplet
     if (method === 'POST'  && rawPath === '/admin/probe-cameras')      return probeCameras(body);
+    // Generic per-venue ops proxy (every /ops/* call goes through here so
+    // each venue's droplet runs its own worker actions; see _forwardToDroplet)
+    if (method === 'POST'  && rawPath === '/admin/ops-proxy')          return opsProxy(body);
 
     // Review queue — low-confidence events needing human approval
     if (method === 'GET'   && rawPath === '/admin/review-queue')               return listReviewQueue(qs);

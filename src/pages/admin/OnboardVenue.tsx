@@ -523,6 +523,7 @@ export function OnboardVenue() {
     setBusy(true);
     try {
       const results = await adminService.probeCameras?.(
+        computedVenueId,
         cameras.map(c => ({ name: c.name, rtspUrl: c.rtspUrl })),
       ).catch(() => null);
 

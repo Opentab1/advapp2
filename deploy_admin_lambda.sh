@@ -142,6 +142,25 @@ sleep 10
 
 echo "Deploying Lambda function..."
 
+# Preserve any pre-set env vars on the Lambda so deploy doesn't blow away
+# OPS_SECRET (per-venue ops proxy auth), DO_API_TOKEN (droplet provisioning),
+# STRIPE_*, etc. We read the existing config, take only the keys we manage
+# below, and pass everything else through unchanged.
+EXISTING_ENV_JSON=$(aws lambda get-function-configuration \
+  --function-name $FUNCTION_NAME --region $REGION \
+  --query 'Environment.Variables' --output json 2>/dev/null || echo '{}')
+
+# Build env-var string: start with existing, override only USER_POOL_ID/REGION
+ENV_VARS=$(echo "$EXISTING_ENV_JSON" | python3 -c "
+import json, sys
+existing = {}
+try: existing = json.load(sys.stdin) or {}
+except Exception: pass
+existing['USER_POOL_ID'] = '$USER_POOL_ID'
+existing['REGION']       = '$REGION'
+print(','.join(f'{k}={v}' for k,v in existing.items()))
+")
+
 if aws lambda get-function --function-name $FUNCTION_NAME --region $REGION >/dev/null 2>&1; then
   aws lambda update-function-code \
     --function-name $FUNCTION_NAME \
@@ -150,10 +169,10 @@ if aws lambda get-function --function-name $FUNCTION_NAME --region $REGION >/dev
 
   aws lambda update-function-configuration \
     --function-name $FUNCTION_NAME \
-    --environment "Variables={USER_POOL_ID=$USER_POOL_ID,REGION=$REGION}" \
+    --environment "Variables={$ENV_VARS}" \
     --region $REGION >/dev/null
 
-  echo "  ✓ Lambda updated"
+  echo "  ✓ Lambda updated (env vars preserved: $(echo $EXISTING_ENV_JSON | python3 -c 'import json,sys; print(len(json.load(sys.stdin) or {}))') existing kept)"
 else
   aws lambda create-function \
     --function-name $FUNCTION_NAME \
@@ -166,7 +185,7 @@ else
     --memory-size 256 \
     --region $REGION >/dev/null
 
-  echo "  ✓ Lambda created"
+  echo "  ✓ Lambda created — set OPS_SECRET + DO_API_TOKEN env vars next"
 fi
 
 LAMBDA_ARN=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.FunctionArn' --output text)

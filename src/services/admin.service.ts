@@ -10,11 +10,10 @@ import cameraService from './camera.service';
 // Admin API Lambda — set VITE_ADMIN_API_URL in Amplify environment variables
 const ADMIN_API = (import.meta.env.VITE_ADMIN_API_URL ?? '').replace(/\/$/, '');
 
-// Droplet webhook/ops server — same base URL as VITE_CALIBRATION_URL
-const OPS_URL = (import.meta.env.VITE_CALIBRATION_URL ?? '').replace(/\/$/, '');
-
-// Ops secret: prefer VITE_OPS_SECRET env var, fall back to localStorage so
-// the user can enter it once in the UI without needing an Amplify rebuild.
+// Ops secret: kept for legacy callers that still hit the droplet directly.
+// The new venue-scoped opsFetch() routes through Lambda /admin/ops-proxy,
+// which carries OPS_SECRET as a Lambda env var so the browser doesn't need
+// it for per-venue calls.
 const LS_SECRET_KEY = 'vs_ops_secret';
 export function getOpsSecret(): string {
   return (import.meta.env.VITE_OPS_SECRET ?? localStorage.getItem(LS_SECRET_KEY) ?? '').trim();
@@ -26,21 +25,29 @@ export function clearOpsSecret(): void {
   localStorage.removeItem(LS_SECRET_KEY);
 }
 
-async function opsFetch(path: string, options?: RequestInit) {
-  if (!OPS_URL) throw new Error('VITE_CALIBRATION_URL is not configured');
-  const secret = getOpsSecret();
-  if (!secret)  throw new Error('NO_SECRET');
-  const res = await fetch(`${OPS_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Ops-Secret': secret,
-      ...(options?.headers ?? {}),
-    },
+/**
+ * Per-venue ops call. Routes through Lambda /admin/ops-proxy → venue's own
+ * droplet. Lambda refuses if the venue's dropletStatus !== 'active', so
+ * callers don't have to pre-check — they can just try the call and surface
+ * whatever 409 the Lambda returns.
+ *
+ * Replaces the old single-droplet OPS_URL. Every venue-touching action
+ * (probe, restart-worker, deploy, cam-proxy, auto-detect-zones, …) is now
+ * sourced from the dedicated worker IP for that specific venue.
+ */
+async function opsFetch(venueId: string, path: string, options?: RequestInit) {
+  if (!venueId) throw new Error('opsFetch requires venueId — every /ops/* call must specify which venue');
+  // Decode body / method so the Lambda can re-construct the upstream request.
+  const method  = (options?.method ?? 'GET').toUpperCase();
+  let bodyJson: unknown;
+  if (options?.body) {
+    try { bodyJson = JSON.parse(options.body as string); }
+    catch { bodyJson = options.body; }
+  }
+  return adminFetch('/admin/ops-proxy', {
+    method: 'POST',
+    body:   JSON.stringify({ venueId, path, method, body: bodyJson }),
   });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((json as any).error ?? `HTTP ${res.status}`);
-  return json;
 }
 
 // Shared-secret stop-gap auth (see lambda/admin-api/index.mjs comment).
@@ -1066,64 +1073,65 @@ class AdminService {
     }
   }
 
-  // ============ OPS API (calls droplet webhook server directly) ============
+  // ============ OPS API (per-venue: routes via Lambda → venue's own droplet) =
 
-  async getOpsStatus(): Promise<OpsStatus> {
-    const data = await opsFetch('/ops/status');
+  async getOpsStatus(venueId: string): Promise<OpsStatus> {
+    const data = await opsFetch(venueId, '/ops/status');
     return data as OpsStatus;
   }
 
-  async getOpsLogs(lines = 150, filter = ''): Promise<{ lines: string[]; count: number }> {
+  async getOpsLogs(venueId: string, lines = 150, filter = ''): Promise<{ lines: string[]; count: number }> {
     const qs = new URLSearchParams({ lines: String(lines) });
     if (filter) qs.set('filter', filter);
-    const data = await opsFetch(`/ops/logs?${qs.toString()}`);
+    const data = await opsFetch(venueId, `/ops/logs?${qs.toString()}`);
     return data as { lines: string[]; count: number };
   }
 
   /**
-   * Curated Prometheus metrics from the droplet. Parsed server-side so the
-   * payload is small (~1 KB) and ready to plot.
+   * Curated Prometheus metrics from the venue's droplet. Parsed server-side
+   * so the payload is small (~1 KB) and ready to plot.
    */
-  async getOpsMetrics(): Promise<OpsMetrics> {
-    const data = await opsFetch('/ops/metrics');
+  async getOpsMetrics(venueId: string): Promise<OpsMetrics> {
+    const data = await opsFetch(venueId, '/ops/metrics');
     return data as OpsMetrics;
   }
 
   /**
-   * Probe a set of RTSP URLs from the droplet's network vantage point.
-   * Returns per-camera {ok, reason, width, height, fps}. Returns null if the
-   * endpoint isn't deployed yet (wizard degrades gracefully).
+   * Probe a set of RTSP URLs from THIS venue's droplet. Source IP is the
+   * dedicated worker — never another venue's droplet. Returns per-camera
+   * {ok, reason, width, height, fps}.
    */
   async probeCameras(
+    venueId: string,
     cameras: Array<{ name: string; rtspUrl: string }>,
   ): Promise<Array<{ ok: boolean; reason: string; width?: number; height?: number; fps?: number }>> {
-    const res = await opsFetch('/ops/probe-cameras', {
+    const res = await opsFetch(venueId, '/ops/probe-cameras', {
       method: 'POST',
-      body:   JSON.stringify({ cameras }),
+      body:   JSON.stringify({ cameras, throttle: 4 }),
     });
-    return res?.results ?? [];
+    return (res as any)?.results ?? [];
   }
 
-  async restartWorker(): Promise<{ ok: boolean; msg: string }> {
-    const data = await opsFetch('/ops/restart', { method: 'POST', body: '{}' });
+  async restartWorker(venueId: string): Promise<{ ok: boolean; msg: string }> {
+    const data = await opsFetch(venueId, '/ops/restart', { method: 'POST', body: '{}' });
     return data as { ok: boolean; msg: string };
   }
 
-  async deployUpdate(): Promise<{ ok: boolean; output: string[] }> {
-    const data = await opsFetch('/ops/deploy', { method: 'POST', body: '{}' });
+  async deployUpdate(venueId: string): Promise<{ ok: boolean; output: string[] }> {
+    const data = await opsFetch(venueId, '/ops/deploy', { method: 'POST', body: '{}' });
     return data as { ok: boolean; output: string[] };
   }
 
-  /** Read the HLS camera proxy upstream (ip:port) from the droplet's Caddyfile. */
-  async getCamProxy(): Promise<{ ip: string; port: number }> {
-    const data = await opsFetch('/ops/cam-proxy');
+  /** Read the HLS camera proxy upstream (ip:port) from this venue's Caddyfile. */
+  async getCamProxy(venueId: string): Promise<{ ip: string; port: number }> {
+    const data = await opsFetch(venueId, '/ops/cam-proxy');
     return data as { ip: string; port: number };
   }
 
-  /** Update the HLS camera proxy upstream and reload Caddy. */
-  async updateCamProxy(args: { ip?: string; port: number }):
+  /** Update this venue's HLS camera proxy upstream and reload its Caddy. */
+  async updateCamProxy(venueId: string, args: { ip?: string; port: number }):
     Promise<{ ok: boolean; ip: string; port: number }> {
-    const data = await opsFetch('/ops/cam-proxy', {
+    const data = await opsFetch(venueId, '/ops/cam-proxy', {
       method: 'POST',
       body:   JSON.stringify(args),
     });
@@ -1133,7 +1141,7 @@ class AdminService {
   /** Run auto_bar_config on a camera's stream and return the suggested config. */
   async autoDetectZones(venueId: string, cameraId: string): Promise<any> {
     const qs = new URLSearchParams({ venue_id: venueId, camera_id: cameraId }).toString();
-    const data = await opsFetch(`/ops/auto-detect-zones?${qs}`);
+    const data = await opsFetch(venueId, `/ops/auto-detect-zones?${qs}`);
     return (data as any).config;
   }
 
@@ -1142,7 +1150,7 @@ class AdminService {
     table_id: string; label: string; polygon: [number, number][];
   }>> {
     const qs = new URLSearchParams({ venue_id: venueId, camera_id: cameraId }).toString();
-    const data = await opsFetch(`/ops/auto-detect-tables?${qs}`);
+    const data = await opsFetch(venueId, `/ops/auto-detect-tables?${qs}`);
     return (data as any).zones ?? [];
   }
 
@@ -1157,7 +1165,7 @@ class AdminService {
     needs_recalibration: boolean;
   }> {
     const qs = new URLSearchParams({ venue_id: venueId, camera_id: cameraId }).toString();
-    return opsFetch(`/ops/camera-accuracy?${qs}`) as any;
+    return opsFetch(venueId, `/ops/camera-accuracy?${qs}`) as any;
   }
 
   /** Last ~60 drink detection events (normalized x/y) for live overlay flashes. */
@@ -1165,7 +1173,7 @@ class AdminService {
     events: Array<{ t_sec: number; score: number; x: number; y: number; zone?: string }>;
   }> {
     const qs = new URLSearchParams({ venue_id: venueId, camera_id: cameraId }).toString();
-    return opsFetch(`/ops/recent-serves?${qs}`) as any;
+    return opsFetch(venueId, `/ops/recent-serves?${qs}`) as any;
   }
 
   // ============ AUDIT LOG ============

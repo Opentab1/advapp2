@@ -213,13 +213,20 @@ function DiscoverModal({
     try {
       const data = await adminFetch('/admin/probe-cameras', {
         method: 'POST',
-        body: JSON.stringify({ ip: ip.trim(), port: port.trim(), totalChannels: parseInt(totalChannels) }),
+        body: JSON.stringify({
+          venueId,                         // routes the probe through THIS venue's droplet
+          ip: ip.trim(), port: port.trim(),
+          totalChannels: parseInt(totalChannels),
+        }),
       });
       setDiscovered(data.channels ?? []);
       const onlineNums = new Set<number>((data.channels ?? []).filter((c: any) => c.online).map((c: any) => c.channel));
       setSelected(onlineNums);
     } catch (e: any) {
-      setError(e.message ?? 'Discovery failed');
+      // Lambda returns 409 when the venue's droplet isn't 'active' — make
+      // that surface clearly so operators don't think it's a network issue.
+      const msg = e.message || 'Discovery failed';
+      setError(msg.includes('droplet') ? msg : msg);
     } finally {
       setDiscovering(false);
     }
@@ -987,8 +994,9 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
     venueSettingsService.loadSettingsFromCloud(venueId).then((s: any) => {
       if (s?.camProxyUrl) setCamProxyUrl(s.camProxyUrl);
     }).catch(() => { /* keep cached value */ });
-    // Load the droplet's current HLS proxy upstream port (Caddyfile)
-    adminService.getCamProxy()
+    // Load the droplet's current HLS proxy upstream port (Caddyfile).
+    // Per-venue: routes through Lambda → THIS venue's droplet only.
+    adminService.getCamProxy(venueId)
       .then(p => { setCamProxy(p); setProxyPortInput(String(p.port)); })
       .catch(() => { /* endpoint may not be deployed yet */ });
     statusTimer.current = setInterval(loadStatuses, 60_000);
@@ -1086,7 +1094,7 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
     setProxyMsg(null);
     try {
       const ip = newIp.trim() || camProxy?.ip;
-      const res = await adminService.updateCamProxy({ port, ip });
+      const res = await adminService.updateCamProxy(venueId, { port, ip });
       setCamProxy({ ip: res.ip, port: res.port });
       setProxyPortInput(String(res.port));
       setProxyMsg({ kind: 'ok', text: `HLS proxy now → ${res.ip}:${res.port}. Reload tiles to verify.` });

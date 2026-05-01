@@ -278,11 +278,11 @@ export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
   // ── Fetch droplet ops status ────────────────────────────────────────────────
 
   const fetchOpsStatus = useCallback(async () => {
-    if (!getOpsSecret()) { setOpsLoading(false); return; }
+    if (!selectedVenueId) { setOpsLoading(false); return; }
     setOpsLoading(true);
     setOpsError(null);
     try {
-      const status = await adminService.getOpsStatus();
+      const status = await adminService.getOpsStatus(selectedVenueId);
       setOpsStatus(status);
     } catch (e: any) {
       if (e.message === 'NO_SECRET') { setOpsLoading(false); return; }
@@ -290,7 +290,7 @@ export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
     } finally {
       setOpsLoading(false);
     }
-  }, []);
+  }, [selectedVenueId]);
 
   /**
    * Fetch curated Prometheus metrics + append to the ring buffer so sparklines
@@ -298,9 +298,9 @@ export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
    * silently — this is additive, not load-bearing.
    */
   const fetchOpsMetrics = useCallback(async () => {
-    if (!getOpsSecret()) return;
+    if (!selectedVenueId) return;
     try {
-      const m = await adminService.getOpsMetrics();
+      const m = await adminService.getOpsMetrics(selectedVenueId);
       setOpsMetrics(m);
       setMetricsHistory(prev => {
         const next = [...prev, m];
@@ -310,21 +310,26 @@ export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
     } catch {
       // Endpoint may not be deployed yet; don't disturb the rest of the page
     }
-  }, []);
+  }, [selectedVenueId]);
 
   // ── Fetch logs ─────────────────────────────────────────────────────────────
 
   const fetchLogs = useCallback(async (filter: string) => {
+    if (!selectedVenueId) {
+      setLogLines(['Select a venue to view its droplet logs.']);
+      setLogsLoading(false);
+      return;
+    }
     setLogsLoading(true);
     try {
-      const data = await adminService.getOpsLogs(150, filter);
+      const data = await adminService.getOpsLogs(selectedVenueId, 150, filter);
       setLogLines(data.lines);
     } catch (e: any) {
       setLogLines([`Error: ${e.message}`]);
     } finally {
       setLogsLoading(false);
     }
-  }, []);
+  }, [selectedVenueId]);
 
   // ── Combined refresh ────────────────────────────────────────────────────────
 
@@ -351,11 +356,12 @@ export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
   // ── Actions ─────────────────────────────────────────────────────────────────
 
   const doRestart = async () => {
+    if (!selectedVenueId) { setActionMsg({ ok: false, text: 'Select a venue first' }); return; }
     setConfirm(null);
     setRestarting(true);
     setActionMsg(null);
     try {
-      const res = await adminService.restartWorker();
+      const res = await adminService.restartWorker(selectedVenueId);
       setActionMsg({ ok: res.ok, text: res.msg });
       setTimeout(fetchOpsStatus, 3000);
     } catch (e: any) {
@@ -383,12 +389,13 @@ export function OpsMonitor({ embedded = false }: { embedded?: boolean } = {}) {
   };
 
   const doDeploy = async () => {
+    if (!selectedVenueId) { setActionMsg({ ok: false, text: 'Select a venue first' }); return; }
     setConfirm(null);
     setDeploying(true);
     setDeployOutput(null);
     setActionMsg(null);
     try {
-      const res = await adminService.deployUpdate();
+      const res = await adminService.deployUpdate(selectedVenueId);
       setDeployOutput(res.output);
       setActionMsg({ ok: res.ok, text: res.ok ? 'Deployed successfully' : 'Deploy failed — see output below' });
       if (res.ok) setTimeout(fetchOpsStatus, 5000);
