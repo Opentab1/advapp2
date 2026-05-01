@@ -485,17 +485,48 @@ class AdminService {
       sizeSlug:      string;
       monthlyUsd:    number | null;
       region:        string;
+      regionName:    string;
       ip:            string;
       tags:          string[];
       role:          'assigned' | 'junk' | 'orphan';
       assignedVenueId:   string | null;
       assignedVenueName: string | null;
+      vcpus:         number;
+      memoryMb:      number;
+      diskGb:        number;
+      kernel:        string;
+      image:         string;
+      backupsEnabled: boolean;
+      monitoring:    boolean;
       createdAt:     string;
     }>;
     counts: { total: number; assigned: number; junk: number; orphan: number };
     monthlyUsd: number;
   }> {
     return adminFetch('/admin/droplets');
+  }
+
+  /**
+   * Permanently destroy a droplet on DigitalOcean. Refuses if it's currently
+   * assigned to a venue — use switchDroplet() with disposition=destroy instead
+   * so the venue is migrated first. Safe for orphan + junk droplets.
+   */
+  async destroyOrphanDroplet(dropletId: number): Promise<{
+    ok: boolean; dropletId: number; ip?: string; alreadyGone?: boolean; msg: string;
+  }> {
+    const data = await adminFetch(
+      `/admin/droplets/${dropletId}`, { method: 'DELETE' },
+    );
+    this.logAuditEntry({
+      action: 'Droplet Destroyed',
+      actionType: 'delete',
+      targetType: 'system',
+      targetName: String(dropletId),
+      details: data.alreadyGone
+        ? `droplet ${dropletId} already gone on DO`
+        : `destroyed orphan/junk droplet ${dropletId} (${data.ip || ''})`,
+    });
+    return data;
   }
 
   /**

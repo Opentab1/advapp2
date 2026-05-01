@@ -21,6 +21,7 @@ import { AccuracySLA } from './AccuracySLA';
 import { PosReceipts } from './PosReceipts';
 import { OnboardVenue } from './OnboardVenue';
 import { WorkerTester } from './WorkerTester';
+import DropletPool from './DropletPool';
 import authService from '../../services/auth.service';
 
 const ADMIN_API_CONFIGURED = !!(import.meta.env.VITE_ADMIN_API_URL ?? '').trim();
@@ -106,6 +107,7 @@ function AdminPortalInner() {
           {!ADMIN_API_CONFIGURED && <SetupBanner />}
           {activeTab === 'dashboard'       && <ErrorBoundary key="dashboard"><AdminDashboard /></ErrorBoundary>}
           {activeTab === 'ops'             && <ErrorBoundary key="ops"><OpsMonitor /></ErrorBoundary>}
+          {activeTab === 'droplet-pool'    && <ErrorBoundary key="droplet-pool"><DropletPool /></ErrorBoundary>}
           {activeTab === 'venues'          && <ErrorBoundary key="venues"><VenuesManagement /></ErrorBoundary>}
           {activeTab === 'cameras'         && <ErrorBoundary key="cameras"><CamerasManagement /></ErrorBoundary>}
           {activeTab === 'calibration'    && <ErrorBoundary key="calibration"><BarCalibration /></ErrorBoundary>}

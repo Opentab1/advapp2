@@ -2864,11 +2864,23 @@ async function listDroplets() {
       sizeSlug:      d.size_slug,
       monthlyUsd:    sizePrice[d.size_slug] ?? null,
       region:        d.region?.slug || '',
+      regionName:    d.region?.name || '',
       ip:            v4,
       tags,
       role,                     // 'assigned' | 'junk' | 'orphan'
       assignedVenueId:   venue?.venueId   || null,
       assignedVenueName: venue?.venueName || null,
+      // Full specs from DO so the admin Droplet Pool page can show it all
+      // without further API calls. memory is MB, disk is GB.
+      vcpus:         d.vcpus    || 0,
+      memoryMb:      d.memory   || 0,
+      diskGb:        d.disk     || 0,
+      kernel:        d.kernel?.name || '',
+      image:         d.image?.distribution
+                       ? `${d.image.distribution} ${d.image.name || ''}`.trim()
+                       : (d.image?.slug || ''),
+      backupsEnabled: !!d.backup_ids?.length,
+      monitoring:    !!d.features?.includes('monitoring'),
       createdAt:     d.created_at,
     };
   });
@@ -3238,6 +3250,42 @@ async function switchDroplet(venueId, body) {
   return err(500, 'unreachable');
 }
 
+async function destroyOrphanDroplet(dropletId) {
+  // DELETE /admin/droplets/{id} — for orphan / junk droplets only. Refuses
+  // to destroy a droplet currently assigned to a venue (you must use
+  // /switch-droplet for that flow so the venue's worker is reassigned
+  // first; otherwise the venue would be left in a broken state).
+  if (!dropletId) return err(400, 'dropletId required');
+
+  // Verify it's not assigned to a venue
+  const byId = await _venuesByDropletId();
+  const owner = byId.get(Number(dropletId));
+  if (owner?.venueId) {
+    return err(409, `droplet ${dropletId} is assigned to venue ${owner.venueId} `
+      + `(${owner.venueName}); use POST /admin/venues/${owner.venueId}/switch-droplet `
+      + `to migrate the venue off this droplet first`);
+  }
+
+  // Best-effort look up IP for audit log before deletion
+  let ip = '';
+  try {
+    const d = (await _doApi(`/droplets/${dropletId}`)).droplet;
+    ip = (d.networks?.v4 || []).find(n => n.type === 'public')?.ip_address || '';
+  } catch { /* droplet may already be gone — proceed to attempt delete */ }
+
+  try {
+    await _doApi(`/droplets/${dropletId}`, { method: 'DELETE' });
+  } catch (e) {
+    if (e._status === 404) {
+      return ok({ ok: true, dropletId, alreadyGone: true,
+                  msg: 'droplet not found on DO (already destroyed)' });
+    }
+    return err(502, `DO API destroy failed: ${e.message}`);
+  }
+  return ok({ ok: true, dropletId, ip,
+              msg: 'droplet destroyed; DO billing for it stops at next hour boundary' });
+}
+
 async function destroyDroplet(venueId) {
   if (!venueId) return err(400, 'venueId required');
   const ven = await ddb.send(new GetItemCommand({
@@ -3413,6 +3461,8 @@ export const handler = async (event, context) => {
     if (method === 'POST' && parkMatch)   return parkDroplet(parkMatch[1]);
     if (method === 'POST' && assignMatch) return assignDroplet(assignMatch[1], body);
     if (method === 'POST' && reachMatch)  return testDropletReachability(reachMatch[1], body);
+    const destroyDropletMatch = rawPath.match(/^\/admin\/droplets\/([0-9]+)$/);
+    if (method === 'DELETE' && destroyDropletMatch) return destroyOrphanDroplet(destroyDropletMatch[1]);
 
     // Review queue — low-confidence events needing human approval
     if (method === 'GET'   && rawPath === '/admin/review-queue')               return listReviewQueue(qs);
