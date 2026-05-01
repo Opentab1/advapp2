@@ -22,6 +22,7 @@ import {
   HardDrive, MemoryStick, MapPin, DollarSign, Tag, AlertTriangle, CheckCircle2,
 } from 'lucide-react';
 import adminService from '../../services/admin.service';
+import { SwitchDropletModal } from '../../components/admin/SwitchDropletModal';
 
 interface Droplet {
   dropletId:         number;
@@ -91,6 +92,10 @@ export default function DropletPool() {
 
   // Filters
   const [roleFilter, setRoleFilter] = useState<'all' | Droplet['role']>('all');
+
+  // Switch Droplet modal — only opened from an ASSIGNED row (the row's venue
+  // is what we migrate). Modal handles the full multi-stage flow internally.
+  const [switchTarget, setSwitchTarget] = useState<Droplet | null>(null);
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -380,10 +385,13 @@ export default function DropletPool() {
                           Destroy
                         </button>
                       )}
-                      {d.role === 'assigned' && (
-                        <span className="text-[10px] text-gray-500 italic px-2">
-                          migrate via venue page
-                        </span>
+                      {d.role === 'assigned' && d.assignedVenueId && (
+                        <button onClick={() => setSwitchTarget(d)} disabled={busyId === d.dropletId}
+                                className="px-2 py-1 text-xs rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 inline-flex items-center gap-1"
+                                title={`Migrate ${d.assignedVenueName || d.assignedVenueId} to a different droplet`}>
+                          <ArrowRightLeft className="w-3 h-3" />
+                          Switch
+                        </button>
                       )}
                     </div>
                   </td>
@@ -406,10 +414,22 @@ export default function DropletPool() {
 
       {/* Operator hints */}
       <div className="text-xs text-gray-500 space-y-1 pt-2 border-t border-white/5">
-        <div><span className="text-emerald-300 font-semibold">ASSIGNED</span> — bound to a venue. Migrate via that venue's "Switch droplet" button before destroying.</div>
+        <div><span className="text-emerald-300 font-semibold">ASSIGNED</span> — bound to a venue. Use Switch to migrate that venue to a different droplet.</div>
         <div><span className="text-amber-300 font-semibold">JUNK POOL</span> — parked. Worker stopped, ready for fast re-assignment via the Assign action.</div>
         <div><span className="text-red-300 font-semibold">ORPHAN</span> — running but not tracked. Either park (move to junk) or destroy.</div>
       </div>
+
+      {/* Switch Droplet modal — opens with the venue+droplet from the clicked row */}
+      {switchTarget && switchTarget.assignedVenueId && (
+        <SwitchDropletModal
+          venueId={switchTarget.assignedVenueId}
+          venueName={switchTarget.assignedVenueName || switchTarget.assignedVenueId}
+          currentDropletId={switchTarget.dropletId}
+          currentDropletIp={switchTarget.ip}
+          onClose={() => setSwitchTarget(null)}
+          onComplete={() => { setSwitchTarget(null); load(true); }}
+        />
+      )}
     </div>
   );
 }
