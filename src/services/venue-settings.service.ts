@@ -50,6 +50,24 @@ export interface VenueSettings {
   };
   camProxyUrl?: string;  // HTTPS proxy base URL for live camera streams, e.g. https://droplet.sslip.io/cam
   nvrPlaybackUrl?: string;  // NVR playback URL template — use {channel} and {starttime} as placeholders
+  // Camera connection method for this venue. Drives onboarding wizard and
+  // sets defaults for new cameras at this venue. Each method has different
+  // setup steps + reliability characteristics; see ConnectionMethodPicker.
+  connectionMethod?:
+    | 'rtsp_direct'        // Public IP + port forward (BG today)
+    | 'cloud_p2p'          // XMeye/Sofia P2P relay (zero customer install)
+    | 'cloudflare_tunnel'  // cloudflared on a venue PC (5-min install)
+    | 'pulse_relay'        // Pulse app forwards via WebSocket
+    | 'edge_bridge';       // VenueScope Pi appliance ($120 hw)
+  // P2P device ID + credentials when connectionMethod === 'cloud_p2p'.
+  // Stored at venue level when all cameras share one NVR; can also be
+  // overridden per-camera in the camera record.
+  p2pDeviceId?: string;
+  p2pUsername?: string;
+  p2pPassword?: string;
+  // Cloudflare Tunnel base URL when connectionMethod === 'cloudflare_tunnel'.
+  // Per-venue stable URL like fergs.tunnels.venuescope.cloud.
+  tunnelBaseUrl?: string;
   lastUpdated?: string;
 }
 

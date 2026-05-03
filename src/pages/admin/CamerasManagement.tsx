@@ -38,6 +38,7 @@ import adminService, { AdminCamera, adminFetch } from '../../services/admin.serv
 import venueSettingsService from '../../services/venue-settings.service';
 import type { Camera as CameraConfig } from '../../services/camera.service';
 import { ZoneEditorModal, TableZoneEditorModal } from '../VenueScope';
+import { ConnectionMethodPicker } from '../../components/admin/ConnectionMethodPicker';
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 
 type CameraMode = 'drink_count' | 'bottle_count' | 'people_count' | 'table_turns' | 'table_service' | 'staff_activity' | 'after_hours';
@@ -1204,6 +1205,10 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
             className="border-t border-white/10"
           >
             <div className="p-4 space-y-3">
+
+              {/* Connection Method picker — top of tab so the operator
+                  picks the right onboarding path BEFORE adding cameras. */}
+              <ConnectionMethodPicker venueId={venueId} />
 
               {/* NVR Connection Summary */}
               {firstConn && firstConn.ip && (
