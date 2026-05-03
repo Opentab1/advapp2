@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   ShieldAlert, Loader2, RefreshCw, AlertTriangle, CheckCircle2,
-  XCircle, Clock, Calendar, PlayCircle,
+  XCircle, Clock, Calendar, PlayCircle, Plus,
 } from 'lucide-react';
 import adminService from '../../services/admin.service';
 import { ReplayScheduleModal } from './ReplayScheduleModal';
@@ -96,6 +96,9 @@ export function CoveragePanel({ venueId, tz = 'America/New_York' }: Props) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
   const [modalGap, setModalGap] = useState<Gap | null>(null);
+  // Custom-window replay (no gap required) — opened via "Schedule Replay"
+  // button so the operator can replay any time range, not just gaps.
+  const [customOpen, setCustomOpen] = useState(false);
 
   const dates = useMemo(() => lastNDates(7, tz), [tz]);
 
@@ -189,6 +192,14 @@ export function CoveragePanel({ venueId, tz = 'America/New_York' }: Props) {
               : 'No gaps detected'}
           </span>
           <div className="flex-1" />
+          <button
+            onClick={() => setCustomOpen(true)}
+            className="px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500 to-fuchsia-600 hover:opacity-90 text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-fuchsia-500/20"
+            title="Replay any window — no gap required"
+          >
+            <Plus className="w-3 h-3" />
+            Schedule Replay
+          </button>
           <button
             onClick={refresh}
             disabled={loading}
@@ -361,7 +372,7 @@ export function CoveragePanel({ venueId, tz = 'America/New_York' }: Props) {
         </motion.div>
       )}
 
-      {/* ── Schedule modal ─────────────────────────────────────────────────── */}
+      {/* ── Gap-mode schedule modal ───────────────────────────────────────── */}
       {modalGap && (
         <ReplayScheduleModal
           venueId={venueId}
@@ -375,6 +386,17 @@ export function CoveragePanel({ venueId, tz = 'America/New_York' }: Props) {
           }
           onClose={() => setModalGap(null)}
           onCreated={() => { setModalGap(null); refresh(); }}
+        />
+      )}
+
+      {/* ── Custom-window schedule modal (no gap required) ─────────────────── */}
+      {customOpen && (
+        <ReplayScheduleModal
+          venueId={venueId}
+          tz={tz}
+          /* gaps omitted → modal switches into custom mode */
+          onClose={() => setCustomOpen(false)}
+          onCreated={() => { setCustomOpen(false); refresh(); }}
         />
       )}
     </>

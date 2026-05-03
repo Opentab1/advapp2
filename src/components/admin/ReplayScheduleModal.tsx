@@ -15,8 +15,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Calendar, Clock, AlertTriangle, PlayCircle, Loader2, ShieldAlert,
+  Camera as CameraIcon,
 } from 'lucide-react';
 import adminService from '../../services/admin.service';
+import cameraService, { Camera as CameraType } from '../../services/camera.service';
 
 interface Gap {
   cameraId:    string;
@@ -30,7 +32,9 @@ interface Gap {
 interface Props {
   venueId: string;
   tz:      string;
-  gaps:    Gap[];
+  /** Pre-selected gaps to fill (gap-mode). Empty/omitted → custom-window mode
+   *  where the operator picks cameras + start/end from scratch. */
+  gaps?:   Gap[];
   onClose: () => void;
   onCreated: () => void;
 }
@@ -115,18 +119,41 @@ function fmtDuration(sec: number): string {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
-export function ReplayScheduleModal({ venueId, tz, gaps, onClose, onCreated }: Props) {
+export function ReplayScheduleModal({ venueId, tz, gaps = [], onClose, onCreated }: Props) {
+  // Custom-window mode kicks in when caller didn't pre-select any gaps —
+  // operator picks cameras + start/end from scratch. Used both for the
+  // "I just want to replay last Saturday" workflow and to validate the
+  // replay path when no gaps exist.
+  const isCustomMode = gaps.length === 0;
+
   const def = useMemo(() => nextDefaultRunAt(tz, venueId), [tz, venueId]);
   const [date,        setDate]        = useState(def.date);
   const [time,        setTime]        = useState(def.time);
   const [runMode,     setRunMode]     = useState<'scheduled' | 'now'>('scheduled');
-  const [outputMode,  setOutputMode]  = useState<'publish' | 'admin_only'>('publish');
+  const [outputMode,  setOutputMode]  = useState<'publish' | 'admin_only'>(
+    isCustomMode ? 'admin_only' : 'publish',          // safer default for ad-hoc
+  );
   const [requestedBy, setRequestedBy] = useState('admin');
   const [selected,    setSelected]    = useState<Set<string>>(
     () => new Set(gaps.map(g => `${g.startEpoch}_${g.endEpoch}`))
   );
   const [submitting,  setSubmitting]  = useState(false);
   const [error,       setError]       = useState<string | null>(null);
+
+  // ── Custom-mode state ──────────────────────────────────────────────────
+  // Default: yesterday 19:00–20:00 venue-local (busy hour, NVR retention OK).
+  const yesterday = useMemo(() => {
+    const d = new Date(Date.now() - 86400_000);
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d);
+  }, [tz]);
+  const [winDate,    setWinDate]    = useState(yesterday);
+  const [winStart,   setWinStart]   = useState('19:00');
+  const [winEnd,     setWinEnd]     = useState('20:00');
+  const [cameras,    setCameras]    = useState<CameraType[]>([]);
+  const [pickedCams, setPickedCams] = useState<Set<string>>(new Set());
+  const [loadingCams, setLoadingCams] = useState(false);
 
   useEffect(() => {
     // Best-effort: pre-fill requestedBy from the logged-in admin if available.
@@ -136,19 +163,66 @@ export function ReplayScheduleModal({ venueId, tz, gaps, onClose, onCreated }: P
       .catch(() => { /* fall back to 'admin' */ });
   }, []);
 
+  // Fetch the venue's camera list when in custom mode.
+  useEffect(() => {
+    if (!isCustomMode || !venueId) return;
+    let cancelled = false;
+    setLoadingCams(true);
+    cameraService.listCameras(venueId)
+      .then(list => {
+        if (cancelled) return;
+        const enabled = list.filter(c => c.enabled);
+        setCameras(enabled);
+        // Default-pick all cameras with at least one mode (active replay candidates).
+        setPickedCams(new Set(
+          enabled.filter(c => (c.modes ?? []).length > 0).map(c => c.cameraId),
+        ));
+      })
+      .catch(e => !cancelled && setError(`Failed to load cameras: ${(e as Error).message}`))
+      .finally(() => !cancelled && setLoadingCams(false));
+    return () => { cancelled = true; };
+  }, [isCustomMode, venueId]);
+
   const chosenGaps   = gaps.filter(g => selected.has(`${g.startEpoch}_${g.endEpoch}`));
   const totalSeconds = chosenGaps.reduce((s, g) => s + g.durationSec, 0);
 
+  // Build synthetic gap[] from custom inputs: one entry per picked camera
+  // covering [winStart, winEnd] on winDate in venue tz.
+  const customGaps = useMemo(() => {
+    if (!isCustomMode) return [];
+    const startEpoch = localToEpoch(winDate, winStart, tz);
+    const endEpoch   = localToEpoch(winDate, winEnd,   tz);
+    if (!startEpoch || !endEpoch || endEpoch <= startEpoch) return [];
+    const dur = endEpoch - startEpoch;
+    return cameras
+      .filter(c => pickedCams.has(c.cameraId))
+      .map(c => ({
+        cameraId:    c.cameraId,
+        cameraName:  c.name || c.cameraId,
+        startEpoch,
+        endEpoch,
+        durationSec: dur,
+      }));
+  }, [isCustomMode, winDate, winStart, winEnd, tz, cameras, pickedCams]);
+
   const handleSubmit = async () => {
     setError(null);
-    if (chosenGaps.length === 0) {
-      setError('Pick at least one gap to fill.');
+    const targetGaps = isCustomMode ? customGaps : chosenGaps;
+    if (targetGaps.length === 0) {
+      setError(isCustomMode
+        ? 'Pick at least one camera + a valid time window.'
+        : 'Pick at least one gap to fill.');
       return;
+    }
+    if (isCustomMode) {
+      const dur = targetGaps[0].endEpoch - targetGaps[0].startEpoch;
+      if (dur < 60)            { setError('Window too short (< 1 min).'); return; }
+      if (dur > 24 * 3600)     { setError('Window too long (> 24 hr).');  return; }
     }
     let scheduledFor: number | null = null;
     if (runMode === 'scheduled') {
       const epoch = localToEpoch(date, time, tz);
-      if (!epoch) { setError('Invalid date/time.'); return; }
+      if (!epoch) { setError('Invalid scheduled date/time.'); return; }
       if (epoch < Math.floor(Date.now() / 1000) - 60) {
         setError('Scheduled time is in the past — pick a future time or "Run now".');
         return;
@@ -158,7 +232,7 @@ export function ReplayScheduleModal({ venueId, tz, gaps, onClose, onCreated }: P
     setSubmitting(true);
     try {
       await adminService.createReplayJob(venueId, {
-        gaps: chosenGaps.map(g => ({
+        gaps: targetGaps.map(g => ({
           cameraId:    g.cameraId,
           cameraName:  g.cameraName,
           startEpoch:  g.startEpoch,
@@ -195,9 +269,13 @@ export function ReplayScheduleModal({ venueId, tz, gaps, onClose, onCreated }: P
             <div className="flex items-center gap-3">
               <ShieldAlert className="w-5 h-5 text-amber-400" />
               <div>
-                <h2 className="text-lg font-bold text-white">Schedule DR Replay</h2>
+                <h2 className="text-lg font-bold text-white">
+                  {isCustomMode ? 'Schedule Replay' : 'Schedule DR Replay'}
+                </h2>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  Re-run NVR footage through the worker for the selected gaps.
+                  {isCustomMode
+                    ? 'Pick a window + cameras and re-run that footage through this venue\'s worker.'
+                    : 'Re-run NVR footage through the worker for the selected gaps.'}
                 </p>
               </div>
             </div>
@@ -207,48 +285,131 @@ export function ReplayScheduleModal({ venueId, tz, gaps, onClose, onCreated }: P
           </div>
 
           <div className="p-5 space-y-5">
-            {/* Gaps list */}
-            <div>
-              <div className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-2">
-                Gaps to fill ({chosenGaps.length}/{gaps.length} selected · {fmtDuration(totalSeconds)} total)
-              </div>
-              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                {gaps.map(g => {
-                  const key = `${g.startEpoch}_${g.endEpoch}`;
-                  const checked = selected.has(key);
-                  return (
-                    <label
-                      key={key}
-                      className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                        checked
-                          ? 'border-amber-500/40 bg-amber-500/5'
-                          : 'border-white/10 bg-white/[0.02] hover:border-white/20'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => setSelected(s => {
-                          const n = new Set(s);
-                          if (n.has(key)) n.delete(key); else n.add(key);
-                          return n;
-                        })}
-                        className="rounded"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-white font-medium">
-                          {g.cameraName} <span className="text-gray-500 font-mono text-[11px]">{g.cameraId}</span>
-                        </div>
-                        <div className="text-[11px] text-gray-400 mt-0.5">
-                          {fmtLocal(g.startEpoch, tz)} → {fmtLocal(g.endEpoch, tz)}
-                          <span className="ml-2 text-amber-300/80">{fmtDuration(g.durationSec)}</span>
-                        </div>
-                      </div>
+            {/* ── Source: gap list (gap-mode) OR window+cameras (custom-mode) ── */}
+            {isCustomMode ? (
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1 flex items-center gap-1">
+                      <Calendar className="w-3 h-3" /> Replay date ({tz})
                     </label>
-                  );
-                })}
+                    <input type="date" value={winDate}
+                      onChange={e => setWinDate(e.target.value)}
+                      className="w-full bg-zinc-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-fuchsia-500/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1 flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> Start
+                    </label>
+                    <input type="time" value={winStart}
+                      onChange={e => setWinStart(e.target.value)}
+                      className="w-full bg-zinc-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-fuchsia-500/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1 flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> End
+                    </label>
+                    <input type="time" value={winEnd}
+                      onChange={e => setWinEnd(e.target.value)}
+                      className="w-full bg-zinc-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-fuchsia-500/50"
+                    />
+                  </div>
+                </div>
+                {customGaps.length > 0 && (
+                  <p className="text-[11px] text-gray-500 -mt-3">
+                    Window: {fmtLocal(customGaps[0].startEpoch, tz)} → {fmtLocal(customGaps[0].endEpoch, tz)}
+                    {' · '}{fmtDuration(customGaps[0].durationSec)} per camera
+                    {customGaps.length > 1 && ` · ${customGaps.length} cameras`}
+                  </p>
+                )}
+
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-2 flex items-center gap-1.5">
+                    <CameraIcon className="w-3 h-3" />
+                    Cameras ({pickedCams.size}/{cameras.length} selected)
+                  </div>
+                  {loadingCams ? (
+                    <div className="text-sm text-gray-400 py-4 text-center">Loading cameras…</div>
+                  ) : cameras.length === 0 ? (
+                    <div className="text-sm text-gray-400 py-4 text-center">No enabled cameras for this venue.</div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-1.5 max-h-56 overflow-y-auto pr-1">
+                      {cameras.map(c => {
+                        const checked = pickedCams.has(c.cameraId);
+                        const modes = (c.modes ?? []).join(', ') || 'no modes';
+                        return (
+                          <label key={c.cameraId}
+                            className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-colors ${
+                              checked
+                                ? 'border-fuchsia-500/40 bg-fuchsia-500/5'
+                                : 'border-white/10 bg-white/[0.02] hover:border-white/20'
+                            }`}
+                          >
+                            <input type="checkbox" checked={checked}
+                              onChange={() => setPickedCams(s => {
+                                const n = new Set(s);
+                                if (n.has(c.cameraId)) n.delete(c.cameraId);
+                                else n.add(c.cameraId);
+                                return n;
+                              })}
+                              className="rounded"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm text-white font-medium truncate">{c.name || c.cameraId}</div>
+                              <div className="text-[10px] text-gray-500 truncate">{modes}</div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-2">
+                  Gaps to fill ({chosenGaps.length}/{gaps.length} selected · {fmtDuration(totalSeconds)} total)
+                </div>
+                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                  {gaps.map(g => {
+                    const key = `${g.startEpoch}_${g.endEpoch}`;
+                    const checked = selected.has(key);
+                    return (
+                      <label
+                        key={key}
+                        className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                          checked
+                            ? 'border-amber-500/40 bg-amber-500/5'
+                            : 'border-white/10 bg-white/[0.02] hover:border-white/20'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setSelected(s => {
+                            const n = new Set(s);
+                            if (n.has(key)) n.delete(key); else n.add(key);
+                            return n;
+                          })}
+                          className="rounded"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-white font-medium">
+                            {g.cameraName} <span className="text-gray-500 font-mono text-[11px]">{g.cameraId}</span>
+                          </div>
+                          <div className="text-[11px] text-gray-400 mt-0.5">
+                            {fmtLocal(g.startEpoch, tz)} → {fmtLocal(g.endEpoch, tz)}
+                            <span className="ml-2 text-amber-300/80">{fmtDuration(g.durationSec)}</span>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Schedule */}
             <div>
