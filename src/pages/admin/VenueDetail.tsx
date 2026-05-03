@@ -20,7 +20,7 @@ import { motion } from 'framer-motion';
 import {
   ArrowLeft, Building2, MapPin, User, Mail, Camera as CameraIcon,
   Activity, Clock, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
-  LayoutDashboard, Target, Briefcase,
+  LayoutDashboard, Target, Briefcase, Rewind,
 } from 'lucide-react';
 import adminService, {
   AdminVenue, AdminCamera, AdminJob,
@@ -33,6 +33,7 @@ import { isVenueOpenNow, nextOpenLabel, type V2BusinessHours }
 import { VenueCameraSection } from './CamerasManagement';
 import { OpsMonitor }   from './OpsMonitor';
 import { AccuracySLA }  from './AccuracySLA';
+import { PlaybackTab }  from '../../components/admin/PlaybackTab';
 
 interface VenueDetailProps {
   venue: AdminVenue;
@@ -40,7 +41,7 @@ interface VenueDetailProps {
   onBack: () => void;
 }
 
-type TabId = 'overview' | 'cameras' | 'ops' | 'accuracy' | 'jobs';
+type TabId = 'overview' | 'cameras' | 'ops' | 'accuracy' | 'jobs' | 'playback';
 
 const TABS: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'overview', label: 'Overview',  icon: LayoutDashboard },
@@ -48,6 +49,7 @@ const TABS: { id: TabId; label: string; icon: React.ComponentType<{ className?: 
   { id: 'ops',      label: 'Ops',       icon: Activity        },
   { id: 'accuracy', label: 'Accuracy',  icon: Target          },
   { id: 'jobs',     label: 'Jobs',      icon: Briefcase       },
+  { id: 'playback', label: 'Playback',  icon: Rewind          },
 ];
 
 export function VenueDetail({ venue, displayName, onBack }: VenueDetailProps) {
@@ -210,6 +212,10 @@ export function VenueDetail({ venue, displayName, onBack }: VenueDetailProps) {
 
         {activeTab === 'jobs' && (
           <JobsTab venueId={venue.venueId} />
+        )}
+
+        {activeTab === 'playback' && (
+          <PlaybackTab venueId={venue.venueId} venueName={venue.venueName} />
         )}
       </motion.div>
     </div>

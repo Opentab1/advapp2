@@ -85,6 +85,11 @@ export interface PulseData {
   activityScore: number | null;
   retentionScore: number | null;
   hasTheftFlag: boolean;
+  // DR replay surfacing — true if any of today's records came from a
+  // gap-fill replay (droplet was down, footage recovered from NVR). Reports
+  // tab renders a "reconstructed" badge when this is set.
+  hasReplayDataToday: boolean;
+  replayMinutesToday: number;
 
   // Current sensor values
   currentDecibels: number | null;
@@ -499,6 +504,16 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     // Fall back to any drink_count job with a rate (today)
     const anyDrink = vsTodayJobs.find(j => j.analysisMode === 'drink_count' && (j.drinksPerHour ?? 0) > 0);
     return anyDrink?.drinksPerHour ?? null;
+  }, [vsTodayJobs]);
+
+  // DR replay roll-up — true when today's job set includes records the
+  // worker reconstructed via NVR replay (rather than live capture).
+  const vsReplayInfo = useMemo(() => {
+    const replayJobs = vsTodayJobs.filter(j => j.isReplay || j.source === 'replay');
+    const minutes = Math.round(
+      replayJobs.reduce((s, j) => s + (j.elapsedSec ?? 0), 0) / 60,
+    );
+    return { hasReplay: replayJobs.length > 0, minutes };
   }, [vsTodayJobs]);
 
   const vsHasTheftFlag = useMemo(() =>
@@ -1018,6 +1033,8 @@ export function usePulseData(options: UsePulseDataOptions = {}): PulseData {
     activityScore: pulseScoreResult.factors.activity?.score ?? null,
     retentionScore: pulseScoreResult.factors.retention?.score ?? null,
     hasTheftFlag: vsHasTheftFlag,
+    hasReplayDataToday: vsReplayInfo.hasReplay,
+    replayMinutesToday: vsReplayInfo.minutes,
 
     // Current sensor values
     currentDecibels: sensorData?.decibels ?? null,

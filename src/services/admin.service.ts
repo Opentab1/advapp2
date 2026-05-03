@@ -1292,6 +1292,78 @@ class AdminService {
     return (data as any).zones ?? [];
   }
 
+  // ── DR replay (gap-fill) ─────────────────────────────────────────────────
+
+  /** Detect time-ranges with no live data on the requested local-day. */
+  async getReplayGaps(venueId: string, dateIso: string,
+                      tz = 'America/New_York'): Promise<{
+    date: string; tz: string; count: number;
+    gaps: Array<{
+      cameraId:    string;
+      cameraName:  string;
+      start:       string;
+      end:         string;
+      startEpoch:  number;
+      endEpoch:    number;
+      durationSec: number;
+    }>;
+  }> {
+    const qs = new URLSearchParams({ date: dateIso, tz }).toString();
+    return opsFetch(venueId, `/ops/replay/gaps?${qs}`) as any;
+  }
+
+  /** Every queued/running/done DR replay job, in scheduled-then-newest order. */
+  async listReplayJobs(venueId: string): Promise<{
+    jobs: Array<{
+      jobId:        string;
+      label:        string;
+      status:       'pending' | 'running' | 'done' | 'failed' | 'scheduled';
+      progress:     number;
+      createdAt:    number;
+      finishedAt?:  number;
+      scheduledFor?: number;
+      errorMessage?: string;
+      gaps:         Array<{ cameraId: string; cameraName: string;
+                            startEpoch: number; endEpoch: number; durationSec: number }>;
+      outputMode:   'publish' | 'admin_only';
+      requestedBy:  string;
+      tz:           string;
+      summary?:     any;
+    }>;
+    count: number;
+  }> {
+    return opsFetch(venueId, '/ops/replay/jobs') as any;
+  }
+
+  /** Queue a new DR replay job. scheduledFor is unix-epoch seconds (null = run now). */
+  async createReplayJob(venueId: string, params: {
+    gaps:         Array<{ cameraId: string; cameraName?: string;
+                          startEpoch: number; endEpoch: number;
+                          durationSec?: number }>;
+    scheduledFor: number | null;
+    outputMode:   'publish' | 'admin_only';
+    requestedBy:  string;
+    tz?:          string;
+    label?:       string;
+  }): Promise<{ jobId: string; status: string; scheduledFor: number | null }> {
+    return opsFetch(venueId, '/ops/replay/jobs', {
+      method: 'POST',
+      body:   JSON.stringify(params),
+    }) as any;
+  }
+
+  /** Cancel a queued replay job. Returns true if cancelled, false if not pending. */
+  async cancelReplayJob(venueId: string, jobId: string): Promise<boolean> {
+    try {
+      await opsFetch(venueId, `/ops/replay/jobs/${encodeURIComponent(jobId)}`, {
+        method: 'DELETE',
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Snapshot of a camera's accuracy telemetry for the zone editor badge. */
   async getCameraAccuracy(venueId: string, cameraId: string): Promise<{
     total_drinks_shift: number;

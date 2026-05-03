@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import authService from '../services/auth.service';
 import venueScopeService, { VenueScopeJob, parseModes } from '../services/venuescope.service';
+import { ReplayDataBadge } from '../components/reports/ReplayDataBadge';
 import sportsService from '../services/sports.service';
 import { SportsGame } from '../types';
 import venueSettingsService from '../services/venue-settings.service';
@@ -1990,6 +1991,13 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true, peopleRooms = [], is
   const theftCount     = jobs.filter(j => j.hasTheftFlag).length;
   const unrung         = jobs.reduce((s, j) => s + (j.unrungDrinks ?? 0), 0);
 
+  // DR replay surfacing — chip rendered just below the stats row when any
+  // of today's job records came from a gap-fill replay.
+  const replayJobs = jobs.filter(j => j.isReplay || j.source === 'replay');
+  const replayMinutes = Math.round(
+    replayJobs.reduce((s, j) => s + (j.elapsedSec ?? 0), 0) / 60,
+  );
+
   // Drinks/hr: weighted avg across live jobs that have a rate
   const liveJobsWithRate = liveJobs.filter(j => (j.drinksPerHour ?? 0) > 0);
   const pace = liveJobsWithRate.length > 0
@@ -2046,18 +2054,25 @@ function TonightHero({ jobs, avgDrinkPrice, barOpen = true, peopleRooms = [], is
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      {stats.map(({ icon, value, label, color, bg, iconColor, sub, countdown }: any) => (
-        <div key={label} className={`border rounded-2xl p-4 ${bg}`}>
-          <div className={`w-7 h-7 rounded-lg bg-black/20 flex items-center justify-center mb-3 ${iconColor}`}>
-            {icon}
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {stats.map(({ icon, value, label, color, bg, iconColor, sub, countdown }: any) => (
+          <div key={label} className={`border rounded-2xl p-4 ${bg}`}>
+            <div className={`w-7 h-7 rounded-lg bg-black/20 flex items-center justify-center mb-3 ${iconColor}`}>
+              {icon}
+            </div>
+            <div className={`text-3xl font-bold ${color} leading-none`}>{value}</div>
+            <div className="text-[10px] text-text-muted uppercase tracking-wide mt-1.5">{label}</div>
+            {sub && <div className="text-[10px] text-text-muted mt-0.5">{sub}</div>}
+            {countdown && <div className="text-[10px] text-teal/70 mt-1.5 tabular-nums">{countdown}</div>}
           </div>
-          <div className={`text-3xl font-bold ${color} leading-none`}>{value}</div>
-          <div className="text-[10px] text-text-muted uppercase tracking-wide mt-1.5">{label}</div>
-          {sub && <div className="text-[10px] text-text-muted mt-0.5">{sub}</div>}
-          {countdown && <div className="text-[10px] text-teal/70 mt-1.5 tabular-nums">{countdown}</div>}
+        ))}
+      </div>
+      {replayJobs.length > 0 && replayMinutes > 0 && (
+        <div className="flex justify-end">
+          <ReplayDataBadge minutes={replayMinutes} />
         </div>
-      ))}
+      )}
     </div>
   );
 }

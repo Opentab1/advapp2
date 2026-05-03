@@ -80,6 +80,8 @@ function _itemToJob(item: Record<string, Record<string, unknown>>): VenueScopeJo
     bottleByClass:   s('bottleByClass'),
     avgPourOz:       n('avgPourOz'),
     isLive:          b('isLive'),
+    source:          (s('source') as 'live' | 'replay' | undefined),
+    isReplay:        b('isReplay'),
     roomLabel:       s('roomLabel'),
     bartenderBreakdown: s('bartenderBreakdown') ?? s('bartenderSummary'),
     elapsedSec:      n('elapsedSec'),
@@ -218,6 +220,11 @@ export interface VenueScopeJob {
   // Bottle count extras
   bottleByClass?: string; // JSON: {bottle: N, wine_glass: N, cup: N}
   avgPourOz?: number;
+  // DR replay tagging — set by the worker when this record was produced by
+  // a gap-fill replay rather than live capture. Consumer Reports renders a
+  // "reconstructed from NVR replay" badge for any day with replay records.
+  source?: 'live' | 'replay';
+  isReplay?: boolean;
   // Live camera stream fields (pushed every ~30s from continuous RTSP streams)
   isLive?: boolean;
   roomLabel?: string;
