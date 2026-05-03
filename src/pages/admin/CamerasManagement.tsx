@@ -779,10 +779,14 @@ function parseTableZonesLocal(json?: string): Array<{
   } catch { return []; }
 }
 
-function CameraLivePreview({ label, proxyBase, rtspUrl, modes, barConfigJson, tableZonesJson }: {
+function CameraLivePreview({ label, proxyBase, rtspUrl, modes, barConfigJson, tableZonesJson, previewBarConfigJson, previewTableZonesJson }: {
   label: string; proxyBase: string; rtspUrl?: string | null;
   modes?: string;
   barConfigJson?: string; tableZonesJson?: string;
+  // Pending auto-config suggestions, rendered with a dashed/yellow style so
+  // the operator can visually verify before Apply persists them.
+  previewBarConfigJson?: string;
+  previewTableZonesJson?: string;
 }) {
   const camModes = (modes || '').split(',').map(m => m.trim()).filter(Boolean);
   const showBar    = camModes.includes('drink_count');
@@ -875,9 +879,11 @@ function CameraLivePreview({ label, proxyBase, rtspUrl, modes, barConfigJson, ta
           Only renders on the admin side so operators can visually verify
           the zones are placed where they meant them to be. */}
       {state === 'ready' && (() => {
-        const bar    = showBar    ? parseBarStations(barConfigJson)    : [];
-        const tables = showTables ? parseTableZonesLocal(tableZonesJson) : [];
-        if (!bar.length && !tables.length) return null;
+        const bar       = showBar    ? parseBarStations(barConfigJson)            : [];
+        const tables    = showTables ? parseTableZonesLocal(tableZonesJson)       : [];
+        const barPrev   = showBar    ? parseBarStations(previewBarConfigJson)     : [];
+        const tablePrev = showTables ? parseTableZonesLocal(previewTableZonesJson) : [];
+        if (!bar.length && !tables.length && !barPrev.length && !tablePrev.length) return null;
         return (
           <svg
             className="absolute inset-0 w-full h-full pointer-events-none"
@@ -906,6 +912,34 @@ function CameraLivePreview({ label, proxyBase, rtspUrl, modes, barConfigJson, ta
                 fill="rgba(168,85,247,0.12)"
                 stroke="rgba(168,85,247,0.9)"
                 strokeWidth="0.004"
+              />
+            ))}
+            {/* Preview / pending suggestions — yellow dashed to flag "not yet saved" */}
+            {barPrev.map((s, i) => (
+              <g key={`bar-prev-${i}`}>
+                <polygon
+                  points={s.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
+                  fill="rgba(250,204,21,0.08)"
+                  stroke="rgba(250,204,21,0.85)"
+                  strokeWidth="0.005"
+                  strokeDasharray="0.015 0.01"
+                />
+                <line
+                  x1={s.bar_line_p1[0]} y1={s.bar_line_p1[1]}
+                  x2={s.bar_line_p2[0]} y2={s.bar_line_p2[1]}
+                  stroke="rgba(250,204,21,0.95)"
+                  strokeWidth="0.006"
+                  strokeDasharray="0.02 0.01"
+                />
+              </g>
+            ))}
+            {tablePrev.map((z, i) => (
+              <polygon key={`t-prev-${i}`}
+                points={z.polygon.map(([x, y]) => `${x},${y}`).join(' ')}
+                fill="rgba(250,204,21,0.10)"
+                stroke="rgba(250,204,21,0.85)"
+                strokeWidth="0.005"
+                strokeDasharray="0.015 0.01"
               />
             ))}
           </svg>
@@ -1726,14 +1760,24 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
                           transition={{ duration: 0.2 }}
                           className="overflow-hidden"
                         >
-                          <CameraLivePreview
-                            label={cam.name}
-                            proxyBase={camProxyUrl}
-                            rtspUrl={cam.rtspUrl}
-                            modes={cam.modes}
-                            barConfigJson={cam.barConfigJson}
-                            tableZonesJson={cam.tableZonesJson}
-                          />
+                          {(() => {
+                            const e = autoCfg[cam.cameraId];
+                            const isSugg = e?.status === 'suggested' && !!e.suggested;
+                            const previewBar    = isSugg && e.kind === 'bar'    ? JSON.stringify(e.suggested) : undefined;
+                            const previewTables = isSugg && e.kind === 'tables' ? JSON.stringify(e.suggested) : undefined;
+                            return (
+                              <CameraLivePreview
+                                label={cam.name}
+                                proxyBase={camProxyUrl}
+                                rtspUrl={cam.rtspUrl}
+                                modes={cam.modes}
+                                barConfigJson={cam.barConfigJson}
+                                tableZonesJson={cam.tableZonesJson}
+                                previewBarConfigJson={previewBar}
+                                previewTableZonesJson={previewTables}
+                              />
+                            );
+                          })()}
                           {!camProxyUrl && !cam.rtspUrl?.startsWith('https://') && (
                             <div className="mt-2 text-[11px] text-amber-400/80">
                               Venue's <code className="text-amber-300">camProxyUrl</code> isn't configured — set the HTTPS proxy in the customer app's Settings page to enable previews.
