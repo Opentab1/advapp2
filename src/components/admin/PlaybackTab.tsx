@@ -22,7 +22,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  FlaskConical, Plus, Trash2, RefreshCw, ChevronDown, Activity,
+  Plus, Trash2, RefreshCw, ChevronDown, Activity,
 } from 'lucide-react';
 import { CoveragePanel } from './CoveragePanel';
 import { WorkerTesterNewRunModal } from './WorkerTesterNewRunModal';
@@ -35,6 +35,9 @@ import authService from '../../services/auth.service';
 interface Props {
   venueId:   string;
   venueName: string;
+  /** IANA tz used for gap-detection day boundaries + scheduling defaults.
+   *  Falls back to America/New_York when the venue has no businessHours yet. */
+  tz?:       string;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -52,7 +55,7 @@ const GRADE_COLORS: Record<FeatureGrade, string> = {
   F: 'text-red-400',
 };
 
-export function PlaybackTab({ venueId }: Props) {
+export function PlaybackTab({ venueId, tz = 'America/New_York' }: Props) {
   return (
     <div className="space-y-6">
       {/* ── Section 1: Coverage & DR Replay ──────────────────────────── */}
@@ -66,7 +69,7 @@ export function PlaybackTab({ venueId }: Props) {
           venue's worker. By default replays run at venue-local off-hours so
           they don't compete with live monitoring for CPU/RAM.
         </p>
-        <CoveragePanel venueId={venueId} />
+        <CoveragePanel venueId={venueId} tz={tz} />
       </div>
 
       {/* ── Section 2: Test Runs ─────────────────────────────────────── */}

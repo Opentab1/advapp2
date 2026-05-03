@@ -215,7 +215,11 @@ export function VenueDetail({ venue, displayName, onBack }: VenueDetailProps) {
         )}
 
         {activeTab === 'playback' && (
-          <PlaybackTab venueId={venue.venueId} venueName={venue.venueName} />
+          <PlaybackTab
+            venueId={venue.venueId}
+            venueName={venue.venueName}
+            tz={hours?.timezone}
+          />
         )}
       </motion.div>
     </div>
