@@ -236,7 +236,7 @@ class ConnectService {
         cameras: (data.cameras || []).map((c: any) => ({
           cameraId:  c.camera_id,
           name:      c.name,
-          mode:      c.mode || 'drink_count',
+          mode:      c.mode || '',
           enabled:   c.enabled !== false,
           notes:     c.notes || '',
           createdAt: c.created_at || '',

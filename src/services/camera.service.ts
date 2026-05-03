@@ -77,7 +77,9 @@ function _itemToCamera(item: Record<string, Record<string, unknown>>): Camera {
     cameraId:        s('cameraId'),
     name:            s('name'),
     rtspUrl:         s('rtspUrl'),
-    modes:           modes.length ? modes : ['drink_count'],
+    // No fallback to drink_count — empty modes means the operator hasn't
+    // enabled any features yet. The UI must reflect the actual DDB state.
+    modes:           modes,
     enabled:         b('enabled'),
     modelProfile:    (s('modelProfile') || 'balanced') as Camera['modelProfile'],
     segmentSeconds:  n('segmentSeconds'),

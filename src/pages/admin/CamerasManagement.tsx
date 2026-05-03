@@ -65,7 +65,9 @@ function adminCameraToCameraConfig(c: AdminCamera, venueId: string): CameraConfi
     cameraId:        c.cameraId,
     name:            c.name,
     rtspUrl:         c.rtspUrl,
-    modes:           modes.length ? modes : ['drink_count'],
+    // No fallback to drink_count — empty modes means the operator hasn't
+    // enabled any features yet. The toggle UI must be allowed to show OFF.
+    modes:           modes,
     enabled:         c.enabled,
     modelProfile:    (c.modelProfile as CameraConfig['modelProfile']) || 'balanced',
     segmentSeconds:  c.segmentSeconds,
@@ -253,7 +255,9 @@ function DiscoverModal({
           venueId,
           name: `${namePrefix} — CH${ch}`,
           rtspUrl: chData.url,
-          modes: 'drink_count',
+          // No features by default — operator toggles drink_count / people /
+          // tables per camera in the Cameras tab. Cameras come in idle.
+          modes: '',
           enabled: true,
           modelProfile: 'balanced',
           segmentSeconds: 0,
@@ -460,7 +464,9 @@ function CameraModal({
   const handleSave = async () => {
     if (!name.trim()) { setError('Camera name is required'); return; }
     if (!effectiveUrl.trim()) { setError(urlMode === 'builder' ? 'Enter IP, port and channel' : 'Stream URL is required'); return; }
-    if (modes.length === 0) { setError('Select at least one mode'); return; }
+    // Modes are optional — a camera with zero modes is "connected but idle":
+    // the worker writes a heartbeat so the UI shows it Live, but no inference
+    // runs until the operator toggles a feature on.
 
     setSaving(true);
     setError('');
@@ -1412,11 +1418,21 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
 
                         {/* Modes */}
                         <div className="flex flex-wrap gap-1 mb-2">
-                          {(cam.modes || 'drink_count').split(',').filter(Boolean).map(m => (
-                            <span key={m} className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                              {MODE_LABELS[m as CameraMode] ?? m}
-                            </span>
-                          ))}
+                          {(() => {
+                            const ms = (cam.modes || '').split(',').map(m => m.trim()).filter(Boolean);
+                            if (ms.length === 0) {
+                              return (
+                                <span className="text-xs px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500 border border-gray-500/20 italic">
+                                  no features enabled
+                                </span>
+                              );
+                            }
+                            return ms.map(m => (
+                              <span key={m} className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                {MODE_LABELS[m as CameraMode] ?? m}
+                              </span>
+                            ));
+                          })()}
                         </div>
 
                         {/* IP:Port display */}
