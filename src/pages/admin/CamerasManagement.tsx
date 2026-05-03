@@ -779,10 +779,14 @@ function parseTableZonesLocal(json?: string): Array<{
   } catch { return []; }
 }
 
-function CameraLivePreview({ label, proxyBase, rtspUrl, barConfigJson, tableZonesJson }: {
+function CameraLivePreview({ label, proxyBase, rtspUrl, modes, barConfigJson, tableZonesJson }: {
   label: string; proxyBase: string; rtspUrl?: string | null;
+  modes?: string;
   barConfigJson?: string; tableZonesJson?: string;
 }) {
+  const camModes = (modes || '').split(',').map(m => m.trim()).filter(Boolean);
+  const showBar    = camModes.includes('drink_count');
+  const showTables = camModes.includes('table_turns') || camModes.includes('table_service');
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -871,8 +875,8 @@ function CameraLivePreview({ label, proxyBase, rtspUrl, barConfigJson, tableZone
           Only renders on the admin side so operators can visually verify
           the zones are placed where they meant them to be. */}
       {state === 'ready' && (() => {
-        const bar = parseBarStations(barConfigJson);
-        const tables = parseTableZonesLocal(tableZonesJson);
+        const bar    = showBar    ? parseBarStations(barConfigJson)    : [];
+        const tables = showTables ? parseTableZonesLocal(tableZonesJson) : [];
         if (!bar.length && !tables.length) return null;
         return (
           <svg
@@ -1707,6 +1711,7 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
                             label={cam.name}
                             proxyBase={camProxyUrl}
                             rtspUrl={cam.rtspUrl}
+                            modes={cam.modes}
                             barConfigJson={cam.barConfigJson}
                             tableZonesJson={cam.tableZonesJson}
                           />
