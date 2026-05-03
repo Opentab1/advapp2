@@ -1107,6 +1107,19 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
     }
   };
 
+  // Open the appropriate zone editor modal pre-loaded with the suggested
+  // zones so the operator can drag/delete/add before persisting. Modal saves
+  // to DDB on its own when the operator hits Save inside it.
+  const reviewAutoCfg = (cam: AdminCamera) => {
+    const entry = autoCfg[cam.cameraId];
+    if (!entry || entry.status !== 'suggested' || !entry.suggested) return;
+    const draft: AdminCamera = entry.kind === 'bar'
+      ? { ...cam, barConfigJson:  JSON.stringify(entry.suggested) }
+      : { ...cam, tableZonesJson: JSON.stringify(entry.suggested) };
+    if (entry.kind === 'bar') setZoneEditorCam(draft);
+    else                       setTableZoneEditorCam(draft);
+  };
+
   const applyAutoCfg = async (cam: AdminCamera) => {
     const cid = cam.cameraId;
     const entry = autoCfg[cid];
@@ -1581,9 +1594,15 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
                                       ? `${(entry.suggested?.stations?.length ?? 1)} bar zone(s) detected`
                                       : `${(entry.suggested?.length ?? 0)} table polygon(s) detected`}
                                   </span>
+                                  <button onClick={() => reviewAutoCfg(cam)}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded"
+                                    title="Open the zone editor pre-loaded with the suggestion so you can fine-tune before saving">
+                                    Review &amp; edit
+                                  </button>
                                   <button onClick={() => applyAutoCfg(cam)}
-                                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded">
-                                    Apply
+                                    className="text-gray-400 hover:text-white"
+                                    title="Skip the editor and persist the suggestion as-is">
+                                    Apply as-is
                                   </button>
                                   <button onClick={() => runAutoCfg(cam)}
                                     className="text-gray-400 hover:text-white">
