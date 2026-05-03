@@ -241,6 +241,19 @@ export function ConnectionMethodPicker({ venueId }: { venueId: string }) {
     return () => { cancelled = true; };
   }, [venueId]);
 
+  // Tunnel-specific config (Cloudflare Tunnel public hostname, e.g.
+  // https://fergs.venuescope.cloud). Persisted in venue settings.
+  const [tunnelUrl, setTunnelUrl] = useState('');
+  const [tunnelSaved, setTunnelSaved] = useState(false);
+
+  // Load tunnel URL alongside the method.
+  useEffect(() => {
+    if (!venueId) return;
+    venueSettingsService.loadSettingsFromCloud(venueId).then(s => {
+      if (s?.tunnelBaseUrl) setTunnelUrl(s.tunnelBaseUrl);
+    });
+  }, [venueId]);
+
   const handleSelect = async (id: MethodId) => {
     setSelected(id);
     if (!venueId) return;
@@ -254,6 +267,27 @@ export function ConnectionMethodPicker({ venueId }: { venueId: string }) {
       setSavedAt(new Date());
     } catch (e: any) {
       setError(e?.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveTunnelUrl = async () => {
+    if (!venueId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const current = venueSettingsService.getSettings(venueId) || {} as VenueSettings;
+      const next: VenueSettings = {
+        ...current,
+        tunnelBaseUrl: tunnelUrl.trim() || undefined,
+      };
+      const ok = await venueSettingsService.saveSettingsToCloud(venueId, next);
+      if (!ok) throw new Error('saveSettings returned false');
+      setTunnelSaved(true);
+      setTimeout(() => setTunnelSaved(false), 2500);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save tunnel URL');
     } finally {
       setSaving(false);
     }
@@ -377,6 +411,55 @@ export function ConnectionMethodPicker({ venueId }: { venueId: string }) {
                 <div className="text-xs text-gray-300 leading-relaxed border-l-2 border-fuchsia-500/30 pl-3 italic">
                   {method.bestFor}
                 </div>
+
+                {/* Cloudflare Tunnel — operator pastes the public hostname
+                    after creating the tunnel manually in CF Zero Trust.
+                    Worker uses this URL to pull RTSP/HLS. */}
+                {selected === 'cloudflare_tunnel' && (
+                  <div className="rounded-lg bg-cyan-500/5 border border-cyan-500/30 p-3 space-y-2">
+                    <div className="text-[10px] uppercase tracking-wider text-cyan-300 font-semibold">
+                      Tunnel hostname
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={tunnelUrl}
+                        onChange={e => setTunnelUrl(e.target.value)}
+                        placeholder="https://fergs.venuescope.cloud"
+                        className="flex-1 bg-zinc-800 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-mono focus:outline-none focus:border-cyan-500/50"
+                      />
+                      <button
+                        onClick={saveTunnelUrl}
+                        disabled={saving || !tunnelUrl.trim()}
+                        className="px-3 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-200 text-xs font-semibold disabled:opacity-50"
+                      >
+                        {tunnelSaved ? '✓ saved' : 'Save'}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-gray-400">
+                      Once Cloudflare reports the tunnel as Healthy and you've pasted the URL above,
+                      the worker auto-discovers cameras and starts streaming within 60s.
+                    </p>
+                    <div className="flex gap-3 pt-1">
+                      <a
+                        href="/docs/cloudflare-tunnel-customer.md"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-cyan-300 hover:text-cyan-200 underline decoration-dotted"
+                      >
+                        Customer install playbook →
+                      </a>
+                      <a
+                        href="/docs/cloudflare-tunnel-operator-setup.md"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-cyan-300 hover:text-cyan-200 underline decoration-dotted"
+                      >
+                        One-time operator setup →
+                      </a>
+                    </div>
+                  </div>
+                )}
 
                 {/* Step-by-step */}
                 <div>
