@@ -1034,6 +1034,35 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
     }
   };
 
+  // Per-feature inline toggle right on the camera card. Click any feature
+  // chip to flip it on/off — no edit-modal round-trip. Optimistic UI rolls
+  // back on Lambda error. Concurrent clicks on the same {camera,mode} pair
+  // are coalesced via the togglingModes set so a double-click can't race.
+  const [togglingModes, setTogglingModes] = useState<Set<string>>(new Set());
+  const handleToggleMode = async (cam: AdminCamera, mode: CameraMode) => {
+    const key = `${cam.cameraId}:${mode}`;
+    if (togglingModes.has(key)) return;
+    const current = (cam.modes || '').split(',').map(m => m.trim()).filter(Boolean);
+    const isOn   = current.includes(mode);
+    const nextArr = isOn ? current.filter(m => m !== mode) : [...current, mode];
+    const nextStr = nextArr.join(',');
+    const prevStr = cam.modes || '';
+
+    setTogglingModes(prev => { const n = new Set(prev); n.add(key); return n; });
+    setCameras(prev => prev.map(c =>
+      c.cameraId === cam.cameraId ? { ...c, modes: nextStr } : c));
+    try {
+      const ok = await adminService.updateCamera(cam.cameraId, venueId, { modes: nextStr });
+      if (!ok) throw new Error('updateCamera returned false');
+    } catch (e: any) {
+      setCameras(prev => prev.map(c =>
+        c.cameraId === cam.cameraId ? { ...c, modes: prevStr } : c));
+      alert(`Failed to toggle ${MODE_LABELS[mode]}: ${e.message}`);
+    } finally {
+      setTogglingModes(prev => { const n = new Set(prev); n.delete(key); return n; });
+    }
+  };
+
   // Bulk update all cameras' IP and/or port
   const handleConnUpdate = async () => {
     const ip = newIp.trim();
@@ -1416,23 +1445,33 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
                           {cam.enabled && <StatusDot status={camStatus} updatedAt={rec?.updatedAt} />}
                         </div>
 
-                        {/* Modes */}
+                        {/* Per-feature toggles — click any chip to flip
+                            it on/off and persist to DDB. Purple = on, gray
+                            outline = off. */}
                         <div className="flex flex-wrap gap-1 mb-2">
-                          {(() => {
-                            const ms = (cam.modes || '').split(',').map(m => m.trim()).filter(Boolean);
-                            if (ms.length === 0) {
-                              return (
-                                <span className="text-xs px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500 border border-gray-500/20 italic">
-                                  no features enabled
-                                </span>
-                              );
-                            }
-                            return ms.map(m => (
-                              <span key={m} className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                                {MODE_LABELS[m as CameraMode] ?? m}
-                              </span>
-                            ));
-                          })()}
+                          {ALL_MODES.map(mode => {
+                            const on = (cam.modes || '').split(',')
+                              .map(m => m.trim()).includes(mode);
+                            const busy = togglingModes.has(`${cam.cameraId}:${mode}`);
+                            return (
+                              <button
+                                key={mode}
+                                type="button"
+                                onClick={() => handleToggleMode(cam, mode)}
+                                disabled={busy}
+                                title={on
+                                  ? `Disable ${MODE_LABELS[mode]} on this camera`
+                                  : `Enable ${MODE_LABELS[mode]} on this camera`}
+                                className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
+                                  on
+                                    ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 hover:bg-purple-500/30'
+                                    : 'bg-white/5 text-gray-500 border-white/10 hover:border-white/20 hover:text-gray-300'
+                                } ${busy ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
+                              >
+                                {MODE_LABELS[mode]}
+                              </button>
+                            );
+                          })}
                         </div>
 
                         {/* IP:Port display */}
