@@ -33,6 +33,8 @@ import {
   Loader2,
   Play,
   Crosshair,
+  Wand2,
+  CheckCircle2,
 } from 'lucide-react';
 import adminService, { AdminCamera, adminFetch } from '../../services/admin.service';
 import venueSettingsService from '../../services/venue-settings.service';
@@ -1064,6 +1066,63 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
     }
   };
 
+  // ─── Per-camera Auto-config ────────────────────────────────────────────
+  // Same flow as the OnboardVenue wizard step, surfaced inline on each
+  // camera card so operators can re-run zone detection at any time without
+  // walking back through onboarding. Bar cams (drink_count) sample frames
+  // and detect bar lines; table cams (table_turns / table_service) detect
+  // polygon zones. Apply writes barConfigJson / tableZonesJson back to DDB.
+  type AutoCfgEntry = {
+    status: 'running' | 'suggested' | 'applied' | 'failed';
+    kind:   'bar' | 'tables';
+    suggested?: any;
+    reason?: string;
+  };
+  const [autoCfg, setAutoCfg] = useState<Record<string, AutoCfgEntry>>({});
+
+  const runAutoCfg = async (cam: AdminCamera) => {
+    const cid = cam.cameraId;
+    const modes = (cam.modes || '').split(',').map(m => m.trim()).filter(Boolean);
+    const wantsBar    = modes.includes('drink_count');
+    const wantsTables = modes.includes('table_turns') || modes.includes('table_service');
+    if (!wantsBar && !wantsTables) return;
+    const kind: 'bar' | 'tables' = wantsBar ? 'bar' : 'tables';
+    setAutoCfg(s => ({ ...s, [cid]: { status: 'running', kind } }));
+    try {
+      const suggested = wantsBar
+        ? await adminService.autoDetectZones(venueId, cid)
+        : await adminService.autoDetectTables(venueId, cid);
+      if (!suggested || (Array.isArray(suggested) && suggested.length === 0)) {
+        setAutoCfg(s => ({ ...s, [cid]: { status: 'failed', kind,
+          reason: wantsBar ? 'no bar line detected' : 'no tables detected' } }));
+        return;
+      }
+      setAutoCfg(s => ({ ...s, [cid]: { status: 'suggested', kind, suggested } }));
+    } catch (e: any) {
+      setAutoCfg(s => ({ ...s, [cid]: { status: 'failed', kind, reason: e?.message ?? 'detect failed' } }));
+    }
+  };
+
+  const applyAutoCfg = async (cam: AdminCamera) => {
+    const cid = cam.cameraId;
+    const entry = autoCfg[cid];
+    if (!entry || entry.status !== 'suggested' || !entry.suggested) return;
+    try {
+      const fields: Partial<AdminCamera> = entry.kind === 'bar'
+        ? { barConfigJson: JSON.stringify(entry.suggested) }
+        : { tableZonesJson: JSON.stringify(entry.suggested) };
+      const ok = await adminService.updateCamera(cid, venueId, fields);
+      if (!ok) {
+        setAutoCfg(s => ({ ...s, [cid]: { ...entry, status: 'failed', reason: 'updateCamera returned false' } }));
+        return;
+      }
+      setAutoCfg(s => ({ ...s, [cid]: { ...entry, status: 'applied' } }));
+      setCameras(prev => prev.map(c => c.cameraId === cid ? { ...c, ...fields } : c));
+    } catch (e: any) {
+      setAutoCfg(s => ({ ...s, [cid]: { ...entry, status: 'failed', reason: e?.message ?? 'updateCamera failed' } }));
+    }
+  };
+
   // Bulk update all cameras' IP and/or port
   const handleConnUpdate = async () => {
     const ip = newIp.trim();
@@ -1478,6 +1537,67 @@ export function VenueCameraSection({ venueId, venueName }: { venueId: string; ve
                             );
                           })}
                         </div>
+
+                        {/* Auto-config — runs zone detection against a live
+                            frame and lets you Apply the result. Shows only
+                            when at least one zone-based feature is enabled. */}
+                        {(() => {
+                          const camModes = (cam.modes || '').split(',').map(m => m.trim()).filter(Boolean);
+                          const wantsBar    = camModes.includes('drink_count');
+                          const wantsTables = camModes.includes('table_turns') || camModes.includes('table_service');
+                          if (!wantsBar && !wantsTables) return null;
+                          const entry = autoCfg[cam.cameraId];
+                          const hasExisting = wantsBar
+                            ? !!cam.barConfigJson
+                            : !!cam.tableZonesJson;
+                          return (
+                            <div className="flex flex-wrap items-center gap-2 mb-2 text-xs">
+                              {!entry || entry.status === 'failed' ? (
+                                <>
+                                  <button onClick={() => runAutoCfg(cam)}
+                                    className="inline-flex items-center gap-1 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 px-2 py-1 rounded">
+                                    <Wand2 className="w-3 h-3" />
+                                    Auto-config {wantsBar ? 'bar' : 'tables'}
+                                  </button>
+                                  {hasExisting && (
+                                    <span className="text-emerald-400/80">✓ saved config present</span>
+                                  )}
+                                  {entry?.status === 'failed' && (
+                                    <span className="text-red-300">✗ {entry.reason}</span>
+                                  )}
+                                </>
+                              ) : entry.status === 'running' ? (
+                                <span className="inline-flex items-center gap-1 text-amber-300">
+                                  <Loader2 className="w-3 h-3 animate-spin" /> Sampling frames…
+                                </span>
+                              ) : entry.status === 'suggested' ? (
+                                <>
+                                  <span className="text-emerald-300">
+                                    ✓ {entry.kind === 'bar'
+                                      ? `${(entry.suggested?.stations?.length ?? 1)} bar zone(s) detected`
+                                      : `${(entry.suggested?.length ?? 0)} table polygon(s) detected`}
+                                  </span>
+                                  <button onClick={() => applyAutoCfg(cam)}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded">
+                                    Apply
+                                  </button>
+                                  <button onClick={() => runAutoCfg(cam)}
+                                    className="text-gray-400 hover:text-white">
+                                    Re-run
+                                  </button>
+                                </>
+                              ) : entry.status === 'applied' ? (
+                                <span className="inline-flex items-center gap-1 text-emerald-400">
+                                  <CheckCircle2 className="w-3 h-3" /> Applied
+                                  <button onClick={() => runAutoCfg(cam)}
+                                    className="ml-2 text-gray-400 hover:text-white">
+                                    Re-run
+                                  </button>
+                                </span>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
 
                         {/* IP:Port display */}
                         {conn.ip && (
