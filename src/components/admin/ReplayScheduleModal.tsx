@@ -532,7 +532,7 @@ export function ReplayScheduleModal({ venueId, tz, gaps = [], onClose, onCreated
             </button>
             <button
               onClick={handleSubmit}
-              disabled={submitting || chosenGaps.length === 0}
+              disabled={submitting || (isCustomMode ? customGaps.length === 0 : chosenGaps.length === 0)}
               className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-fuchsia-600 hover:opacity-90 text-white font-semibold text-sm disabled:opacity-50 flex items-center gap-2"
             >
               {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
